@@ -12,6 +12,19 @@ metadata:
 modules:
   - .aldashboard
 ---
+objects:
+  - daREST: DAWeb.using(base_url=get_config('url root',"https://" + get_config('external hostname',"")) + "/api" )
+---
+code: |
+  install_packages_api_key = get_config('install packages api key')
+---
+code: |
+  playground_files = daREST.get('playground',{
+        "key": install_packages_api_key,
+        "user_id": chosen_user,
+        "folder": "questions",
+        })
+---
 mandatory: True
 id: interview order
 code: |
@@ -38,8 +51,8 @@ fields:
     datatype: radio
     choices:
       - Reset password: reset_password
-      # - Download playground files: download_playground
       - Change user permissions: elevate_permissions
+      - View playground files: view_files
   - New password: new_user_password
     datatype: password
     show if:
@@ -88,6 +101,9 @@ question: |
 subquestion: |
   % if user_task == 'elevate_permissions':
   `${ new_permission_level.true_values().elements }`
+  % endif
+  % if user_task=='view_files':
+  ${ playground_files }
   % endif
 buttons:
   - Restart: restart

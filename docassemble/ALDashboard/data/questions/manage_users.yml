@@ -19,11 +19,46 @@ code: |
   install_packages_api_key = get_config('install packages api key')
 ---
 code: |
+  playground_projects = daREST.get('playground/project',{
+        "key": install_packages_api_key,
+        "user_id": chosen_user,
+        })
+---
+code: |
   playground_files = daREST.get('playground',{
         "key": install_packages_api_key,
         "user_id": chosen_user,
-        "folder": "questions",
+        "folder": folder_name,
+        "project": project_name
         })
+---
+event: deliver_file
+code: |
+  filename = action_argument('filename')
+  the_file = daREST.get('playground',{
+        "key": install_packages_api_key,
+        "user_id": chosen_user,
+        "folder": folder_name,
+        "project": project_name,
+        "filename": filename
+        })
+  response(response=the_file)            
+---
+code: |
+  from docassemble.webapp.server import get_list_of_projects
+---
+question: |
+  Project
+fields:
+  - Project: project_name
+    code: |
+      get_list_of_projects(chosen_user)
+  - Folder: folder_name
+    choices:
+      - questions
+      - static
+      - modules
+      - sources
 ---
 mandatory: True
 id: interview order
@@ -103,7 +138,9 @@ subquestion: |
   `${ new_permission_level.true_values().elements }`
   % endif
   % if user_task=='view_files':
-  ${ playground_files }
+  % for filename in playground_files:
+  * ${ filename } ${ action_button_html(interview_url_action('deliver_file', filename=filename), label="Download") }    
+  % endfor
   % endif
 buttons:
   - Restart: restart

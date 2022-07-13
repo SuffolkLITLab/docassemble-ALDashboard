@@ -21,9 +21,31 @@ subquestion: |
 fields:
   - Upload 1 or more YAML files: yaml_file
     datatype: files
-  - Create revisit screens for lists: build_revisit_blocks
+  - How do you want to handle lists (screens that use `i`)?: list_handling
+    datatype: radio
+    choices:
+      - Create a revisit page that lists each item and attribute (may have many columns): build_revisit_blocks
+      - Make specific inline review blocks for each question that uses **i** and the first **n** objects in each list, plus an overflow block: use_inline_review_blocks
+    default: use_inline_review_blocks
+  - How many items in each list do you want to generate an inline review block for?: inline_review_blocks_to_generate
+    datatype: range
+    min: 1
+    max: 10
+    step: 1
+    default: 3
+    
+    show if:
+      variable: list_handling
+      is: use_inline_review_blocks
+  - Create standard name and address review blocks for all ALPeopleList and ALIndividual objects?: add_name_address_review_blocks
     datatype: yesno
     default: True
+    show if:
+      variable: list_handling
+      is: use_inline_review_blocks
+validation code: |
+  if defined("inline_review_blocks_to_generate"):
+    inline_review_blocks_to_generate = int(inline_review_blocks_to_generate)
 ---
 code: |
   import ruamel.yaml as yaml
@@ -53,7 +75,7 @@ code: |
         for field in doc["fields"]:
           if field and "code" in field:
             object_name = name_match.match(field["code"])[1]
-            if object_name == "x" or "[i]" in field["code"]:
+            if object_name == "x" or "[i]" in field["code"] and list_handling == "build_revisit_blocks":
               continue
             else:
               if ".name_fields(" in field["code"]:
@@ -123,7 +145,45 @@ code: |
   review_fields_temp = []
   revisit_screens = []
   tables = []
-  if build_revisit_blocks:
+  if list_handling == "use_inline_review_blocks" and add_name_address_review_blocks:
+    for obj in objects:
+      obj_name = next(iter(obj.keys()), [""])
+      nice_obj_name = obj_name.replace('_', ' ')
+      if next(iter(obj.values()),"").startswith("ALPeopleList") or next(iter(obj.values()),"").startswith("PartyList") or next(iter(obj.values()),"").startswith("ChildList"):
+        for index in range(0, inline_review_blocks_to_generate+1):
+          if index == inline_review_blocks_to_generate:
+            review_fields_temp.append({
+              "note": f"**Name of {nice_obj_name}** ({ordinal(index)} {noun_singular(obj_name)})\n\n {obj_name}.name_table",
+              "show if": f"{ obj_name }[{inline_review_blocks_to_generate}:]"
+            })
+            review_fields_temp.append({
+              "note": f"**Address of {nice_obj_name}** ({ordinal(index)}) {noun_singular(obj_name)}\n\n {obj_name}.address_table",
+              "show if": f"{ obj_name }[{inline_review_blocks_to_generate}:]"
+            })
+            tables.append({
+                "table": f"{obj_name}.name_table",
+                "rows": f"{obj_name}[{inline_review_blocks_to_generate}:]",
+                "columns": [{"Name": "row_item.name.full()"}],
+                "edit": ['name.first']
+              }
+            )
+            tables.append({
+                "table": f"{obj_name}.address_table",
+                "rows": f"{obj_name}[{inline_review_blocks_to_generate}:]",
+                "columns": [{"Address": "row_item.address.on_one_line()"}],
+                "edit": ['name.first']
+              }
+            )            
+          else:
+            review_fields_temp.append({
+              "Edit": f"{ obj_name }[{index}].name.first",
+              "button": f"**Name of { obj_name }**\n\n${{ {obj_name}[{index}] }}"
+            })
+            review_fields_temp.append({
+              "Edit": f"{ obj_name }[0].address.address",
+              "button": f"**Address of ${{ {obj_name}[{index}] }}**\n\n${{ {obj_name}[{index}].address.on_one_line() }}",
+            })
+  if list_handling == "build_revisit_blocks":
     for obj in objects:
       obj_name = next(iter(obj.keys()), [""])
       review = {}
@@ -144,32 +204,89 @@ code: |
           "columns": [
             {next(iter(attribute.values())).split('.')[-1] if next(iter(attribute.keys())) == "no label" else next(iter(attribute.keys())): f"row_item.{ next(iter(attribute.values())).split('.')[-1] } if hasattr(row_item, '{next(iter(attribute.values())).split('.')[-1]}') else ''"}
             for attribute in attributes_list[obj_name]
-          ]
+          ],
+          "edit": [
+            next(iter(attribute.values())).split('.')[-1]
+            for attribute in attributes_list[obj_name]
+          ],
         })
+        
+  name_without_index_match = re.compile(r"(\w+).*\[i.*")
+  mako_tags_match = re.compile(r"(\${.*\})")
   for question in questions:
     if len(question["fields"]):
       fields = question["fields"]
       first_label_pair = next((pair for pair in fields[0].items() if pair[0] not in not_labels), ("",""))
-      review = {}
-      review['Edit'] = first_label_pair[1] # This will be the trigger variable in edit button
-      review["button"] = f"**{ question['question'] }**\n\n"
-      for field in fields:
-        label_pair = next((pair for pair in field.items() if pair[0] not in not_labels), None)
-        if label_pair:
-          if label_pair[0] == "no label":
-            if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
-              review['button'] += f"${{ word(yesno({ label_pair[1] })) }}\n\n"
+      # See if we need to un-generalize some question screens that use `i`
+      if "[i]" in first_label_pair[1] and list_handling == "use_inline_review_blocks": 
+        count = int(inline_review_blocks_to_generate)
+      else:
+        count = 1            
+      for index in range(0,count+1):        
+        review = {}
+        if "[i]" in first_label_pair[1] and list_handling == "use_inline_review_blocks":         
+          if index == count:
+            obj_name = name_without_index_match.match(first_label_pair[1])[1]
+            # Get a unique name for this table
+            if question.get("id"):
+              table_prefix = space_to_underscore(question.get("id"))
             else:
-              review['button'] += f"${{ showifdef('{label_pair[1]}') }}\n\n"
-          else:          
-            if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
-              review['button'] += f"{label_pair[0] or ''}: ${{ word(yesno({ label_pair[1] })) }}\n\n"
-            else:
-              review['button'] += f"{label_pair[0] or ''}: ${{ showifdef('{label_pair[1]}') }}\n\n"
-      review["button"] = review["button"].strip() + "\n"
-      review_fields_temp.append(review)
+              table_prefix = next(iter(question["fields"][0].values())).split('.')[-1]
+            # Build the catch-all block, which is a note instead of a standard 'edit' button
+            review['note'] = f"**{ mako_tags_match.sub(noun_singular(obj_name), question['question']) }** (Other {noun_plural(obj_name)} )\n\n"
+            review['note'] += f"${{ {obj_name}.{table_prefix}_table }}"
+            review['show if'] = first_label_pair[1].replace("[i]", f"[{index}:]")
+            # Build a review table for this question
+            tables.append(
+              {
+                "table": f"{obj_name}.{table_prefix}_table",
+                "rows": f"{obj_name}[{index}:]",
+                "columns": [
+                  {next(iter(attribute.values())).split('.')[-1] if next(iter(attribute.keys())) == "no label" else next(iter(attribute.keys())): f"row_item.{ next(iter(attribute.values())).split('.')[-1] } if hasattr(row_item, '{next(iter(attribute.values())).split('.')[-1]}') else ''"}
+            for attribute in fields
+                ],
+                "edit": [
+                          next(iter(attribute.values())).split('.')[-1]
+                          for attribute in fields
+                ]
+              }
+            )
+          else:
+            obj_name = noun_singular(name_without_index_match.match(first_label_pair[1])[1])          
+            review['Edit'] = first_label_pair[1].replace("[i]", f"[{index}]")
+            review["button"] = f"**{ question['question'].replace('[i]', f'[{index}]')} ({ordinal(index)} {obj_name.replace('_', ' ')})\n\n**"
+        else:
+          review['Edit'] = first_label_pair[1]
+          review["button"] = f"**{ question['question'] }**\n\n"
+        if not index == count:          
+          for field in fields:
+            label_pair = next((pair for pair in field.items() if pair[0] not in not_labels), None)
+            if label_pair:
+              # Replace `[i]` with a specific index value
+              if "[i]" in first_label_pair[1] and list_handling == "use_inline_review_blocks":
+                  field_name = label_pair[1].replace("[i]", f"[{index}]")
+                  field_text = label_pair[0].replace("[i]", f"[{index}]")
+              else:
+                field_name = label_pair[1]
+                field_text = label_pair[0]            
+              if label_pair[0] == "no label":
+                if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
+                  review['button'] += f"${{ word(yesno({ field_name })) }}\n\n"
+                else:
+                  review['button'] += f"${{ showifdef('{ field_name}') }}\n\n"
+              else:          
+                if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
+                  review['button'] += f"{field_text or ''}: ${{ word(yesno({ field_name })) }}\n\n"
+                else:
+                  review['button'] += f"{field_text or ''}: ${{ showifdef('{ field_name }') }}\n\n"
+            review["button"] = review["button"].strip() + "\n"
+          
+        review_fields_temp.append(review)
   review_yaml = [
     {
+      "need": [
+        table["table"] for table in tables
+      ],
       "id": "review screen",
       "question": "Review your answers",
       'review': review_fields_temp
@@ -180,10 +297,19 @@ code: |
   not_labels = ['datatype','default', 'help', 'min','max','maxlength','minlength','rows','choices','input type','required','hint','code','exclude','none of the above','shuffle','show if','hide if','enable if','disable if','js show if','js hide if','js enable if','js disable if','disable others','note','html','field metadata','accept','validate','address autocomplete']
 ---
 code: |
-  # import pyyaml
-  # from yaml import dump
-  from pyaml import dump_all
-  review_yaml_dumped = dump_all(review_yaml, string_val_style='|')
+  import yaml
+
+  def str_presenter(dumper, data):
+    if len(data.splitlines()) > 1:  # check for multiline string
+      return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+  yaml.add_representer(str, str_presenter)
+
+  # to use with safe_dump:
+  yaml.representer.SafeRepresenter.add_representer(str, str_presenter)
+
+  review_yaml_dumped = yaml.dump_all(review_yaml)
 ---
 event: results
 question: |

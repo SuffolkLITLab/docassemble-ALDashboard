@@ -151,7 +151,7 @@ def has_iterator(question: Dict, iterator: str = "i") -> bool:
         for field in question.get("fields", [{"": ""}])
     ):
         return True
-    if any(f"[{iterator}]" in value for value in question.values()):
+    if any(f"[{iterator}]" in value for value in question.values() if isinstance(value, str)):
         return True
     return False
 
@@ -168,7 +168,7 @@ def get_questions(yaml_parsed: List[Any], objects: List[Dict[str, str]]) -> List
     """
     questions = []
     for doc in yaml_parsed:
-        if not doc.get("question"):
+        if not doc or not doc.get("question"):
             continue
         # First, expand generic objects
         if uses_generic_object(doc):
@@ -176,11 +176,13 @@ def get_questions(yaml_parsed: List[Any], objects: List[Dict[str, str]]) -> List
         else:
             to_process = [doc]
         for item in to_process:
+            if not item or not item.get("question"):
+                continue
             # Expand iterators and normalize after generic objects are expanded
             if has_iterator(item):
                 expanded_questions = expand_iterator_question(item)
                 questions.extend(
-                    [normalize_question(question) for question in expanded_questions]
+                    [normalize_question(question) for question in expanded_questions if question.get("question")]
                 )
                 # Add a marker for where the review block for the overflow items should go
                 questions.append(normalize_question(item, placeholder=True))
@@ -191,29 +193,28 @@ def get_questions(yaml_parsed: List[Any], objects: List[Dict[str, str]]) -> List
 
 
 def normalize_question(doc: Dict, placeholder: bool = False) -> Dict:
-    if doc.get("question"):
-        question = {"question": doc["question"].strip(), "fields": []}
-        if placeholder:
-            question["ITERATOR QUESTION PLACEHOLDER"] = True
-        if "yesno" in doc:
+    question = {"question": doc["question"].strip(), "fields": []}
+    if placeholder:
+        question["ITERATOR QUESTION PLACEHOLDER"] = True
+    if "yesno" in doc:
+        question["fields"] = [
+            {doc.get("question", ""): doc.get("yesno"), "datatype": "yesno"}
+        ]
+    elif "noyes" in doc:
+        question["fields"] = [
+            {doc.get("question", ""): doc.get("noyes"), "datatype": "noyes"}
+        ]
+    elif "signature" in doc:
+        question["fields"] = [
+            {doc.get("question", ""): doc.get("signature"), "datatype": "signature"}
+        ]
+    elif "field" in doc:
+        if "choices" in doc or "buttons" in doc:
             question["fields"] = [
-                {doc.get("question", ""): doc.get("yesno"), "datatype": "yesno"}
+                {doc.get("question", ""): doc.get("field"), "datatype": "radio"}
             ]
-        elif "noyes" in doc:
-            question["fields"] = [
-                {doc.get("question", ""): doc.get("noyes"), "datatype": "noyes"}
-            ]
-        elif "signature" in doc:
-            question["fields"] = [
-                {doc.get("question", ""): doc.get("signature"), "datatype": "signature"}
-            ]
-        elif "field" in doc:
-            if "choices" in doc or "buttons" in doc:
-                question["fields"] = [
-                    {doc.get("question", ""): doc.get("field"), "datatype": "radio"}
-                ]
-        else:
-            question["fields"] = expand_fields(question.get("fields", []))
+    else:
+        question["fields"] = expand_fields(doc.get("fields", []))
     return question
 
 
@@ -243,7 +244,7 @@ def expand_generic_question(
                             r"\1" + obj_name + r"\2", question["question"]
                         ),
                         "fields": [
-                            {key: x_regex.sub(obj_name, value) for key, value in field}
+                            {key: x_regex.sub(obj_name, value) if isinstance(value, str) else value for key, value in field.items()}
                             for field in question["fields"]
                         ],
                     }
@@ -276,8 +277,10 @@ def expand_iterator_question(
     a new screen.
     """
     expanded_questions = []
-
+    if not question.get("question"):
+        return []
     for index in range(0, number_of_expansions):
+
         if question.get("fields"):
             expanded_questions.append(
                 {
@@ -371,6 +374,17 @@ def get_name_and_address_review_blocks(
             nice_obj_name = "people on your side of the case"
         else:
             nice_obj_name = obj_name.replace("_", " ")
+
+        for index in range(0, number_of_expansions):
+            blocks.append({
+                "Edit": f"{obj_name}[{index}].name.first",
+                "button": f"**Name of {ordinal(index)} { noun_singular(nice_obj_name) }**\n\n{obj_name}[{index}]"
+            })
+
+            blocks.append({
+                "Edit": f"{obj_name}[{index}].address.address",
+                "button": f"**Address of {ordinal(index)} { noun_singular(nice_obj_name) }**\n\n{obj_name}[{index}].address.on_one_line()"
+            })
 
         blocks.append(
             {
@@ -509,6 +523,6 @@ def expand_fields(fields: List[Dict]) -> List[Dict]:
 def get_objects(yaml_parsed: List[Any]) -> List[Dict[str, str]]:
     objects = []
     for doc in yaml_parsed:
-        if doc.get("objects"):
+        if doc and doc.get("objects"):
             objects.extend(doc["objects"])
     return objects

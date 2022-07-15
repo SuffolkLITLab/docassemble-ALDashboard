@@ -47,9 +47,6 @@ fields:
   - Add standard name and address review blocks for all ALPeopleList, PeopleList, PartyList, and ChildList objects?: add_name_address_review_blocks
     datatype: yesno
     default: True
-    show if:
-      variable: list_handling
-      is: use_inline_review_blocks
 validation code: |
   if defined("inline_review_blocks_to_generate"):
     inline_review_blocks_to_generate = int(inline_review_blocks_to_generate)
@@ -57,34 +54,36 @@ validation code: |
 code: |
   parsed_yaml = parse_yaml(yaml_file)
   objects = get_objects(parsed_yaml)
+  questions = get_questions(parsed_yaml, objects)
 
   review_blocks, review_tables = get_question_review_blocks_and_tables(
-      get_questions(parsed_yaml, objects),
+      questions,
       number_of_expansions=inline_review_blocks_to_generate, iterator="i"
   )
 
-  review_yaml = [
-      {
+  if add_name_address_review_blocks:
+      review_tables.extend(
+          get_name_and_address_tables(
+              objects, number_of_expansions=inline_review_blocks_to_generate
+          )
+      )  
+
+  first_review_block = {
           "need": [table["table"] for table in review_tables],
           "id": "review screen",
           "question": "Review your answers",
           "review": [],
-      },
-  ]
+      }
   if add_name_address_review_blocks:
-      review_yaml["review"].extend(
+      first_review_block["review"].extend(
           get_name_and_address_review_blocks(
               objects, number_of_expansions=inline_review_blocks_to_generate
           )
       )
-  review_yaml["review"].extend(review_blocks)
-  if add_name_address_review_blocks:
-      review_yaml["review"].extend(
-          get_name_and_address_tables(
-              objects, number_of_expansions=inline_review_blocks_to_generate
-          )
-      )
-  review_yaml["review"].extend(review_tables)
+  first_review_block["review"].extend(review_blocks)
+  review_yaml = [first_review_block]
+
+  review_yaml.extend(review_tables)
 
   review_yaml_dumped = yaml.dump_all(review_yaml)
 ---

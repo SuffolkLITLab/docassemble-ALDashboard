@@ -1,5 +1,8 @@
 metadata:
   title: Package scanner
+  required privileges:
+    - admin
+    - developer
 ---
 modules:
   - .package_scanner

@@ -5,6 +5,11 @@ include:
 imports:
   - requests
 ---
+metadata:
+  title: Install Assembly Line
+  required privileges:
+    - admin
+---
 objects:
   - installer: ALPackageInstaller
 ---

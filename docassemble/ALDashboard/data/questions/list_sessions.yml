@@ -5,6 +5,11 @@ include:
 modules:
   - .aldashboard
 ---
+metadata:
+  title: Install Assembly Line
+  required privileges:
+    - admin
+---
 #mandatory: True # Use while developing in playground
 continue button field: playground_splash
 question: |

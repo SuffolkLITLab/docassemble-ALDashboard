@@ -14,6 +14,7 @@ metadata:
 objects:
   - output_file: DAFile
   - output_scss: DAFile.using(filename="custom.scss")
+  - test_html_file: DAStaticFile.using(filename="test_html.html")
 ---
 id: interview order block
 mandatory: True
@@ -166,3 +167,23 @@ subquestion: |
   % else:
   [:download: SCSS source file](${ uploaded_file.url_for(attachment=True) })
   % endif
+
+  Below are examples of all bootstrap components and what they will look like with this
+  bootstrap theme.
+
+  ${ test_html_file.slurp() }
+
+script: |
+  <script type="text/javascript">
+    var link = document.createElement('link');
+    link.setAttribute('rel', 'stylesheet');
+    link.setAttribute('href', '${ output_file.url_for() }');
+    document.head.appendChild(link);
+  </script>
+css: |
+  <style>
+    #daquestion {
+      margin-left: 0% !important;
+      width: 100% !important;
+    }
+  </style>

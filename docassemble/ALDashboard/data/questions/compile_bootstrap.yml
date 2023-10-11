@@ -138,7 +138,7 @@ validation code: |
     validation_error('You need to include the exact text \'@import "bootstrap";\' at the end of your SCSS block', field="file_text")
 ---
 template: output_template
-subject: Bootstrap CSS File
+subject: Bootstrap CSS Contents
 content: |
   ${ output_file.slurp() }
 ---
@@ -160,18 +160,24 @@ subquestion: |
 
   ${ display_template(output_template, copy=True, collapse=True) }
 
-  [Bootstrap Theme file](${output_file.url_for(attachment=True)})
+  **[Bootstrap CSS file](${output_file.url_for(attachment=True)})**
 
   % if upload_choice == "type_out":
-  [:download: SCSS source file](${ output_scss.url_for(attachment=True) })
+  **[:download: SCSS source file](${ output_scss.url_for(attachment=True) })**
   % else:
-  [:download: SCSS source file](${ uploaded_file.url_for(attachment=True) })
+  **[:download: SCSS source file](${ uploaded_file.url_for(attachment=True) })**
   % endif
+
+  <br>
+
+  ---
 
   Below are examples of all bootstrap components and what they will look like with this
   bootstrap theme.
 
   ${ test_html_file.slurp() }
+
+  ---
 
 script: |
   <script type="text/javascript">
@@ -185,5 +191,8 @@ css: |
     #daquestion {
       margin-left: 0% !important;
       width: 100% !important;
+    }
+    .bs-component + .bs-component {
+      margin-top: 1rem;
     }
   </style>

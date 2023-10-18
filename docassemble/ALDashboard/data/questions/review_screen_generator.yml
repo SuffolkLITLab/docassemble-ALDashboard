@@ -26,6 +26,9 @@ fields:
   - Create revisit screens for lists: build_revisit_blocks
     datatype: yesno
     default: True
+  - Point section blocks to review screen: point_sections_to_review
+    datatype: yesno
+    default: True
 ---
 code: |
   import ruamel.yaml as yaml
@@ -43,6 +46,7 @@ code: |
   attributes_list = {}
   questions_temp = []
   generic_question_blocks = []
+  sections_temp = []
   for doc in yaml_parsed:
     if doc:
       question = {"question": doc.get('question',"").strip() }
@@ -116,18 +120,30 @@ code: |
           fields_temp.append({doc.get('question',""): doc.get('field'), 'datatype': 'radio' })
       elif 'objects' in doc:
         objects_temp.extend(doc["objects"])
+      elif 'sections' in doc:
+        sections_temp.extend([next(iter(sec.keys()), [""]) for sec in doc["sections"]])
       question["fields"] = fields_temp
       if question["fields"]:
         questions_temp.append(question)
   objects = objects_temp
   questions = questions_temp
+  section_events = sections_temp
   del objects_temp
   del questions_temp
+  del sections_temp
 ---
 code: |
+  REVIEW_EVENT_NAME = "review_form"
   review_fields_temp = []
   revisit_screens = []
   tables = []
+  sections = []
+  if point_sections_to_review:
+    for sec in section_events:
+      sections.append({
+        "event": sec,
+        "code": REVIEW_EVENT_NAME,
+      })
   if build_revisit_blocks:
     for obj in objects:
       obj_name = next(iter(obj.keys()), [""])
@@ -184,9 +200,10 @@ code: |
             review['button'] += f"${{ showifdef('{label_pair[1]}') }}\n\n"
       review["button"] = review["button"].strip() + "\n"
       review_fields_temp.append(review)
-  review_yaml = [
+  review_yaml = sections + [
     {
       "id": "review screen",
+      "event": REVIEW_EVENT_NAME,
       "question": "Review your answers",
       'review': review_fields_temp
     },

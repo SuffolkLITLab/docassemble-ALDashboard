@@ -1,5 +1,6 @@
 ---
 include:
+  - docassemble.ALToolbox:display_template.yml
   - nav.yml
 ---
 metadata:
@@ -189,8 +190,22 @@ code: |
   from pyaml import dump_all
   review_yaml_dumped = dump_all(review_yaml, string_val_style='|')
 ---
+template: review_yaml_template
+content: |
+  ${ review_yaml_dumped }
+---
 event: results
 question: |
 subquestion: |  
-  ${ indent(review_yaml_dumped,4) } 
+  ${ display_template(review_yaml_template, classname="make_code", copy=True) }
+css: |
+  <style>
+  .make_code {
+    font-family: var(--bs-font-monospace);
+    font-size: 12px;
+  }
+  .make_code.scrollable-panel {
+    max-height: 2000px;
+  }
+  </style>
   

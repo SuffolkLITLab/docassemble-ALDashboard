@@ -188,7 +188,7 @@ code: |
   # import pyyaml
   # from yaml import dump
   from pyaml import dump_all
-  review_yaml_dumped = dump_all(review_yaml, string_val_style='|')
+  review_yaml_dumped = dump_all(review_yaml, string_val_style='|', sort_keys=False)
 ---
 template: review_yaml_template
 content: |

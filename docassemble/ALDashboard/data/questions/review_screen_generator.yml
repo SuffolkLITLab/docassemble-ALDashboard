@@ -161,7 +161,11 @@ code: |
       first_label_pair = next((pair for pair in fields[0].items() if pair[0] not in not_labels), ("",""))
       review = {}
       review['Edit'] = first_label_pair[1] # This will be the trigger variable in edit button
-      review["button"] = f"**{ question['question'] }**\n\n"
+      # Bolding with `**` over multiple lines doesn't work; use <strong> instead
+      if '\n' in question['question']:
+        review["button"] = f"<strong>{question['question'] }</strong>\n\n"
+      else:
+        review["button"] = f"**{ question['question'] }**\n\n"
       for field in fields:
         label_pair = next((pair for pair in field.items() if pair[0] not in not_labels), None)
         if label_pair:

@@ -141,10 +141,10 @@ code: |
       review_fields_temp.append(review)
       revisit_screen = {
         "id": f"revisit { obj_name }",
-        "event": f"{ obj_name }.revisit",
+        "continue button field": f"{ obj_name }.revisit",
         "question": f"Edit your answers about { obj_name.replace('_', ' ').title() }",
       }
-      revisit_screen["subquestion"] = f"${{ {obj_name}.table }}"
+      revisit_screen["subquestion"] = f"${{ {obj_name}.table }}\n\n${{ {obj_name}.add_action() }}"
       revisit_screens.append(revisit_screen)
       if obj_name in attributes_list:
         tables.append({
@@ -153,7 +153,11 @@ code: |
           "columns": [
             {next(iter(attribute.values())).split('.')[-1] if next(iter(attribute.keys())) == "no label" else next(iter(attribute.keys())): f"row_item.{ next(iter(attribute.values())).split('.')[-1] } if hasattr(row_item, '{next(iter(attribute.values())).split('.')[-1]}') else ''"}
             for attribute in attributes_list[obj_name]
-          ]
+          ],
+          "edit": [
+            next(iter(attribute.values())).split('.')[-1]
+            for attribute in attributes_list[obj_name]
+          ],
         })
   for question in questions:
     if len(question["fields"]):

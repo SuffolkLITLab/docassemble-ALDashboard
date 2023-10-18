@@ -173,16 +173,15 @@ code: |
       for field in fields:
         label_pair = next((pair for pair in field.items() if pair[0] not in not_labels), None)
         if label_pair:
-          if label_pair[0] == "no label":
-            if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
-              review['button'] += f"${{ word(yesno({ label_pair[1] })) }}\n\n"
-            else:
-              review['button'] += f"${{ showifdef('{label_pair[1]}') }}\n\n"
-          else:          
-            if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
-              review['button'] += f"{label_pair[0] or ''}: ${{ word(yesno({ label_pair[1] })) }}\n\n"
-            else:
-              review['button'] += f"{label_pair[0] or ''}: ${{ showifdef('{label_pair[1]}') }}\n\n"
+          if label_pair[0] != "no label":
+            review['button'] += f"{label_pair[0] or ''}: "
+
+          if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
+            review['button'] += f"${{ word(yesno({ label_pair[1] })) }}\n\n"
+          elif field.get('datatype') == 'currency':
+            review['button'] += f"${{ currency(showifdef('{label_pair[1]}')) }}\n\n"
+          else:
+            review['button'] += f"${{ showifdef('{label_pair[1]}') }}\n\n"
       review["button"] = review["button"].strip() + "\n"
       review_fields_temp.append(review)
   review_yaml = [

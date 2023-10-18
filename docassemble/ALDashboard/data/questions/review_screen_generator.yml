@@ -131,6 +131,10 @@ code: |
   if build_revisit_blocks:
     for obj in objects:
       obj_name = next(iter(obj.keys()), [""])
+      obj_type = next(iter(obj.values()), [""])
+      is_skippable_type = any(map(lambda val: obj_type.startswith(val), ["ALDocument.", "ALDocumentBundle.", "DAStaticFile."]))
+      if is_skippable_type:
+        continue
       review = {}
       review["Edit"] = f"{ obj_name }.revisit"
       review["button"] = f"**{ obj_name.replace('_', ' ').title() }**\n\n% for item in { obj_name }:\n- ${{ item }}\n% endfor"

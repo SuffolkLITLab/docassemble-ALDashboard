@@ -33,35 +33,46 @@ def add_paragraph_before(paragraph, text):
 
 
 def update_docx(
-    document: Union[docx.Document, str], modified_runs: List[Tuple[int, int, str, int]]
+    document: Union[docx.Document, str], 
+    modified_runs: List[List[int, int, str, int]]
 ) -> docx.Document:
-    """Update the document with the modified runs.
+    """Update the document with modified runs.
 
     Args:
         document: the docx.Document object, or the path to the DOCX file
-        modified_runs: a tuple of paragraph number, run number, the modified text, a question (not used), and whether a new paragraph should be inserted (for conditional text)
+        modified_runs: a tuple of paragraph number, run number, the modified text, and 
+            a number from -1 to 1 indicating whether a new paragraph should be inserted 
+            before or after the current paragraph.
 
     Returns:
         The modified document.
-    """
-    ## Sort modified_runs in reverse order so inserted paragraphs are in the correct order
-    # modified_runs = sorted(modified_runs, key=lambda x: x[0], reverse=True)
-    #
-    ## also sort each run in the modified_runs so that the runs are in the correct order
-    # modified_runs = sorted(modified_runs, key=lambda x: x[1], reverse=True)
+    """    
+    modified_runs.sort(key=lambda x: x[0], reverse=True)
 
     if isinstance(document, str):
         document = docx.Document(document)
 
-    for paragraph_number, run_number, modified_text, new_paragraph in modified_runs:
+    for item in modified_runs:
+        if len(item) != 4:
+            continue  # Skip items with incorrect format
+
+        paragraph_number, run_number, modified_text, new_paragraph = item
+
+        if paragraph_number >= len(document.paragraphs):
+            continue  # Skip invalid paragraph index
+
         paragraph = document.paragraphs[paragraph_number]
-        run = paragraph.runs[run_number]
-        # if new_paragraph == 1:
-        #    add_paragraph_after(paragraph, modified_text)
-        # elif new_paragraph == -1:
-        #    add_paragraph_before(paragraph, modified_text)
-        # else:
-        run.text = modified_text
+
+        if run_number >= len(paragraph.runs):
+            continue  # Skip invalid run index
+
+        if new_paragraph == 1:
+           add_paragraph_after(paragraph, modified_text)
+        elif new_paragraph == -1:
+           add_paragraph_before(paragraph, modified_text)
+        else:
+            paragraph.runs[run_number].text = modified_text
+
     return document
 
 
@@ -251,6 +262,23 @@ def get_labeled_docx_runs(
     assert isinstance(response.choices[0].message.content, str)
     guesses = json.loads(response.choices[0].message.content)["results"]
     return guesses
+
+
+def docx_rewrite(docx_path: str, prompt:str, openai_client: Optional[OpenAI] = None,) -> List[Tuple[int, int, str, int]]:
+    """Use GPT to rewrite the contents of a DOCX file paragraph by paragraph.
+
+    Args:
+        docx_path: path to the DOCX file
+        prompt: the prompt to use for OpenAI
+        openai_client: an optional OpenAI client
+
+    Returns:
+        The modified document.
+    """
+    doc = docx.Document(docx_path)
+    for paragraph in doc.paragraphs:
+        paragraph.text = paragraph.text.replace(find, replace)
+    return doc
 
 
 def modify_docx_with_openai_guesses(docx_path: str) -> docx.Document:

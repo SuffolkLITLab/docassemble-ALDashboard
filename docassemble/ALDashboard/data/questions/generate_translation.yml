@@ -28,6 +28,19 @@ fields:
       ]
   - "Language codes (like: es, one per line)": tr_langs
     datatype: area
+  - Include a draft translation with GPT or Google Translate: use_gpt
+    datatype: yesno
+    show if:
+      code: |
+        gpt_is_available() or google_translate_is_available()
+  - note: |
+      If you want to use Google Translate, you need to set up a Google Cloud project and enable the Google Translate API.
+
+      To use OpenAI's GPT-3, you need to set up an OpenAI account and get an API key.
+    show if:
+      code: |
+        not (gpt_is_available() or google_translate_is_available())
+
 ---
 mandatory: True
 question: |

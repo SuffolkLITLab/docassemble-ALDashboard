@@ -34,7 +34,7 @@ def add_paragraph_before(paragraph, text):
 
 def update_docx(
     document: Union[docx.Document, str], 
-    modified_runs: List[List[int, int, str, int]]
+    modified_runs: List[Tuple[int, int, str, int]]
 ) -> docx.Document:
     """Update the document with modified runs.
 

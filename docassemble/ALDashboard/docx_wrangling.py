@@ -33,20 +33,19 @@ def add_paragraph_before(paragraph, text):
 
 
 def update_docx(
-    document: Union[docx.Document, str], 
-    modified_runs: List[Tuple[int, int, str, int]]
+    document: Union[docx.Document, str], modified_runs: List[Tuple[int, int, str, int]]
 ) -> docx.Document:
     """Update the document with modified runs.
 
     Args:
         document: the docx.Document object, or the path to the DOCX file
-        modified_runs: a tuple of paragraph number, run number, the modified text, and 
-            a number from -1 to 1 indicating whether a new paragraph should be inserted 
+        modified_runs: a tuple of paragraph number, run number, the modified text, and
+            a number from -1 to 1 indicating whether a new paragraph should be inserted
             before or after the current paragraph.
 
     Returns:
         The modified document.
-    """    
+    """
     modified_runs.sort(key=lambda x: x[0], reverse=True)
 
     if isinstance(document, str):
@@ -67,9 +66,9 @@ def update_docx(
             continue  # Skip invalid run index
 
         if new_paragraph == 1:
-           add_paragraph_after(paragraph, modified_text)
+            add_paragraph_after(paragraph, modified_text)
         elif new_paragraph == -1:
-           add_paragraph_before(paragraph, modified_text)
+            add_paragraph_before(paragraph, modified_text)
         else:
             paragraph.runs[run_number].text = modified_text
 
@@ -262,23 +261,6 @@ def get_labeled_docx_runs(
     assert isinstance(response.choices[0].message.content, str)
     guesses = json.loads(response.choices[0].message.content)["results"]
     return guesses
-
-
-def docx_rewrite(docx_path: str, prompt:str, openai_client: Optional[OpenAI] = None,) -> List[Tuple[int, int, str, int]]:
-    """Use GPT to rewrite the contents of a DOCX file paragraph by paragraph.
-
-    Args:
-        docx_path: path to the DOCX file
-        prompt: the prompt to use for OpenAI
-        openai_client: an optional OpenAI client
-
-    Returns:
-        The modified document.
-    """
-    doc = docx.Document(docx_path)
-    for paragraph in doc.paragraphs:
-        paragraph.text = paragraph.text.replace(find, replace)
-    return doc
 
 
 def modify_docx_with_openai_guesses(docx_path: str) -> docx.Document:

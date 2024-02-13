@@ -60,3 +60,7 @@ ignore_missing_imports = true
 module="docx.*"
 ignore_missing_imports = true
 
+[[tool.mako.overrides]]
+module="mako.*"
+ignore_missing_imports = true
+

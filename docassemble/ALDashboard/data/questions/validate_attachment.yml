@@ -2,6 +2,9 @@
 include:
   - nav.yml
 ---
+modules:
+  - .validate_attachment
+---
 question: |
   Paste the contents of a long attachment block
   (beginning with the line `fields:`)
@@ -14,30 +17,7 @@ fields:
     rows: 10
 ---
 code: |
-  import ruamel.yaml as yaml
-  parsed_blocks = yaml.load(fields_statement)
----
-#mandatory: True
-question: |
-  ${ parsed_blocks['fields'] }
----
-code: |
-  import mako.template
-  import mako.runtime
-  import re
-  
-  mako.runtime.UNDEFINED = DAEmpty()
-  from mako import exceptions
-  errors = []
-  empty_rows = []
-  for index, row in enumerate(parsed_blocks['fields']):
-    try: 
-      mytemplate = mako.template.Template(next(iter(row.values())))
-      content = mytemplate.render()
-    except:
-      # Row in XLSX file is 1 indexed, and it has a header row
-      errors.append((f"Error on row {index}, id: {row}",exceptions.text_error_template().render()))
-  del mytemplate
+  errors = validate_attachment_block(fields_statement)
   load_all_errors = True
 ---
 need:
@@ -59,10 +39,3 @@ subquestion: |
   
   % endfor
   % endif
-  
-  % if len(empty_rows):
-  #### ${ len(empty_rows) } untranslated strings found
-  
-  Rows ${ comma_and_list(empty_rows) } have untranslated text.
-  % endif
-  

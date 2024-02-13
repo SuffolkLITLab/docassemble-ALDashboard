@@ -150,8 +150,10 @@ code: |
     for obj in objects:
       obj_name = next(iter(obj.keys()), [""])
       obj_type = next(iter(obj.values()), [""])
-      is_skippable_type = any(map(lambda val: obj_type.startswith(val), ["ALDocument.", "ALDocumentBundle.", "DAStaticFile."]))
-      if is_skippable_type:
+      # We skip types that don't need revisit screens, and types that have default revisit screens
+      # defined in AssemblyLine
+      skippable_types = ["ALDocument.", "ALDocumentBundle.", "DAStaticFile.", "ALPeopleList."]
+      if any(map(lambda val: obj_type.startswith(val), skippable_types)):
         continue
       review = {}
       review["Edit"] = f"{ obj_name }.revisit"

@@ -329,6 +329,7 @@ def list_installed_fonts():
 #  subq = db.session.query(db.func.max(UserDict.indexno).label('indexno'), UserDict.filename, UserDict.key).group_by(UserDict.filename, UserDict.key).subquery()
 #  interview_query = db.session.query(UserDictKeys.user_id, UserDictKeys.temp_user_id, UserDictKeys.filename, UserDictKeys.key, UserDict.dictionary, UserDict.encrypted, UserModel.email).join(subq, and_(subq.c.filename == UserDictKeys.filename, subq.c.key == UserDictKeys.key)).join(UserDict, and_(UserDict.indexno == subq.c.indexno, UserDict.key == UserDictKeys.key, UserDict.filename == UserDictKeys.filename)).join(UserModel, UserModel.id == UserDictKeys.user_id).filter(UserDictKeys.user_id == user_id, UserDictKeys.filename == filename, UserDictKeys.key == session).group_by(UserModel.email, UserDictKeys.user_id, UserDictKeys.temp_user_id, UserDictKeys.filename, UserDictKeys.key, UserDict.dictionary, UserDict.encrypted, UserDictKeys.indexno).order_by(UserDictKeys.indexno)
 
+
 def nicer_interview_filename(filename: str) -> str:
     """
     Given a filename like docassemble.playground10ALWeaver:data/questions/assembly_line.yml,
@@ -338,12 +339,12 @@ def nicer_interview_filename(filename: str) -> str:
 
     # Fixing the slicing for the first part of the filename
     if filename_parts[0].startswith("docassemble."):
-        filename_parts[0] = filename_parts[0][len("docassemble."):]
+        filename_parts[0] = filename_parts[0][len("docassemble.") :]
 
     # Check if there are two parts and modify the second part
     if len(filename_parts) > 1:
         if filename_parts[1].startswith("data/questions/"):
-            filename_parts[1] = filename_parts[1][len("data/questions/"):]
+            filename_parts[1] = filename_parts[1][len("data/questions/") :]
         return f"{filename_parts[0]}:{filename_parts[1].replace('.yml', '')}"
 
     return filename_parts[0]

@@ -76,7 +76,7 @@ def may_have_html(text:str) -> bool:
     """
     return re.search(r'<\w+.*?>.*?<\/\w+>', text, flags=re.MULTILINE) is not None
 
-def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str, tr_lang:str, special_words: Optional[Dict[str,str]] = None, model="gpt-3.5-turbo-1106", max_tokens=3900) -> Dict[int, str]:
+def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str, tr_lang:str, special_words: Optional[Dict[str,str]] = None, model="gpt-3.5-turbo-1106", max_tokens=3900, openai_api:Optional[str]=None) -> Dict[int, str]:
     """Use GPT-3.5-1106 to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
 
@@ -156,6 +156,7 @@ def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str,
             temperature = 0.0,
             json_mode = True,
             model=model,
+            openai_api=openai_api,
         )
 
         results.update(response)
@@ -205,18 +206,8 @@ class Translation(NamedTuple):
     untranslated_segments: int  # Number of rows in the output that have untranslated text - one for each question, subquestion, field, etc.
     total_rows: int
 
-class TranslationRow(NamedTuple):
-    source: str
-    question_id: str
-    index_num: int
-    hash: str
-    orig_lang: str
-    tr_lang: str
-    orig_text: str
-    tr_text: str
 
-
-def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_translate=False) -> Translation:
+def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_translate=False, openai_api:Optional[str]=None) -> Translation:
     """
     Return a tuple of the translation file in XLSX format, plus a count of the
     number of words and segments that need to be translated.
@@ -524,6 +515,7 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
 
         whole_draft_translation_format = workbook.add_format()
         whole_draft_translation_format.set_bg_color('yellow')
+        whole_draft_translation_format.set_font_color('black')
         whole_draft_translation_format.set_align('top')
         whole_draft_translation_format.set_text_wrap()
 
@@ -540,6 +532,11 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
         whole_draft_translation_format_two.set_font_color('blue')
         whole_draft_translation_format_two.set_align('top')
         whole_draft_translation_format_two.set_text_wrap()      
+
+        draft_fixedcell = workbook.add_format()
+        draft_fixedcell.set_align("top")
+        draft_fixedcell.set_text_wrap()
+        draft_fixedcell.set_bg_color('yellow')
 
         # Default number format
         numb = workbook.add_format()
@@ -652,32 +649,34 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
         # Now we need to translate the hold_for_draft_translation items
         if use_gpt:
             translated_fragments = translate_fragments_gpt(
-                [{item[0]: item[1]} for item in hold_for_draft_translation],
+                [{item[0]: item[1]} for item in hold_for_draft_translation], # We send a list of dictionaries for easier partitioning if we exceed max_tokens
                 source_language=language,
                 tr_lang=tr_lang,
+                openai_api=openai_api,
             )
-            for row, item in translated_fragments.items():
-                # Get the mako parts
+            for row, item in translated_fragments.items(): # But we get back one dictionary
+                row = int(row) # it seems sometimes GPT-3.5 makes it a string, not an int
+                # Get the mako
                 mako = mako_parts(item)
                 if len(mako) == 0:
-                    worksheet.write_string(row, 7, tr_text, whole_draft_translation_format)
+                    worksheet.write_string(row, 7, item, whole_draft_translation_format)
                 elif len(mako) == 1:
                     if mako[0][1] == 0:
-                        worksheet.write_string(row, 7, tr_text, whole_draft_translation_format)
+                        worksheet.write_string(row, 7, item, whole_draft_translation_format)
                     elif mako[0][1] == 1:
-                        worksheet.write_string(row, 7, tr_text, whole_draft_translation_format_one)
+                        worksheet.write_string(row, 7, item, whole_draft_translation_format_one)
                     elif mako[0][1] == 2:
-                        worksheet.write_string(row, 7, tr_text, whole_draft_translation_format_two)
+                        worksheet.write_string(row, 7, item, whole_draft_translation_format_two)
                 else:
                     parts = [row, 7]
                     for part in mako:
                         if part[1] == 0:
-                            parts.extend([fixed, part[0]])
+                            parts.extend([whole_draft_translation_format, part[0]])
                         elif part[1] == 1:
-                            parts.extend([fixedone, part[0]])
+                            parts.extend([whole_draft_translation_format_one, part[0]])
                         elif part[1] == 2:
-                            parts.extend([fixedtwo, part[0]])
-                    parts.append(fixedcell)
+                            parts.extend([whole_draft_translation_format_two, part[0]])
+                    parts.append(draft_fixedcell)
                     worksheet.write_rich_string(*parts)
         
         for item, cache_item in tr_cache.items():

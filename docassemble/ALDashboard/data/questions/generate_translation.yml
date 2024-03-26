@@ -38,7 +38,7 @@ reload: True
 event: translate_file
 code: |
   translations = [
-    translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt)
+    translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt, openai_api=get_config("openai api key", get_config("open ai", {}).get("key")))
     for tr_lang
     in tr_langs.split()
   ]

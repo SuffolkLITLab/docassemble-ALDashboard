@@ -155,7 +155,7 @@ def translate_fragments_gpt(
         # so heuristic of just assuming each fragment is equal size should be OK
         number_of_chunks_to_make = math.ceil(token_count / max_tokens)
 
-    results = {}
+    results:Dict[int, str] = {}
     for c in range(number_of_chunks_to_make):
         chunked_fragments = fragments
         if number_of_chunks_to_make > 1:
@@ -169,7 +169,9 @@ def translate_fragments_gpt(
             openai_api=openai_api,
         )
 
-        results.update(response)
+        assert isinstance(response, dict)
+
+        results.update(response) # type-ignore
 
     return results
 

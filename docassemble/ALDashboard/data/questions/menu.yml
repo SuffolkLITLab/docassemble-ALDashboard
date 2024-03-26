@@ -61,11 +61,6 @@ data:
     privilege:
       - admin
       - developer
-  - name: Manage answer file viewers
-    url: ${ interview_url(i=user_info().package + ":manage_answer_viewers.yml", reset=1) }
-    image: pencil-alt
-    privilege:
-      - admin
   - name: Generate a review screen draft
     url: ${ interview_url(i=user_info().package + ":review_screen_generator.yml", reset=1) }
     image: pencil-alt

@@ -41,7 +41,9 @@ import xlsxwriter
 from docassemble.base.util import DAFile, language_name, get_config
 from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
-from docassemble.ALToolbox.llms import *
+from docassemble.ALToolbox.llms import chat_completion
+
+import tiktoken
 
 DEFAULT_LANGUAGE = "en"
 
@@ -50,6 +52,7 @@ __all__ = [
     "translation_file",
     "translate_fragments",
     "gpt_is_available",
+    "translate_fragments_gpt",
 ]
 
 def gpt_is_available() -> bool:
@@ -71,9 +74,18 @@ def may_have_html(text:str) -> bool:
     """
     return re.search(r'<\w+.*?>.*?<\/\w+>', text, flags=re.MULTILINE) is not None
 
-def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str, tr_lang:str, special_words: Optional[Dict[str,str]] = None) -> Dict[str]:
-    """Use GPT-3.5 to translate a list of fragments (strings) from one language to another and provide a dictionary
+def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str, tr_lang:str, special_words: Optional[Dict[str,str]] = None, model="gpt-3.5-turbo-1106", max_tokens=3900) -> Dict[int, str]:
+    """Use GPT-3.5-1106 to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
+
+    You can optionally provide an alternative model, but it must support JSON mode.
+
+    Args:
+        fragments: A list of strings to be translated.
+        source_language: The language of the original text.
+        tr_lang: The language to translate the text into.
+        special_words: A dictionary of special words that should be translated in a specific way.
+        model: The GPT model to use. The default is "gpt-3.5-turbo-1106".
     """
     try:
         language_in_english = language_name(source_language)
@@ -90,6 +102,14 @@ def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str,
     system_prompt = f"""You are a helpful translator that translates Docassemble interviews from "{language_in_english}" to "{tr_language_in_english}". You
     preserve the meaning of all sentences while aiming to produce a translation at or below a 9th grade reading level.
     
+    You will get input that looks like this that indicates a row in a table and the untranslated text in that row:
+
+    [
+        {{0, "Your name"}},
+        {{10, "When was ${{ user.name }} born?"}},
+        {{32, "<div>Here is some text <a href="https://example.com">and a link</a>.</div> }}
+    ]
+
     When you see Mako tags or HTML tags, you do not translate them. You can translate text in quotes that appears to be intended to be shown
     to the user, but if there is a chance text is intended for the program logic you do not translate it. You do not change the whitespace because
     whitespace can have meaning in Docassemble.
@@ -99,24 +119,56 @@ def translate_fragments_gpt(fragments:Union[str,List[str]], source_language:str,
     When you see one of the special words in the following table in the first column, you use a form of the suggested replacement rather than inventing a new translation:
 
     {special_words}
-
+    """
+    system_prompt += """
     Your only reply is a JSON object that looks like this:
-    {{
-        "original text": "translated text",
-    }}
-    """
-    user_message = f"""
-    {fragments}
+    {
+        [ROW NUMBER]: "[TRANSLATED TEXT]",
+    }
+
+    Where [ROW NUMBER] is the matching row index number, and [TRANSLATED TEXT] is the translated text.
     """
 
-def translate_fragments_google(fragments:Union[str,List[str]], source_language:str, tr_lang:str, special_words: Optional[Dict[str,str]] = None) -> Dict[str]:
+    encoding = tiktoken.encoding_for_model(model)
+    system_token_count = len(encoding.encode(system_prompt))
+    user_message_token_count = len(encoding.encode(repr(fragments)))
+    token_count = system_token_count + user_message_token_count
+    number_of_chunks_to_make = 1
+    if token_count > max_tokens:
+        # Divide the fragments into smaller chunks
+        max_chunk_size = max_tokens - system_token_count
+        chunked_fragments = []
+
+        # Most of the time, each fragment will be well under the max token limit,
+        # so heuristic of just assuming each fragment is equal size should be OK
+        number_of_chunks_to_make = math.ceil(token_count / max_tokens)
+    
+    results = {}
+    for c in range(number_of_chunks_to_make):
+        chunked_fragments = fragments
+        if number_of_chunks_to_make > 1:
+            chunked_fragments = fragments[c*max_chunk_size:(c+1)*max_chunk_size]
+        response = chat_completion(
+            system_prompt,
+            user_message = repr(chunked_fragments),
+            temperature = 0.0,
+            json_mode = True,
+            model=model,
+        )
+
+        results.update(response)
+
+    return results
+
+
+def translate_fragments_google(fragments:Union[str,List[str]], source_language:str, tr_lang:str, special_words: Optional[Dict[str,str]] = None) -> Dict[int, str]:
     """Use Google Translate to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
     """
     return fragments
         
 
-def translate_fragments(fragments:Union[str,List[str]], language:str, tr_lang:str, allow_gpt=True, allow_google=True, special_words=Dict[str,str]) -> Dict[str]:
+def translate_fragments(fragments:Union[str,List[str]], language:str, tr_lang:str, allow_gpt=True, allow_google=True, special_words=Dict[str,str]) -> Dict[int, str]:
     """
     Translate a list of fragments (strings) from one language to another.
     """
@@ -150,6 +202,17 @@ class Translation(NamedTuple):
     untranslated_words: int # Word count for all untranslated segments that are not Mako or HTML
     untranslated_segments: int # Number of rows in the output that have untranslated text - one for each question, subquestion, field, etc.
     total_rows: int
+
+class TranslationRow(NamedTuple):
+    source: str
+    question_id: str
+    index_num: int
+    hash: str
+    orig_lang: str
+    tr_lang: str
+    orig_text: str
+    tr_text: str
+
 
 def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_translate=False) -> Translation:
     """
@@ -291,15 +354,35 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
                                 indexno += 1
     
     # Create the output file
-    # We don't have any other filetypes for now, but we could add XLIFF support later                                
-    if filetype == 'XLSX':  
+    if filetype == 'XLSX':  # We only support XLSX for now, but this came from upstream implementation
         xlsx_filename = docassemble.base.functions.space_to_underscore(os.path.splitext(os.path.basename(re.sub(r'.*:', '', yaml_filename)))[0]) + "_" + tr_lang + ".xlsx"
         output_file.initialize(filename=xlsx_filename)
         workbook = xlsxwriter.Workbook(output_file.path())
         worksheet = workbook.add_worksheet()
+
+        # Add a bold format for the header
         bold = workbook.add_format({'bold': 1})
-        text = workbook.add_format()
-        text.set_align('top')
+
+        # Add the table headings
+        worksheet.write('A1', 'interview', bold)
+        worksheet.write('B1', 'question_id', bold)
+        worksheet.write('C1', 'index_num', bold)
+        worksheet.write('D1', 'hash', bold)
+        worksheet.write('E1', 'orig_lang', bold)
+        worksheet.write('F1', 'tr_lang', bold)
+        worksheet.write('G1', 'orig_text', bold)
+        worksheet.write('H1', 'tr_text', bold)
+
+        # Set column widths
+        worksheet.set_column(0, 0, 25) # interview source
+        worksheet.set_column(1, 1, 15) # question_id
+        worksheet.set_column(2, 2, 12) # index_num
+        worksheet.set_column(6, 6, 75) # orig_text
+        worksheet.set_column(6, 7, 75) # tr_text
+
+        # Create some formats to use for syntax highlighting
+        text_format = workbook.add_format()
+        text_format.set_align('top')
         fixedcell = workbook.add_format()
         fixedcell.set_align('top')
         fixedcell.set_text_wrap()
@@ -350,6 +433,8 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
         wholefixedunlockedtwo.set_align('top')
         wholefixedunlockedtwo.set_text_wrap()
         # wholefixedunlockedtwo.set_locked(False)
+
+        # This is a variation on above formats to be used to mark "draft" translations (from GPT-4)
         draft_translation_format = workbook.add_format()
         draft_translation_format.set_bg_color('yellow')
         draft_translation_format_one = workbook.add_format()
@@ -381,22 +466,11 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
         whole_draft_translation_format_two.set_align('top')
         whole_draft_translation_format_two.set_text_wrap()      
 
+        # Default number format
         numb = workbook.add_format()
         numb.set_align('top')
-        worksheet.write('A1', 'interview', bold)
-        worksheet.write('B1', 'question_id', bold)
-        worksheet.write('C1', 'index_num', bold)
-        worksheet.write('D1', 'hash', bold)
-        worksheet.write('E1', 'orig_lang', bold)
-        worksheet.write('F1', 'tr_lang', bold)
-        worksheet.write('G1', 'orig_text', bold)
-        worksheet.write('H1', 'tr_text', bold)
 
-        worksheet.set_column(0, 0, 25)
-        worksheet.set_column(1, 1, 15)
-        worksheet.set_column(2, 2, 12)
-        worksheet.set_column(6, 6, 75)
-        worksheet.set_column(6, 7, 75)
+        # Write the data
         row = 1
         seen = []
         untranslated_segments = 0
@@ -428,13 +502,17 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
                     tr_text = str(tr_cache[item][language][tr_lang]['tr_text'])
                 else: # This string needs to be translated
                     tr_text = ''
+                    hold_for_draft_translation.append((row, item )) # item is the original untranslated string, pre-mako parsing
                     untranslated_segments += 1
-                worksheet.write_string(row, 0, question.from_source.get_name(), text)
-                worksheet.write_string(row, 1, question_id, text)
+                
+                # Add the metadata 
+                   
+                worksheet.write_string(row, 0, question.from_source.get_name(), text_format)
+                worksheet.write_string(row, 1, question_id, text_format)
                 worksheet.write_number(row, 2, indexno, numb)
-                worksheet.write_string(row, 3, hashlib.md5(item.encode('utf-8')).hexdigest(), text)
-                worksheet.write_string(row, 4, language, text)
-                worksheet.write_string(row, 5, tr_lang, text)
+                worksheet.write_string(row, 3, hashlib.md5(item.encode('utf-8')).hexdigest(), text_format)
+                worksheet.write_string(row, 4, language, text_format)
+                worksheet.write_string(row, 5, tr_lang, text_format)
                 mako = mako_parts(item)
                 
                 if not tr_text:
@@ -496,15 +574,46 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
                 row += 1
                 seen.append(item)
         
+        # Now we need to translate the hold_for_draft_translation items
+        if use_gpt:
+            translated_fragments = translate_fragments_gpt(
+                [{item[0]: item[1]} for item in hold_for_draft_translation],
+                source_language=language,
+                tr_lang=tr_lang,
+            )
+            for row, item in translated_fragments.items():
+                # Get the mako parts
+                mako = mako_parts(item)
+                if len(mako) == 0:
+                    worksheet.write_string(row, 7, tr_text, whole_draft_translation_format)
+                elif len(mako) == 1:
+                    if mako[0][1] == 0:
+                        worksheet.write_string(row, 7, tr_text, whole_draft_translation_format)
+                    elif mako[0][1] == 1:
+                        worksheet.write_string(row, 7, tr_text, whole_draft_translation_format_one)
+                    elif mako[0][1] == 2:
+                        worksheet.write_string(row, 7, tr_text, whole_draft_translation_format_two)
+                else:
+                    parts = [row, 7]
+                    for part in mako:
+                        if part[1] == 0:
+                            parts.extend([fixed, part[0]])
+                        elif part[1] == 1:
+                            parts.extend([fixedone, part[0]])
+                        elif part[1] == 2:
+                            parts.extend([fixedtwo, part[0]])
+                    parts.append(fixedcell)
+                    worksheet.write_rich_string(*parts)
+        
         for item, cache_item in tr_cache.items():
             if item in seen or language not in cache_item or tr_lang not in cache_item[language]:
                 continue
-            worksheet.write_string(row, 0, cache_item[language][tr_lang]['interview'], text)
-            worksheet.write_string(row, 1, cache_item[language][tr_lang]['question_id'], text)
+            worksheet.write_string(row, 0, cache_item[language][tr_lang]['interview'], text_format)
+            worksheet.write_string(row, 1, cache_item[language][tr_lang]['question_id'], text_format)
             worksheet.write_number(row, 2, 1000 + cache_item[language][tr_lang]['index_num'], numb)
-            worksheet.write_string(row, 3, cache_item[language][tr_lang]['hash'], text)
-            worksheet.write_string(row, 4, cache_item[language][tr_lang]['orig_lang'], text)
-            worksheet.write_string(row, 5, cache_item[language][tr_lang]['tr_lang'], text)
+            worksheet.write_string(row, 3, cache_item[language][tr_lang]['hash'], text_format)
+            worksheet.write_string(row, 4, cache_item[language][tr_lang]['orig_lang'], text_format)
+            worksheet.write_string(row, 5, cache_item[language][tr_lang]['tr_lang'], text_format)
             mako = mako_parts(cache_item[language][tr_lang]['orig_text'])
             if len(mako) == 1:
                 if mako[0][1] == 0:
@@ -550,4 +659,5 @@ def translation_file(yaml_filename:str, tr_lang:str, use_gpt=False, use_google_t
         workbook.close()
         untranslated_words = len(re.findall(r"\w+", untranslated_text))        
         return Translation(output_file, untranslated_words,untranslated_segments, total_rows)
+    
     raise ValueError("That's not a valid filetype for a translation file")

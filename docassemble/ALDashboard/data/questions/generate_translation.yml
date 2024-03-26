@@ -9,12 +9,45 @@ metadata:
   title: |
     Translation support tool    
 ---
+mandatory: True
+code: |
+  the_yaml_path
+  if not the_task.ready():
+    waiting_screen
+  show_translation_results
+---
+# code: |
+#   translations = [
+#     translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt)
+#     for tr_lang
+#     in tr_langs.split()
+#   ]
+---
+code: |
+  the_task = background_action('translate_file')
+---
+event: waiting_screen
+question: |
+  Please wait while we translate your file
+subquestion: |
+  <div class="spinner-border" role="status">
+    <span class="visually-hidden">Processing...</span>
+  </div>
+reload: True
+---
+event: translate_file
 code: |
   translations = [
-    translation_file(the_yaml_path, tr_lang)
+    translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt)
     for tr_lang
     in tr_langs.split()
   ]
+  background_response_action('save_translations', translations=translations)
+---
+event: save_translations
+code: |
+  translations = action_argument('translations')
+  background_response()
 ---
 question: |
   What file do you want to translate?
@@ -32,17 +65,15 @@ fields:
     datatype: yesno
     show if:
       code: |
-        gpt_is_available() or google_translate_is_available()
+        gpt_is_available() # or google_translate_is_available()
   - note: |
-      If you want to use Google Translate, you need to set up a Google Cloud project and enable the Google Translate API.
-
       To use OpenAI's GPT-3, you need to set up an OpenAI account and get an API key.
     show if:
       code: |
-        not (gpt_is_available() or google_translate_is_available())
+        not gpt_is_available()
 
 ---
-mandatory: True
+event: show_translation_results
 question: |
   Translation results
 subquestion: |

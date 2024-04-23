@@ -52,7 +52,9 @@ If you want the ALDashboard to be a dropdown option for admins and developers, a
 
 ![A screenshot that says "What packages do you want to update?" followed by a list of packages. For example, "docassemble.209aPlaintiffMotionToModify", "docassemble.ALAffidavitOfIndigency", and more.](https://user-images.githubusercontent.com/7645641/123702362-068f8c00-d831-11eb-9ce4-df7a67ffcfeb.png)
 
-### View / search sessions by user and interview name
+### View answer files
+
+View / search sessions by user and interview name
 
 ![A screenshot that says "What interview do you want to view sessions for?" The fields are "File name" and "User (leave blank to view all sessions)"](https://user-images.githubusercontent.com/7645641/123702422-1d35e300-d831-11eb-84d5-5e7385deb901.png)
 

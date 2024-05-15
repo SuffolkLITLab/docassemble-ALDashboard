@@ -40,7 +40,7 @@ import pandas
 
 import xlsxwriter
 
-from docassemble.base.util import DAFile, language_name, get_config
+from docassemble.base.util import DAFile, language_name, get_config, log
 from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
 from docassemble.ALToolbox.llms import chat_completion
@@ -160,16 +160,23 @@ def translate_fragments_gpt(
         chunked_fragments = fragments
         if number_of_chunks_to_make > 1:
             chunked_fragments = fragments[c * max_chunk_size : (c + 1) * max_chunk_size]
-        response = chat_completion(
-            system_prompt,
-            user_message=repr(chunked_fragments),
-            temperature=0.0,
-            json_mode=True,
-            model=model,
-            openai_api=openai_api,
-        )
-
-        results.update(response)
+        try:
+            response = chat_completion(
+                system_prompt,
+                user_message=repr(chunked_fragments),
+                temperature=0.0,
+                json_mode=True,
+                model=model,
+                openai_api=openai_api,
+            )
+        # Get the exception and log it
+        except Exception as e:
+            log(f"Exception when calling chatcompletion: { e }")
+            response = str(e)
+        try:
+            results.update(response)
+        except:
+            log(f"Unexpected format in response from GPT: { response }")
 
     return results
 
@@ -246,6 +253,7 @@ def translation_file(
     use_gpt=False,
     use_google_translate=False,
     openai_api: Optional[str] = None,
+    max_tokens=4000,
 ) -> Translation:
     """
     Return a tuple of the translation file in XLSX format, plus a count of the
@@ -715,6 +723,7 @@ def translation_file(
                 source_language=language,
                 tr_lang=tr_lang,
                 openai_api=openai_api,
+                max_tokens=max_tokens,
             )
             for (
                 row,

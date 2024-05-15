@@ -14,6 +14,8 @@ code: |
   the_yaml_path
   if not the_task.ready():
     waiting_screen
+  if the_task.failed():
+    error_screen
   show_translation_results
 ---
 # code: |
@@ -37,6 +39,7 @@ reload: True
 ---
 event: translate_file
 code: |
+  background_error_action('bg_fail', stage='calculation')
   translations = [
     translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt, openai_api=get_config("openai api key", get_config("open ai", {}).get("key")))
     for tr_lang
@@ -46,6 +49,7 @@ code: |
 ---
 event: save_translations
 code: |
+  background_error_action('bg_fail', stage='saving')
   translations = action_argument('translations')
   background_response()
 ---
@@ -87,3 +91,36 @@ subquestion: |
 
   Percentage of rows that are not translated: %${ translations[index].untranslated_segments/translations[index].total_rows * 100 }
   % endfor
+---
+event: bg_fail
+code: |
+  errmess = "Failure at the " \
+            + action_argument('stage') \
+            + " stage due to a " \
+            + action_argument('error_type') \
+            + " error"
+  background_response('handled_error')
+---
+event: error_screen
+question: |
+  There was an error.
+subquestion: |
+  The saved error message was
+  ${ errmess }.
+  
+  The value was
+  `${ the_task.get() }`.
+  
+  The error was
+  `${ the_task.result().error_type }`.
+
+  The trace was
+  
+  ${ indent(the_task.result().error_trace) }
+
+  The message was
+  
+  ${ indent(the_task.result().error_message) }
+
+  The variables were
+  `${ repr(the_task.result().variables) }`.  

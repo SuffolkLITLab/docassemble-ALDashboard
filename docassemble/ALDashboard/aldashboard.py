@@ -33,6 +33,7 @@ from docassemble.base.util import (
     word,
     DAFileList,
     get_config,
+    user_has_privilege,
 )
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
@@ -138,6 +139,7 @@ def da_write_config(data: Dict):
     with open(daconfig["config file"], "w", encoding="utf-8") as fp:
         fp.write(yaml_data)
     restart_all()
+    return True
 
 
 def speedy_get_users() -> List[Dict[int, str]]:
@@ -161,6 +163,7 @@ def speedy_get_sessions(
     user_id: Optional[int] = None,
     filename: Optional[str] = None,
     filter_step1: bool = True,
+    metadata_key_name: str = "metadata",
 ) -> List[Tuple]:
     """
     Return a list of the most recent 500 sessions, optionally tied to a specific user ID.
@@ -173,33 +176,49 @@ def speedy_get_sessions(
     """
     get_sessions_query = text(
         """
-        SELECT userdict.filename as filename,
-            num_keys,
-            userdictkeys.user_id as user_id,
-            modtime,
-            userdict.key as key
-        FROM userdict 
-        NATURAL JOIN 
-        (
-            SELECT key,
-                MAX(modtime) AS modtime,
-                COUNT(key) AS num_keys
-            FROM userdict
-            GROUP BY key
-            HAVING COUNT(key) > 1 OR :filter_step1 = False
-        ) mostrecent
-        LEFT JOIN userdictkeys
-        ON userdictkeys.key = userdict.key
-        WHERE (userdict.user_id = :user_id OR :user_id is null)
-        AND (userdict.filename = :filename OR :filename is null)
-        ORDER BY modtime DESC 
-        LIMIT 500;
+SELECT 
+    userdict.filename as filename,
+    num_keys,
+    userdictkeys.user_id as user_id,
+    mostrecent.modtime as modtime,  -- This retrieves the most recent modification time for each key
+    userdict.key as key,
+    jsonstorage.data->>'auto_title' as auto_title,
+    jsonstorage.data->>'title' as title,
+    jsonstorage.data->>'description' as description,
+    jsonstorage.data->>'steps' as steps,
+    jsonstorage.data->>'progress' as progress
+FROM 
+    userdict 
+NATURAL JOIN 
+    (
+        SELECT 
+            key,
+            MAX(modtime) AS modtime,  -- Calculate the most recent modification time for each key
+            COUNT(key) AS num_keys
+        FROM 
+            userdict
+        GROUP BY 
+            key
+        HAVING 
+            COUNT(key) > 1 OR :filter_step1 = False
+    ) mostrecent
+LEFT JOIN 
+    userdictkeys ON userdictkeys.key = userdict.key
+LEFT JOIN 
+    jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = :metadata
+WHERE 
+    (userdict.user_id = :user_id OR :user_id is null)
+    AND (userdict.filename = :filename OR :filename is null)
+ORDER BY 
+    modtime DESC 
+LIMIT 500;
         """
     )
-    # Assuming `filename`, `user_id`, and `filter_step1` are provided elsewhere in your code
     if not filename:
+        if not user_has_privilege(['admin', 'developer']):
+            raise Exception("You must provide a filename to filter sessions unless you are a developer or administrator.")
         filename = None  # Explicitly treat empty string as equivalent to None
-    if not user_id:  # TODO: verify that 0 is not a valid value for user ID
+    if not user_id:
         user_id = None
 
     # Ensure filter_step1 is a boolean
@@ -208,7 +227,7 @@ def speedy_get_sessions(
     with db.connect() as con:
         rs = con.execute(
             get_sessions_query,
-            {"user_id": user_id, "filename": filename, "filter_step1": filter_step1},
+            {"user_id": user_id, "filename": filename, "filter_step1": filter_step1, "metadata": metadata_key_name},
         )
     sessions = [session for session in rs]
 

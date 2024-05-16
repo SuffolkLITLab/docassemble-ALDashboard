@@ -58,9 +58,11 @@ data:
   - name: View answer files
     url: ${ interview_url(i=user_info().package + ":list_sessions.yml", reset=1) }
     image: file-alt
+  - name: Manage answer viewers
+    url: ${ interview_url(i=user_info().package + ":manage_answer_viewers.yml", reset=1) }
+    image: users-cog
     privilege:
       - admin
-      - developer
   - name: Generate a review screen draft
     url: ${ interview_url(i=user_info().package + ":review_screen_generator.yml", reset=1) }
     image: pencil-alt

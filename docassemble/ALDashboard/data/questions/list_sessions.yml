@@ -1,6 +1,13 @@
 ---
-include:
-  - nav.yml
+metadata:
+  temporary session: True
+  sessions are unique: True
+---
+default screen parts:
+  right: |
+    % if user_has_privilege(['admin', 'developer']):
+    ${ action_button_html(interview_url(i=f"{user_info().package}:menu.yml"), label="Back to Dashboard") }
+    % endif
 ---
 modules:
   - .aldashboard
@@ -11,18 +18,37 @@ question: |
   Splash screen
 ---
 code: |
-  interviews = {interview['filename']:interview for interview in interview_menu()}
+  if user_has_privilege(['admin', 'developer']):
+    interviews = {interview['filename']:interview for interview in interview_menu()}
+  else:
+    allowed_interviews = set()
+    for privilege in user_privileges():
+      allowed_interviews.update(get_config("assembly line",{}).get("interview viewers",{}).get(privilege,[]))
+    interviews = {interview['filename']:interview for interview in interview_menu() if interview['filename'] in allowed_interviews}
 ---
 question: |
-  What interview do you want to view sessions for?  
+  What interview do you want to view sessions for?
 subquestion: |
+  % if user_has_privilege(['admin', 'developer']):
   Pick an interview from the list below, or type a filename like: `docassemble.playground1:data/questions/interview.yml`
+  % else:
+  You can only view sessions for interviews you have access to.
+  % endif
 fields:
   - Filename: filename
     required: False
     datatype: combobox
     code: |
       sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+    show if:
+      code: |
+        user_has_privilege(['admin', 'developer'])
+  - Filename: filename
+    code: |
+      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+    show if:
+      code: |
+        not user_has_privilege(['admin', 'developer'])      
   - User (leave blank to view all sessions): chosen_user
     required: False
     datatype: integer
@@ -37,7 +63,18 @@ fields:
 # next((item.get('title') for item in interviews if item.get('filename') == interview['filename']), interview['filename'] )
 ---
 code: |
+  # For debugging purposes
   sessions_list = speedy_get_sessions(user_id=chosen_user, filename=filename, filter_step1=filter_step1)
+---
+code: |
+  # users_and_names() returns a tuple of user ID to email, name, last
+  # Convert to a dict with key of user id, formatted email, name, last
+
+  users_and_name_dict = {
+      user_id: f"{email} {name} {last}" 
+      for user_id, email, name, last 
+      in get_users_and_name() 
+    }
 ---
 mandatory: True
 event: load_answer
@@ -50,34 +87,41 @@ question: |
   Recently started sessions for all users
   % endif
 subquestion: |
+
   <table class="table">
     <thead>
       <tr>
-        <th>Session ID</th>
+        <th>Title and session ID</th>
         <th>User</th>
         <th>Modified</th>
-        <th>Page</th>
+        <th>Step / Progress</th>
         <th>Actions</th>
       </tr>
     </thead>
 
-  % for interview in sessions_list:
+  % for interview in speedy_get_sessions(user_id=chosen_user, filename=filename, filter_step1=filter_step1):
   <tr>
     <td class="text-wrap text-break">
+      <strong>${ interview.title if interview.title else interview.auto_title }</strong>
+      <br/>
       ${ interview.key }
   % if not filename:
       <br/>
       ${ nicer_interview_filename(interview.filename) }
   % endif
     </td>
-    <td>${ interview.user_id }</td>
+    <td>${ users_and_name_dict[interview.user_id] if interview.user_id else 'Anonymous'}</td>
     <td>${ format_date(interview.modtime, "MMM d YYYY") }</td>
-    <td>${ interview.num_keys }</td>
+    <td>${ f"Step {interview.num_keys}" if not int(interview.progress) else f"{interview.progress}%" }</td>
     <td>
       <a href="${ interview_url(i=interview.filename, session=interview.key) }">
         <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>
     <br/>
     <a href="${ interview_url_action('view_session_variables', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+  % if user_has_privilege('admin'):
+    <br/>
+    <a href="${ url_action('delete_session', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-trash"></i>&nbsp;Delete</a>
+  % endif
     </td>
   </tr>
   % endfor
@@ -87,3 +131,11 @@ question back button: True
 event: view_session_variables
 code: |
   response(binaryresponse=json.dumps(dashboard_get_session_variables(session_id=action_argument('session_id'), filename=action_argument('filename'))).encode('utf-8'), content_type="application/json", response_code=200)
+---
+event: delete_session
+code: |
+  if interview_list(action="delete", filename=action_argument("filename"), session=action_argument("session_id"), user_id="all", delete_shared=True):
+    log("Deleted session", "success")
+  else:
+    log("Something went wrong deleting session", "danger")
+  

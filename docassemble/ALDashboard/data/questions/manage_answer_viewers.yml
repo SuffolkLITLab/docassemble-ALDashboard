@@ -1,0 +1,123 @@
+---
+include:
+  - nav.yml
+---
+modules:
+  - .aldashboard
+---
+metadata:
+  required privileges:
+    - admin
+  title: |
+    Manage limited answer viewers
+---
+code: |
+  # Get the list of dispatch interviews
+  interviews = {interview['filename']:interview for interview in interview_menu()}
+---
+objects:
+  - viewers: DADict.using(object_type = DAObject, auto_gather=False)
+  - viewers[i].allowed_interviews: DAList.using(auto_gather=False, gathered=True)
+---
+code: |
+  viewers[i].allowed_interviews.gathered = True
+---
+table: viewers.table
+rows: viewers
+columns:
+  - Privilege: |
+      row_index
+  - Allowed Interviews: |
+      comma_and_list(row_item.allowed_interviews)
+---
+table: viewers[i].allowed_interviews.table
+rows: viewers[i].allowed_interviews
+columns:
+  - Interview: |
+      row_item
+delete buttons: True
+---
+code: |
+  existing_viewers = get_config("assembly line",{}).get("interview viewers",{})
+  
+  for privilege in manage_privileges('list'):
+    viewers.initializeObject(privilege)
+    if privilege in existing_viewers:
+      viewers[privilege].allowed_interviews = DAList(
+          viewers[privilege].attr_name("allowed_interviews"), 
+          elements=existing_viewers[privilege],
+          auto_gather=False,
+          gathered=True
+      )
+  viewers.gathered = True
+---
+id: interview order
+mandatory: True
+code: |
+  view_viewers
+---
+id: allowed interviews i
+question: |
+  Add an interview that users with the privilege "${ i }" are allowed to view
+subquestion: |
+  % if len(viewers[i].allowed_interviews):
+  The following interviews are currently allowed for this privilege:
+
+  ${ comma_and_list(viewers[i].allowed_interviews) }
+  % endif
+fields:
+  - Interview name: viewers[i].allowed_interviews[j]
+    datatype: combobox
+    code: |
+      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+validation code: |
+  if viewers[i].allowed_interviews[j] in viewers[i].allowed_interviews[:j]:
+    validation_error("This interview is already in the list", field="viewers[i].allowed_interviews[j]")
+---
+event: view_viewers
+id: viewers
+question: |
+  Who is allowed to view limited answers?
+subquestion: |
+  The answer viewing feature makes use of Docassemble's built-in privilege system.
+
+  To assign a user the right to view a particular interview's sessions, you must add a matching
+  privilege and then assign the interview to that privilege.
+
+  You can also edit this list manually in the global configuration, under:
+
+  ```
+  assembly line:
+    interview viewers:
+      privilege_name:
+        - interview1
+        - interview2
+  ```
+
+  When you have finished adding privileges and interviews, click the "Save to global configuration" button to save your changes.
+
+  % for privilege in viewers:
+  <h2 class="h4">${ privilege }</h2>
+
+  ${ viewers[privilege].allowed_interviews.table }
+
+  ${ viewers[privilege].allowed_interviews.add_action() }
+  % endfor
+
+  ${ action_button_html(url_action("save_changes"), label="Save to global configuration", color="primary", ) }
+---
+code: |
+  the_config = da_get_config()
+  if not "assembly line" in the_config:
+    the_config["assembly line"] = {}
+  if not "interview viewers" in the_config["assembly line"]:
+    the_config["assembly line"]["interview viewers"] = {}
+  for privilege in viewers:
+    if viewers[privilege].allowed_interviews or privilege in the_config["assembly line"]["interview viewers"]: # handle deletion but don't add new empty entries
+      the_config["assembly line"]["interview viewers"][privilege] = list(viewers[privilege].allowed_interviews)
+  results = da_write_config(the_config)
+  if results:
+    log("Changes saved", "success")
+  else:
+    log("Failed to save changes", "danger")
+  save_changes = True

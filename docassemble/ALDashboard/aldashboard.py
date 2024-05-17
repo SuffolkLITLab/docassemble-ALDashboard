@@ -70,7 +70,7 @@ __all__ = [
 def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = None):
     giturl = url.strip().rstrip("/")
     if pat:
-        # modify so it looks like https://e8cc02bec7061de98ba4851263638d7483f63d41:x-oauth-basic@github.com/johnsmith/docassemble-missouri-familylaw
+        # modify so it looks like https://ghp_...:x-oauth-basic@github.com/johnsmith/docassemble-missouri-familylaw
         giturl = re.sub(r"^https://", f"https://{pat}:x-oauth-basic@", giturl)
     if isinstance(branch, str):
         branch = branch.strip()

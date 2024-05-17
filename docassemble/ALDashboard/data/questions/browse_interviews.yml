@@ -1,0 +1,34 @@
+---
+modules:
+  - .aldashboard
+  - docassemble.demo.accordion
+---
+default screen parts:
+  right: |
+    ${ action_button_html(interview_url(i=f"{user_info().package}:menu.yml"), label="Back to Dashboard") }
+---
+mandatory: True
+id: browse packages
+question: |
+  Interviews on this server
+subquestion: |
+  Below is a list of every interview YAML file in every Docassemble package on this server.
+  Not all YAMLs are intended to be run directly as interviews.
+
+  % for package_name, question_files in sorted(list_question_files_in_docassemble_packages().items()):
+  % if loop.index == 0:
+  ${ start_accordion(package_name.replace("docassemble.", "")) }
+  % else:
+  ${ next_accordion(package_name.replace("docassemble.", "")) }
+  % endif
+  % if question_files:
+  <ul>
+  % for question_file in question_files:
+  <li> 
+    <a href="${ interview_url(i=package_name + ":" + question_file, reset=1) }">${ question_file }</a>
+  </li>
+  % endfor
+  </ul>
+  % endif
+  % endfor
+  ${ end_accordion() }

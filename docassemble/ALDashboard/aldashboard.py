@@ -35,10 +35,14 @@ from docassemble.base.util import (
     get_config,
     user_has_privilege,
 )
+from docassemble.webapp.server import get_package_info
+
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import re
 import werkzeug
+import pkg_resources
+
 
 db = init_sqlalchemy()
 
@@ -58,6 +62,8 @@ __all__ = [
     "list_installed_fonts",
     "dashboard_get_session_variables",
     "nicer_interview_filename",
+    "list_question_files_in_package",
+    "list_question_files_in_docassemble_packages",
 ]
 
 
@@ -367,3 +373,52 @@ def nicer_interview_filename(filename: str) -> str:
         return f"{filename_parts[0]}:{filename_parts[1].replace('.yml', '')}"
 
     return filename_parts[0]
+
+def list_question_files_in_package(package_name:str) -> List[str]:
+    """
+    List all the files in the 'data/questions' directory of a package.
+
+    Args:
+        package_name (str): The name of the package to list files from.
+
+    Returns:
+        List[str]: A list of filenames in the 'data/questions' directory of the package.
+    """
+    try:
+        # Locate the directory within the package
+        directory_path = pkg_resources.resource_filename(package_name, 'data/questions')
+
+        # List all files in the directory
+        if os.path.isdir(directory_path):
+            files = os.listdir(directory_path)
+            # Filter out directories, only keep files
+            files = [f for f in files if os.path.isfile(os.path.join(directory_path, f))]
+            return files
+        else:
+            return []
+    except Exception as e:
+        log(f"An error occurred with package '{package_name}': {e}")
+        return None
+
+def list_question_files_in_docassemble_packages():
+    """
+    List all the files in the 'data/questions' directory of all docassemble packages.
+
+    Returns:
+        Dict[str, List[str]]: A dictionary where the keys are package names and the values are lists of filenames in the 'data/questions' directory of the package.
+    """
+    packages = get_package_info()[0] # get_package_info returns a tuple, the packages are in index 0
+
+    filtered_packages = [pkg for pkg in packages if pkg.package.name.startswith('docassemble.')]
+
+    result = {}
+
+    # Iterate over each filtered package and list files in 'data/questions'
+    for package in filtered_packages:
+        package_name = package.package.name
+        
+        files = list_question_files_in_package(package_name)
+        if files:
+                result[package_name] = files
+
+    return result

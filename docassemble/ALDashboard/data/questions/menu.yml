@@ -56,6 +56,9 @@ data:
   - name: Package scanner
     url: ${ interview_url(i=user_info().package + ":package_scanner.yml", reset=1) }
     image: search
+  - name: View installed interviews
+    url: ${ interview_url(i=user_info().package + ":browse_interviews.yml", reset=1) }
+    image: list
   - name: View answer files
     url: ${ interview_url(i=user_info().package + ":list_sessions.yml", reset=1) }
     image: file-alt

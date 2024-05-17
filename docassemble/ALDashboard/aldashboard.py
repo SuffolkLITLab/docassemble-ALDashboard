@@ -67,8 +67,11 @@ __all__ = [
 ]
 
 
-def install_from_github_url(url: str, branch: str = ""):
+def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = None):
     giturl = url.strip().rstrip("/")
+    if pat:
+        # modify so it looks like https://e8cc02bec7061de98ba4851263638d7483f63d41:x-oauth-basic@github.com/johnsmith/docassemble-missouri-familylaw
+        giturl = re.sub(r"^https://", f"https://{pat}:x-oauth-basic@", giturl)
     if isinstance(branch, str):
         branch = branch.strip()
     if not branch:
@@ -221,8 +224,10 @@ LIMIT 500;
         """
     )
     if not filename:
-        if not user_has_privilege(['admin', 'developer']):
-            raise Exception("You must provide a filename to filter sessions unless you are a developer or administrator.")
+        if not user_has_privilege(["admin", "developer"]):
+            raise Exception(
+                "You must provide a filename to filter sessions unless you are a developer or administrator."
+            )
         filename = None  # Explicitly treat empty string as equivalent to None
     if not user_id:
         user_id = None
@@ -233,7 +238,12 @@ LIMIT 500;
     with db.connect() as con:
         rs = con.execute(
             get_sessions_query,
-            {"user_id": user_id, "filename": filename, "filter_step1": filter_step1, "metadata": metadata_key_name},
+            {
+                "user_id": user_id,
+                "filename": filename,
+                "filter_step1": filter_step1,
+                "metadata": metadata_key_name,
+            },
         )
     sessions = [session for session in rs]
 
@@ -374,7 +384,8 @@ def nicer_interview_filename(filename: str) -> str:
 
     return filename_parts[0]
 
-def list_question_files_in_package(package_name:str) -> List[str]:
+
+def list_question_files_in_package(package_name: str) -> Optional[List[str]]:
     """
     List all the files in the 'data/questions' directory of a package.
 
@@ -386,19 +397,22 @@ def list_question_files_in_package(package_name:str) -> List[str]:
     """
     try:
         # Locate the directory within the package
-        directory_path = pkg_resources.resource_filename(package_name, 'data/questions')
+        directory_path = pkg_resources.resource_filename(package_name, "data/questions")
 
         # List all files in the directory
         if os.path.isdir(directory_path):
             files = os.listdir(directory_path)
             # Filter out directories, only keep files
-            files = [f for f in files if os.path.isfile(os.path.join(directory_path, f))]
+            files = [
+                f for f in files if os.path.isfile(os.path.join(directory_path, f))
+            ]
             return files
         else:
             return []
     except Exception as e:
         log(f"An error occurred with package '{package_name}': {e}")
-        return None
+        return []
+
 
 def list_question_files_in_docassemble_packages():
     """
@@ -407,18 +421,22 @@ def list_question_files_in_docassemble_packages():
     Returns:
         Dict[str, List[str]]: A dictionary where the keys are package names and the values are lists of filenames in the 'data/questions' directory of the package.
     """
-    packages = get_package_info()[0] # get_package_info returns a tuple, the packages are in index 0
+    packages = get_package_info()[
+        0
+    ]  # get_package_info returns a tuple, the packages are in index 0
 
-    filtered_packages = [pkg for pkg in packages if pkg.package.name.startswith('docassemble.')]
+    filtered_packages = [
+        pkg for pkg in packages if pkg.package.name.startswith("docassemble.")
+    ]
 
     result = {}
 
     # Iterate over each filtered package and list files in 'data/questions'
     for package in filtered_packages:
         package_name = package.package.name
-        
+
         files = list_question_files_in_package(package_name)
         if files:
-                result[package_name] = files
+            result[package_name] = files
 
     return result

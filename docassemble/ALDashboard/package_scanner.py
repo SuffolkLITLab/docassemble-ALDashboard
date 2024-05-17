@@ -163,9 +163,9 @@ def fetch_github_repo_version(repo_list, key_pkgs, github_user) -> dict:
                     version_num = decoded_line[str_start:str_end][9:].replace(
                         "',\n", ""
                     )
-                    v[
-                        "version"
-                    ] = version_num  # Add version number to the original repo_list.
+                    v["version"] = (
+                        version_num  # Add version number to the original repo_list.
+                    )
                     has_version_num = True
                     break
 

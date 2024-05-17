@@ -54,7 +54,9 @@ __all__ = [
 
 class Translation(NamedTuple):
     file: DAFile  # an XLSX or XLIFF file
-    untranslated_words: int  # Word count for all untranslated segments that are not Mako or HTML
+    untranslated_words: (
+        int  # Word count for all untranslated segments that are not Mako or HTML
+    )
     untranslated_segments: int  # Number of rows in the output that have untranslated text - one for each question, subquestion, field, etc.
     total_rows: int
 
@@ -69,7 +71,9 @@ def translation_file(yaml_filename: str, tr_lang: str) -> Translation:
     This code was adjusted from the Flask endpoint-only version in server.py. XLIFF support was removed
     for now but can be added later.
     """
-    filetype: str = "XLSX"  # Look in server.py for support of XLIFF format, but we won't implement it here
+    filetype: str = (
+        "XLSX"  # Look in server.py for support of XLIFF format, but we won't implement it here
+    )
     output_file = DAFile()
     setup_translation()
     if yaml_filename is None or not re.search(r"\S", yaml_filename):

@@ -31,6 +31,7 @@ data:
     image: users-cog
     privilege:
       - admin
+      - al_manage_users
   - name: Usage stats
     url: ${ interview_url(i="docassemble.InterviewStats:data/questions/stats.yml", reset=1) }
     image: chart-bar

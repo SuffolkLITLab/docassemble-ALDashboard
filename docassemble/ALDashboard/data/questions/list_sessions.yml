@@ -112,8 +112,9 @@ subquestion: |
     </td>
     <td>${ users_and_name_dict[interview.user_id] if interview.user_id else 'Anonymous'}</td>
     <td>${ format_date(interview.modtime, "MMM d YYYY") }</td>
-    <td>${ f"Step {interview.num_keys if not interview.progress else (lambda x: f'{float(x):.2f}' if isinstance(x, (int, float, str)) and str(x).replace('.', '', 1).isdigit() else None)(interview.progress)}%"
- }</td>
+    <td>
+      ${ f"Step {interview.num_keys if not interview.progress else (lambda x: f'{float(x):.2f}' if isinstance(x, (int, float, str)) and str(x).replace('.', '', 1).isdigit() else None)(interview.progress)}%"}
+    </td>
     <td>
       <a href="${ interview_url(i=interview.filename, session=interview.key) }">
         <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>

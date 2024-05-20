@@ -1,7 +1,44 @@
 ---
+comment: |
+  This interview allows you to list all YAML files on the system, which may reveal
+  a new attack surface if you do not properly secure sensitive interviews.
+
+  By default it can be accessed by developers or admins on production servers,
+  and by any logged in user on a development server (with debug: True in global config).
+
+  If you would like to limit access without turning off "debug" mode, modify the global
+  configuration as follows:
+
+  assembly line:
+    require login to browse interviews on development servers: True
+---
 modules:
   - .aldashboard
   - docassemble.demo.accordion
+---
+initial: True
+code: |
+  if (
+        user_logged_in()
+        and (
+          user_has_privilege(["admin", "developer"])
+          or (
+              get_config("debug")
+              and not (
+                  get_config("assembly line", {}).get("require login to browse interviews on development servers", False)
+                )
+              )
+          )
+      ):
+    pass
+  else:
+    exit_need_logged_in
+---
+id: exit need logged in
+event: exit_need_logged_in
+question: |
+  You must be logged in as a developer or admin to view this page.
+right: |  
 ---
 default screen parts:
   right: |

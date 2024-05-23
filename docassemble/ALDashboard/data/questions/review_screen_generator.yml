@@ -11,7 +11,6 @@ metadata:
 mandatory: True
 code: |
   yaml_file
-  debug_step_1
   results
 ---
 question: |
@@ -134,35 +133,6 @@ code: |
   del objects_temp
   del questions_temp
   del sections_temp
----
-continue button field: debug_step_1
-question: |
-  Debug Step 1
-subquestion: |
-  ### Objects
-  ```
-  ${ repr(objects) }
-  ```
-
-  ### Questions
-  ```
-  ${ repr(questions) }
-  ```
-
-  ### Sections
-  ```
-  ${ repr(section_events) }
-  ```
-
-  ### Attributes List
-  ```
-  ${ repr(attributes_list) }
-  ```
-
-  ### Generic Question Blocks
-  ```
-  ${ repr(generic_question_blocks) }
-  ```
 
 ---
 code: |

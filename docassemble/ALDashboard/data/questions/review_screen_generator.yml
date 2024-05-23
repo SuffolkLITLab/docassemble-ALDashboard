@@ -11,6 +11,7 @@ metadata:
 mandatory: True
 code: |
   yaml_file
+  debug_step_1
   results
 ---
 question: |
@@ -50,14 +51,14 @@ code: |
   generic_question_blocks = []
   sections_temp = []
   for doc in yaml_parsed:
-    if doc:
+    if doc and any(key in doc for key in ["fields", "question", "objects", "sections", "metadata"]):
       question = {"question": doc.get('question',"").strip() }
       generic_object = doc.get("generic object")
       if generic_object:
         generic_question_blocks.append(doc)
         continue
       fields_temp = []
-      if 'fields' in doc:
+      if 'fields' in doc and isinstance(doc["fields"], list):
         for field in doc["fields"]:
           if field and "code" in field:
             try:
@@ -133,6 +134,36 @@ code: |
   del objects_temp
   del questions_temp
   del sections_temp
+---
+continue button field: debug_step_1
+question: |
+  Debug Step 1
+subquestion: |
+  ### Objects
+  ```
+  ${ repr(objects) }
+  ```
+
+  ### Questions
+  ```
+  ${ repr(questions) }
+  ```
+
+  ### Sections
+  ```
+  ${ repr(section_events) }
+  ```
+
+  ### Attributes List
+  ```
+  ${ repr(attributes_list) }
+  ```
+
+  ### Generic Question Blocks
+  ```
+  ${ repr(generic_question_blocks) }
+  ```
+
 ---
 code: |
   REVIEW_EVENT_NAME = "review_form"

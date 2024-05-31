@@ -1,0 +1,27 @@
+---
+mandatory: True
+code: |
+  intro_screen
+  show_results
+---
+modules:
+  - .translation
+---
+code: |
+  example_strings = {
+    0: "The quick brown fox jumps over the lazy dog.",
+    20: "Your name",
+    22: "${ users[0] }'s birthdate is" 
+  }
+---
+question: |
+  Click to send the dictionary to GPT-3.5-turbo-1106
+subquestion: |
+  ${ repr(example_strings) }
+continue button field: intro_screen
+---
+continue button field: show_results
+question: |
+  Here are the results
+subquestion: |
+  ${ repr(translate_fragments_gpt(example_strings, "en", "fr")) }

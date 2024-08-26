@@ -21,6 +21,8 @@ Ideas:
 1. Add a link to the dispatch directive for an existing file in an existing package.
 1. Generate translation files [TBD].
 
+## Use
+
 To use, you must create a docassemble API key and add it to your
 configuration, like this:
 

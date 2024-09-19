@@ -73,6 +73,9 @@ data:
   - name: Validate docx template
     url: ${ interview_url(i=user_info().package + ":validate_docx.yml", reset=1) }
     image: file-word
+  - name: Highlight Jinja2 syntax
+    url: ${ interview_url(i=user_info().package + ":highlight_docx.yml", reset=1) }
+    image: highlighter
   - name: Validate translation files
     url: ${ interview_url(i=user_info().package + ":validate_translation.yml", reset=1) }
     image: language

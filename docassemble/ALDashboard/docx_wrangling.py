@@ -245,7 +245,7 @@ def get_labeled_docx_runs(
         )
 
     response = openai_client.chat.completions.create(
-        model="gpt-4-1106-preview",
+        model="gpt-4-turbo",
         messages=[
             {"role": "system", "content": role_description + rules},
             {"role": "user", "content": repr(items)},

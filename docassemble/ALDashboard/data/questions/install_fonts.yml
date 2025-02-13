@@ -63,6 +63,7 @@ subquestion: |
 
   [TARGET displayed_fonts]
 
+  You can add a TrueType (.TTF) or OpenType (.OTF) font.
 fields:
   - Font files: the_font_files
     datatype: files
@@ -70,8 +71,8 @@ fields:
     #  "application/font-sfnt, .TTF, .ttf, font/*"
 validation code: |
   for f in the_font_files:
-    if not ".ttf" in f.filename.lower():
-      validation_error("You need to upload a TrueType font", field="the_font_files")
+    if not ".ttf" in f.filename.lower() or not ".otf" in f.filename.lower():
+      validation_error("You need to upload a TrueType or OpenType font", field="the_font_files")
 ---
 code: |
   list_fonts_task = background_action("display_fonts", 'backgroundresponse')

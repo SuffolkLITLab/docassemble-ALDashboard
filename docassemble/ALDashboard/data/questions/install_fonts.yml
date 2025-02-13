@@ -71,7 +71,7 @@ fields:
     #  "application/font-sfnt, .TTF, .ttf, font/*"
 validation code: |
   for f in the_font_files:
-    if not ".ttf" in f.filename.lower() or not ".otf" in f.filename.lower():
+    if not (".ttf" in f.filename.lower() or ".otf" in f.filename.lower()):
       validation_error("You need to upload a TrueType or OpenType font", field="the_font_files")
 ---
 code: |

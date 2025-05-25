@@ -168,6 +168,66 @@ def get_users_and_name() -> List[Tuple[int, str, str, str]]:
     return users
 
 
+def session_count(
+        filename: str,
+        user_id: Optional[int] = None,
+        filter_step1: bool = True,
+        ) -> int:
+    """
+    Return the number of sessions for a given filename.
+
+    Args:
+        filename (str): The filename to filter sessions.
+        user_id (Optional[int]): The user ID to filter sessions. Defaults to None.
+        filter_step1 (bool): Whether to filter step1 sessions. Defaults to True.
+
+    Returns:
+        int: The count of sessions relative to the given filename, or the total number of sessions
+        on the server.
+    """
+    get_sessions_query = text(
+        """
+SELECT
+    COUNT(DISTINCT userdict.key) as session_count
+FROM
+    userdict
+NATURAL JOIN
+    (
+        SELECT
+            key
+        FROM
+            userdict
+        GROUP BY
+            key
+        HAVING
+            COUNT(key) > 1 OR :filter_step1 = False
+    )
+LEFT JOIN
+    userdictkeys ON userdictkeys.key = userdict.key
+WHERE
+    (userdict.user_id = :user_id OR :user_id is null)
+    AND (userdict.filename = :filename OR :filename is null)
+    """)
+    if not filename:
+        filename = None  # Explicitly treat empty string as equivalent to None
+    if not user_id:
+        user_id = None
+
+    # Ensure filter_step1 is a boolean
+    filter_step1 = bool(filter_step1)
+
+    with db.connect() as con:
+        rs = con.execute(
+            get_sessions_query,
+            {
+                "user_id": user_id,
+                "filename": filename,
+                "filter_step1": filter_step1,
+            },
+        )
+        session_count = int(rs.scalar())  # Get the first column of the first row
+    return session_count
+
 def speedy_get_sessions(
     user_id: Optional[int] = None,
     filename: Optional[str] = None,

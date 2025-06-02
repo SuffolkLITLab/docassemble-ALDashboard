@@ -135,6 +135,9 @@ builtin_jinja_filters = {
     "verbatim": null_func,
     "map": null_func,
     "chain": null_func,
+    "catchall_options": null_func,
+    "catchall_label": null_func,
+    "catchall_datatype": null_func,
     "any": any,
     "all": all,
 }

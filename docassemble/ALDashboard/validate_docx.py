@@ -89,7 +89,7 @@ class CallAndDebugUndefined(DebugUndefined):
     __getitem__ = __getattr__  # type: ignore
 
 
-null_func: Callable = lambda y: y
+null_func: Callable = lambda *y: y
 
 registered_jinja_filters: dict = {}
 

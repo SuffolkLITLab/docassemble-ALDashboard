@@ -206,7 +206,7 @@ fields:
   - Server short title: the_config['default short title']
     default: ${ the_config.get('default short title') }
   - App name: the_config['appname']
-    default: ${ the_config.get('appname', '') }
+    default: ${ the_config.get('appname', the_config.get('default short title')) }
   - note: |
       ---
       Some features require background processing, which means you need
@@ -371,6 +371,9 @@ subquestion: |
   
   1. Let users give feedback about an interview.
   2. Display a "last updated" date on the "About" page of an interview.
+  1. Install and update packages from GitHub.
+
+  We recommend using **2 separate GitHub accounts** for these tasks.
 
   First, in order to use GitHub you should create a dedicated GitHub account. You can use an account that already exists, but we recommend having an account that only handles Assembly Line functionality.
   
@@ -383,9 +386,21 @@ subquestion: |
       1. Tap the checkbox for "repo" permissions.
   1. Finish creating the personal access token.
   1. Copy the token and paste it below
+
+  If you have a private repository, you will need a second token with "repo" permissions.
+
+  This token is only used to install and update packages, and should not be the same
+  as the account used for feedback. It is OK for this token to be associated with your
+  personal GitHub account.
 fields:
-  - Personal access token: the_config['github issues']['token']
+  - Personal access token for authoring issues: the_config['github issues']['token']
     default: ${ the_config['github issues'].get('token', '') }
+  - Personal access token for installing private repositories: the_config['assembly line']['github install token']
+    default: ${ the_config['assembly line'].get('github install token', '') }
+    required: False
+    help: |
+      If you have private repositories, you will need a second token with "repo" permissions.
+      This token is only used to install and update packages.
 ---
 id: github owners list
 continue button field: github_owners_list

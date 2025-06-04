@@ -26,10 +26,20 @@ question: |
 list collect: True
 fields:
   - Github URL: packages[i].github_url
+  - This is a private GitHub repo: packages[i].is_private
+    datatype: yesno
+  - Github [Personal Access Token](https://docassemble.org/docs/packages.html#github_install): packages[i].github_token
+    show if: packages[i].is_private
+    default: |
+      ${ get_config('assembly line',{}).get("github install token", "") }
+  - Also add an alias: packages[i].add_alias
+    datatype: yesno
   - YAML filename: packages[i].yaml_name
+    show if: packages[i].add_alias
   - Short name or alias (no spaces): packages[i].alias
     validate: |
       lambda y: y.isidentifier()
+    show if: packages[i].add_alias
 ---
 code: |
   install_packages_task = background_action('install_packages_event')
@@ -38,19 +48,21 @@ event: install_packages_event
 code: |
   background_error_action("bg_failure")
   for package in packages:
-    pkgname = install_from_github_url(package.github_url)
+    pkgname = install_from_github_url(package.github_url, pat=package.github_token if package.is_private else None)
     reset(pkgname)
 
-  the_config = da_get_config()
-  if not the_config.get("dispatch"):
-    the_config["dispatch"] = {}
-  for package in packages:
-      package_regex = r"https:\/\/github\.com\/.*\/docassemble-([\w]*)"
-      match = re.search(package_regex, package.github_url)
-      if match:
-        package_path = f"docassemble.{ match.groups()[0] }:data/questions/{ package.yaml_name }"
-        the_config["dispatch"][package.alias] = package_path
-  results = da_write_config(the_config)
+  if any((package.add_alias for package in packages)):
+    the_config = da_get_config()
+    if not the_config.get("dispatch"):
+      the_config["dispatch"] = {}
+    for package in packages:
+      if package.add_alias:
+        package_regex = r"https:\/\/github\.com\/.*\/docassemble-([\w]*)"
+        match = re.search(package_regex, package.github_url)
+        if match:
+          package_path = f"docassemble.{ match.groups()[0] }:data/questions/{ package.yaml_name }"
+          the_config["dispatch"][package.alias] = package_path
+    results = da_write_config(the_config)
 
   background_response_action("bg_success")
 ---
@@ -76,13 +88,18 @@ subquestion: |
   % if it_worked:
   It may take a few minutes for the installation process to complete.
 
+  % if any((package.add_alias for package in packages)):
   You can now use these links to reach your interviews:
   
   % for package in packages:
+  % if package.add_alias:
   * [${package.alias}](/start/${package.alias})
+  % endif
   % endfor
+  % endif
   % else:
   Something went wrong. Check the [worker.log](/logs?file=worker.log) to learn what.
   % endif
+
 buttons:
   - Restart: restart

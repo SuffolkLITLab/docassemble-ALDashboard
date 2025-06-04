@@ -50,14 +50,14 @@ code: |
   generic_question_blocks = []
   sections_temp = []
   for doc in yaml_parsed:
-    if doc:
+    if doc and any(key in doc for key in ["fields", "question", "objects", "sections", "metadata"]):
       question = {"question": doc.get('question',"").strip() }
       generic_object = doc.get("generic object")
       if generic_object:
         generic_question_blocks.append(doc)
         continue
       fields_temp = []
-      if 'fields' in doc:
+      if 'fields' in doc and isinstance(doc["fields"], list):
         for field in doc["fields"]:
           if field and "code" in field:
             try:
@@ -133,6 +133,7 @@ code: |
   del objects_temp
   del questions_temp
   del sections_temp
+
 ---
 code: |
   REVIEW_EVENT_NAME = "review_form"
@@ -150,8 +151,10 @@ code: |
     for obj in objects:
       obj_name = next(iter(obj.keys()), [""])
       obj_type = next(iter(obj.values()), [""])
-      is_skippable_type = any(map(lambda val: obj_type.startswith(val), ["ALDocument.", "ALDocumentBundle.", "DAStaticFile."]))
-      if is_skippable_type:
+      # We skip types that don't need revisit screens, and types that have default revisit screens
+      # defined in AssemblyLine
+      skippable_types = ["ALDocument.", "ALDocumentBundle.", "DAStaticFile.", "ALPeopleList."]
+      if any(map(lambda val: obj_type.startswith(val), skippable_types)):
         continue
       review = {}
       review["Edit"] = f"{ obj_name }.revisit"

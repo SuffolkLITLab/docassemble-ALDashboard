@@ -7,6 +7,7 @@ metadata:
   sessions are unique: True
   required privileges:
     - admin
+    - al_manage_users
   temporary session: True
 ---
 modules:
@@ -33,6 +34,24 @@ code: |
 id: select user
 question: |
   Manage users
+subquestion: |
+  % if not user_has_privilege(["admin"]):
+  **Note**: make sure the role `al_manage_users` any of the the following desired [permissions](https://docassemble.org/docs/config.html#permissions)
+  in the global configuration:
+
+  ```
+  permissions:
+    al_manage_users:
+      - access_user_info
+      - edit_user_active_status
+      - edit_user_password
+      - delete_user
+      - edit_sessions
+      - access_sessions
+      - access_privileges 
+      - edit_user_privileges
+  ```
+  % endif
 fields:
   - User: chosen_user
     datatype: integer
@@ -95,7 +114,7 @@ event: do_download_playground
 ---
 code: |
   def valid_password(pword):
-    if not re.match(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{6,}$", pword):
+    if not re.match(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d!@#$%^&*()_+\-=\[\]{};:\'\"\\|,.<>\/?]{6,}$", pword):
       validation_error(word("Password must have at least 6 characters with one lowercase letter, one uppercase letter and one number"))
     return True      
 ---

@@ -3,6 +3,7 @@ docassemble.webapp
 types-setuptools
 types-pycurl
 types-requests
+types-setuptools
 mypy
 openai
 tiktoken

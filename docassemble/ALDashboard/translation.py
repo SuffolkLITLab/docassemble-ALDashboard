@@ -82,12 +82,15 @@ def translate_fragments_gpt(
     fragments: Union[str, List[Dict[int, str]]],
     source_language: str,
     tr_lang: str,
+    interview_context: Optional[str] = None,
     special_words: Optional[Dict[int, str]] = None,
-    model="gpt-3.5-turbo-1106",
-    max_tokens=3900,
+    model="gpt-4.1-nano",
+    openai_base_url: Optional[str] = None,
+    max_output_tokens: int = None,
+    max_input_tokens: int = None,
     openai_api: Optional[str] = None,
 ) -> Dict[int, str]:
-    """Use GPT-3.5-1106 to translate a list of fragments (strings) from one language to another and provide a dictionary
+    """Use an AI model to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
 
     You can optionally provide an alternative model, but it must support JSON mode.
@@ -97,8 +100,16 @@ def translate_fragments_gpt(
         source_language: The language of the original text.
         tr_lang: The language to translate the text into.
         special_words: A dictionary of special words that should be translated in a specific way.
-        model: The GPT model to use. The default is "gpt-3.5-turbo-1106".
+        model: The GPT model to use. The default is "gpt-4.1-nano"
+        openai_base_url: The base URL for the OpenAI API. If not provided, the default OpenAI URL will be used.
+        max_output_tokens: The maximum number of tokens to generate in the output.
+        max_input_tokens: The maximum number of tokens in the input. If not provided, it will be set to 4000.
+        openai_api: The OpenAI API key. If not provided, it will use the key from the configuration.
+    Returns:
+        A dictionary where the keys are the indices of the fragments and the values are the translated text.
     """
+    if not model:
+        model = "gpt-4.1-nano"
     try:
         language_in_english = language_name(source_language)
     except:
@@ -111,131 +122,53 @@ def translate_fragments_gpt(
     if isinstance(fragments, str):
         fragments = [{0: fragments}]
 
-    system_prompt = f"""You are a helpful translator that translates Docassemble interviews from "{language_in_english}" to "{tr_language_in_english}". You
+    system_prompt = f"""You translate Docassemble interviews from "{language_in_english}" to "{tr_language_in_english}". You
     preserve the meaning of all sentences while aiming to produce a translation at or below a 9th grade reading level.
-    
-    You will get input that looks like this that indicates a row in a table and the untranslated text in that row:
 
-    [
-        {{0, "Your name"}},
-        {{10, "When was ${{ user.name }} born?"}},
-        {{32, "<div>Here is some text <a href="https://example.com">and a link</a>.</div> }}
-    ]
+    Sometimes the input text may contain Mako tags or HTML tags. You do not translate these tags.
 
-    When you see Mako tags or HTML tags, you do not translate them. You can translate text in quotes that appears to be intended to be shown
-    to the user, but if there is a chance text is intended for the program logic you do not translate it. You do not change the whitespace because
-    whitespace can have meaning in Docassemble.
+    You do not change the whitespace because whitespace can have meaning in Docassemble.
+
+    **Reply only with the translated text. Do not include any additional text or explanations.**
     """
+    if interview_context is not None:
+        system_prompt += f"""When translating, keep in mind the purpose of this interview: ```{ interview_context }```
+        """
+
     if special_words is not None:
-        system_prompt += """
+        system_prompt += f"""
     When you see one of the special words in the following table in the first column, you use a form of the suggested replacement rather than inventing a new translation:
 
+    ```
     {special_words}
-    """
-    system_prompt += """
-    Your only reply is a JSON object that looks like this:
-    {
-        [ROW NUMBER]: "[TRANSLATED TEXT]",
-    }
-
-    Where [ROW NUMBER] is the matching row index number, and [TRANSLATED TEXT] is the translated text.
+    ```
     """
 
-    encoding = tiktoken.encoding_for_model(model)
-    system_token_count = len(encoding.encode(system_prompt))
-    user_message_token_count = len(encoding.encode(repr(fragments)))
-    token_count = system_token_count + user_message_token_count
-    number_of_chunks_to_make = 1
-    if token_count > max_tokens:
-        # Divide the fragments into smaller chunks
-        max_chunk_size = max_tokens - system_token_count
-        chunked_fragments = []
-
-        # Most of the time, each fragment will be well under the max token limit,
-        # so heuristic of just assuming each fragment is equal size should be OK
-        number_of_chunks_to_make = math.ceil(token_count / max_tokens)
-
+    #           row number: text to translate
     results:Dict[int, str] = {}
-    for c in range(number_of_chunks_to_make):
-        chunked_fragments = fragments
-        if number_of_chunks_to_make > 1:
-            chunked_fragments = fragments[c * max_chunk_size : (c + 1) * max_chunk_size]
+    
+    for row_number, text_to_translate in fragments:
         try:
             response = chat_completion(
                 system_prompt,
-                user_message=repr(chunked_fragments),
+                user_message=text_to_translate,
                 temperature=0.0,
-                json_mode=True,
                 model=model,
+                max_output_tokens=max_output_tokens,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
                 openai_api=openai_api,
             )
+            if isinstance(response, str):
+                results[row_number] = response.rstrip() # Remove any trailing whitespace some LLM models might add
+            else:
+                log(f"Unexpected response type from chat completion: {type(response)}")
         # Get the exception and log it
         except Exception as e:
             log(f"Exception when calling chatcompletion: { e }")
             response = str(e)
-        try:
-            results.update(response)
-        except:
-            log(f"Unexpected format in response from GPT: { response }")
 
     return results
-
-
-# def translate_fragments_google(
-#     fragments: Union[str, List[str]],
-#     source_language: str,
-#     tr_lang: str,
-#     special_words: Optional[Dict[str, str]] = None,
-# ) -> Dict[int, str]:
-#     """Use Google Translate to translate a list of fragments (strings) from one language to another and provide a dictionary
-#     with the original text and the translated text.
-#     """
-#     return fragments
-
-
-# def translate_fragments(
-#     fragments: Union[str, List[str]],
-#     language: str,
-#     tr_lang: str,
-#     allow_gpt=True,
-#     allow_google=True,
-#     special_words=Dict[str, str],
-# ) -> Dict[int, str]:
-#     """
-#     Translate a list of fragments (strings) from one language to another.
-#     """
-#     if not (allow_google or allow_gpt):
-#         raise ValueError("You must allow at least one translation method")
-
-#     if isinstance(fragments, str):
-#         fragments = [fragments]
-#     if language == tr_lang:
-#         return fragments
-
-#     fragments_with_code = []
-#     fragments_without_code = []
-
-#     if allow_gpt and allow_google:
-#         for fragment in fragments:
-#             if may_have_html(fragment) or may_have_mako(fragment):
-#                 fragments_with_code.append(fragment)
-#             else:
-#                 fragments_without_code.append(fragment)
-#         results = translate_fragments_gpt(
-#             fragments_with_code, language, tr_lang, special_words
-#         )
-#         results.update(
-#             translate_fragments_google(
-#                 fragments_without_code, language, tr_lang, special_words
-#             )
-#         )
-#     elif allow_gpt:
-#         results = translate_fragments_gpt(fragments, language, tr_lang, special_words)
-#     else:  # allow_google
-#         results = translate_fragments_google(
-#             fragments, language, tr_lang, special_words
-#         )
-#     return results
 
 
 class Translation(NamedTuple):
@@ -254,6 +187,12 @@ def translation_file(
     use_google_translate=False,
     openai_api: Optional[str] = None,
     max_tokens=4000,
+    interview_context: Optional[str] = None,
+    special_words: Optional[Dict[int, str]] = None,
+    model: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
+    max_input_tokens: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,    
 ) -> Translation:
     """
     Return a tuple of the translation file in XLSX format, plus a count of the
@@ -718,12 +657,18 @@ def translation_file(
         if use_gpt:
             translated_fragments = translate_fragments_gpt(
                 [
-                    {item[0]: item[1]} for item in hold_for_draft_translation
-                ],  # We send a list of dictionaries for easier partitioning if we exceed max_tokens
+                    # row, text to translate
+                    (item[0], item[1]) for item in hold_for_draft_translation
+                ],  # We send a list of tuples for easier partitioning if we exceed max_tokens
                 source_language=language,
                 tr_lang=tr_lang,
                 openai_api=openai_api,
-                max_tokens=max_tokens,
+                interview_context=interview_context,
+                special_words=special_words,
+                model=model,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
+                max_output_tokens=max_output_tokens,
             )
             for (
                 row,

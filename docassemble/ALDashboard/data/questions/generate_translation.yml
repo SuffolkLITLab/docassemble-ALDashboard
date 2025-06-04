@@ -41,7 +41,14 @@ event: translate_file
 code: |
   background_error_action('bg_fail', stage='calculation')
   translations = [
-    translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt, openai_api=get_config("openai api key", get_config("open ai", {}).get("key")))
+    translation_file(
+        the_yaml_path, 
+        tr_lang, 
+        use_gpt=use_gpt, 
+        openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
+        interview_context=interview_context if use_context else None,
+
+      )
     for tr_lang
     in tr_langs.split()
   ]
@@ -70,8 +77,20 @@ fields:
     show if:
       code: |
         gpt_is_available() # or google_translate_is_available()
+  - Include context to help the translation: use_context
+    datatype: yesno
+    show if: use_gpt
+  - Context (explain what the interview is about, so isolated fragments get a better translation): interview_context
+    datatype: area
+    show if: use_context
+  - Add a glossary of special terms to help the translation: use_special_words
+    datatype: yesno
+    show if: use_gpt
+  - 'Add a list of terms and their translations (one per line, like: "term: translation")': special_words
+    datatype: area
+    show if: use_special_words
   - note: |
-      To use OpenAI's GPT-3, you need to set up an OpenAI account and get an API key.
+      To use AI translation, you need to set up an OpenAI account and get an API key.
     show if:
       code: |
         not gpt_is_available()

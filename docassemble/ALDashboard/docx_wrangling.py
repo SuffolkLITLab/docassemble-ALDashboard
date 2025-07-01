@@ -9,7 +9,7 @@ from docx.oxml import OxmlElement
 import re
 from docassemble.base.util import get_config
 
-os.environ["OPENAI_API_KEY"] = get_config("openai api key")
+os.environ["OPENAI_API_KEY"] = get_config("openai api key") or ""
 
 from typing import List, Tuple, Optional, Union
 

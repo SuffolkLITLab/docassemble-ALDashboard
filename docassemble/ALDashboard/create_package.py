@@ -15,7 +15,7 @@ import datetime
 import zipfile
 import os
 import re
-from typing import Any, Dict, List, Tuple, Union  # , Set
+from typing import Optional, Any, Dict, List, Tuple, Union  # , Set
 
 __all__ = [
     "get_files",
@@ -48,7 +48,7 @@ def project_name(name):
 
 
 def create_user_playground_zip(
-    user_id: int, name: str, project: str = "default", fileobj: DAFile = None
+    user_id: int, name: str, project: str = "default", fileobj: Optional[DAFile] = None
 ):
     folders_and_files = {}
     for section in (
@@ -82,7 +82,7 @@ def create_package_zip(
     info: dict,
     author_info: dict,
     folders_and_files: dict,
-    fileobj: DAFile = None,
+    fileobj: Optional[DAFile] = None,
 ) -> DAFile:
     """
     Given a dictionary of lists, with the keys representing folders and the values

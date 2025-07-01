@@ -86,8 +86,8 @@ def translate_fragments_gpt(
     special_words: Optional[Dict[int, str]] = None,
     model="gpt-4.1-nano",
     openai_base_url: Optional[str] = None,
-    max_output_tokens: int = None,
-    max_input_tokens: int = None,
+    max_output_tokens: Optional[int] = None,
+    max_input_tokens: Optional[int] = None,
     openai_api: Optional[str] = None,
 ) -> Dict[int, str]:
     """Use an AI model to translate a list of fragments (strings) from one language to another and provide a dictionary

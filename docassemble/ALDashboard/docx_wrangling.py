@@ -33,8 +33,8 @@ def add_paragraph_before(paragraph, text):
 
 
 def update_docx(
-    document: Union[docx.Document, str], modified_runs: List[Tuple[int, int, str, int]]
-) -> docx.Document:
+    document: Union[docx.document.Document, str], modified_runs: List[Tuple[int, int, str, int]]
+) -> docx.document.Document:
     """Update the document with modified runs.
 
     Args:
@@ -263,7 +263,7 @@ def get_labeled_docx_runs(
     return guesses
 
 
-def modify_docx_with_openai_guesses(docx_path: str) -> docx.Document:
+def modify_docx_with_openai_guesses(docx_path: str) -> docx.document.Document:
     """Uses OpenAI to guess the variable names for a document and then modifies the document with the guesses.
 
     Args:

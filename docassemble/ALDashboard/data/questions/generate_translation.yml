@@ -47,7 +47,7 @@ code: |
         use_gpt=use_gpt, 
         openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
         interview_context=interview_context if use_context else None,
-
+        model = model,
       )
     for tr_lang
     in tr_langs.split()
@@ -77,6 +77,14 @@ fields:
     show if:
       code: |
         gpt_is_available() # or google_translate_is_available()
+  - Model to use (nano is normally smart enough): model
+    input type: radio
+    choices:
+      - Nano (cheapest): gpt-4.1-nano
+      - Mini (still cheap): gpt-4.1-mini
+      - Normal (moderately expensive): gpt-4.1
+    show if: use_gpt
+    default: gpt-4.1-nano
   - Include context to help the translation: use_context
     datatype: yesno
     show if: use_gpt

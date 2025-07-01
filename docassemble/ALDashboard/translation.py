@@ -79,7 +79,7 @@ def may_have_html(text: str) -> bool:
 
 
 def translate_fragments_gpt(
-    fragments: Union[str, List[Dict[int, str]]],
+    fragments: Union[str, List[Tuple[int, str]]],
     source_language: str,
     tr_lang: str,
     interview_context: Optional[str] = None,
@@ -120,16 +120,25 @@ def translate_fragments_gpt(
         tr_language_in_english = tr_lang
 
     if isinstance(fragments, str):
-        fragments = [{0: fragments}]
+        fragments = [(0, fragments)]
 
     system_prompt = f"""You translate Docassemble interviews from "{language_in_english}" to "{tr_language_in_english}". You
     preserve the meaning of all sentences while aiming to produce a translation at or below a 9th grade reading level.
 
-    Sometimes the input text may contain Mako tags or HTML tags. You do not translate these tags.
+    Whenever you see anything that looks like code, variable interpolation, Mako template syntax, HTML tags, or Python keywords, assume it is code and do not touch it.
+    You are only translating natural-language content.
 
-    You do not change the whitespace because whitespace can have meaning in Docassemble.
+    **Do not translate** any text matching these patterns (pass it through verbatim):
+    • `% if …:` / `% endif` / `% for …:` / `% endfor`
+    • `% elif …:` / `% else:`
+    • `${{…}}`  
+    • `{{% … %}}`
+    • `<…>` HTML tags  
+    • Python keywords: def, if, else, elif, import, for, while, return
 
-    **Reply only with the translated text. Do not include any additional text or explanations.**
+    You only translate natural-language text.  
+    Preserve all whitespace exactly.  
+    Reply *only* with the translated text—no extra commentary.
     """
     if interview_context is not None:
         system_prompt += f"""When translating, keep in mind the purpose of this interview: ```{ interview_context }```
@@ -147,32 +156,28 @@ def translate_fragments_gpt(
     #           row number: text to translate
     results: Dict[int, str] = {}
 
-    for fragment_dict in fragments:
-        for row_number, text_to_translate in fragment_dict.items():
-            try:
-                response = chat_completion(
-                    system_prompt,
-                    user_message=text_to_translate,
-                    temperature=0.0,
-                    model=model,
-                    max_output_tokens=max_output_tokens,
-                    openai_base_url=openai_base_url,
-                    max_input_tokens=max_input_tokens,
-                    openai_api=openai_api,
-                )
-                if isinstance(response, str):
-                    results[row_number] = (
-                        response.rstrip()
-                    )  # Remove any trailing whitespace some LLM models might add
-                else:
-                    log(
-                        f"Unexpected response type from chat completion: {type(response)}"
-                    )
-            # Get the exception and log it
-            except Exception as e:
-                log(f"Exception when calling chatcompletion: { e }")
-                response = str(e)
-
+    for row_number, text_to_translate in fragments:
+        try:
+            response = chat_completion(
+                system_prompt,
+                user_message=text_to_translate,
+                temperature=0.0,
+                model=model,
+                max_output_tokens=max_output_tokens,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
+                openai_api=openai_api,
+            )
+            if isinstance(response, str):
+                results[row_number] = (
+                    response.rstrip()
+                )  # Remove any trailing whitespace some LLM models might add
+            else:
+                log(f"Unexpected response type from chat completion: {type(response)}")
+        # Get the exception and log it
+        except Exception as e:
+            log(f"Exception when calling chatcompletion: { e }")
+            response = str(e)
     return results
 
 
@@ -663,7 +668,7 @@ def translation_file(
             translated_fragments = translate_fragments_gpt(
                 [
                     # row: text to translate
-                    {item[0]: item[1]}
+                    (item[0], item[1])
                     for item in hold_for_draft_translation
                 ],  # We send a list of dicts for easier partitioning if we exceed max_tokens
                 source_language=language,

@@ -145,28 +145,33 @@ def translate_fragments_gpt(
     """
 
     #           row number: text to translate
-    results:Dict[int, str] = {}
-    
-    for row_number, text_to_translate in fragments:
-        try:
-            response = chat_completion(
-                system_prompt,
-                user_message=text_to_translate,
-                temperature=0.0,
-                model=model,
-                max_output_tokens=max_output_tokens,
-                openai_base_url=openai_base_url,
-                max_input_tokens=max_input_tokens,
-                openai_api=openai_api,
-            )
-            if isinstance(response, str):
-                results[row_number] = response.rstrip() # Remove any trailing whitespace some LLM models might add
-            else:
-                log(f"Unexpected response type from chat completion: {type(response)}")
-        # Get the exception and log it
-        except Exception as e:
-            log(f"Exception when calling chatcompletion: { e }")
-            response = str(e)
+    results: Dict[int, str] = {}
+
+    for fragment_dict in fragments:
+        for row_number, text_to_translate in fragment_dict.items():
+            try:
+                response = chat_completion(
+                    system_prompt,
+                    user_message=text_to_translate,
+                    temperature=0.0,
+                    model=model,
+                    max_output_tokens=max_output_tokens,
+                    openai_base_url=openai_base_url,
+                    max_input_tokens=max_input_tokens,
+                    openai_api=openai_api,
+                )
+                if isinstance(response, str):
+                    results[row_number] = (
+                        response.rstrip()
+                    )  # Remove any trailing whitespace some LLM models might add
+                else:
+                    log(
+                        f"Unexpected response type from chat completion: {type(response)}"
+                    )
+            # Get the exception and log it
+            except Exception as e:
+                log(f"Exception when calling chatcompletion: { e }")
+                response = str(e)
 
     return results
 
@@ -192,7 +197,7 @@ def translation_file(
     model: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     max_input_tokens: Optional[int] = None,
-    max_output_tokens: Optional[int] = None,    
+    max_output_tokens: Optional[int] = None,
 ) -> Translation:
     """
     Return a tuple of the translation file in XLSX format, plus a count of the
@@ -657,9 +662,10 @@ def translation_file(
         if use_gpt:
             translated_fragments = translate_fragments_gpt(
                 [
-                    # row, text to translate
-                    (item[0], item[1]) for item in hold_for_draft_translation
-                ],  # We send a list of tuples for easier partitioning if we exceed max_tokens
+                    # row: text to translate
+                    {item[0]: item[1]}
+                    for item in hold_for_draft_translation
+                ],  # We send a list of dicts for easier partitioning if we exceed max_tokens
                 source_language=language,
                 tr_lang=tr_lang,
                 openai_api=openai_api,

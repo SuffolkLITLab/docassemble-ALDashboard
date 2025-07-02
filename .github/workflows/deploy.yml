@@ -1,0 +1,17 @@
+
+name: Deploy the ALDashboard to PyPI and the Dev server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-to-dev:
+    - uses: action/checkout@v3
+    - uses: SuffolkLITLab/ALActions/da_install@dogfood
+      with:
+        SERVER_URL: ${{ secrets.DOCASSEMBLE_SERVER_URL }}
+        DOCASSEMBLE_DEVELOPER_API_KEY: ${{ secrets.DOCASSEMBLE_DEVELOPER_API_KEY }}
+        GITHUB_URL: ${{ github.server_url }}/${{ github.repository }}
+        GITHUB_BRANCH: main

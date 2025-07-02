@@ -8,10 +8,13 @@ on:
 
 jobs:
   deploy-to-dev:
-    - uses: action/checkout@v3
-    - uses: SuffolkLITLab/ALActions/da_install@dogfood
+    name: Deploy to the Development server
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: SuffolkLITLab/ALActions/da_package@dogfood
       with:
-        SERVER_URL: ${{ secrets.SERVER_URL }}
-        DOCASSEMBLE_DEVELOPER_API_KEY: ${{ secrets.DOCASSEMBLE_DEVELOPER_API_KEY }}
+        SERVER_URL: ${{ secrets.DEV_SERVER_URL }}
+        DOCASSEMBLE_DEVELOPER_API_KEY: ${{ secrets.DOCASSEMBLE_DEV_SERVER_API_KEY }}
         GITHUB_URL: ${{ github.server_url }}/${{ github.repository }}
         GITHUB_BRANCH: main

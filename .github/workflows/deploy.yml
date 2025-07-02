@@ -11,7 +11,7 @@ jobs:
     - uses: action/checkout@v3
     - uses: SuffolkLITLab/ALActions/da_install@dogfood
       with:
-        SERVER_URL: ${{ secrets.DOCASSEMBLE_SERVER_URL }}
+        SERVER_URL: ${{ secrets.SERVER_URL }}
         DOCASSEMBLE_DEVELOPER_API_KEY: ${{ secrets.DOCASSEMBLE_DEVELOPER_API_KEY }}
         GITHUB_URL: ${{ github.server_url }}/${{ github.repository }}
         GITHUB_BRANCH: main

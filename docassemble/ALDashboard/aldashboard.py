@@ -34,6 +34,7 @@ from docassemble.base.util import (
     DAFileList,
     get_config,
     user_has_privilege,
+    DACloudStorage,   
 )
 from docassemble.webapp.server import get_package_info
 
@@ -43,6 +44,14 @@ import re
 import werkzeug
 import pkg_resources
 
+import os
+import re
+from flask import send_file
+from werkzeug.utils import secure_filename
+
+from docassemble.webapp.backend import get_info_from_file_number
+from docassemble.webapp.files import get_ext_and_mimetype
+from docassemble.webapp.server import secure_filename_unicode_ok
 
 db = init_sqlalchemy()
 
@@ -64,6 +73,12 @@ __all__ = [
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
+    "get_session_details",
+    "increment_index_value",
+    "get_current_index_value",
+    "get_latest_s3_folder",
+    "get_file_ids_associated_with_session",
+    "download_file_by_id",
 ]
 
 
@@ -247,6 +262,133 @@ LIMIT 500;
     sessions = [session for session in rs]
 
     return sessions
+
+
+def get_session_details(session_id: str) -> Dict[str, str]:
+    """
+    Get filename, user_id, modtime, key, and other details for a given session ID.
+    """
+    query = text(
+        """
+        SELECT
+        userdict.filename as filename,
+        userdict.user_id as user_id,
+        userdict.modtime as modtime,
+        userdict.key as key,
+        jsonstorage.data->>'auto_title' as auto_title,
+        jsonstorage.data->>'title' as title,
+        jsonstorage.data->>'description' as description,
+        jsonstorage.data->>'steps' as steps,
+        jsonstorage.data->>'progress' as progress
+        FROM userdict
+        LEFT JOIN jsonstorage ON jsonstorage.key = userdict.key
+        WHERE userdict.key = :session_id
+        LIMIT 1;
+        """
+    )
+    with db.connect() as con:
+        rs = con.execute(query, {"session_id": session_id})
+        session_details = rs.fetchone()
+    if session_details is None:
+        raise ValueError(f"No session found with ID: {session_id}")
+    return {
+        "filename": session_details.filename,
+        "user_id": session_details.user_id,
+        "modtime": session_details.modtime,
+        "key": session_details.key,
+        "auto_title": session_details.auto_title,
+        "title": session_details.title,
+        "description": session_details.description,
+        "steps": session_details.steps,
+        "progress": session_details.progress,
+    }
+
+
+def get_file_ids_associated_with_session(session_id: str) -> List[int]:
+    """
+    Get a list of file IDs associated with a given session ID.
+    """
+    # files are stored in uploads db with a key that is the session id
+    query = text(
+        """
+        SELECT indexno,
+        filename,
+          
+        FROM uploads 
+        WHERE key = :session_id
+    """)
+    with db.connect() as con:
+        rs = con.execute(query, {"session_id": session_id})
+        file_ids = [row.indexno for row in rs]
+    return file_ids
+
+def download_file_by_id(
+    file_number: str,
+    privileged: Optional[bool] = False,
+    uids: list = None,
+    extension: str = None,
+    filename_override: str = None
+):
+    """Fetches a file by its ID and returns a Flask Response for downloading it.
+    
+    Args:
+        file_number (str): Raw file ID (may contain non-digit characters).
+        privileged (bool): Whether to perform an admin/advocate lookup. Defaults to False.
+        uids (list, optional): List of session UIDs for scoping the lookup. Defaults to None.
+        extension (str, optional): File extension to force (e.g. "pdf"). Defaults to None.
+        filename_override (str, optional): Specific filename to serve (e.g. "report.docx"). Defaults to None.
+
+    Raises:
+        FileNotFound: If no record or filesystem path exists for the given ID,
+                      or the requested variant is missing on disk.
+
+    Returns:
+        Response: A Flask Response object from `send_file`, with caching disabled.
+    """
+    # 1. Normalize to digits only
+    number = re.sub(r'[^0-9]', '', str(file_number))
+
+    # 2. Lookup base info
+    try:
+        file_info = get_info_from_file_number(number, privileged=privileged, uids=uids)
+    except Exception:
+        raise FileNotFoundError(f"No record for file ID {number!r}")
+
+    if 'path' not in file_info:
+        raise FileNotFoundError(f"No filesystem path for file ID {number!r}")
+
+    base_path = file_info['path']
+
+    # 3. Resolve which physical file to serve
+    if extension:
+        ext = secure_filename(extension)
+        candidate = f"{base_path}.{ext}"
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Extension variant not found: {candidate}")
+        the_path = candidate
+        _, mimetype = get_ext_and_mimetype(candidate)
+
+    elif filename_override:
+        safe_name = secure_filename_unicode_ok(filename_override)
+        candidate = os.path.join(os.path.dirname(base_path), safe_name)
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Filename variant not found: {candidate}")
+        the_path = candidate
+        _, mimetype = get_ext_and_mimetype(safe_name)
+
+    else:
+        the_path = base_path
+        mimetype = file_info.get('mimetype')
+
+    # 4. Final sanity check
+    if not os.path.isfile(the_path):
+        raise FileNotFoundError(f"File not found on disk: {the_path}")
+
+    # 5. Build and return the download response
+    resp = send_file(the_path, mimetype=mimetype)
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
+    return resp
+
 
 
 def dashboard_get_session_variables(session_id: str, filename: str):
@@ -438,3 +580,61 @@ def list_question_files_in_docassemble_packages():
             result[package_name] = files
 
     return result
+
+
+def increment_index_value(by: int = 5000, index_name: str = "uploads_indexno_seq"):
+    """
+    Increment the file index value in the database by a specified amount.
+
+    Args:
+        by (int): The amount to increment the file index value by. Defaults to 5000.
+        index_name (str): The name of the sequence to increment. Defaults to "uploads_indexno_seq".
+    """
+    with db.connect() as con:
+        con.execute(
+            text(f"SELECT setval(:index_name, nextval(:index_name) + :by);"),
+            {"by": by, "index_name": index_name}
+        )
+        con.commit()
+
+
+def get_current_index_value() -> int:
+    """Get the current value of the file index sequence.
+
+    Returns:
+        int: The current value of the file index sequence.
+    """
+    query = db.session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
+    return query.fetchone()[0]
+
+def get_latest_s3_folder(prefix: str = "files/") -> Optional[int]:
+    """
+    Return the highest integer “folder” that exists directly under *prefix*,
+    or None if there are no numeric folders at all.
+
+    • Uses the S3 LIST paginator, so it works for any number of prefixes.
+    • Ignores non‑numeric folder names (e.g. files/tmp/, files/images/, …).
+    • Requires only read permission for ListObjectsV2.
+
+    Example return value: 45237
+    """
+    cloud = DACloudStorage()          # your Docassemble wrapper
+    client, bucket = cloud.client, cloud.bucket_name
+
+    highest = None
+    paginator = client.get_paginator("list_objects_v2")
+
+    for page in paginator.paginate(
+            Bucket=bucket,
+            Prefix=prefix,
+            Delimiter="/"          # ask S3 to give us one prefix per “folder”
+    ):
+        for cp in page.get("CommonPrefixes", []):
+            # strip the leading prefix (“files/”) and trailing “/”
+            name = cp["Prefix"][len(prefix):-1]
+            if name.isdigit():
+                n = int(name)
+                if highest is None or n > highest:
+                    highest = n
+
+    return highest

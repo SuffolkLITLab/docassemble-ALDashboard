@@ -12,7 +12,14 @@ default screen parts:
 modules:
   - .aldashboard
 ---
-#mandatory: True # Use while developing in playground
+mandatory: True
+code: |
+  view_sessions_method
+  if view_sessions_method == "browse":
+    load_answer
+  elif view_sessions_method == "session_id":
+    view_single_session
+---
 continue button field: playground_splash
 question: |
   Splash screen
@@ -35,30 +42,91 @@ subquestion: |
   You can only view sessions for interviews you have access to.
   % endif
 fields:
+  - View: view_sessions_method
+    input type: radio
+    choices:
+      - Browse latest sessions: browse
+      - Visit specific session: session_id
+    default: browse
+  - Session id: session_id
+    show if:
+      variable: view_sessions_method
+      is: session_id
   - Filename: filename
     required: False
     datatype: combobox
     code: |
       sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
     show if:
+      variable: view_sessions_method
+      is: browse
       code: |
         user_has_privilege(['admin', 'developer'])
   - Filename: filename
     code: |
       sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
     show if:
+      variable: view_sessions_method
+      is: browse
       code: |
         not user_has_privilege(['admin', 'developer'])      
   - User (leave blank to view all sessions): chosen_user
     required: False
     datatype: integer
     input type: combobox
+    show if:
+      variable: view_sessions_method
+      is: browse
     code: |
       speedy_get_users()
   - Filter out interviews that are on the first page: filter_step1
     required: False
     datatype: yesno
     default: True
+    show if:
+      variable: view_sessions_method
+      is: browse
+---
+code: |
+  try:
+    single_session_details = get_session_details(session_id)
+  except ValueError:
+    session_not_found
+---
+event: session_not_found
+question: |
+  Session ${ session_id } not found.    
+---
+event: view_single_session
+question: |
+  Session details for ${ single_session_details.get('title', single_session_details.get("auto_title", session_id)) }
+subquestion: |
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Session ID</th>
+        <th>User</th>
+        <th>Modified</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tr>
+      <td class="text-wrap text-break">
+        ${ single_session_details.get('title', single_session_details.get("auto_title", session_id)) }
+      </td>
+      <td>${ session_id }</td>
+      <td>${ users_and_name_dict[single_session_details.get('user_id', 'Anonymous')] if single_session_details.get('user_id') else 'Anonymous'}</td>
+      <td>${ format_date(single_session_details.get('modtime'), "MMM d YYYY") }</td>
+      <td>
+        <a href="${ interview_url(i=single_session_details['filename'], session=session_id) }">
+          <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>
+        <br/>
+        <a href="${ interview_url_action('view_session_variables', session_id=session_id, filename=single_session_details.get('filename')) }">
+          <i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+      </td>
+    </tr>
+  </table>
 ---
 # next((item.get('title') for item in interviews if item.get('filename') == interview['filename']), interview['filename'] )
 ---

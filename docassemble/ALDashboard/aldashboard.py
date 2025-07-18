@@ -7,7 +7,7 @@ from github import Github  # PyGithub
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 import docassemble.webapp.worker
 from docassemble.webapp.server import (
     user_can_edit_package,
@@ -34,7 +34,7 @@ from docassemble.base.util import (
     DAFileList,
     get_config,
     user_has_privilege,
-    DACloudStorage,   
+    DACloudStorage,
 )
 from docassemble.webapp.server import get_package_info
 
@@ -316,21 +316,23 @@ def get_file_ids_associated_with_session(session_id: str) -> List[int]:
           
         FROM uploads 
         WHERE key = :session_id
-    """)
+    """
+    )
     with db.connect() as con:
         rs = con.execute(query, {"session_id": session_id})
         file_ids = [row.indexno for row in rs]
     return file_ids
 
+
 def download_file_by_id(
     file_number: str,
     privileged: Optional[bool] = False,
-    uids: list = None,
-    extension: str = None,
-    filename_override: str = None
+    uids: Optional[List[Any]] = None,
+    extension: Optional[str] = None,
+    filename_override: Optional[str] = None,
 ):
     """Fetches a file by its ID and returns a Flask Response for downloading it.
-    
+
     Args:
         file_number (str): Raw file ID (may contain non-digit characters).
         privileged (bool): Whether to perform an admin/advocate lookup. Defaults to False.
@@ -346,7 +348,7 @@ def download_file_by_id(
         Response: A Flask Response object from `send_file`, with caching disabled.
     """
     # 1. Normalize to digits only
-    number = re.sub(r'[^0-9]', '', str(file_number))
+    number = re.sub(r"[^0-9]", "", str(file_number))
 
     # 2. Lookup base info
     try:
@@ -354,10 +356,10 @@ def download_file_by_id(
     except Exception:
         raise FileNotFoundError(f"No record for file ID {number!r}")
 
-    if 'path' not in file_info:
+    if "path" not in file_info:
         raise FileNotFoundError(f"No filesystem path for file ID {number!r}")
 
-    base_path = file_info['path']
+    base_path = file_info["path"]
 
     # 3. Resolve which physical file to serve
     if extension:
@@ -378,7 +380,7 @@ def download_file_by_id(
 
     else:
         the_path = base_path
-        mimetype = file_info.get('mimetype')
+        mimetype = file_info.get("mimetype")
 
     # 4. Final sanity check
     if not os.path.isfile(the_path):
@@ -386,9 +388,10 @@ def download_file_by_id(
 
     # 5. Build and return the download response
     resp = send_file(the_path, mimetype=mimetype)
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
+    resp.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+    )
     return resp
-
 
 
 def dashboard_get_session_variables(session_id: str, filename: str):
@@ -593,7 +596,7 @@ def increment_index_value(by: int = 5000, index_name: str = "uploads_indexno_seq
     with db.connect() as con:
         con.execute(
             text(f"SELECT setval(:index_name, nextval(:index_name) + :by);"),
-            {"by": by, "index_name": index_name}
+            {"by": by, "index_name": index_name},
         )
         con.commit()
 
@@ -607,6 +610,7 @@ def get_current_index_value() -> int:
     query = db.session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
     return query.fetchone()[0]
 
+
 def get_latest_s3_folder(prefix: str = "files/") -> Optional[int]:
     """
     Return the highest integer “folder” that exists directly under *prefix*,
@@ -618,20 +622,20 @@ def get_latest_s3_folder(prefix: str = "files/") -> Optional[int]:
 
     Example return value: 45237
     """
-    cloud = DACloudStorage()          # your Docassemble wrapper
+    cloud = DACloudStorage()  # your Docassemble wrapper
     client, bucket = cloud.client, cloud.bucket_name
 
     highest = None
     paginator = client.get_paginator("list_objects_v2")
 
     for page in paginator.paginate(
-            Bucket=bucket,
-            Prefix=prefix,
-            Delimiter="/"          # ask S3 to give us one prefix per “folder”
+        Bucket=bucket,
+        Prefix=prefix,
+        Delimiter="/",  # ask S3 to give us one prefix per “folder”
     ):
         for cp in page.get("CommonPrefixes", []):
             # strip the leading prefix (“files/”) and trailing “/”
-            name = cp["Prefix"][len(prefix):-1]
+            name = cp["Prefix"][len(prefix) : -1]
             if name.isdigit():
                 n = int(name)
                 if highest is None or n > highest:

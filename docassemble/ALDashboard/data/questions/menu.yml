@@ -103,3 +103,8 @@ data:
     privilege:
       - admin
       - developer
+  - name: Manage S3 file index
+    url: ${ interview_url(i=user_info().package + ":file_index.yml", reset=1) }
+    image: folder-tree
+    privilege:
+      - admin

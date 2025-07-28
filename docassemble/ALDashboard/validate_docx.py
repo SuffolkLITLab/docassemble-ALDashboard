@@ -138,6 +138,8 @@ builtin_jinja_filters = {
     "catchall_options": null_func,
     "catchall_label": null_func,
     "catchall_datatype": null_func,
+    "catchall_question": null_func,
+    "catchall_subquestion": null_func,
     "any": any,
     "all": all,
 }

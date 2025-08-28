@@ -145,7 +145,7 @@ code: |
 continue button field: ask_about_labels
 question: |
   Review the labels
-subuestion: |
+subquestion: |
   On the left is the original text. On the right, you will see the modified
   text with Jinja2 added. Make any changes you need.
 fields:

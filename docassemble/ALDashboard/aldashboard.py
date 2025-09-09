@@ -34,6 +34,7 @@ from docassemble.base.util import (
     DAFileList,
     get_config,
     user_has_privilege,
+    DACloudStorage,
 )
 from docassemble.webapp.server import get_package_info
 
@@ -64,6 +65,9 @@ __all__ = [
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
+    "increment_index_value",
+    "get_current_index_value",
+    "get_latest_s3_folder",
 ]
 
 
@@ -438,3 +442,62 @@ def list_question_files_in_docassemble_packages():
             result[package_name] = files
 
     return result
+
+
+def increment_index_value(by: int = 5000, index_name: str = "uploads_indexno_seq"):
+    """
+    Increment the file index value in the database by a specified amount.
+
+    Args:
+        by (int): The amount to increment the file index value by. Defaults to 5000.
+        index_name (str): The name of the sequence to increment. Defaults to "uploads_indexno_seq".
+    """
+    with db.connect() as con:
+        con.execute(
+            text(f"SELECT setval(:index_name, nextval(:index_name) + :by);"),
+            {"by": by, "index_name": index_name},
+        )
+        con.commit()
+
+
+def get_current_index_value() -> int:
+    """Get the current value of the file index sequence.
+
+    Returns:
+        int: The current value of the file index sequence.
+    """
+    query = db.session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
+    return query.fetchone()[0]
+
+
+def get_latest_s3_folder(prefix: str = "files/") -> Optional[int]:
+    """
+    Return the highest integer “folder” that exists directly under *prefix*,
+    or None if there are no numeric folders at all.
+
+    • Uses the S3 LIST paginator, so it works for any number of prefixes.
+    • Ignores non‑numeric folder names (e.g. files/tmp/, files/images/, …).
+    • Requires only read permission for ListObjectsV2.
+
+    Example return value: 45237
+    """
+    cloud = DACloudStorage()  # your Docassemble wrapper
+    client, bucket = cloud.client, cloud.bucket_name
+
+    highest = None
+    paginator = client.get_paginator("list_objects_v2")
+
+    for page in paginator.paginate(
+        Bucket=bucket,
+        Prefix=prefix,
+        Delimiter="/",  # ask S3 to give us one prefix per “folder”
+    ):
+        for cp in page.get("CommonPrefixes", []):
+            # strip the leading prefix (“files/”) and trailing “/”
+            name = cp["Prefix"][len(prefix) : -1]
+            if name.isdigit():
+                n = int(name)
+                if highest is None or n > highest:
+                    highest = n
+
+    return highest

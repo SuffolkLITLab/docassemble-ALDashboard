@@ -196,7 +196,7 @@ subquestion: |
   </tr>
   % endfor
   </table>
-question back button: True
+back button: True
 ---
 event: view_session_variables
 code: |

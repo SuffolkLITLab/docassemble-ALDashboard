@@ -1,3 +1,5 @@
+# do not pre-load
+
 import unittest
 from typing import Optional
 from .validate_docx import get_jinja_errors

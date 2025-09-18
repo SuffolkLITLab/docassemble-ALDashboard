@@ -1,0 +1,110 @@
+---
+metadata:
+  title: ALDashboard
+  short title: Dashboard
+  description: |
+    A management dashboard
+  temporary session: True
+  required privileges:
+    - admin
+    - developer
+---
+modules:
+  - docassemble.ALToolbox.misc
+---
+features: 
+  css: al_dashboard.css
+---
+mandatory: True
+question: |
+  ALDashboard 
+Subquestion: |
+  This tool is used by admin users and developers to manage certain tasks.
+
+  ${ button_array(dashboard_buttons) }
+event: dashboard
+---
+variable name: dashboard_buttons
+data:
+  - name: Manage users
+    url: ${ interview_url(i=user_info().package + ":manage_users.yml", reset=1) }
+    image: users-cog
+    privilege:
+      - admin
+      - al_manage_users
+  - name: Usage stats
+    url: ${ interview_url(i="docassemble.InterviewStats:data/questions/stats.yml", reset=1) }
+    image: chart-bar
+    privilege:
+      - admin
+  - name: Install assembly line
+    url: ${ interview_url(i=user_info().package + ":install_assembly_line.yml", reset=1) }
+    image: tasks
+    privilege:
+      - admin
+  - name: Verify API keys
+    url: ${ interview_url(i=user_info().package + ":api_test.yml", reset=1) }
+    image: terminal
+    privilege:
+      - admin
+  - name: Install packages
+    url: ${ interview_url(i=user_info().package + ":install_packages.yml", reset=1) }
+    image: cogs
+  - name: Update packages
+    url: ${ interview_url(i=user_info().package + ":update_packages.yml", reset=1) }
+    image: sync
+  - name: Package scanner
+    url: ${ interview_url(i=user_info().package + ":package_scanner.yml", reset=1) }
+    image: search
+  - name: View installed interviews
+    url: ${ interview_url(i=user_info().package + ":browse_interviews.yml", reset=1) }
+    image: list
+  - name: View answer files
+    url: ${ interview_url(i=user_info().package + ":list_sessions.yml", reset=1) }
+    image: file-alt
+  - name: Manage answer viewers
+    url: ${ interview_url(i=user_info().package + ":manage_answer_viewers.yml", reset=1) }
+    image: users-cog
+    privilege:
+      - admin
+  - name: Generate a review screen draft
+    url: ${ interview_url(i=user_info().package + ":review_screen_generator.yml", reset=1) }
+    image: pencil-alt
+  - name: Validate docx template
+    url: ${ interview_url(i=user_info().package + ":validate_docx.yml", reset=1) }
+    image: file-word
+  - name: Validate translation files
+    url: ${ interview_url(i=user_info().package + ":validate_translation.yml", reset=1) }
+    image: language
+  - name: Prepare translation files
+    url: ${ interview_url(i=user_info().package + ":generate_translation.yml", reset=1) }
+    image: language
+  - name: Validate an attachment fields block
+    url: ${ interview_url(i=user_info().package + ":validate_attachment.yml", reset=1) }
+    image: paperclip
+  - name: PDF tools
+    url: ${ interview_url(i=user_info().package + ":pdf_wrangling.yml", reset=1) }
+    image: file-pdf
+  - name: Auto-label DOCX
+    url: ${ interview_url(i=user_info().package + ":docx_wrangling.yml", reset=1) }
+    image: file-word
+  - name: Compile Bootstrap theme
+    url: ${ interview_url(i=user_info().package + ":compile_bootstrap.yml", reset=1) }
+    image: palette
+  - name: Install fonts
+    url: ${ interview_url(i=user_info().package + ":install_fonts.yml", reset=1)}
+    image: font
+    privilege:
+      - admin
+      - developer
+  - name: Browse Feedback
+    url: ${ interview_url(i="docassemble.GithubFeedbackForm:browse_feedback_sessions.yml", reset=1)}
+    image: comments
+    privilege:
+      - admin
+      - developer
+  - name: Manage S3 file index
+    url: ${ interview_url(i=user_info().package + ":file_index.yml", reset=1) }
+    image: folder-tree
+    privilege:
+      - admin

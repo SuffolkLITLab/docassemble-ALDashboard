@@ -1,0 +1,41 @@
+---
+include:
+  - nav.yml
+---
+modules:
+  - .validate_attachment
+---
+question: |
+  Paste the contents of a long attachment block
+  (beginning with the line `fields:`)
+subquestion: |
+  This tool is a quick way to identify exactly which line of
+  a very long PDF attachment block has a Mako syntax error.
+fields:
+  - YAML fields statement: fields_statement
+    datatype: area
+    rows: 10
+---
+code: |
+  errors = validate_attachment_block(fields_statement)
+  load_all_errors = True
+---
+need:
+  - load_all_errors
+mandatory: True
+question: |
+  % if len(errors):
+  ${ len(errors) } potential errors found
+  % else:
+  No errors found
+  % endif 
+subquestion: |
+  % if len(errors):
+  % for row in errors:
+  #### ${ row[0] }
+  ```
+  ${ row[1] }
+  ```
+  
+  % endfor
+  % endif

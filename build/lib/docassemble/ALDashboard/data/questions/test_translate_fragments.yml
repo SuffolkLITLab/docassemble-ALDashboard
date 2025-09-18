@@ -1,0 +1,38 @@
+---
+mandatory: True
+code: |
+  intro_screen
+  show_results
+---
+modules:
+  - .translation
+---
+code: |
+  example_strings = (
+    (0, "The quick brown fox jumps over the lazy dog."),
+    (20, "Your name"),
+    (22, "${ users[0] }'s birthdate is"),
+    (55, """% if user_is_cool_status == "cool":
+  You are cool!
+  ${ "and it's a cool day!" if the_date < today() else "" }
+  % else:
+  You are not cool!
+  % endif
+  """),
+  )
+---
+question: |
+  Click to test the translation
+subquestion: |
+  ```
+  ${ repr(example_strings) }
+  ```
+continue button field: intro_screen
+---
+continue button field: show_results
+question: |
+  Here are the results
+subquestion: |
+  ```
+  ${ repr(translate_fragments_gpt(example_strings, "en", "es")) }
+  ```

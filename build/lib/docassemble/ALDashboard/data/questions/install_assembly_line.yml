@@ -1,0 +1,573 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  required privileges:
+    - admin
+---
+imports:
+  - requests
+---
+objects:
+  - installer: ALPackageInstaller
+---
+mandatory: True
+code: |
+  # Show any errors first
+  if len(installer.errors) > 0:
+    installer.show_errors
+  
+  backup_file
+  welcome
+  basic_server_config
+  recommended_api_config
+  
+  if configure_api_github:
+    # -- GitHub --
+    # Token with repo permission scope
+    feedback_form_config
+    complete_github_auth
+    # Other config questions
+    github_owners_list
+    save_repo_owners
+    if len(the_config['github issues']['allowed repository owners']) == 1:
+      set_default_owner_from_list
+    else:
+      github_owners_default
+  set_answer_set_config
+  set_custom_interview_list
+  menu_shortcut_config
+  save_config
+  selected_mandatory_packages
+  al_install_done
+  end_screen
+---
+code: |
+  backup_file = da_get_config_as_file()
+---
+question: |
+  Do you want to enable answer sets?
+subquestion: |
+  [Answer 
+  sets](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/framework/answer_sets/) 
+  allow interview users to save and reuse answers in multiple interviews.
+  
+  If you do not want users to be able to re-use answers, turn off this feature.
+fields:
+  - Enable answer sets: enable_answer_sets
+    datatype: yesnoradio
+    default: True
+  - note: |
+      **Answer set imports**
+      
+      If you turn on the "answer set import" feature, users can save answers to a file and import them
+      on the same or a different server. This feature is helpful for developers but is still experimental
+      and carries some risk on production servers.
+      
+      Although there are no known specific attacks, answer set imports allow your users to create
+      arbitrary variables inside your interview. Depending on your interview design, this could have
+      unintended consequences. Therefore, this option is disabled by default.
+  - Enable answer set importing: enable_answer_set_imports
+    datatype: yesnoradio
+    default: False
+---
+question: |
+  Use a custom interview list page?
+subquestion: |
+  You can use a [custom interview list](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/framework/magic_variables#use-the-assemblyline-interview-list-replacement)
+  to replace Docassemble's stock "My interviews" page.
+
+  The replacement page has been expert-tested to improve usability. It is also
+  faster than the default page and can display the progress a user has made in each
+  interview session.
+fields:
+  - Use custom interview list page: enable_custom_interview_list
+    datatype: yesnoradio
+  - What URL should the "Start a new form" link point to?: custom_interview_list_start_page
+    default: https://courtformsonline.org
+    help: |
+      Add a link to a page that lists all of the interviews that you have available.
+      If you do not have a custom landing page, you might want to just use "/list".
+    show if: enable_custom_interview_list
+  - Update session to include progress and user name automatically: enable_session_metadata_update
+    datatype: yesnoradio
+    help: |
+      Select "yes" if you want the party names and the progress of each interview displayed
+      on the custom interview list.
+
+      This feature is recommended, but does add a small database query every 3 screen loads.
+      You can turn it off later if you like.
+    default: True
+    show if: enable_custom_interview_list
+---
+code: |
+  if not "assembly line" in the_config:
+    the_config["assembly line"] = {}    
+  the_config["assembly line"]["enable answer sets"] = enable_answer_sets      
+  the_config["assembly line"]["enable answer set imports"] = enable_answer_set_imports
+  set_answer_set_config = True
+---
+code: |
+  if not "assembly line" in the_config:
+    the_config["assembly line"] = {}    
+  if enable_custom_interview_list:
+    the_config["assembly line"]["update session metadata"] = enable_session_metadata_update
+    the_config["assembly line"]["new form url"] = custom_interview_list_start_page
+    the_config["session list interview"] = "docassemble.AssemblyLine:data/questions/interview_list.yml"
+  set_custom_interview_list = True
+---
+depends on:
+  - allowed_github_repo_owners
+code: |
+  the_config['github issues']['allowed repository owners'] = allowed_github_repo_owners.splitlines()
+  save_repo_owners = True
+---
+code: |
+  github_result = installer.get_validated_github_username( the_config['github issues']['token'] )
+  if type( github_result ) is str:
+    the_config['github issues']['username'] = github_result
+  complete_github_auth = True
+---
+code: |
+  the_config['github issues']['default repository owner'] = the_config['github issues']['allowed repository owners'][0]
+  set_default_owner_from_list = True
+---
+code: |
+  if add_weaver_shortcut and not 'docassemble.ALWeaver:data/questions/assembly_line.yml' in the_config.get('administrative interviews',[]):
+    if not isinstance(the_config.get('administrative interviews'), list):
+      the_config['administrative interviews'] = []
+    the_config['administrative interviews'].append('docassemble.ALWeaver:data/questions/assembly_line.yml')
+  if add_dashboard_shortcut and not 'docassemble.ALDashboard:data/questions/menu.yml' in the_config.get('administrative interviews',[]):
+    if not isinstance(the_config.get('administrative interviews'), list):
+      the_config['administrative interviews'] = []
+    the_config['administrative interviews'].append('docassemble.ALDashboard:data/questions/menu.yml')
+       
+  if add_playground_examples and not 'docassemble.ALRecipes:data/questions/examples.yml' in the_config.get('playground examples', []):
+    if not isinstance(the_config.get('playground examples'), list):
+      the_config['playground examples'] = []
+    the_config['playground examples'].insert(0, 'docassemble.ALRecipes:data/questions/examples.yml')
+    # Add the default playground examples explicitly
+    if not 'docassemble.base:data/questions/example-list.yml' in the_config['playground examples']:
+      the_config['playground examples'].append('docassemble.base:data/questions/example-list.yml')
+  if add_word_translations and not "docassemble.AssemblyLine:data/sources/es-words.yml" in the_config.get('words'):
+    if not isinstance(the_config.get('words'), list):
+      the_config['words'] = []
+    the_config['words'].append('docassemble.AssemblyLine:data/sources/es-words.yml')
+  
+  results = da_write_config(the_config)
+  save_config = True
+---
+id: welcome
+continue button field: welcome
+question: |
+  Document Assembly Line Installation
+subquestion: |
+  Thank you for using the [Document Assembly Line](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/)
+  framework.
+  
+  This script will help you:
+  
+  1. Install packages; and
+  2. Update your Docassemble configuration file.
+  
+  When you finish this script, you should be able to run and build your
+  own Docassemble interviews using the Assembly Line framework. For example,
+  the interviews hosted at [CourtFormsOnline.org](https://courtformsonline.org).
+  
+  You may want to pause and download a copy of your
+  [:file-download: configuration file](${ backup_file.url_for(attachment=True) }) before you continue.
+---
+code: |
+  the_config = da_get_config()
+  
+  # Create some empty structures in config for new settings
+  if not the_config.get('efile proxy'):
+    the_config['efile proxy'] = {}
+  if not the_config.get('google'):
+    the_config['google'] = {}
+  if not the_config.get('voicerss'):
+    the_config['voicerss'] = {}
+  if not the_config.get('github issues'):
+    the_config['github issues'] = {} 
+---
+id: configuration questions
+continue button field: basic_server_config
+question: |
+  Basic Server Settings
+subquestion: |
+  Look over the settings below. Make sure that they match your
+  organization's branding. These are **not** required for the 
+  Assembly Line, but may leak out in log files and emails. You should
+  get these right if you can.
+fields:
+  - Server title: the_config['default title']
+    default: ${ the_config.get('default title') }
+  - Server short title: the_config['default short title']
+    default: ${ the_config.get('default short title') }
+  - App name: the_config['appname']
+    default: ${ the_config.get('appname', the_config.get('default short title')) }
+  - note: |
+      ---
+      Some features require background processing, which means you need
+      the "Check-in" interval set. We recommend the default interval of
+      6 seconds (6000 microseconds).
+    show if:
+      code: |
+        the_config.get('checkin interval') != 6000
+  - Check-in interval: the_config['checkin interval']
+    default: 6000
+    show if:
+      code: |
+        the_config.get('checkin interval') != 6000
+  - note: |
+      ---
+      The Assembly Line makes extensive use of Font Awesome. Some icons
+      may not work if you do not use font awesome as your icon set.
+    show if:
+      code: |
+        the_config.get('default icons') != 'font awesome'
+  - Default icon set: the_config['default icons']
+    default: font awesome
+    show if:
+      code: |
+        the_config.get('default icons') != 'font awesome'
+---
+id: api configuration
+continue button field: recommended_api_config
+question: |
+  Optional API Configuration
+subquestion: |
+  Select the API configurations that you are ready to setup now.
+  
+  <div class="accordion" id="about-apis">
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="headingOne">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne">
+          ${ about_api_template.subject_as_html() }
+        </button>
+      </h2>
+      <div id="collapseOne" class="accordion-collapse collapse" aria-labelledby="headingOne" data-bs-parent="#about-apis">
+        <div class="accordion-body">
+          ${ about_api_template.content_as_html() }
+        </div>
+      </div>
+    </div>
+  </div>
+
+fields:
+  - Configure [Google API](https://console.cloud.google.com) for maps and geocoding (usually free, credit card required): configure_api_google
+    datatype: yesno
+    help: |
+      Create an API key by visiting [Google Cloud Console](https://console.cloud.google.com/). You
+      need to add a credit card, although there is a very generous free tier. Assign the API key
+      both Google Places, Geocoding, and Maps Javascript access.
+  - Google API key (for geocoding, IP restrictions): the_config['google']['api key']
+    default: ${ the_config['google'].get('api key') }
+    show if: configure_api_google
+    help: |
+      This API key should probably have IP address access restricted to ${ bold(requests.get('https://checkip.amazonaws.com').text.strip() or "UNKNOWN") }
+  - Google Maps API key (for maps and address auto completion): the_config['google']['google maps api key']
+    default: ${ the_config['google'].get('api key') }
+    show if: configure_api_google
+    help: |
+      This API key should probably have "referrer" access restricted to ${ bold(get_config("url root")) }/*
+  - Configure [VoiceRSS](https://voicerss.org) for text to speech (free, no credit card): configure_api_voicerss
+    datatype: yesno
+    help: |
+      VoiceRSS is a free service that allows readers to listen to text on-screen be read aloud.
+      It may be helpful for users with low literacy or people with limited vision that do not
+      have a screen reader. It can be turned on or off on a per-interview basis.
+  - Enable VoiceRSS: the_config['voicerss']['enable']
+    datatype: yesno
+    show if: configure_api_voicerss    
+  - VoiceRSS API Key: the_config['voicerss']['key']
+    default: ${ the_config['voicerss'].get('key') }    
+    show if: configure_api_voicerss
+  - note: |
+      % if not the_config.get('mail'):
+      ** You do not appear to have a valid mail configuration.**
+      Follow the Docassemble instructions to [setup a mail 
+      server](https://docassemble.org/docs/config.html#mail) **after**
+      you finish this installation process.
+      
+      We recommend using SendGrid, not an SMTP server.
+      % endif
+  - Configure [e-filing](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/efiling/overview): configure_api_efile
+    datatype: yesno
+    help: |
+      If you choose to use the [e-file proxy server](https://github.com/SuffolkLITLab/EfileProxyServer),
+      you should also generate or [get an API token](https://github.com/SuffolkLITLab/EfileProxyServer/#making-api-tokens)
+      to authenticate this server's connection.
+      
+      Using the e-file connection is rare. Feel free to skip this step.       
+  - E-file server URL: the_config['efile proxy']['url']
+    default: ${ the_config['efile proxy'].get('url') or "https://efile.suffolklitlab.org:9000" }
+    show if: configure_api_efile
+  - E-file proxy api key: the_config['efile proxy']['api key']
+    default: ${ the_config['efile proxy'].get('api key') }
+    show if: configure_api_efile
+  - E-file proxy JeffNet api key (rare): the_config['efile proxy']['jeffnet api token']
+    default: ${ the_config['efile proxy'].get('jeffnet api token') }
+    show if: configure_api_efile
+    required: False
+  - Configure [GitHub](https://github.com) API for showing package modification date and automating feedback (free): configure_api_github
+    datatype: yesno
+    help: |
+      The GitHub API can be used to:
+      
+      1. Display the last modified date of packages on the about screen
+      1. Add GitHub issues when users submit feedback
+  - note: |
+      **OK, you will setup GitHub on the next page.**
+    show if: configure_api_github
+  - note: |
+      **We cannot yet help you configure**:
+      
+      - [Twilio](https://docassemble.org/docs/config.html#twilio)
+      - [EMail](https://docassemble.org/docs/config.html#mail)
+---
+template: about_api_template
+subject: |
+  About optional APIs
+content: |
+  Below is a list of API configurations that we recommend that you make.
+
+  If you do not already have these APIs enabled, you may want to take a minute
+  to sign up for each API. You can can use this page to make it a little
+  easier to write the updated values in your configuration file.
+
+  If you do not have the API key now, that's OK. We will add a placeholder in 
+  your configuration file that may still make it easier to edit and update
+  later.
+
+  We recommend setting up the following "free" / generous free
+  tier API keys:
+
+  * Server-run API queries: [Google API for geocoding](https://developers.google.com/maps/documentation/geocoding/overview)
+    (Use an IP address restriction--this server's IP address appears to be ${ bold(requests.get('https://checkip.amazonaws.com').text.strip() or "UNKNOWN") }) (credit card required)
+  * Frontend browser API queries: [Google JavaScript API for maps](https://developers.google.com/maps/documentation/javascript/overview) / [Google places for autocompletion](https://developers.google.com/maps/documentation/places/web-service/overview)
+    (Use a referer restriction ) (credit card required)
+  * [VoiceRSS](http://www.voicerss.org/) screen reader (no credit card required)
+
+  Please confirm that you have enabled "geocoding", "maps javascript" and "places" on
+  your Google Cloud Console account. Billing must also be turned on,
+  although you can set a quota well below the threshold that would trigger
+  any costs.
+
+  You should also set up the following:
+
+  * Mail (SendGrid or Mailgun have free tiers, but limited)
+  * Twilio for SMS
+---
+# This must be tested with a private repository
+#  If your GitHub organization's repositories are private, the account must have permission to see it and file issues.
+id: github PAT
+continue button field: feedback_form_config
+question: |
+  Feedback and "About" page information with GitHub
+subquestion: |
+  Assembly Line uses GitHub to let you:
+  
+  1. Let users give feedback about an interview.
+  2. Display a "last updated" date on the "About" page of an interview.
+  1. Install and update packages from GitHub.
+
+  We recommend using **2 separate GitHub accounts** for these tasks.
+
+  First, in order to use GitHub you should create a dedicated GitHub account. You can use an account that already exists, but we recommend having an account that only handles Assembly Line functionality.
+  
+  The account must have permission to edit your GitHub organization's repositories. You can read [GitHub's documentation about setting an account's permissions](https://docs.github.com/en/organizations/managing-access-to-your-organizations-repositories/repository-roles-for-an-organization).
+  
+  To complete this page, you need to authorize your docassemble server to use that account to make issues. You can do that by creating a personal access token (PAT):
+      
+  1. Follow [these directions to make a personal access token (PAT) for the account](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token#creating-a-token) on GitHub, stopping at the "expiration" section.
+      1. Set the expiration date to "No expiration".
+      1. Tap the checkbox for "repo" permissions.
+  1. Finish creating the personal access token.
+  1. Copy the token and paste it below
+
+  If you have a private repository, you will need a second token with "repo" permissions.
+
+  This token is only used to install and update packages, and should not be the same
+  as the account used for feedback. It is OK for this token to be associated with your
+  personal GitHub account.
+fields:
+  - Personal access token for authoring issues: the_config['github issues']['token']
+    default: ${ the_config['github issues'].get('token', '') }
+  - Personal access token for installing private repositories: the_config['assembly line']['github install token']
+    default: ${ the_config['assembly line'].get('github install token', '') }
+    required: False
+    help: |
+      If you have private repositories, you will need a second token with "repo" permissions.
+      This token is only used to install and update packages.
+---
+id: github owners list
+continue button field: github_owners_list
+question: |
+  Avoid GitHub issue spamming
+subquestion: |
+  To make sure that no one uses the feedback forms to spam just any GitHub repository with issues, you can limit your feedback forms to only make issues to repositories owned by specific users or organizations.
+      
+  Here, list the usernames of all the GitHub users or organizations who own repositories where you will allow users make issues.
+  
+  You can list just one if you want.
+fields:
+  - Usernames[BR](one per line): allowed_github_repo_owners
+    datatype: area
+    default: |
+      ${ "\n".join(the_config['github issues'].get('allowed repository owners',[])) }
+---
+id: github owners default
+continue button field: github_owners_default
+question: |
+  Default GitHub repository owner
+subquestion: |
+  Finally, you can also choose a default repository owner so that interviews don't have to each list their own. Pick one of the usernames to be the default repository owner.
+fields:
+  - Default account name: the_config['github issues']['default repository owner']
+    input type: radio
+    code: |
+      the_config['github issues'].get('allowed repository owners', [])
+---
+id: shortcuts
+continue button field: menu_shortcut_config
+question: |
+  Menu Shortcuts
+fields:
+  - Add shortcut to Dashboard: add_dashboard_shortcut
+    datatype: yesno
+    default: True
+  - Add shortcut to Weaver: add_weaver_shortcut
+    datatype: yesno
+    default: True
+  - Add Assembly-Line model questions to Playground: add_playground_examples
+    datatype: yesno
+    default: True  
+  - Add words.yml translations: add_word_translations
+    datatype: yesno
+    default: True  
+---
+variable name: mandatory_packages
+data:
+  "https://github.com/SuffolkLITLab/docassemble-AssemblyLine":
+    label: Assembly Line (Core)
+    help: |
+      The core Assembly Line runtime code, with default styling.
+  "https://github.com/SuffolkLITLab/docassemble-ALToolbox":
+    label: ALToolbox
+    help: |
+      Utility functions and web components that may help with or without the
+      Assembly Line framework. This will be installed regardles if you select
+      "Core" above, but you can force an independent update here.
+  "https://github.com/SuffolkLITLab/docassemble-GithubFeedbackForm":
+    label: Feedback Form
+    help: |
+      Feedback form used in the footer by default. This is a dependency of
+      the "Core" package above that will always be installed, but you can
+      force an independent update here. 
+---
+variable name: optional_packages
+data:
+  "https://github.com/SuffolkLITLab/docassemble-ALWeaver":
+    label: ALWeaver
+    help: |
+      A tool to help turn templates into draft interviews quickly.
+  "https://github.com/SuffolkLITLab/docassemble-ALRecipes":
+    label: "Playground examples"
+    help: |
+      Model questions for composite fields, such as name, address,
+      and more that you can insert directly into interviews.
+  "https://github.com/SuffolkLITLab/docassemble-InterviewStats/":
+    label: InterviewStats
+    help: |
+      A package to help view detailed statistics generated by 
+      store_interview_snapshot() (created by default just before
+      download for all Assembly Line packages)
+  "https://github.com/SuffolkLITLab/docassemble-ALMassachusetts":
+    label: Massachusetts-specific questions
+  "https://github.com/GBLS/docassemble-MACourts":
+    label: Massachusetts-specific list of courts
+    help: |
+      This is installed automatically if you select "Massachusetts-
+      specific questions".
+  "https://github.com/SuffolkLITLab/docassemble-MassAccess":
+    label: |
+      Mass Access / Court Forms Online branding
+    help: |
+      Logo and branding for Court Forms Online / Suffolk LIT Lab. Selecting
+      this will also automatically install the list of courts and Massachusetts-
+      specific questions.
+  "https://github.com/SuffolkLITLab/docassemble-ALDashboard":
+    label: ALDashboard
+    help: |
+      A menu and dashboard for small administrative tasks, which includes
+      the installation script you are running now.
+  "https://github.com/SuffolkLITLab/docassemble-EFSPIntegration/":
+    label: E-filing client
+    help: |
+      E-filing client for Tyler EFM
+---
+modules:
+  - .aldashboard
+---
+code: |
+  for pkg_url in selected_mandatory_packages.true_values() + selected_optional_packages.true_values():
+    pkgname = install_from_github_url(pkg_url)
+  reset(pkgname)
+  al_install_done = True
+---
+question: |
+  What packages do you want to install or update?
+continue button label: Install Assembly Line
+fields:
+  - Core packages: selected_mandatory_packages
+    datatype: checkboxes
+    code: |
+      [{key: mandatory_packages[key].get('label'), "help": mandatory_packages[key].get('help')} for key in mandatory_packages]
+    default:
+      - https://github.com/SuffolkLITLab/docassemble-ALToolbox
+      - https://github.com/SuffolkLITLab/docassemble-AssemblyLine
+      - https://github.com/SuffolkLITLab/docassemble-GithubFeedbackForm
+    none of the above: False      
+  - Optional packages: selected_optional_packages
+    datatype: checkboxes
+    code: |
+      [{key: optional_packages[key].get('label'), "help": optional_packages[key].get('help')} for key in optional_packages]  
+    none of the above: False      
+---
+event: end_screen
+question: |
+  Installation complete
+subquestion: |
+  Check the status in the [Package management page](/updatepackage)
+---
+generic object: ALPackageInstaller
+event: x.show_errors
+id: error page
+question: |
+  Sorry, something went wrong
+subquestion: |
+  % for error in x.errors:
+  ##### :exclamation-circle: ${ getattr(error, error.template_name).subject }
+  
+  ${ getattr(error, error.template_name) }
+  
+  ---
+  % endfor
+---
+generic object: ErrorLikeObject
+template: x.github_credentials_error
+subject: |
+  GitHub token
+content: |
+  GitHub does not recognize the token ending in **${ the_config['github issues']['token'][-4:] }**. Are you sure you copied it correctly? If not, try deleting the token you made and make a new one.
+---
+generic object: ErrorLikeObject
+template: x.github_permissions_error
+subject: |
+  GitHub token permissions
+content: |
+  The GitHub token you gave is missing "repo" permissions. Instead, it has these permissions: **${ comma_and_list(x.scopes) }**. Make a new token that includes "repo" scope.
+---
+  

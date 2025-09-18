@@ -1,0 +1,51 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: |
+    Validate DOCX Template
+---
+modules:
+  - .validate_docx
+---
+mandatory: True
+code: |
+  get_upload
+  show_results
+---
+code: |
+  all_files = []
+  for file in get_upload:
+    all_files.append({"file": file.filename,
+      "errors": get_jinja_errors(file.path())
+    })    
+---
+question: |
+  Upload your DOCX template(s)
+fields:
+  - no label: get_upload
+    datatype: files
+---
+event: show_results
+question: |
+  % if any(f for f in all_files if f["errors"]):
+  Errors found
+  % else:
+  No errors found
+  % endif
+subquestion: |
+  % if any(f for f in all_files if f["errors"]):
+  ### Files with errors
+  
+  % for f in (f for f in all_files if f["errors"]):
+  * ${ f["file"] }
+  % endfor
+  
+  % for f in all_files:
+  % if f["errors"]:
+  #### ${ f["file"] }
+  ${ indent(f["errors"]) }
+  % endif
+  % endfor
+  % endif

@@ -1,0 +1,153 @@
+---
+include:
+  - nav.yml
+---
+modules:
+  - .translation
+---
+metadata:
+  title: |
+    Translation support tool    
+---
+mandatory: True
+code: |
+  the_yaml_path
+  if not the_task.ready():
+    waiting_screen
+  if the_task.failed():
+    error_screen
+  show_translation_results
+---
+# code: |
+#   translations = [
+#     translation_file(the_yaml_path, tr_lang, use_gpt=use_gpt)
+#     for tr_lang
+#     in tr_langs.split()
+#   ]
+---
+code: |
+  the_task = background_action('translate_file')
+---
+event: waiting_screen
+question: |
+  Please wait while we translate your file
+subquestion: |
+  <div class="spinner-border" role="status">
+    <span class="visually-hidden">Processing...</span>
+  </div>
+reload: True
+---
+event: translate_file
+code: |
+  background_error_action('bg_fail', stage='calculation')
+  translations = [
+    translation_file(
+        the_yaml_path, 
+        tr_lang, 
+        use_gpt=use_gpt, 
+        openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
+        interview_context=interview_context if use_context else None,
+        model = model,
+      )
+    for tr_lang
+    in tr_langs.split()
+  ]
+  background_response_action('save_translations', translations=translations)
+---
+event: save_translations
+code: |
+  background_error_action('bg_fail', stage='saving')
+  translations = action_argument('translations')
+  background_response()
+---
+question: |
+  What file do you want to translate?
+fields:
+  - "YAML file path (like: docassemble.AssemblyLine:assembly_line.yml)": the_yaml_path
+    datatype: combobox
+    code: |
+      [
+        {form["filename"]: form["title"] }
+        for form in interview_menu()
+      ]
+  - "Language codes (like: es, one per line)": tr_langs
+    datatype: area
+  - Include a draft translation with GPT or Google Translate: use_gpt
+    datatype: yesno
+    show if:
+      code: |
+        gpt_is_available() # or google_translate_is_available()
+  - Model to use (nano is normally smart enough): model
+    input type: radio
+    choices:
+      - Nano (cheapest): gpt-4.1-nano
+      - Mini (still cheap): gpt-4.1-mini
+      - Normal (moderately expensive): gpt-4.1
+    show if: use_gpt
+    default: gpt-4.1-nano
+  - Include context to help the translation: use_context
+    datatype: yesno
+    show if: use_gpt
+  - Context (explain what the interview is about, so isolated fragments get a better translation): interview_context
+    datatype: area
+    show if: use_context
+  - Add a glossary of special terms to help the translation: use_special_words
+    datatype: yesno
+    show if: use_gpt
+  - 'Add a list of terms and their translations (one per line, like: "term: translation")': special_words
+    datatype: area
+    show if: use_special_words
+  - note: |
+      To use AI translation, you need to set up an OpenAI account and get an API key.
+    show if:
+      code: |
+        not gpt_is_available()
+
+---
+event: show_translation_results
+question: |
+  Translation results
+subquestion: |
+  % for index, tr_lang in enumerate(tr_langs.split()):
+  ## ${ tr_lang }
+  ${ translations[index].file }
+
+  Number of words to translate: ${ translations[index].untranslated_words }
+
+  Number of untranslated rows: ${ translations[index].untranslated_segments }
+
+  Percentage of rows that are not translated: %${ translations[index].untranslated_segments/translations[index].total_rows * 100 }
+  % endfor
+---
+event: bg_fail
+code: |
+  errmess = "Failure at the " \
+            + action_argument('stage') \
+            + " stage due to a " \
+            + action_argument('error_type') \
+            + " error"
+  background_response('handled_error')
+---
+event: error_screen
+question: |
+  There was an error.
+subquestion: |
+  The saved error message was
+  ${ errmess }.
+  
+  The value was
+  `${ the_task.get() }`.
+  
+  The error was
+  `${ the_task.result().error_type }`.
+
+  The trace was
+  
+  ${ indent(the_task.result().error_trace) }
+
+  The message was
+  
+  ${ indent(the_task.result().error_message) }
+
+  The variables were
+  `${ repr(the_task.result().variables) }`.  

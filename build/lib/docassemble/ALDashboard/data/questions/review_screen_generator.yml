@@ -1,0 +1,268 @@
+---
+include:
+  - docassemble.ALToolbox:display_template.yml
+  - nav.yml
+---
+metadata:
+  title: |
+    AL Review Generator
+  temporary session: True
+---
+mandatory: True
+code: |
+  yaml_file
+  results
+---
+question: |
+  Generate a review screen
+subquestion: |
+  This interview will build you a draft of a review screen from the question.yml file.
+  
+  Please make sure to upload any YAML files containing questions as well as any YAML
+  files containing `objects` blocks.
+fields:
+  - Upload 1 or more YAML files: yaml_file
+    datatype: files
+  - Create revisit screens for lists: build_revisit_blocks
+    datatype: yesno
+    default: True
+  - Point section blocks to review screen: point_sections_to_review
+    datatype: yesno
+    default: True
+---
+code: |
+  from ruamel.yaml import YAML
+
+  yaml = YAML(typ='safe', pure=True)
+  yaml_parsed = []
+  for f in yaml_file:
+    yaml_parsed.extend(list(yaml.load_all(f.slurp())))
+
+  del yaml
+---
+code: |
+  # identify all questions that set a variable in the interview
+  # they will be added as a dictionary of label: field, with other modifiers
+  
+  objects_temp = []
+  attributes_list = {}
+  questions_temp = []
+  generic_question_blocks = []
+  sections_temp = []
+  for doc in yaml_parsed:
+    if doc and any(key in doc for key in ["fields", "question", "objects", "sections", "metadata"]):
+      question = {"question": doc.get('question',"").strip() }
+      generic_object = doc.get("generic object")
+      if generic_object:
+        generic_question_blocks.append(doc)
+        continue
+      fields_temp = []
+      if 'fields' in doc and isinstance(doc["fields"], list):
+        for field in doc["fields"]:
+          if field and "code" in field:
+            try:
+              object_name = re.match(r"((\w+\[\d+\])|\w+)", field["code"])[1]
+              if object_name == "x" or "[i]" in field["code"]:
+                continue
+            except:
+              continue
+            else:
+              if ".name_fields(" in field["code"]:
+                fields_temp.extend(
+                  [
+                    {"First": f"{ object_name }.name.first"},
+                    {"Middle": f"{ object_name }.name.middle"},
+                    {"Last": f"{ object_name }.name.last"},
+                  ]
+                  )
+              elif ".address_fields(" in field["code"]:
+                fields_temp.extend(
+                  [
+                    {"Address": f"{ object_name }.address.address"},
+                    {"Apartment or Unit": f"{ object_name }.address.unit"},
+                    {"City": f"{ object_name }.address.city"},
+                    {"State": f"{ object_name }.address.state"},
+                    {"Zip": f"{ object_name }.address.zip"},
+                    {"Country": f"{ object_name }.address.country"},
+                  ]
+                  )
+              elif ".gender_fields(" in field["code"]:
+                fields_temp.extend(
+                  [
+                    {"Gender": f"{ object_name }.gender"},
+                  ]
+                  )
+              elif ".language_fields(" in field["code"]:
+                fields_temp.extend(
+                  [
+                    {"Language": f"{ object_name }.language"},
+                  ]
+                  )
+          elif isinstance( (val := next(iter(field.values()))), str ) and "[i]" in val:
+            # log(next(iter(field.values())), "success")
+            obj_match = re.match(r"(\w+).*\[i.*", next(iter(field.values())))
+            if obj_match:
+              object_name = obj_match[1]
+            else:
+              continue # Only handle [i] on the first level
+            del obj_match
+            if object_name not in attributes_list:
+              attributes_list[object_name] = []
+            attributes_list[object_name].append(field)
+          else:
+            fields_temp.append(field)
+      elif 'yesno' in doc:
+        fields_temp.append({doc.get('question',""): doc.get('yesno'), 'datatype':'yesno'})
+      elif 'noyes' in doc:
+        fields_temp.append({doc.get('question',""): doc.get('noyes'), 'datatype':'noyes'})
+      elif 'signature' in doc:
+        fields_temp.append({doc.get('question',""): doc.get('signature'), 'datatype': 'signature'})
+      elif 'field' in doc:
+        if 'choices' in doc or 'buttons' in doc:
+          fields_temp.append({doc.get('question',""): doc.get('field'), 'datatype': 'radio' })
+      elif 'objects' in doc:
+        objects_temp.extend(doc["objects"])
+      elif 'sections' in doc:
+        sections_temp.extend([next(iter(sec.keys()), [""]) for sec in doc["sections"]])
+      question["fields"] = fields_temp
+      if question["fields"]:
+        questions_temp.append(question)
+  objects = objects_temp
+  questions = questions_temp
+  section_events = sections_temp
+  del objects_temp
+  del questions_temp
+  del sections_temp
+
+---
+code: |
+  REVIEW_EVENT_NAME = "review_form"
+  review_fields_temp = []
+  revisit_screens = []
+  tables = []
+  sections = []
+  if point_sections_to_review:
+    for sec in section_events:
+      sections.append({
+        "event": sec,
+        "code": REVIEW_EVENT_NAME,
+      })
+  if build_revisit_blocks:
+    for obj in objects:
+      obj_name = next(iter(obj.keys()), [""])
+      obj_type = next(iter(obj.values()), [""])
+      # We skip types that don't need revisit screens, and types that have default revisit screens
+      # defined in AssemblyLine
+      skippable_types = ["ALDocument.", "ALDocumentBundle.", "DAStaticFile.", "ALPeopleList."]
+      if any(map(lambda val: obj_type.startswith(val), skippable_types)):
+        continue
+      review = {}
+      review["Edit"] = f"{ obj_name }.revisit"
+      review["button"] = f"**{ obj_name.replace('_', ' ').title() }**\n\n% for item in { obj_name }:\n- ${{ item }}\n% endfor"
+      review_fields_temp.append(review)
+      revisit_screen = {
+        "id": f"revisit { obj_name }",
+        "continue button field": f"{ obj_name }.revisit",
+        "question": f"Edit your answers about { obj_name.replace('_', ' ').title() }",
+      }
+      revisit_screen["subquestion"] = f"${{ {obj_name}.table }}\n\n${{ {obj_name}.add_action() }}"
+      revisit_screens.append(revisit_screen)
+      if obj_name in attributes_list:
+        tables.append({
+          "table": f"{ obj_name }.table",
+          "rows": obj_name,
+          "columns": [
+            {next(iter(attribute.values())).split('.')[-1] if next(iter(attribute.keys())) == "no label" else next(iter(attribute.keys())): f"row_item.{ next(iter(attribute.values())).split('.')[-1] } if hasattr(row_item, '{next(iter(attribute.values())).split('.')[-1]}') else ''"}
+            for attribute in attributes_list[obj_name]
+          ],
+          "edit": [
+            next(iter(attribute.values())).split('.')[-1]
+            for attribute in attributes_list[obj_name]
+          ],
+        })
+  for question in questions:
+    if len(question["fields"]):
+      fields = question["fields"]
+      first_label_pair = next((pair for pair in fields[0].items() if pair[0] not in not_labels), None)
+      if first_label_pair is None:
+        first_label_pair = (fields[0].get("label", ""), fields[0].get("field", ""))
+      review = {}
+      review['Edit'] = first_label_pair[1] # This will be the trigger variable in edit button
+      # Bolding with `**` over multiple lines doesn't work; use <strong> instead
+      if '\n' in question['question']:
+        review["button"] = f"<strong>\n{question['question'] }\n</strong>\n\n"
+      else:
+        review["button"] = f"**{ question['question'] }**\n\n"
+      for field in fields:
+        label_pair = next((pair for pair in field.items() if pair[0] not in not_labels), None)
+        if label_pair is None:
+          label_pair = (field.get("label", ""), field.get("field", ""))
+
+        if label_pair[0]:
+          if field.get("show if"):
+            show_if = field.get("show if")
+            if isinstance(show_if, str):
+              review['button'] += f"% if showifdef('{show_if}'):\n"
+            elif isinstance(show_if, dict) and show_if.get("variable"):
+              var = show_if.get("variable")
+              val = show_if.get("is")
+              if val not in ["False", "True", "false", "true"]:
+                val = f'"{val}"'
+
+              review['button'] += f"% if showifdef('{var}') == {val}:\n"
+          else:
+            show_if = None
+
+          if label_pair[0] != "no label":
+            review['button'] += f"{label_pair[0] or ''}: "
+
+          if field.get('datatype') in ['yesno','yesnoradio','yesnowide']:
+            review['button'] += f"${{ word(yesno({ label_pair[1] })) }}\n"
+          elif field.get('datatype') == 'currency':
+            review['button'] += f"${{ currency(showifdef('{label_pair[1]}')) }}\n"
+          else:
+            review['button'] += f"${{ showifdef('{label_pair[1]}') }}\n"
+
+          if show_if:
+            review['button'] += "% endif\n\n"
+          else:
+            review['button'] += "\n"
+      review["button"] = review["button"].strip() + "\n"
+      review_fields_temp.append(review)
+  review_yaml = sections + [
+    {
+      "id": "review screen",
+      "event": REVIEW_EVENT_NAME,
+      "question": "Review your answers",
+      'review': review_fields_temp
+    },
+  ] + revisit_screens + tables
+---
+code: |
+  not_labels = ['label','datatype','default', 'help', 'min','max','maxlength','minlength','rows','choices','input type','required','hint','code','exclude','none of the above','shuffle','show if','hide if','enable if','disable if','js show if','js hide if','js enable if','js disable if','disable others','note','html','field', 'field metadata','accept','validate','address autocomplete']
+---
+code: |
+  # import pyyaml
+  # from yaml import dump
+  from pyaml import dump_all
+  review_yaml_dumped = dump_all(review_yaml, string_val_style='|', sort_keys=False)
+---
+template: review_yaml_template
+content: |
+  ${ review_yaml_dumped }
+---
+event: results
+question: |
+subquestion: |  
+  ${ display_template(review_yaml_template, classname="make_code", copy=True) }
+css: |
+  <style>
+  .make_code {
+    font-family: var(--bs-font-monospace);
+    font-size: 12px;
+  }
+  .make_code.scrollable-panel {
+    max-height: 2000px;
+  }
+  </style>
+  

@@ -1,3 +1,145 @@
+"""
+GitHub Project Maintenance Tool for Docassemble
+
+This module provides command-line tools for automating GitHub repository maintenance tasks
+across multiple repositories, particularly for Docassemble packages. It enables bulk operations
+like adding issues, managing tags, and linking issues to GitHub projects.
+
+PREREQUISITES:
+==============
+1. Install required dependencies:
+   pip install PyGithub
+
+2. GitHub Personal Access Token (PAT):
+   You need a GitHub Personal Access Token with the following permissions:
+   - repo (full control of private repositories)
+   - admin:org (for organization operations)
+   - project (for GitHub Projects v2 access)
+   
+   Create one at: https://github.com/settings/tokens
+
+AVAILABLE COMMANDS:
+==================
+
+1. get_package_names
+   Gets package names from a Docassemble server.
+
+2. add_tag_to_repos
+   Adds a topic/tag to specific repositories.
+
+3. process_packages_and_add_tag
+   Gets packages from a Docassemble server and adds tags to corresponding repositories.
+
+4. add_issues_and_create_cards
+   Creates issues across repositories with a specific topic and adds them to a GitHub project.
+
+5. link_issues
+   Links existing issues with specific titles to a GitHub project.
+
+USAGE EXAMPLES:
+===============
+
+Basic Usage:
+-----------
+python project_maintenance.py <command> [arguments]
+
+1. Get package names from a Docassemble server:
+   python project_maintenance.py get_package_names courtformsonline.org
+
+2. Add a tag to specific repositories:
+   python project_maintenance.py add_tag_to_repos \\
+     YOUR_GITHUB_TOKEN \\
+     SuffolkLITLab \\
+     docassemble-ALAffidavitOfIndigency docassemble-ALDocument \\
+     legal-tech
+
+3. Process packages from server and add tags:
+   python project_maintenance.py process_packages_and_add_tag \\
+     courtformsonline.org \\
+     YOUR_GITHUB_TOKEN \\
+     SuffolkLITLab \\
+     assembly-line
+
+4. Add issues across repositories and create project cards:
+   python project_maintenance.py add_issues_and_create_cards \\
+     YOUR_GITHUB_TOKEN \\
+     SuffolkLITLab \\
+     "Assembly Line Maintenance" \\
+     assembly-line \\
+     "Update documentation" \\
+     "Please update the README.md file with current installation instructions."
+
+5. Link existing issues to a project:
+   python project_maintenance.py link_issues \\
+     YOUR_GITHUB_TOKEN \\
+     SuffolkLITLab \\
+     "Assembly Line Maintenance" \\
+     assembly-line \\
+     "Update documentation"
+
+COMMON WORKFLOWS:
+================
+
+Workflow 1: Batch Issue Creation for Maintenance
+-----------------------------------------------
+# Step 1: Create issues across all Assembly Line packages
+python project_maintenance.py add_issues_and_create_cards \\
+  YOUR_GITHUB_TOKEN \\
+  SuffolkLITLab \\
+  "Q1 2024 Maintenance" \\
+  assembly-line \\
+  "Security audit required" \\
+  "Please review and update dependencies for security vulnerabilities. See issue template for checklist."
+
+Workflow 2: Repository Organization
+---------------------------------
+# Step 1: Get packages from production server
+python project_maintenance.py get_package_names courtformsonline.org
+
+# Step 2: Add organization tags based on server packages  
+python project_maintenance.py process_packages_and_add_tag \\
+  courtformsonline.org \\
+  YOUR_GITHUB_TOKEN \\
+  SuffolkLITLab \\
+  production-ready
+
+Workflow 3: Project Management
+-----------------------------
+# Step 1: Create issues for a new initiative
+python project_maintenance.py add_issues_and_create_cards \\
+  YOUR_GITHUB_TOKEN \\
+  SuffolkLITLab \\
+  "Accessibility Improvements" \\
+  assembly-line \\
+  "WCAG 2.1 Compliance Review" \\
+  "Review forms for WCAG 2.1 AA compliance. Focus on: keyboard navigation, screen reader compatibility, color contrast, and form labels."
+
+# Step 2: Later, link related existing issues
+python project_maintenance.py link_issues \\
+  YOUR_GITHUB_TOKEN \\
+  SuffolkLITLab \\
+  "Accessibility Improvements" \\
+  assembly-line \\
+  "Screen reader compatibility"
+
+AUTHENTICATION SECURITY:
+========================
+- Never commit your GitHub token to version control
+- Use environment variables: export GITHUB_TOKEN=your_token_here
+- Then use: $GITHUB_TOKEN in place of YOUR_GITHUB_TOKEN in examples
+- Consider using GitHub CLI authentication: gh auth token
+
+TIPS:
+=====
+- Use quotes around multi-word arguments (project names, issue titles, etc.)
+- Repository names are automatically converted from package names (dots become hyphens)
+- The script filters repositories by GitHub topics/tags for targeted operations
+- GitHub Projects v2 (Next-Generation) are required for project operations
+- Large batch operations may hit GitHub API rate limits - the script includes error handling
+
+For more information, see: https://github.com/SuffolkLITLab/docassemble-ALDashboard
+"""
+
 # do not pre-load
 
 # before using, pip install PyGithub

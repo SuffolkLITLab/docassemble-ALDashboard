@@ -7,7 +7,9 @@ from github import Github  # PyGithub
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Callable
+import math
+
 import docassemble.webapp.worker
 from docassemble.webapp.server import (
     user_can_edit_package,
@@ -43,7 +45,7 @@ from ruamel.yaml.compat import StringIO
 import re
 import werkzeug
 import pkg_resources
-
+from datetime import datetime, timedelta
 
 db = init_sqlalchemy()
 
@@ -62,6 +64,10 @@ __all__ = [
     "install_fonts",
     "list_installed_fonts",
     "dashboard_get_session_variables",
+    "dashboard_session_activity",
+    "make_usage_rows",
+    "compute_heatmap_styles",
+
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
@@ -85,9 +91,7 @@ def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = Non
     packagename = re.sub(r"\.git$", "", packagename)
     packagename = re.sub(r".*/", "", packagename)
     packagename = re.sub(r"^docassemble-", "docassemble.", packagename)
-    if user_can_edit_package(giturl=giturl) and user_can_edit_package(
-        pkgname=packagename
-    ):
+    if user_can_edit_package(giturl=giturl) and user_can_edit_package(pkgname=packagename):
         install_git_package(packagename, giturl, branch)
     else:
         flash(word("You do not have permission to install this package."), "error")
@@ -385,6 +389,253 @@ def nicer_interview_filename(filename: str) -> str:
         return f"{filename_parts[0]}:{filename_parts[1].replace('.yml', '')}"
 
     return filename_parts[0]
+
+
+def make_usage_rows(
+    current_interview_usage: Optional[Dict[int, List[Dict]]],
+    nicer_fn: Callable[[str], str] = lambda x: x,
+    limit: int = 10,
+) -> List[Dict]:
+    """Convert the nested `current_interview_usage` structure into a list of rows
+    suitable for rendering in the template.
+
+    Args:
+        current_interview_usage: mapping of minute -> list of dicts with keys
+            including 'filename', 'sessions', 'users'. Typically the output
+            of `dashboard_session_activity`.
+        nicer_fn: callable that receives a filename and returns a display title.
+        limit: maximum number of rows to return (sorted by total recent sessions).
+
+    Returns:
+        A list of dicts with keys: filename, title, s_1, s_5, s_10, s_30, s_60,
+        s_120, users, total
+    """
+    if not current_interview_usage:
+        return []
+
+    filenames = set()
+    for items in current_interview_usage.values():
+        for it in items:
+            # tolerate malformed items
+            fname = it.get("filename") if isinstance(it, dict) else None
+            if fname:
+                filenames.add(fname)
+
+    rows: List[Dict] = []
+    for fname in filenames:
+        row = {"filename": fname, "title": nicer_fn(fname)}
+        total = 0
+        for m in (1, 5, 10, 30, 60, 120):
+            found = next(
+                (i for i in current_interview_usage.get(m, []) if i.get("filename") == fname),
+                None,
+            )
+            count = 0
+            if found:
+                try:
+                    count = int(found.get("sessions", 0) or 0)
+                except Exception:
+                    count = 0
+            row[f"s_{m}"] = count
+            total += count
+        row["total"] = total
+        found120 = next(
+            (i for i in current_interview_usage.get(120, []) if i.get("filename") == fname),
+            None,
+        )
+        users = 0
+        if found120:
+            try:
+                users = int(found120.get("users", 0) or 0)
+            except Exception:
+                users = 0
+        row["users"] = users
+        rows.append(row)
+
+    rows = sorted(rows, key=lambda r: r["total"], reverse=True)[: int(limit) if limit else None]
+    return rows
+
+
+def dashboard_session_activity(minutes_list=None, limit: int = 10):
+    """
+    Return a dict mapping each minutes value to a list of top interviews by session starts
+    during the last N minutes. Each list contains dicts with keys: filename, sessions, users, title.
+
+    Example return value:
+    {60: [{'filename': 'docassemble.foo:data/questions/x.yml', 'sessions': 12, 'users': 9, 'title': 'foo:x'}, ...], ...}
+    """
+    if minutes_list is None:
+        minutes_list = [1, 5, 10, 30, 60, 120]
+    results = {}
+    # We'll compute starttime per session key and then count sessions whose starttime >= cutoff
+    query = text(
+        """
+SELECT sub.filename as filename, COUNT(sub.key) AS sessions, COUNT(DISTINCT userdictkeys.user_id) AS users
+FROM (
+    SELECT key, filename, MIN(modtime) AS starttime
+    FROM userdict
+    GROUP BY key, filename
+) sub
+LEFT JOIN userdictkeys ON userdictkeys.key = sub.key
+WHERE sub.starttime >= :cutoff
+GROUP BY sub.filename
+ORDER BY sessions DESC
+LIMIT :limit
+        """
+    )
+    with db.connect() as con:
+        for m in minutes_list:
+            cutoff = datetime.utcnow() - timedelta(minutes=int(m))
+            rs = con.execute(query, {"cutoff": cutoff, "limit": int(limit)})
+            rows = []
+            for row in rs:
+                # SQLAlchemy result rows may be mapping-like or tuple-like depending on version/context.
+                if hasattr(row, "_mapping"):
+                    mapping = row._mapping
+                    fname = mapping.get("filename")
+                    sessions_count = mapping.get("sessions")
+                    users_count = mapping.get("users")
+                else:
+                    # positional fallback: filename, sessions, users
+                    fname = row[0] if len(row) > 0 else None
+                    sessions_count = row[1] if len(row) > 1 else None
+                    users_count = row[2] if len(row) > 2 else None
+
+                try:
+                    sessions_val = int(sessions_count or 0)
+                except Exception:
+                    sessions_val = 0
+                try:
+                    users_val = int(users_count or 0)
+                except Exception:
+                    users_val = 0
+
+                rows.append(
+                    {
+                        "filename": fname,
+                        "sessions": sessions_val,
+                        "users": users_val,
+                        "title": nicer_interview_filename(fname) if fname else "",
+                    }
+                )
+            results[int(m)] = rows
+    return results
+
+
+def compute_heatmap_styles(rows, windows: Optional[tuple] = None):
+    """Augment each row (dict) in `rows` with per-window inline style and text color
+    keys for rendering a logarithmic heatmap.
+
+    Mutates and returns the input list for convenience.
+    """
+
+    if not rows:
+        return rows
+
+    if windows is None:
+        windows = (1, 5, 10, 30, 60, 120)
+
+    def _luminance_channel(v: float) -> float:
+        # v is 0-255
+        s = v / 255.0
+        return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
+
+    # determine global max across all windows and users so scaling is consistent
+    max_count = 0
+    for r in rows:
+        for m in windows:
+            try:
+                c = int(r.get(f"s_{m}", 0) or 0)
+            except Exception:
+                c = 0
+            if c > max_count:
+                max_count = c
+        try:
+            u = int(r.get("users", 0) or 0)
+        except Exception:
+            u = 0
+        if u > max_count:
+            max_count = u
+
+    denom = math.log10(max_count + 1) if max_count > 0 else 1.0
+
+    for r in rows:
+        # per-cell windows
+        for m in windows:
+            try:
+                c = int(r.get(f"s_{m}", 0) or 0)
+            except Exception:
+                c = 0
+            if max_count <= 0:
+                norm = 0.0
+            else:
+                norm = math.log10(c + 1) / denom
+            alpha = 0.15 + 0.8 * norm
+            bg = f"background-color: rgba(255,0,0,{alpha:.3f});"
+
+            # compute contrast against white page background composited with our red tint
+            try:
+                comp_r = 255.0
+                comp_g = 255.0 * (1.0 - alpha)
+                comp_b = 255.0 * (1.0 - alpha)
+                L_comp = (
+                    0.2126 * _luminance_channel(comp_r)
+                    + 0.7152 * _luminance_channel(comp_g)
+                    + 0.0722 * _luminance_channel(comp_b)
+                )
+                L_black = 0.0
+                L_white = 1.0
+                contrast_with_black = (L_comp + 0.05) / (L_black + 0.05)
+                contrast_with_white = (L_white + 0.05) / (L_comp + 0.05)
+                if contrast_with_black >= 4.5 and contrast_with_black >= contrast_with_white:
+                    textcol = "black"
+                elif contrast_with_white >= 4.5 and contrast_with_white > contrast_with_black:
+                    textcol = "white"
+                else:
+                    textcol = "black" if contrast_with_black >= contrast_with_white else "white"
+            except Exception:
+                textcol = "black"
+
+            r[f"text_color_{m}"] = textcol
+            # single combined style attribute so template doesn't concatenate fragments
+            r[f"style_attr_{m}"] = f"{bg} color: {textcol}"
+
+        # users column: scale by same denom
+        try:
+            u = int(r.get("users", 0) or 0)
+        except Exception:
+            u = 0
+        if max_count <= 0:
+            unorm = 0.0
+        else:
+            unorm = math.log10(u + 1) / denom
+        ualpha = 0.15 + 0.8 * unorm
+        ubg = f"background-color: rgba(255,0,0,{ualpha:.3f});"
+
+        try:
+            comp_r = 255.0
+            comp_g = 255.0 * (1.0 - ualpha)
+            comp_b = 255.0 * (1.0 - ualpha)
+            L_comp = (
+                0.2126 * _luminance_channel(comp_r)
+                + 0.7152 * _luminance_channel(comp_g)
+                + 0.0722 * _luminance_channel(comp_b)
+            )
+            contrast_with_black = (L_comp + 0.05) / (0.0 + 0.05)
+            contrast_with_white = (1.0 + 0.05) / (L_comp + 0.05)
+            if contrast_with_black >= 4.5 and contrast_with_black >= contrast_with_white:
+                utext = "black"
+            elif contrast_with_white >= 4.5 and contrast_with_white > contrast_with_black:
+                utext = "white"
+            else:
+                utext = "black" if contrast_with_black >= contrast_with_white else "white"
+        except Exception:
+            utext = "black"
+
+        r["text_color_users"] = utext
+        r["style_attr_users"] = f"{ubg} color: {utext}"
+
+    return rows
 
 
 def list_question_files_in_package(package_name: str) -> Optional[List[str]]:

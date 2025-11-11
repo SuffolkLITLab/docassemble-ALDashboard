@@ -456,20 +456,60 @@ def make_usage_rows(
     return rows
 
 
-def dashboard_session_activity(minutes_list=None, limit: int = 10):
+def dashboard_session_activity(minutes_list=None, limit: int = 10, exclude_filenames=None):
     """
     Return a dict mapping each minutes value to a list of top interviews by session starts
     during the last N minutes. Each list contains dicts with keys: filename, sessions, users, title.
+
+    Args:
+        minutes_list: time windows to report on (default: [1, 5, 10, 30, 60, 120])
+        limit: max interviews per window (default: 10)
+        exclude_filenames: list of exact filenames or package prefixes to exclude.
+            By default, excludes docassemble.ALDashboard: and entries from
+            get_config("assembly line",{}).get("interview list",{}).get("exclude from interview list")
 
     Example return value:
     {60: [{'filename': 'docassemble.foo:data/questions/x.yml', 'sessions': 12, 'users': 9, 'title': 'foo:x'}, ...], ...}
     """
     if minutes_list is None:
         minutes_list = [1, 5, 10, 30, 60, 120]
+    
+    # Build exclude set from config + defaults
+    if exclude_filenames is None:
+        exclude_filenames = []
+    exclude_set = set(exclude_filenames)
+    exclude_set.add("docassemble.ALDashboard:")
+    # Add entries from config
+    config_excludes = get_config("assembly line", {}).get("interview list", {}).get("exclude from interview list", [])
+    if config_excludes:
+        exclude_set.update(config_excludes)
+    
     results = {}
-    # We'll compute starttime per session key and then count sessions whose starttime >= cutoff
-    query = text(
-        """
+    
+    # Build dynamic WHERE clause for exclusions using safe parameterization
+    # Separate prefixes from exact filenames for cleaner logic
+    exclude_prefixes = [excl for excl in sorted(exclude_set) if excl.endswith(":")]
+    exclude_exact = [excl for excl in sorted(exclude_set) if not excl.endswith(":")]
+    
+    exclude_where_parts = []
+    exclude_params = {}
+    
+    # For prefixes: use NOT LIKE with concatenation to avoid SQL injection
+    for idx, prefix in enumerate(exclude_prefixes):
+        param_key = f"excl_prefix_{idx}"
+        exclude_params[param_key] = prefix
+        exclude_where_parts.append(f"sub.filename NOT LIKE CONCAT(:{param_key}, '%')")
+    
+    # For exact matches: use safe != comparisons
+    for idx, fname in enumerate(exclude_exact):
+        param_key = f"excl_exact_{idx}"
+        exclude_params[param_key] = fname
+        exclude_where_parts.append(f"sub.filename != :{param_key}")
+    
+    exclude_where = " AND ".join(exclude_where_parts) if exclude_where_parts else "1=1"
+    
+    # Build the query with the WHERE clause safely embedded
+    query_sql = f"""
 SELECT sub.filename as filename, COUNT(sub.key) AS sessions, COUNT(DISTINCT userdictkeys.user_id) AS users
 FROM (
     SELECT key, filename, MIN(modtime) AS starttime
@@ -477,16 +517,19 @@ FROM (
     GROUP BY key, filename
 ) sub
 LEFT JOIN userdictkeys ON userdictkeys.key = sub.key
-WHERE sub.starttime >= :cutoff
+WHERE sub.starttime >= :cutoff AND {exclude_where}
 GROUP BY sub.filename
 ORDER BY sessions DESC
 LIMIT :limit
-        """
-    )
+    """
+    query = text(query_sql)
+    
     with db.connect() as con:
         for m in minutes_list:
             cutoff = datetime.utcnow() - timedelta(minutes=int(m))
-            rs = con.execute(query, {"cutoff": cutoff, "limit": int(limit)})
+            query_params = {"cutoff": cutoff, "limit": int(limit)}
+            query_params.update(exclude_params)
+            rs = con.execute(query, query_params)
             rows = []
             for row in rs:
                 # SQLAlchemy result rows may be mapping-like or tuple-like depending on version/context.

@@ -80,10 +80,10 @@ subquestion: |
   This interview will let you create a custom bootstrap theme, compiling it down into a single
   CSS file that you can include in your docassemble projects.
 
-  For more information, see [our tutorial on making a custom bootstrap theme](https://suffolklitlab.org/legal-tech-class/docs/practical-guide-docassemble/theming-docassemble#creating-a-custom-theme-from-source-instead-of-with-a-theme-generator).
+  For more information, see [our tutorial on making a custom bootstrap theme](https://assemblyline.suffolklitlab.org/docs/docassemble_intro/theming-docassemble#creating-a-custom-theme-from-source-instead-of-with-a-theme-generator).
 
   If your Docassemble "system" version is less than 1.4.43, you will need to upgrade (yours is ${ get_config("system version") }).
-  This requires an upgrade to the [Docker container](https://suffolklitlab.org/legal-tech-class/docs/practical-guide-docassemble/maintaining-docassemble#updates-to-the-docassemble-container).
+  This requires an upgrade to the [Docker container](https://assemblyline.suffolklitlab.org/docs/admin_guide_docassemble/maintaining-docassemble#updates-to-the-docassemble-container).
 continue button field: start_screen
 ---
 id: file-upload

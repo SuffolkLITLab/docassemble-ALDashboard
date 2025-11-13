@@ -1,0 +1,15 @@
+.heat-cell {
+  transition: background-color 0.2s ease, color 0.2s ease;
+  padding: 0.25rem 0.5rem;
+}
+.heat-legend {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.heat-legend .swatch {
+  width: 1.5rem;
+  height: 1rem;
+  border: 1px solid rgba(0,0,0,0.1);
+}

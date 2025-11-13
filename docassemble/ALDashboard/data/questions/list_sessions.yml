@@ -54,7 +54,7 @@ fields:
     datatype: integer
     input type: combobox
     code: |
-      speedy_get_users()
+      speedy_get_users() if user_has_privilege(['admin', 'developer']) else [{user_info().id: user_info().email}]
   - Filter out interviews that are on the first page: filter_step1
     required: False
     datatype: yesno

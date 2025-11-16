@@ -769,7 +769,7 @@ def translation_file(
                         "gpt-4.1",
                     ]
                     models_to_try: List[Optional[str]] = []
-                    if model not in (None, "") and model not in models_to_try:
+                    if model not in (None, ""):
                         models_to_try.append(model)
                     else:
                         models_to_try.append(None)

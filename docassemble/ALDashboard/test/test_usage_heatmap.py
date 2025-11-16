@@ -23,16 +23,20 @@ class TestUsageHeatmapHelpers(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         path = __file__.replace("/test/test_usage_heatmap.py", "/aldashboard.py")
-        funcs = _extract_functions_from_file(path, {"make_usage_rows", "compute_heatmap_styles"})
+        funcs = _extract_functions_from_file(
+            path, {"make_usage_rows", "compute_heatmap_styles"}
+        )
         ns = {}
         # provide minimal names expected by the functions (typing annotations may reference these)
-        ns.update({
-            "Optional": __import__("typing").Optional,
-            "List": __import__("typing").List,
-            "Dict": __import__("typing").Dict,
-            "Callable": __import__("typing").Callable,
-            "math": __import__("math"),
-        })
+        ns.update(
+            {
+                "Optional": __import__("typing").Optional,
+                "List": __import__("typing").List,
+                "Dict": __import__("typing").Dict,
+                "Callable": __import__("typing").Callable,
+                "math": __import__("math"),
+            }
+        )
         # execute the function source into ns
         for name, src in funcs.items():
             exec(src, ns)

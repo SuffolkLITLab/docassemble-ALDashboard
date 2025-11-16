@@ -67,7 +67,6 @@ __all__ = [
     "dashboard_session_activity",
     "make_usage_rows",
     "compute_heatmap_styles",
-
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
@@ -91,7 +90,9 @@ def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = Non
     packagename = re.sub(r"\.git$", "", packagename)
     packagename = re.sub(r".*/", "", packagename)
     packagename = re.sub(r"^docassemble-", "docassemble.", packagename)
-    if user_can_edit_package(giturl=giturl) and user_can_edit_package(pkgname=packagename):
+    if user_can_edit_package(giturl=giturl) and user_can_edit_package(
+        pkgname=packagename
+    ):
         install_git_package(packagename, giturl, branch)
     else:
         flash(word("You do not have permission to install this package."), "error")
@@ -429,7 +430,11 @@ def make_usage_rows(
         # Use sorted() to ensure a deterministic order
         for minute in sorted(current_interview_usage.keys()):
             found = next(
-                (i for i in current_interview_usage.get(minute, []) if i.get("filename") == fname),
+                (
+                    i
+                    for i in current_interview_usage.get(minute, [])
+                    if i.get("filename") == fname
+                ),
                 None,
             )
             count = 0
@@ -447,7 +452,11 @@ def make_usage_rows(
         # Use the largest available time window to provide a conservative
         # users count; change this heuristic here if another window is preferred.
         found_users_window = next(
-            (i for i in current_interview_usage.get(largest_window, []) if i.get("filename") == fname),
+            (
+                i
+                for i in current_interview_usage.get(largest_window, [])
+                if i.get("filename") == fname
+            ),
             None,
         )
         users = 0
@@ -459,11 +468,15 @@ def make_usage_rows(
         row["users"] = users
         rows.append(row)
 
-    rows = sorted(rows, key=lambda r: r["total"], reverse=True)[: int(limit) if limit else None]
+    rows = sorted(rows, key=lambda r: r["total"], reverse=True)[
+        : int(limit) if limit else None
+    ]
     return rows
 
 
-def dashboard_session_activity(minutes_list=None, limit: int = 10, exclude_filenames=None):
+def dashboard_session_activity(
+    minutes_list=None, limit: int = 10, exclude_filenames=None
+):
     """
     Return a dict mapping each minutes value to a list of top interviews by session starts
     during the last N minutes. Each list contains dicts with keys: filename, sessions, users, title.
@@ -480,41 +493,45 @@ def dashboard_session_activity(minutes_list=None, limit: int = 10, exclude_filen
     """
     if minutes_list is None:
         minutes_list = [1, 5, 10, 30, 60, 120]
-    
+
     # Build exclude set from config + defaults
     if exclude_filenames is None:
         exclude_filenames = []
     exclude_set = set(exclude_filenames)
     exclude_set.add("docassemble.ALDashboard:")
     # Add entries from config
-    config_excludes = get_config("assembly line", {}).get("interview list", {}).get("exclude from interview list", [])
+    config_excludes = (
+        get_config("assembly line", {})
+        .get("interview list", {})
+        .get("exclude from interview list", [])
+    )
     if config_excludes:
         exclude_set.update(config_excludes)
-    
+
     results = {}
-    
+
     # Build dynamic WHERE clause for exclusions using safe parameterization
     # Separate prefixes from exact filenames for cleaner logic
     exclude_prefixes = [excl for excl in sorted(exclude_set) if excl.endswith(":")]
     exclude_exact = [excl for excl in sorted(exclude_set) if not excl.endswith(":")]
-    
+
     exclude_where_parts = []
     exclude_params = {}
-    
+
     # For prefixes: use NOT LIKE with concatenation to avoid SQL injection
     for idx, prefix in enumerate(exclude_prefixes):
         param_key = f"excl_prefix_{idx}"
         exclude_params[param_key] = prefix
         exclude_where_parts.append(f"sub.filename NOT LIKE CONCAT(:{param_key}, '%')")
-    
+
     # For exact matches: use safe != comparisons
     for idx, fname in enumerate(exclude_exact):
         param_key = f"excl_exact_{idx}"
         exclude_params[param_key] = fname
         exclude_where_parts.append(f"sub.filename != :{param_key}")
-    
+
     exclude_where = " AND ".join(exclude_where_parts) if exclude_where_parts else "1=1"
-    
+
     # Build the query with the WHERE clause safely embedded
     query_sql = f"""
 SELECT sub.filename as filename, COUNT(sub.key) AS sessions, COUNT(DISTINCT userdictkeys.user_id) AS users
@@ -530,7 +547,7 @@ ORDER BY sessions DESC
 LIMIT :limit
     """
     query = text(query_sql)
-    
+
     with db.connect() as con:
         for m in minutes_list:
             cutoff = datetime.utcnow() - timedelta(minutes=int(m))

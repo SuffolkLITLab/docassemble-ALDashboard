@@ -425,9 +425,11 @@ def make_usage_rows(
     for fname in filenames:
         row = {"filename": fname, "title": nicer_fn(fname)}
         total = 0
-        for m in (1, 5, 10, 30, 60, 120):
+        # Iterate over the registered minute windows instead of hardcoding them
+        # Use sorted() to ensure a deterministic order
+        for minute in sorted(current_interview_usage.keys()):
             found = next(
-                (i for i in current_interview_usage.get(m, []) if i.get("filename") == fname),
+                (i for i in current_interview_usage.get(minute, []) if i.get("filename") == fname),
                 None,
             )
             count = 0
@@ -436,17 +438,22 @@ def make_usage_rows(
                     count = int(found.get("sessions", 0) or 0)
                 except Exception:
                     count = 0
-            row[f"s_{m}"] = count
+            row[f"s_{minute}"] = count
             total += count
         row["total"] = total
-        found120 = next(
-            (i for i in current_interview_usage.get(120, []) if i.get("filename") == fname),
+        # Use the largest available window (max key) so this
+        # function adapts to the provided windows in current_interview_usage.
+        largest_window = max(current_interview_usage.keys())
+        # Use the largest available time window to provide a conservative
+        # users count; change this heuristic here if another window is preferred.
+        found_users_window = next(
+            (i for i in current_interview_usage.get(largest_window, []) if i.get("filename") == fname),
             None,
         )
         users = 0
-        if found120:
+        if found_users_window:
             try:
-                users = int(found120.get("users", 0) or 0)
+                users = int(found_users_window.get("users", 0) or 0)
             except Exception:
                 users = 0
         row["users"] = users
@@ -566,117 +573,52 @@ LIMIT :limit
 
 
 def compute_heatmap_styles(rows, windows: Optional[tuple] = None):
-    """Augment each row (dict) in `rows` with per-window inline style and text color
-    keys for rendering a logarithmic heatmap.
-
-    Mutates and returns the input list for convenience.
-    """
+    """Add inline styles for a log-scaled heatmap to each row dict."""
 
     if not rows:
         return rows
 
-    if windows is None:
-        windows = (1, 5, 10, 30, 60, 120)
+    time_windows = windows or (1, 5, 10, 30, 60, 120)
+    min_alpha = 0.15
+    max_alpha = 0.95  # visually "full" red but still readable with black text
+    text_color = "black"
 
-    def _luminance_channel(v: float) -> float:
-        # v is 0-255
-        s = v / 255.0
-        return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
-
-    # determine global max across all windows and users so scaling is consistent
-    max_count = 0
-    for r in rows:
-        for m in windows:
-            try:
-                c = int(r.get(f"s_{m}", 0) or 0)
-            except Exception:
-                c = 0
-            if c > max_count:
-                max_count = c
+    def safe_int(value) -> int:
         try:
-            u = int(r.get("users", 0) or 0)
+            return int(value or 0)
         except Exception:
-            u = 0
-        if u > max_count:
-            max_count = u
+            return 0
 
-    denom = math.log10(max_count + 1) if max_count > 0 else 1.0
+    # Use a single maximum so every cell shares the same color scale.
+    max_activity = 0
+    for row in rows:
+        max_activity = max(max_activity, safe_int(row.get("users", 0)))
+        for minutes in time_windows:
+            max_activity = max(max_activity, safe_int(row.get(f"s_{minutes}", 0)))
 
-    for r in rows:
-        # per-cell windows
-        for m in windows:
-            try:
-                c = int(r.get(f"s_{m}", 0) or 0)
-            except Exception:
-                c = 0
-            if max_count <= 0:
-                norm = 0.0
-            else:
-                norm = math.log10(c + 1) / denom
-            alpha = 0.15 + 0.8 * norm
-            bg = f"background-color: rgba(255,0,0,{alpha:.3f});"
+    log_denominator = math.log10(max_activity + 1) if max_activity > 0 else 1.0
 
-            # compute contrast against white page background composited with our red tint
-            try:
-                comp_r = 255.0
-                comp_g = 255.0 * (1.0 - alpha)
-                comp_b = 255.0 * (1.0 - alpha)
-                L_comp = (
-                    0.2126 * _luminance_channel(comp_r)
-                    + 0.7152 * _luminance_channel(comp_g)
-                    + 0.0722 * _luminance_channel(comp_b)
-                )
-                L_black = 0.0
-                L_white = 1.0
-                contrast_with_black = (L_comp + 0.05) / (L_black + 0.05)
-                contrast_with_white = (L_white + 0.05) / (L_comp + 0.05)
-                if contrast_with_black >= 4.5 and contrast_with_black >= contrast_with_white:
-                    textcol = "black"
-                elif contrast_with_white >= 4.5 and contrast_with_white > contrast_with_black:
-                    textcol = "white"
-                else:
-                    textcol = "black" if contrast_with_black >= contrast_with_white else "white"
-            except Exception:
-                textcol = "black"
-
-            r[f"text_color_{m}"] = textcol
-            # single combined style attribute so template doesn't concatenate fragments
-            r[f"style_attr_{m}"] = f"{bg} color: {textcol}"
-
-        # users column: scale by same denom
-        try:
-            u = int(r.get("users", 0) or 0)
-        except Exception:
-            u = 0
-        if max_count <= 0:
-            unorm = 0.0
+    def compute_alpha(count: int) -> float:
+        """Return opacity between min_alpha and max_alpha on a log scale."""
+        if max_activity <= 0:
+            normalized = 0.0
         else:
-            unorm = math.log10(u + 1) / denom
-        ualpha = 0.15 + 0.8 * unorm
-        ubg = f"background-color: rgba(255,0,0,{ualpha:.3f});"
+            normalized = math.log10(count + 1) / log_denominator
+        return min_alpha + (max_alpha - min_alpha) * normalized
 
-        try:
-            comp_r = 255.0
-            comp_g = 255.0 * (1.0 - ualpha)
-            comp_b = 255.0 * (1.0 - ualpha)
-            L_comp = (
-                0.2126 * _luminance_channel(comp_r)
-                + 0.7152 * _luminance_channel(comp_g)
-                + 0.0722 * _luminance_channel(comp_b)
-            )
-            contrast_with_black = (L_comp + 0.05) / (0.0 + 0.05)
-            contrast_with_white = (1.0 + 0.05) / (L_comp + 0.05)
-            if contrast_with_black >= 4.5 and contrast_with_black >= contrast_with_white:
-                utext = "black"
-            elif contrast_with_white >= 4.5 and contrast_with_white > contrast_with_black:
-                utext = "white"
-            else:
-                utext = "black" if contrast_with_black >= contrast_with_white else "white"
-        except Exception:
-            utext = "black"
+    def build_style(count: int) -> str:
+        alpha = compute_alpha(count)
+        return f"background-color: rgba(255,0,0,{alpha:.3f}); color: {text_color}"
 
-        r["text_color_users"] = utext
-        r["style_attr_users"] = f"{ubg} color: {utext}"
+    for row in rows:
+        for minutes in time_windows:
+            count = safe_int(row.get(f"s_{minutes}", 0))
+            row[f"text_color_{minutes}"] = text_color
+            row[f"style_attr_{minutes}"] = build_style(count)
+
+        user_count = safe_int(row.get("users", 0))
+        row["text_color_users"] = text_color
+        row["style_attr_users"] = build_style(user_count)
 
     return rows
 

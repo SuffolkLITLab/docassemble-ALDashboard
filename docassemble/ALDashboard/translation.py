@@ -130,7 +130,6 @@ def translate_fragments_gpt(
     Returns:
         A dictionary where the keys are the indices of the fragments and the values are the translated text.
     """
-    results: Dict[int, str] = {}
     if not model:
         model = "gpt-5-nano"
     is_gpt5_model = model.startswith("gpt-5")

@@ -48,7 +48,7 @@ code: |
         openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
         interview_context=showifdef("interview_context") if use_gpt and showifdef("use_context") else None,
         model=showifdef("model") if use_gpt else None,
-        validate_mako=showifdef("validate_mako") if use_gpt else True,
+        validate_mako=showifdef("validate_mako", True),
       )
     for tr_lang
     in tr_langs.split()

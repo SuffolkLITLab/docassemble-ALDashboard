@@ -9,6 +9,10 @@ default screen parts:
     ${ action_button_html(interview_url(i=f"{user_info().package}:menu.yml"), label="Back to Dashboard") }
     % endif
 ---
+features:
+  css:
+    - docassemble.ALDashboard:data/static/heatmap.css
+---
 modules:
   - .aldashboard
 ---
@@ -26,6 +30,15 @@ code: |
       allowed_interviews.update(get_config("assembly line",{}).get("interview viewers",{}).get(privilege,[]))
     interviews = {interview['filename']:interview for interview in interview_menu() if interview['filename'] in allowed_interviews}
 ---
+code: |
+  # Compute current interview usage and apply heatmap styles
+  if user_has_privilege(['admin', 'developer']):
+    current_interview_usage = dashboard_session_activity()
+    current_usage_rows = make_usage_rows(current_interview_usage, nicer_interview_filename, limit=10)
+    current_usage_rows = compute_heatmap_styles(current_usage_rows)
+  else:
+    current_usage_rows = []
+---
 question: |
   What interview do you want to view sessions for?
 subquestion: |
@@ -34,18 +47,60 @@ subquestion: |
   % else:
   You can only view sessions for interviews you have access to.
   % endif
+under: |
+  % if user_has_privilege(['admin', 'developer']):
+  % if current_usage_rows:
+  <h2 class="h4">Current Interview Usage</h2>
+  <table class="table table-sm table-striped">
+    <thead>
+      <tr>
+        <th>Interview</th>
+        <th class="text-center">1m</th>
+        <th class="text-center">5m</th>
+        <th class="text-center">10m</th>
+        <th class="text-center">30m</th>
+        <th class="text-center">60m</th>
+        <th class="text-center">120m</th>
+        <th class="text-center">Users</th>
+      </tr>
+    </thead>
+        <tbody>
+        % for r in current_usage_rows:
+          <tr>
+            <td><a href="${ url_action("set_interview_to_browse", filename=r['filename']) }">${ r['title'] }</a></td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_1','') }">${ r['s_1'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_5','') }">${ r['s_5'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_10','') }">${ r['s_10'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_30','') }">${ r['s_30'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_60','') }">${ r['s_60'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_120','') }">${ r['s_120'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_users','') }">${ r['users'] }</td>
+          </tr>
+        % endfor
+        </tbody>
+  </table>
+  % else:
+  <div class="alert alert-secondary">Nobody is using the server right now (no sessions started in last 120 minutes).</div>
+  % endif
+  % endif
 fields:
   - Filename: filename
     required: False
     datatype: combobox
     code: |
-      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+      sorted(list(interviews.keys()), key=lambda fname: (
+        interviews.get(fname).get('title') if isinstance(interviews.get(fname), dict)
+        else (getattr(interviews.get(fname), 'title', None) or (interviews.get(fname) if isinstance(interviews.get(fname), str) else fname))
+      ))
     show if:
       code: |
         user_has_privilege(['admin', 'developer'])
   - Filename: filename
     code: |
-      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+      sorted(list(interviews.keys()), key=lambda fname: (
+        interviews.get(fname).get('title') if isinstance(interviews.get(fname), dict)
+        else (getattr(interviews.get(fname), 'title', None) or (interviews.get(fname) if isinstance(interviews.get(fname), str) else fname))
+      ))
     show if:
       code: |
         not user_has_privilege(['admin', 'developer'])      
@@ -75,6 +130,12 @@ code: |
       for user_id, email, name, last 
       in get_users_and_name() 
     }
+---
+event: set_interview_to_browse
+code: |
+  filename = action_argument('filename')
+  chosen_user = None
+  filter_step1 = True
 ---
 mandatory: True
 event: load_answer

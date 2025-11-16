@@ -133,7 +133,7 @@ def translate_fragments_gpt(
     results: Dict[int, str] = {}
     if not model:
         model = "gpt-5-nano"
-    is_gpt5_model = "gpt-5" in model
+    is_gpt5_model = model.startswith("gpt-5")
     applied_reasoning_effort = reasoning_effort or "low"
     try:
         language_in_english = language_name(source_language)

@@ -202,7 +202,7 @@ description_file = README.md
     setuppy = """\
 import os
 import sys
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 from fnmatch import fnmatchcase
 from distutils.util import convert_path
 standard_exclude = ('*.pyc', '*~', '.*', '*.bak', '*.swp*')
@@ -270,8 +270,7 @@ def find_package_data(where='.', package='', exclude=standard_exclude, exclude_d
       url="""
         + repr(info["url"] if info["url"] else "https://docassemble.org")
         + """,
-      packages=find_packages(),
-      namespace_packages=['docassemble'],
+      packages=find_namespace_packages(),
       install_requires=["""
         + dependencies
         + """],

@@ -3,7 +3,7 @@ import math
 import os
 import re
 import tempfile
-from typing import List, Optional, Tuple, Union, Literal
+from typing import Any, List, Optional, Tuple, Union, Literal
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -43,7 +43,7 @@ import xlsxwriter
 from docassemble.base.util import DAFile, language_name, get_config, log, DAEmpty
 from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
-from docassemble.ALToolbox.llms import chat_completion
+from docassemble.ALToolbox.llms import chat_completion  # type: ignore[import-untyped]
 
 import tiktoken
 import mako.template
@@ -66,6 +66,7 @@ def is_valid_mako_block(text: str) -> Tuple[bool, Optional[str]]:
         return True, None
     except Exception as err:  # pragma: no cover - logging only
         return False, str(err)
+
 
 DEFAULT_LANGUAGE = "en"
 
@@ -110,7 +111,7 @@ def translate_fragments_gpt(
     max_input_tokens: Optional[int] = None,
     openai_api: Optional[str] = None,
     reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = "low",
-) -> Dict[int, str]:
+) -> Dict[Union[int, str], str]:
     """Use an AI model to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
 
@@ -178,26 +179,37 @@ def translate_fragments_gpt(
     """
 
     #           row number: text to translate
-    results: Dict[int, str] = {}
+    results: Dict[Union[int, str], str] = {}
 
     for row_number, text_to_translate in fragments:
         try:
-            chat_kwargs = dict(
-                system_message=system_prompt,
-                user_message=text_to_translate,
-                model=model,
-                max_output_tokens=max_output_tokens,
-                openai_base_url=openai_base_url,
-                max_input_tokens=max_input_tokens,
-                openai_api=openai_api,
-            )
+            # Build an explicit call to chat_completion instead of using **kwargs
             if is_gpt5_model:
-                chat_kwargs["reasoning_effort"] = applied_reasoning_effort
+                response = chat_completion(
+                    system_message=system_prompt,
+                    user_message=text_to_translate,
+                    model=model,
+                    max_output_tokens=max_output_tokens,
+                    openai_base_url=openai_base_url,
+                    max_input_tokens=max_input_tokens,
+                    openai_api=openai_api,
+                    reasoning_effort=applied_reasoning_effort,
+                )
             else:
-                chat_kwargs["temperature"] = 0.0
-            response = chat_completion(**chat_kwargs)
+                response = chat_completion(
+                    system_message=system_prompt,
+                    user_message=text_to_translate,
+                    model=model,
+                    max_output_tokens=max_output_tokens,
+                    openai_base_url=openai_base_url,
+                    max_input_tokens=max_input_tokens,
+                    openai_api=openai_api,
+                    temperature=0.0,
+                )
             if isinstance(response, str):
-                results[row_number] = (
+                results[
+                    row_number
+                ] = (
                     response.rstrip()
                 )  # Remove any trailing whitespace some LLM models might add
             else:
@@ -259,9 +271,7 @@ def translation_file(
         reasoning_effort: Reasoning effort setting, used for GPT-5 models.
         validate_mako: When True, retry GPT translations that break Mako syntax (default).
     """
-    filetype: str = (
-        "XLSX"  # Look in server.py for support of XLIFF format, but we won't implement it here
-    )
+    filetype: str = "XLSX"  # Look in server.py for support of XLIFF format, but we won't implement it here
     output_file = DAFile()
     setup_translation()
     if yaml_filename is None or not re.search(r"\S", yaml_filename):
@@ -718,7 +728,11 @@ def translation_file(
         # Now we need to translate the hold_for_draft_translation items
         if use_gpt:
             fragments_by_language: Dict[str, List[Tuple[int, str]]] = {}
-            for row_number, original_text, source_language in hold_for_draft_translation:
+            for (
+                row_number,
+                original_text,
+                source_language,
+            ) in hold_for_draft_translation:
                 fragments_by_language.setdefault(source_language, []).append(
                     (row_number, original_text)
                 )
@@ -750,15 +764,17 @@ def translation_file(
 
             final_translations: Dict[int, str] = {}
             if validate_mako:
+
                 def translate_with_retries(
                     row_number: int,
                     original_text: str,
                     initial_translation: Optional[str],
                     source_language: str,
                 ) -> str:
-                    candidate = initial_translation or ""
+                    candidate: Optional[str] = initial_translation or ""
                     attempts = 0
-                    valid, error_message = is_valid_mako_block(candidate)
+                    # Ensure candidate is str before passing to is_valid_mako_block
+                    valid, error_message = is_valid_mako_block(candidate or "")
                     fallback_chain = [
                         "gpt-5-nano",
                         "gpt-5-mini",
@@ -789,7 +805,9 @@ def translation_file(
                             log(
                                 f"Regenerating draft translation for row {row_number} due to Mako error: {error_message}"
                             )
-                        retry_model = models_to_try[min(attempts, len(models_to_try) - 1)]
+                        retry_model = models_to_try[
+                            min(attempts, len(models_to_try) - 1)
+                        ]
                         attempts += 1
                         retry_context = interview_context
                         if error_message:
@@ -816,11 +834,12 @@ def translation_file(
                             max_output_tokens=max_output_tokens,
                             reasoning_effort=reasoning_effort,
                         )
-                        candidate = retry_response.get(
-                            row_number,
-                            retry_response.get(str(row_number), candidate),
-                        )
-                        valid, error_message = is_valid_mako_block(candidate)
+                        # Attempt to get an int key; if present, use it. Otherwise try the str key.
+                        candidate = retry_response.get(row_number)
+                        if candidate is None:
+                            candidate = retry_response.get(str(row_number), "")
+                        # Ensure candidate is str before passing to is_valid_mako_block
+                        valid, error_message = is_valid_mako_block(candidate or "")
 
                     if not candidate or not valid:
                         fallback_valid, _ = is_valid_mako_block(original_text)
@@ -834,9 +853,13 @@ def translation_file(
                             f"Unable to create valid Mako translation for row {row_number}; leaving draft empty."
                         )
                         return ""
-                    return candidate
+                    return candidate or ""
 
-                for row_number, original_text, source_language in hold_for_draft_translation:
+                for (
+                    row_number,
+                    original_text,
+                    source_language,
+                ) in hold_for_draft_translation:
                     final_translations[row_number] = translate_with_retries(
                         row_number,
                         original_text,
@@ -844,13 +867,21 @@ def translation_file(
                         source_language,
                     )
             else:
-                for row_number, _original_text, _source_language in hold_for_draft_translation:
+                for (
+                    row_number,
+                    _original_text,
+                    _source_language,
+                ) in hold_for_draft_translation:
                     translation_text = translated_fragments.get(row_number)
                     if translation_text is None:
                         translation_text = ""
                     final_translations[row_number] = translation_text
 
-            for row_number, _original_text, _source_language in hold_for_draft_translation:
+            for (
+                row_number,
+                _original_text,
+                _source_language,
+            ) in hold_for_draft_translation:
                 item = final_translations.get(row_number, "") or ""
                 row = row_number
                 mako = mako_parts(item)

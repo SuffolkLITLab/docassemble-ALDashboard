@@ -1,6 +1,6 @@
 import os
 import sys
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 from fnmatch import fnmatchcase
 from distutils.util import convert_path
 
@@ -52,8 +52,7 @@ setup(name='docassemble.ALDashboard',
       author_email='qsteenhuis@gmail.com',
       license='The MIT License (MIT)',
       url='https://github.com/SuffolkLITLab/docassemble-ALDashboard',
-      packages=find_packages(),
-      namespace_packages=['docassemble'],
+      packages=find_namespace_packages(),
       install_requires=['PyGithub>=2.1.1', 'docassemble.ALToolbox>=0.9.2', 'python-docx>=1.1.1', 'openai>=1.0', 'tiktoken', 'pyaml', 'formfyxer>=1.0.1'],
       zip_safe=False,
       package_data=find_package_data(where='docassemble/ALDashboard/', package='docassemble.ALDashboard'),

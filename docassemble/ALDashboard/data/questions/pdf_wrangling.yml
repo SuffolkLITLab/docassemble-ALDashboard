@@ -12,8 +12,10 @@ mandatory: True
 code: |
   do_what
   if do_what == "normalize":
-    process_field_normalization
-    view_normalized_pdf
+    if field_normalize_task.ready():
+      view_normalized_pdf
+    else:
+      field_normalize_waiting_screen
   elif do_what == "recognize":
     process_field_recognition
     view_recognized_pdf
@@ -53,10 +55,29 @@ code: |
   # import os  
   base_name = source_pdf[0].filename
 ---
+id: field_normalize_waiting_screen
+event: field_normalize_waiting_screen
+question: |
+  Your PDF is being normalized in the background. This may take a minute or two. Please wait
+subquestion: |
+  <div class="spinner-border text-primary d-flex justify-content-center" role="status">
+      <span class="sr-only visually-hidden">Normalizing fields...</span>
+  </div>
+reload: 4
+---
+code: |
+  field_normalize_task = background_action("rename_pdf_action")
+---
+event: rename_pdf_action
 code: |
   formfyxer.parse_form(source_pdf[0].path(), title=base_name, jur="MA", normalize=1,rewrite=1, tools_token=get_config("assembly line", {}).get("tools.suffolklitlab.org api key"))
   source_pdf[0].commit()
-  process_field_normalization = True  
+  background_response_action("save_normalized_pdf", source_pdf=source_pdf)
+---
+event: save_normalized_pdf
+code: |
+  source_pdf = action_argument('source_pdf')  
+  background_response()
 ---
 code: |
   new_pdf.initialize(filename = f"fields_{base_name}")

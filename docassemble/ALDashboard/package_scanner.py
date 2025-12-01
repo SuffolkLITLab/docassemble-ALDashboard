@@ -2,8 +2,7 @@ import pkg_resources
 import time
 import json
 import math
-import pycurl
-import certifi
+import requests
 from io import BytesIO
 from docassemble.base.util import as_datetime
 
@@ -72,17 +71,7 @@ DELAY_BETWEEN_QUERYS = 3  # The time to wait between different queries to GitHub
 
 def getUrl(url):
     """Given a URL it returns its body"""
-    buffer = BytesIO()
-    c = pycurl.Curl()
-    c.setopt(c.URL, url)
-    c.setopt(c.WRITEDATA, buffer)
-    c.setopt(c.CAINFO, certifi.where())
-    c.perform()
-    c.close()
-    body = buffer.getvalue()
-    # Body is a byte string.
-    # We have to know the encoding in order to print it to a text file.
-    return body.decode("iso-8859-1")
+    return requests.get(url).text
 
 
 def fetch_github_repos(github_user, sub_queries) -> dict:

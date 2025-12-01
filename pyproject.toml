@@ -1,3 +1,39 @@
+[build-system]
+requires = [
+    "setuptools==80.9.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docassemble.ALDashboard"
+version = "0.26.0"
+description= "Dashboard for some admin tasks"
+readme = "README.md"
+authors = [
+    { name="Suffolk Legal Innovation and Technology Lab", email="litlab@suffolk.edu" },
+]
+dependencies = [
+    'PyGithub>=2.1.1',
+    'docassemble.ALToolbox>=0.9.2',
+    'python-docx>=1.1.1',
+    'openai>=1.0',
+    'tiktoken',
+    'pyaml',
+    'formfyxer>=1.0.1'
+]
+license="MIT"
+license-files = [
+    "LICENSE"
+]
+
+[project.urls]
+Homepage = "https://courtformsonline.org"
+
+[tool.setuptools.packages.find]
+where = [
+    ".",
+]
+
 [tool.black]
 extend-exclude = '(__init__.py|setup.py)'
 

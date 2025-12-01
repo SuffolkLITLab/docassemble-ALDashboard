@@ -3,6 +3,7 @@ import json
 import math
 import requests
 from io import BytesIO
+from typing import List
 from importlib.metadata import distributions
 from docassemble.base.util import as_datetime
 
@@ -21,19 +22,20 @@ def get_server_name(interview_url):
 # Crawl installed packages on the current server.
 # Store key and non key docassemble packages separately.
 # -----------------------------------------------------
-def installed_pkg_list(target: list) -> dict:
+def installed_pkg_list(target: List[str]) -> dict:
     installed_packages = {}
     key_packages = {}
     non_key_packages = {}
+    target_lowercase = [t.casefold() for t in target]
 
     for p in distributions():
         # docassemble packages
         if "docassemble" in p.name:
             # Key packages
-            if p.name in target:
+            if p.name.casefold() in target_lowercase:
                 key_packages[p.name] = p.version
             # non-key packages
-            if p.name not in target:
+            else:
                 non_key_packages[p.name] = p.version
 
     sorted_key_packages = sort_dict(key_packages)

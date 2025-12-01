@@ -202,7 +202,7 @@ code: |
     end_date = today()
 ---
 code: |
-  key_pkg_names = ['docassemble.ALWeaver', 'docassemble.AssemblyLine', 'docassemble.ALMassechusetts', 'docassemble.massaccess', 'docassemble.ALToolbox', 'docassemble.ALDashboard',]
+  key_pkg_names = ['docassemble.ALWeaver', 'docassemble.AssemblyLine', 'docassemble.ALMassachusetts', 'docassemble.massaccess', 'docassemble.ALToolbox', 'docassemble.ALDashboard',]
   server_name = get_server_name(interview_url())
 ---
 # Fetch github repos

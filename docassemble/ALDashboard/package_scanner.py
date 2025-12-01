@@ -1,9 +1,9 @@
-import pkg_resources
 import time
 import json
 import math
 import requests
 from io import BytesIO
+from importlib.metadata import distributions
 from docassemble.base.util import as_datetime
 
 
@@ -26,15 +26,15 @@ def installed_pkg_list(target: list) -> dict:
     key_packages = {}
     non_key_packages = {}
 
-    for p in pkg_resources.working_set:
+    for p in distributions():
         # docassemble packages
-        if "docassemble" in p.project_name:
+        if "docassemble" in p.name:
             # Key packages
-            if p.project_name in target:
-                key_packages[p.project_name] = p.version
+            if p.name in target:
+                key_packages[p.name] = p.version
             # non-key packages
-            if p.project_name not in target:
-                non_key_packages[p.project_name] = p.version
+            if p.name not in target:
+                non_key_packages[p.name] = p.version
 
     sorted_key_packages = sort_dict(key_packages)
     sorted_non_key_packages = sort_dict(non_key_packages)

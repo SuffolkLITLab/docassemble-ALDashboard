@@ -44,7 +44,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import re
 import werkzeug
-import pkg_resources
+import importlib.resources
 from datetime import datetime, timedelta
 
 db = init_sqlalchemy()
@@ -652,18 +652,18 @@ def list_question_files_in_package(package_name: str) -> Optional[List[str]]:
     """
     try:
         # Locate the directory within the package
-        directory_path = pkg_resources.resource_filename(package_name, "data/questions")
-
-        # List all files in the directory
-        if os.path.isdir(directory_path):
-            files = os.listdir(directory_path)
-            # Filter out directories, only keep files
-            files = [
-                f for f in files if os.path.isfile(os.path.join(directory_path, f))
-            ]
-            return files
-        else:
-            return []
+        ref = importlib.resources.files(package_name) / "data" / "questions"
+        with importlib.resources.as_file(ref) as directory_path:
+          # List all files in the directory
+          if os.path.isdir(directory_path):
+              files = os.listdir(directory_path)
+              # Filter out directories, only keep files
+              files = [
+                  f for f in files if os.path.isfile(os.path.join(directory_path, f))
+              ]
+              return files
+          else:
+              return []
     except Exception as e:
         log(f"An error occurred with package '{package_name}': {e}")
         return []

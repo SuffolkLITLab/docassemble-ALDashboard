@@ -33,9 +33,6 @@ id: search parameters
 question: |  
   Specify your search preferences
 fields:   
-  - Report date: report_date
-    datatype: date
-    default: ${ today() }
   - Search type: search_type
     datatype: radio
     choices:
@@ -85,7 +82,7 @@ fields:
 id: package info display
 question: |  
 subquestion: |    
-  <div class="article_title">Report Date: ${ report_date }<br>
+  <div class="article_title">Report Date: ${ today() }<br>
   Server name: ${ server_name }<br>  
   Github user name: ${ github_user }<br>
   (${display_github_str})</div>
@@ -202,7 +199,7 @@ code: |
     end_date = today()
 ---
 code: |
-  key_pkg_names = ['docassemble.ALWeaver', 'docassemble.AssemblyLine', 'docassemble.ALMassechusetts', 'docassemble.massaccess', 'docassemble.ALToolbox', 'docassemble.ALDashboard',]
+  key_pkg_names = ['docassemble.ALWeaver', 'docassemble.AssemblyLine', 'docassemble.ALMassachusetts', 'docassemble.massaccess', 'docassemble.ALToolbox', 'docassemble.ALDashboard',]
   server_name = get_server_name(interview_url())
 ---
 # Fetch github repos

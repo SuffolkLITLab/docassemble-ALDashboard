@@ -1,0 +1,96 @@
+---
+modules:
+  - .translation
+---
+event: api_translation_background
+code: |
+  import base64
+
+  def parse_bool(value, default=False):
+    if value is None:
+      return default
+    if isinstance(value, bool):
+      return value
+    if isinstance(value, (int, float)):
+      return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+      return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+      return False
+    return default
+
+  def parse_langs(value):
+    if isinstance(value, list):
+      return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "")
+    return [item.strip() for item in text.replace(",", " ").split() if item.strip()]
+
+  def parse_special_words(value):
+    if value is None:
+      return None
+    if isinstance(value, dict):
+      return {str(k): str(v) for k, v in value.items()}
+    text = str(value).strip()
+    if not text:
+      return None
+    output = {}
+    for line in text.splitlines():
+      if ":" not in line:
+        continue
+      key, val = line.split(":", 1)
+      key = key.strip()
+      val = val.strip()
+      if key:
+        output[key] = val
+    return output or None
+
+  args = action_arguments()
+  interview_path = str(args.get("interview_path") or args.get("yaml_filename") or "").strip()
+  if not interview_path:
+    raise Exception("interview_path is required")
+
+  tr_langs = parse_langs(args.get("tr_langs") or args.get("languages"))
+  if not tr_langs:
+    raise Exception("tr_langs is required")
+
+  use_gpt = parse_bool(args.get("use_gpt"), default=False)
+  include_xlsx_base64 = parse_bool(args.get("include_xlsx_base64"), default=False)
+  validate_mako = parse_bool(args.get("validate_mako"), default=True)
+
+  interview_context = args.get("interview_context")
+  if interview_context is not None:
+    interview_context = str(interview_context)
+
+  special_words = parse_special_words(args.get("special_words"))
+
+  translations = []
+  for tr_lang in tr_langs:
+    result = translation_file(
+      yaml_filename=interview_path,
+      tr_lang=tr_lang,
+      use_gpt=use_gpt,
+      model=args.get("model"),
+      interview_context=interview_context,
+      special_words=special_words,
+      openai_api=args.get("openai_api"),
+      openai_base_url=args.get("openai_base_url"),
+      validate_mako=validate_mako,
+    )
+
+    tr_entry = {
+      "language": tr_lang,
+      "filename": getattr(result.file, "filename", f"{tr_lang}.xlsx"),
+      "untranslated_words": result.untranslated_words,
+      "untranslated_segments": result.untranslated_segments,
+      "total_rows": result.total_rows,
+    }
+    if include_xlsx_base64:
+      with open(result.file.path(), "rb") as handle:
+        tr_entry["xlsx_base64"] = base64.b64encode(handle.read()).decode("ascii")
+    translations.append(tr_entry)
+
+  background_response({
+    "interview_path": interview_path,
+    "translations": translations
+  })

@@ -37,6 +37,57 @@ If you want the ALDashboard to be a dropdown option for admins and developers, a
           - admin
           - developer
 
+## ALDashboard API
+
+When installed on a docassemble server, ALDashboard exposes a Flask API at:
+
+- `POST /al/api/v1/dashboard/translation`
+- `POST /al/api/v1/dashboard/docx/auto-label`
+- `POST /al/api/v1/dashboard/bootstrap/compile`
+- `POST /al/api/v1/dashboard/translation/validate`
+- `POST /al/api/v1/dashboard/review-screen/draft`
+- `POST /al/api/v1/dashboard/docx/validate`
+- `GET /al/api/v1/dashboard/jobs/{job_id}`
+- `DELETE /al/api/v1/dashboard/jobs/{job_id}`
+- `GET /al/api/v1/dashboard/openapi.json`
+- `GET /al/api/v1/dashboard/docs`
+
+The API uses docassemble API key authentication via `api_verify()`. Endpoints default to synchronous execution and support `mode=async` (or `async=true`) for Celery-backed processing.
+
+To enable async mode, add this module to your docassemble configuration:
+
+```yaml
+celery modules:
+  - docassemble.ALDashboard.api_dashboard_worker
+```
+
+### Endpoint Notes
+
+- `POST /al/api/v1/dashboard/translation`
+  - Input: `interview_path`, one or more target languages (`tr_langs`), optional GPT settings.
+  - Output: translation XLSX metadata and optional base64 file content.
+- `POST /al/api/v1/dashboard/docx/auto-label`
+  - Input: DOCX file upload, optional `custom_people_names`.
+  - Uses `docassemble.ALToolbox.llms` for OpenAI configuration.
+  - Optional per-request override: `openai_api`.
+- `POST /al/api/v1/dashboard/bootstrap/compile`
+  - Input: SCSS upload or `scss_text`.
+  - Output: compiled CSS text or base64.
+- `POST /al/api/v1/dashboard/translation/validate`
+  - Input: translation XLSX.
+  - Output: structured errors/warnings/empty rows.
+- `POST /al/api/v1/dashboard/review-screen/draft`
+  - Input: one or more YAML files.
+  - Output: generated review-screen YAML draft.
+- `POST /al/api/v1/dashboard/docx/validate`
+  - Input: one or more DOCX templates.
+  - Output: per-file Jinja rendering errors.
+
+Live docs:
+
+- `GET /al/api/v1/dashboard/openapi.json`
+- `GET /al/api/v1/dashboard/docs`
+
 ## Some screenshots
 
 ### Main page

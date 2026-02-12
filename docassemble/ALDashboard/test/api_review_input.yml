@@ -1,0 +1,26 @@
+---
+metadata:
+  title: API review fixture
+---
+sections:
+  - intro: Intro
+  - details: Details
+---
+objects:
+  - users: ALPeopleList.using(ask_number=False)
+---
+id: ask_name
+question: What is your name?
+fields:
+  - First name: users[0].name.first
+  - Last name: users[0].name.last
+---
+id: ask_amount
+question: What amount?
+fields:
+  - Amount: filing_amount
+    datatype: currency
+---
+id: ask_yesno
+question: Are you filing?
+yesno: is_filing

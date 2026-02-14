@@ -640,10 +640,62 @@ def validate_docx_payload_from_options(
     return {"files": files}
 
 
+def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.pdf")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError("file_content_base64 is required.")
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+    if not filename.lower().endswith(".pdf"):
+        raise DashboardAPIValidationError(
+            "Only PDF uploads are supported.", status_code=415
+        )
+    input_path = _write_temp_file(filename, content)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_file:
+        output_path = out_file.name
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    return {
+        "raw": raw,
+        "filename": filename,
+        "input_path": input_path,
+        "output_path": output_path,
+    }
+
+
+def _finalize_pdf_payload(
+    *,
+    filename: str,
+    output_path: str,
+    stats: Dict[str, Any],
+    include_pdf_base64: bool,
+    include_parse_stats: bool,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "input_filename": filename,
+        "output_filename": f"labeled_{filename}",
+        "field_count": (
+            stats.get("total fields")
+            if isinstance(stats.get("total fields"), int)
+            else None
+        ),
+        "fields": stats.get("fields", []),
+        "fields_old": stats.get("fields_old", []),
+    }
+    if include_parse_stats:
+        payload["parse_stats"] = stats
+    if include_pdf_base64:
+        with open(output_path, "rb") as handle:
+            payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
+    return payload
+
+
 def pdf_label_fields_payload_from_request() -> Dict[str, Any]:
     upload = _read_single_upload(field_name="file")
     raw = merge_raw_options(_request_dict())
-    return pdf_label_fields_payload_from_options(
+    return pdf_fields_detect_payload_from_options(
         {
             "filename": upload["filename"],
             "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
@@ -655,73 +707,146 @@ def pdf_label_fields_payload_from_request() -> Dict[str, Any]:
 def pdf_label_fields_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    from .pdf_field_labeler import PDFLabelingError, apply_formfyxer_pdf_labeling
+    # Backward-compatible alias for detect+label operation.
+    return pdf_fields_detect_payload_from_options(raw_options)
 
-    raw = merge_raw_options(raw_options)
-    filename = str(raw.get("filename") or "upload.pdf")
-    file_content_base64 = raw.get("file_content_base64")
-    if file_content_base64 is None:
-        raise DashboardAPIValidationError("file_content_base64 is required.")
 
-    content = decode_base64_content(file_content_base64)
-    _validate_upload_size(content)
+def pdf_fields_detect_payload_from_request() -> Dict[str, Any]:
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return pdf_fields_detect_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
 
-    if not filename.lower().endswith(".pdf"):
-        raise DashboardAPIValidationError(
-            "Only PDF uploads are supported.", status_code=415
-        )
+
+def pdf_fields_detect_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .pdf_field_labeler import (
+        PDFLabelingError,
+        detect_pdf_fields_and_optionally_relabel,
+    )
+
+    prepared = _prepare_pdf_upload(raw_options)
+    raw = prepared["raw"]
+    filename = prepared["filename"]
+    input_path = prepared["input_path"]
+    output_path = prepared["output_path"]
 
     include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
     include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
-    add_fields = parse_bool(raw.get("add_fields"), default=True)
-    normalize_fields = parse_bool(raw.get("normalize_fields"), default=True)
+    relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
-    tools_token = raw.get("tools_token")
-    openai_api = raw.get("openai_api")
-
-    if tools_token is not None:
-        tools_token = str(tools_token)
-    if openai_api is not None:
-        openai_api = str(openai_api)
-
-    input_path = _write_temp_file(filename, content)
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_file:
-        output_path = out_file.name
-    if os.path.exists(output_path):
-        os.remove(output_path)
+    tools_token = (
+        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
+    )
+    openai_api = (
+        str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    target_field_names = _load_json_field(
+        raw.get("target_field_names"),
+        field_name="target_field_names",
+        expected_type=list,
+    )
+    if isinstance(target_field_names, list):
+        target_field_names = [str(item) for item in target_field_names]
     try:
-        stats = apply_formfyxer_pdf_labeling(
+        stats = detect_pdf_fields_and_optionally_relabel(
             input_pdf_path=input_path,
             output_pdf_path=output_path,
-            add_fields=add_fields,
-            normalize_fields=normalize_fields,
+            relabel_with_ai=relabel_with_ai,
+            target_field_names=target_field_names,
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
         )
-        payload: Dict[str, Any] = {
-            "input_filename": filename,
-            "output_filename": f"labeled_{filename}",
-            "field_count": (
-                stats.get("total fields")
-                if isinstance(stats, dict)
-                and isinstance(stats.get("total fields"), int)
-                else None
-            ),
-            "fields": stats.get("fields", []) if isinstance(stats, dict) else [],
-        }
-        if include_parse_stats:
-            payload["parse_stats"] = stats
-        if include_pdf_base64:
-            with open(output_path, "rb") as handle:
-                payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
-        return payload
+        return _finalize_pdf_payload(
+            filename=filename,
+            output_path=output_path,
+            stats=stats,
+            include_pdf_base64=include_pdf_base64,
+            include_parse_stats=include_parse_stats,
+        )
     except PDFLabelingError as err:
         raise DashboardAPIValidationError(str(err), status_code=400)
-    except Exception as err:
-        raise DashboardAPIValidationError(
-            f"FormFyxer PDF labeling failed: {err}", status_code=400
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
+def pdf_fields_relabel_payload_from_request() -> Dict[str, Any]:
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return pdf_fields_relabel_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
+
+
+def pdf_fields_relabel_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .pdf_field_labeler import PDFLabelingError, relabel_existing_pdf_fields
+
+    prepared = _prepare_pdf_upload(raw_options)
+    raw = prepared["raw"]
+    filename = prepared["filename"]
+    input_path = prepared["input_path"]
+    output_path = prepared["output_path"]
+
+    include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
+    include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
+    relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
+    jur = str(raw.get("jur") or "MA").strip() or "MA"
+    tools_token = (
+        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
+    )
+    openai_api = (
+        str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    target_field_names = _load_json_field(
+        raw.get("target_field_names"),
+        field_name="target_field_names",
+        expected_type=list,
+    )
+    if isinstance(target_field_names, list):
+        target_field_names = [str(item) for item in target_field_names]
+    field_name_mapping = _load_json_field(
+        raw.get("field_name_mapping"),
+        field_name="field_name_mapping",
+        expected_type=dict,
+    )
+    if isinstance(field_name_mapping, dict):
+        field_name_mapping = {str(k): str(v) for k, v in field_name_mapping.items()}
+    try:
+        stats = relabel_existing_pdf_fields(
+            input_pdf_path=input_path,
+            output_pdf_path=output_path,
+            field_name_mapping=field_name_mapping,
+            target_field_names=target_field_names,
+            relabel_with_ai=relabel_with_ai,
+            jur=jur,
+            tools_token=tools_token,
+            openai_api=openai_api,
         )
+        return _finalize_pdf_payload(
+            filename=filename,
+            output_path=output_path,
+            stats=stats,
+            include_pdf_base64=include_pdf_base64,
+            include_parse_stats=include_parse_stats,
+        )
+    except PDFLabelingError as err:
+        raise DashboardAPIValidationError(str(err), status_code=400)
     finally:
         if os.path.exists(input_path):
             os.remove(input_path)
@@ -772,7 +897,31 @@ def build_openapi_spec() -> Dict[str, Any]:
                 "post": {"summary": "Validate DOCX Jinja template"}
             },
             f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
-                "post": {"summary": "Add and label PDF fields using FormFyxer"}
+                "post": {
+                    "summary": "Detect and optionally relabel PDF fields (alias)",
+                    "description": (
+                        "Backward-compatible alias for /pdf/fields/detect. "
+                        "Supports adding fields and optional AI/manual relabeling."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/pdf/fields/detect": {
+                "post": {
+                    "summary": "Detect/add PDF fields; optionally relabel",
+                    "description": (
+                        "Adds detected fields to uploaded PDF and optionally relabels "
+                        "with AI (relabel_with_ai=true) or explicit ordered target_field_names."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/pdf/fields/relabel": {
+                "post": {
+                    "summary": "Relabel existing PDF fields",
+                    "description": (
+                        "Renames existing fields using one of: field_name_mapping, "
+                        "ordered target_field_names, or relabel_with_ai=true."
+                    ),
+                }
             },
             f"{DASHBOARD_API_BASE_PATH}/jobs/{{job_id}}": {
                 "get": {"summary": "Get async job status and result"},
@@ -819,6 +968,8 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>
   </ul>
   <h2>Notes</h2>
   <ul>
@@ -826,7 +977,9 @@ def build_docs_html() -> str:
     <li>You can pass optional <code>openai_api</code> to <code>/docx/auto-label</code> to override key per request.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
-    <li><code>/pdf/label-fields</code> runs FormFyxer to add and normalize fields in uploaded PDFs.</li>
+    <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
+    <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>.</li>
+    <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>.</li>
   </ul>
 </body>
 </html>

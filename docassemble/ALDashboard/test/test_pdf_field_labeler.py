@@ -7,6 +7,8 @@ from unittest.mock import patch
 from docassemble.ALDashboard.pdf_field_labeler import (
     PDFLabelingError,
     apply_formfyxer_pdf_labeling,
+    detect_pdf_fields_and_optionally_relabel,
+    relabel_existing_pdf_fields,
 )
 
 
@@ -83,6 +85,67 @@ class TestPDFFieldLabeler(unittest.TestCase):
                         input_pdf_path=input_path,
                         output_pdf_path=output_path,
                     )
+
+    def test_relabel_existing_with_target_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = str(Path(tmpdir) / "input.pdf")
+            output_path = str(Path(tmpdir) / "output.pdf")
+            Path(input_path).write_bytes(b"%PDF-input")
+
+            def fake_get_existing(_in_file):
+                return [
+                    [SimpleNamespace(name="old_1"), SimpleNamespace(name="old_2")],
+                ]
+
+            def fake_rename(_in_file, out_file, mapping):
+                self.assertEqual(mapping, {"old_1": "new_1", "old_2": "new_2"})
+                Path(out_file).write_bytes(b"%PDF-relabeled")
+
+            fake_module = SimpleNamespace(
+                get_existing_pdf_fields=fake_get_existing,
+                rename_pdf_fields=fake_rename,
+                parse_form=lambda *_args, **_kwargs: {},
+            )
+            with patch.dict("sys.modules", {"formfyxer": fake_module}):
+                result = relabel_existing_pdf_fields(
+                    input_pdf_path=input_path,
+                    output_pdf_path=output_path,
+                    target_field_names=["new_1", "new_2"],
+                )
+            self.assertEqual(result["fields"], ["old_1", "old_2"])
+
+    def test_detect_then_relabel_with_target_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = str(Path(tmpdir) / "input.pdf")
+            output_path = str(Path(tmpdir) / "output.pdf")
+            Path(input_path).write_bytes(b"%PDF-input")
+
+            def fake_auto_add(_in_file, out_file):
+                Path(out_file).write_bytes(b"%PDF-detected")
+
+            def fake_get_existing(_in_file):
+                return [[SimpleNamespace(name="det_1")]]
+
+            def fake_rename(_in_file, out_file, mapping):
+                self.assertEqual(mapping, {"det_1": "users[0].name.first"})
+                Path(out_file).write_bytes(b"%PDF-relabeled")
+
+            fake_module = SimpleNamespace(
+                auto_add_fields=fake_auto_add,
+                get_existing_pdf_fields=fake_get_existing,
+                rename_pdf_fields=fake_rename,
+                parse_form=lambda *_args, **_kwargs: {
+                    "total fields": 1,
+                    "fields": ["det_1"],
+                },
+            )
+            with patch.dict("sys.modules", {"formfyxer": fake_module}):
+                result = detect_pdf_fields_and_optionally_relabel(
+                    input_pdf_path=input_path,
+                    output_pdf_path=output_path,
+                    target_field_names=["users[0].name.first"],
+                )
+            self.assertIn("post_relabel", result)
 
 
 if __name__ == "__main__":

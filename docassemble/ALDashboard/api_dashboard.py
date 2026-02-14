@@ -29,6 +29,8 @@ from .api_dashboard_utils import (
     build_openapi_spec,
     coerce_async_flag,
     merge_raw_options,
+    pdf_fields_detect_payload_from_request,
+    pdf_fields_relabel_payload_from_request,
     pdf_label_fields_payload_from_request,
     review_screen_payload_from_request,
     translation_payload_from_request,
@@ -46,6 +48,8 @@ if not in_celery:
     from .api_dashboard_worker import (
         dashboard_autolabel_task,
         dashboard_bootstrap_task,
+        dashboard_pdf_fields_detect_task,
+        dashboard_pdf_fields_relabel_task,
         dashboard_pdf_label_fields_task,
         dashboard_review_screen_task,
         dashboard_validate_docx_task,
@@ -402,6 +406,26 @@ def dashboard_pdf_label_fields():
     return _run_endpoint(
         pdf_label_fields_payload_from_request,
         dashboard_pdf_label_fields_task,
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/fields/detect", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_pdf_fields_detect():
+    return _run_endpoint(
+        pdf_fields_detect_payload_from_request,
+        dashboard_pdf_fields_detect_task,
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/fields/relabel", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_pdf_fields_relabel():
+    return _run_endpoint(
+        pdf_fields_relabel_payload_from_request,
+        dashboard_pdf_fields_relabel_task,
     )
 
 

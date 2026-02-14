@@ -48,6 +48,8 @@ When installed on a docassemble server, ALDashboard exposes a Flask API at:
 - `POST /al/api/v1/dashboard/review-screen/draft`
 - `POST /al/api/v1/dashboard/docx/validate`
 - `POST /al/api/v1/dashboard/pdf/label-fields`
+- `POST /al/api/v1/dashboard/pdf/fields/detect`
+- `POST /al/api/v1/dashboard/pdf/fields/relabel`
 - `GET /al/api/v1/dashboard/jobs/{job_id}`
 - `DELETE /al/api/v1/dashboard/jobs/{job_id}`
 - `GET /al/api/v1/dashboard/openapi.json`
@@ -90,7 +92,16 @@ celery modules:
   - Output: per-file Jinja rendering errors.
 - `POST /al/api/v1/dashboard/pdf/label-fields`
   - Input: PDF upload.
-  - Output: PDF with fields added/normalized using FormFyxer, plus optional parse stats/base64 output.
+  - Output: PDF with fields detected and optionally relabeled (backward-compatible alias of `/pdf/fields/detect`).
+- `POST /al/api/v1/dashboard/pdf/fields/detect`
+  - Input: PDF upload.
+  - Optional flags: `relabel_with_ai`, `include_pdf_base64`, `include_parse_stats`.
+  - Optional exact-name list: `target_field_names` (ordered list to apply after detection).
+  - Output: PDF with detected fields added, plus optional AI/target-name relabeling.
+- `POST /al/api/v1/dashboard/pdf/fields/relabel`
+  - Input: PDF with existing fields.
+  - Relabel modes: `field_name_mapping` (exact old->new map), ordered `target_field_names`, or AI (`relabel_with_ai=true`).
+  - Output: Relabeled PDF and resulting field names; optional parse stats/base64 output.
 
 Live docs:
 

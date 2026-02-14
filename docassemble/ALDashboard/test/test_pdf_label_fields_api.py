@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from docassemble.ALDashboard.api_dashboard_utils import (
     DashboardAPIValidationError,
+    pdf_fields_detect_payload_from_options,
+    pdf_fields_relabel_payload_from_options,
     pdf_label_fields_payload_from_options,
 )
 from docassemble.ALDashboard.pdf_field_labeler import PDFLabelingError
@@ -89,6 +91,51 @@ class TestPDFLabelFieldsAPI(unittest.TestCase):
                     }
                 )
         self.assertIn("broken", str(cm.exception))
+
+    def test_detect_accepts_target_field_names(self):
+        def fake_detect(**kwargs):
+            self.assertEqual(
+                kwargs["target_field_names"],
+                ["users[0].name.first", "users[0].name.last"],
+            )
+            Path(kwargs["output_pdf_path"]).write_bytes(b"%PDF-labeled")
+            return {"total fields": 2, "fields": kwargs["target_field_names"]}
+
+        with patch(
+            "docassemble.ALDashboard.pdf_field_labeler.detect_pdf_fields_and_optionally_relabel",
+            side_effect=fake_detect,
+        ):
+            payload = pdf_fields_detect_payload_from_options(
+                {
+                    "filename": "test.pdf",
+                    "file_content_base64": base64.b64encode(b"%PDF-input").decode(
+                        "ascii"
+                    ),
+                    "target_field_names": ["users[0].name.first", "users[0].name.last"],
+                }
+            )
+        self.assertEqual(payload["field_count"], 2)
+
+    def test_relabel_accepts_mapping(self):
+        def fake_relabel(**kwargs):
+            self.assertEqual(kwargs["field_name_mapping"], {"old1": "new1"})
+            Path(kwargs["output_pdf_path"]).write_bytes(b"%PDF-relabeled")
+            return {"total fields": 1, "fields_old": ["old1"], "fields": ["new1"]}
+
+        with patch(
+            "docassemble.ALDashboard.pdf_field_labeler.relabel_existing_pdf_fields",
+            side_effect=fake_relabel,
+        ):
+            payload = pdf_fields_relabel_payload_from_options(
+                {
+                    "filename": "test.pdf",
+                    "file_content_base64": base64.b64encode(b"%PDF-input").decode(
+                        "ascii"
+                    ),
+                    "field_name_mapping": {"old1": "new1"},
+                }
+            )
+        self.assertEqual(payload["fields"], ["new1"])
 
 
 if __name__ == "__main__":

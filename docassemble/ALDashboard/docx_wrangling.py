@@ -74,7 +74,7 @@ def update_docx(
 
 def get_labeled_docx_runs(
     docx_path: str,
-    custom_people_names: Optional[Tuple[str, str]] = None,
+    custom_people_names: Optional[List[Tuple[str, str]]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
 ) -> List[Tuple[int, int, str, int]]:
@@ -82,7 +82,8 @@ def get_labeled_docx_runs(
 
     Args:
         docx_path: path to the DOCX file
-        custom_people_names: a tuple of custom names and descriptions to use in addition to the default ones. Like: ("clients", "the person benefiting from the form")
+        custom_people_names: optional list of custom (name, description) pairs, e.g.
+            [("clients", "the person benefiting from the form")]
         openai_api: optional API key override. If omitted, ALToolbox default resolution is used.
 
     Returns:
@@ -123,9 +124,17 @@ def get_labeled_docx_runs(
     """
 
     custom_name_text = ""
-    if custom_people_names:
-        assert isinstance(custom_people_names, list)
-        for name, description in custom_people_names:
+    if custom_people_names is not None:
+        if not isinstance(custom_people_names, list):
+            raise ValueError(
+                "custom_people_names must be a list of [name, description] pairs."
+            )
+        for item in custom_people_names:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise ValueError(
+                    "Each custom_people_names item must be a [name, description] pair."
+                )
+            name, description = item
             custom_name_text += f"    {name} ({description}), \n"
 
     rules = f"""
@@ -136,7 +145,7 @@ def get_labeled_docx_runs(
         4. Use variable names and patterns from the list below. Invent new variable names when it is appropriate.
 
     List names for people:
-        {custom_people_names}
+{custom_name_text}
         users (for the person benefiting from the form, especially when for a pro se filer)
         other_parties (the opposing party in a lawsuit or transactional party)
         plaintiffs
@@ -254,10 +263,18 @@ def get_labeled_docx_runs(
     )
 
     if isinstance(response, str):
-        response = json.loads(response)
+        try:
+            response = json.loads(response)
+        except json.JSONDecodeError as exc:
+            raise ValueError("chat_completion returned non-JSON output") from exc
     if not isinstance(response, dict):
         raise ValueError("Unexpected response type from chat_completion")
-    guesses = response["results"]
+    results = response.get("results")
+    if not isinstance(results, list):
+        raise ValueError(
+            "chat_completion response did not contain a list 'results' field"
+        )
+    guesses = results
     return guesses
 
 

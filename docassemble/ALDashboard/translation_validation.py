@@ -2,13 +2,21 @@ import re
 from typing import Any, Dict, List
 
 import pandas as pd
-from mako import exceptions
+from mako.lexer import Lexer
 import mako.runtime
-import mako.template
 
 from docassemble.base.util import DAEmpty
 
 mako.runtime.UNDEFINED = DAEmpty()
+
+
+def _validate_mako_syntax(text: str) -> str:
+    try:
+        Lexer(text).parse()
+        return ""
+    except Exception as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        return f"Mako syntax error: {message}"
 
 
 def validate_translation_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
@@ -34,8 +42,7 @@ def validate_translation_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
     percent_no_space = re.compile(r"^%\w", re.MULTILINE)
     percent_too_many_spaces = re.compile(r"^%\s\s+", re.MULTILINE)
 
-    for index, row in df.fillna("").iterrows():
-        row_num = index + 2
+    for row_num, (_, row) in enumerate(df.fillna("").iterrows(), start=2):
         row_text = str(row.get("tr_text", ""))
         question_id = str(row.get("question_id", ""))
 
@@ -125,15 +132,13 @@ def validate_translation_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
                 }
             )
 
-        try:
-            mytemplate = mako.template.Template(row_text)
-            mytemplate.render()
-        except Exception:
+        mako_error = _validate_mako_syntax(row_text)
+        if mako_error:
             errors.append(
                 {
                     "row": row_num,
                     "question_id": question_id,
-                    "message": exceptions.text_error_template().render(),
+                    "message": mako_error,
                 }
             )
 

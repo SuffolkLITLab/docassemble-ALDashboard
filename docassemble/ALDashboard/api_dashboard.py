@@ -1,5 +1,6 @@
 # pre-load
 
+import base64
 import json
 import time
 import uuid
@@ -21,11 +22,13 @@ from docassemble.base.parse import get_initial_dict
 from .api_dashboard_utils import (
     DASHBOARD_API_BASE_PATH,
     DashboardAPIValidationError,
+    _validate_upload_size,
     autolabel_payload_from_request,
     bootstrap_payload_from_request,
     build_docs_html,
     build_openapi_spec,
     coerce_async_flag,
+    merge_raw_options,
     review_screen_payload_from_request,
     translation_payload_from_request,
     validate_docx_payload_from_request,
@@ -57,7 +60,9 @@ def _job_key(job_id: str) -> str:
     return JOB_KEY_PREFIX + job_id
 
 
-def _store_job_mapping(job_id: str, task_id: str, extra: Optional[Dict[str, Any]] = None) -> None:
+def _store_job_mapping(
+    job_id: str, task_id: str, extra: Optional[Dict[str, Any]] = None
+) -> None:
     payload = {"id": task_id, "created_at": time.time()}
     if extra:
         payload.update(extra)
@@ -88,12 +93,20 @@ def _auth_fail(request_id: str):
     )
 
 
-def _extract_payload_for_async() -> Dict[str, Any]:
+def _request_payload_without_files() -> Dict[str, Any]:
+    post_data = request.get_json(silent=True)
+    if isinstance(post_data, dict):
+        return post_data
+    return dict(request.form)
+
+
+def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = dict(base_payload)
     if request.files:
-        payload: Dict[str, Any] = dict(request.form)
         files_payload = []
         for _, upload in request.files.items(multi=True):
             content = upload.read()
+            _validate_upload_size(content)
             try:
                 upload.stream.seek(0)
             except Exception:
@@ -101,20 +114,14 @@ def _extract_payload_for_async() -> Dict[str, Any]:
             files_payload.append(
                 {
                     "filename": upload.filename or "upload",
-                    "file_content_base64": __import__("base64").b64encode(content).decode("ascii"),
+                    "file_content_base64": base64.b64encode(content).decode("ascii"),
                 }
             )
         if len(files_payload) == 1:
             payload.update(files_payload[0])
         if files_payload:
             payload["files"] = files_payload
-        return payload
-
-    post_data = request.get_json(silent=True)
-    if isinstance(post_data, dict):
-        return post_data
-
-    return dict(request.form)
+    return payload
 
 
 def _run_endpoint(sync_func, async_task):
@@ -123,7 +130,7 @@ def _run_endpoint(sync_func, async_task):
         return _auth_fail(request_id)
 
     try:
-        merged_options = _extract_payload_for_async()
+        merged_options = merge_raw_options(_request_payload_without_files())
         use_async = coerce_async_flag(merged_options)
         if use_async:
             if not _async_is_configured():
@@ -142,7 +149,8 @@ def _run_endpoint(sync_func, async_task):
                     },
                     503,
                 )
-            task = async_task.delay(payload=merged_options)
+            task_payload = _extract_payload_for_async(merged_options)
+            task = async_task.delay(payload=task_payload)
             job_id = str(uuid.uuid4())
             _store_job_mapping(job_id, task.id)
             return jsonify_with_status(
@@ -182,7 +190,10 @@ def _run_endpoint(sync_func, async_task):
             {
                 "success": False,
                 "request_id": request_id,
-                "error": {"type": "server_error", "message": "ALDashboard API action failed."},
+                "error": {
+                    "type": "server_error",
+                    "message": "ALDashboard API action failed.",
+                },
             },
             500,
         )
@@ -212,7 +223,9 @@ def _build_cron_user_info() -> Dict[str, Any]:
 
 
 def _queue_translation_background(payload: Dict[str, Any]) -> Any:
-    yaml_filename = "docassemble.ALDashboard:data/questions/api_translation_background.yml"
+    yaml_filename = (
+        "docassemble.ALDashboard:data/questions/api_translation_background.yml"
+    )
     user_info = _build_cron_user_info()
     session_code = f"api-translation-{uuid.uuid4()}"
     seed_user_dict: Dict[str, Any] = copy.deepcopy(get_initial_dict())
@@ -261,7 +274,7 @@ def dashboard_translation():
         return _auth_fail(request_id)
 
     try:
-        merged_options = _extract_payload_for_async()
+        merged_options = merge_raw_options(_request_payload_without_files())
         use_async = coerce_async_flag(merged_options)
         if use_async:
             if not _async_is_configured():
@@ -281,14 +294,18 @@ def dashboard_translation():
                     503,
                 )
             try:
-                task = _queue_translation_background(merged_options)
+                task = _queue_translation_background(
+                    _extract_payload_for_async(merged_options)
+                )
             except Exception as exc:
                 raise DashboardAPIValidationError(
                     f"Failed to queue translation background task: {exc}",
                     status_code=500,
                 )
             job_id = str(uuid.uuid4())
-            _store_job_mapping(job_id, task.id, extra={"kind": "translation_background"})
+            _store_job_mapping(
+                job_id, task.id, extra={"kind": "translation_background"}
+            )
             return jsonify_with_status(
                 {
                     "success": True,
@@ -325,7 +342,10 @@ def dashboard_translation():
             {
                 "success": False,
                 "request_id": request_id,
-                "error": {"type": "server_error", "message": "ALDashboard API action failed."},
+                "error": {
+                    "type": "server_error",
+                    "message": "ALDashboard API action failed.",
+                },
             },
             500,
         )
@@ -359,14 +379,18 @@ def dashboard_translation_validate():
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def dashboard_review_screen_draft():
-    return _run_endpoint(review_screen_payload_from_request, dashboard_review_screen_task)
+    return _run_endpoint(
+        review_screen_payload_from_request, dashboard_review_screen_task
+    )
 
 
 @app.route(f"{DASHBOARD_API_BASE_PATH}/docx/validate", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def dashboard_docx_validate():
-    return _run_endpoint(validate_docx_payload_from_request, dashboard_validate_docx_task)
+    return _run_endpoint(
+        validate_docx_payload_from_request, dashboard_validate_docx_task
+    )
 
 
 @app.route(f"{DASHBOARD_API_BASE_PATH}/jobs/<job_id>", methods=["GET", "DELETE"])

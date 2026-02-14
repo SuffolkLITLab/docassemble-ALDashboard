@@ -73,6 +73,11 @@ celery modules:
 - `POST /al/api/v1/dashboard/bootstrap/compile`
   - Input: SCSS upload or `scss_text`.
   - Output: compiled CSS text or base64.
+  - Operational notes:
+    - Requires `node` and `npm` available on server `PATH`.
+    - First run downloads Bootstrap source into `/tmp` and runs `npm install`/`npm run css-compile`, so it may be noticeably slower.
+    - Requires outbound HTTPS access to fetch Bootstrap and npm dependencies.
+    - Writes temporary build artifacts under `/tmp`; ensure adequate disk space and cleanup policies.
 - `POST /al/api/v1/dashboard/translation/validate`
   - Input: translation XLSX.
   - Output: structured errors/warnings/empty rows.

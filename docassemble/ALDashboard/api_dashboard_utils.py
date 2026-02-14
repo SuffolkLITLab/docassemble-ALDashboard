@@ -4,17 +4,10 @@ import importlib.resources
 import json
 import os
 import tempfile
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 from flask import request
 from docassemble.base.error import DAError
-
-from .bootstrap_compiler import BootstrapCompileError, compile_bootstrap_theme
-from .docx_wrangling import get_labeled_docx_runs, update_docx
-from .review_screen_generator import generate_review_screen_yaml
-from .translation import translation_file
-from .translation_validation import validate_translation_xlsx
-from .validate_docx import get_jinja_errors
 
 DASHBOARD_API_BASE_PATH = "/al/api/v1/dashboard"
 
@@ -52,7 +45,9 @@ def decode_base64_content(content: Any) -> bytes:
     try:
         return base64.b64decode(content, validate=True)
     except (ValueError, binascii.Error):
-        raise DashboardAPIValidationError("file_content_base64 is not valid base64 data.")
+        raise DashboardAPIValidationError(
+            "file_content_base64 is not valid base64 data."
+        )
 
 
 def coerce_async_flag(raw_options: Mapping[str, Any]) -> bool:
@@ -69,7 +64,9 @@ def coerce_async_flag(raw_options: Mapping[str, Any]) -> bool:
     return False
 
 
-def _load_json_field(raw_value: Any, *, field_name: str, expected_type: type) -> Optional[Any]:
+def _load_json_field(
+    raw_value: Any, *, field_name: str, expected_type: type
+) -> Optional[Any]:
     if raw_value is None:
         return None
     value = raw_value
@@ -93,7 +90,9 @@ def _load_json_field(raw_value: Any, *, field_name: str, expected_type: type) ->
 def merge_raw_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     merged: Dict[str, Any] = dict(raw_options)
     options_blob = raw_options.get("options")
-    parsed_options = _load_json_field(options_blob, field_name="options", expected_type=dict)
+    parsed_options = _load_json_field(
+        options_blob, field_name="options", expected_type=dict
+    )
     if parsed_options:
         for key, value in parsed_options.items():
             merged.setdefault(key, value)
@@ -120,14 +119,18 @@ def _coerce_tr_langs(value: Any) -> List[str]:
     if isinstance(value, list):
         langs = [str(item).strip() for item in value if str(item).strip()]
         if not langs:
-            raise DashboardAPIValidationError("tr_langs must contain at least one language code.")
+            raise DashboardAPIValidationError(
+                "tr_langs must contain at least one language code."
+            )
         return langs
     if value is None:
         raise DashboardAPIValidationError("tr_langs is required.")
     text = str(value)
     langs = [item.strip() for item in text.replace(",", " ").split() if item.strip()]
     if not langs:
-        raise DashboardAPIValidationError("tr_langs must contain at least one language code.")
+        raise DashboardAPIValidationError(
+            "tr_langs must contain at least one language code."
+        )
     return langs
 
 
@@ -151,7 +154,9 @@ def _parse_special_words(value: Any) -> Optional[Dict[str, str]]:
     return output or None
 
 
-def _validate_upload_size(content: bytes, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) -> None:
+def _validate_upload_size(
+    content: bytes, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+) -> None:
     if len(content) == 0:
         raise DashboardAPIValidationError("Uploaded file is empty.")
     if len(content) > max_upload_bytes:
@@ -247,8 +252,12 @@ def translation_payload_from_request() -> Dict[str, Any]:
 
 
 def translation_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    from .translation import translation_file
+
     raw = merge_raw_options(raw_options)
-    yaml_filename = _require_text(raw.get("interview_path") or raw.get("yaml_filename"), "interview_path")
+    yaml_filename = _require_text(
+        raw.get("interview_path") or raw.get("yaml_filename"), "interview_path"
+    )
     tr_langs = _coerce_tr_langs(raw.get("tr_langs") or raw.get("languages"))
 
     use_gpt = parse_bool(raw.get("use_gpt"), default=False)
@@ -267,7 +276,7 @@ def translation_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str
                 use_gpt=use_gpt,
                 model=raw.get("model"),
                 interview_context=str(interview_context) if interview_context else None,
-                special_words=special_words,
+                special_words=cast(Any, special_words),
                 openai_api=raw.get("openai_api"),
                 openai_base_url=raw.get("openai_base_url"),
                 validate_mako=validate_mako,
@@ -282,7 +291,7 @@ def translation_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str
                 use_gpt=use_gpt,
                 model=raw.get("model"),
                 interview_context=str(interview_context) if interview_context else None,
-                special_words=special_words,
+                special_words=cast(Any, special_words),
                 openai_api=raw.get("openai_api"),
                 openai_base_url=raw.get("openai_base_url"),
                 validate_mako=validate_mako,
@@ -296,7 +305,9 @@ def translation_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str
         }
         if include_xlsx_base64:
             with open(result.file.path(), "rb") as handle:
-                tr_entry["xlsx_base64"] = base64.b64encode(handle.read()).decode("ascii")
+                tr_entry["xlsx_base64"] = base64.b64encode(handle.read()).decode(
+                    "ascii"
+                )
         translations.append(tr_entry)
 
     return {
@@ -318,6 +329,8 @@ def autolabel_payload_from_request() -> Dict[str, Any]:
 
 
 def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    from .docx_wrangling import get_labeled_docx_runs, update_docx
+
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.docx")
     file_content_base64 = raw.get("file_content_base64")
@@ -327,9 +340,13 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
     _validate_upload_size(content)
 
     if not filename.lower().endswith(".docx"):
-        raise DashboardAPIValidationError("Only DOCX uploads are supported.", status_code=415)
+        raise DashboardAPIValidationError(
+            "Only DOCX uploads are supported.", status_code=415
+        )
 
-    include_labeled_docx_base64 = parse_bool(raw.get("include_labeled_docx_base64"), default=False)
+    include_labeled_docx_base64 = parse_bool(
+        raw.get("include_labeled_docx_base64"), default=False
+    )
     openai_api_override = raw.get("openai_api")
     if openai_api_override is not None:
         openai_api_override = str(openai_api_override)
@@ -353,12 +370,16 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         }
         if include_labeled_docx_base64:
             updated = update_docx(temp_path, guesses)
-            with tempfile.NamedTemporaryFile(mode="wb", suffix=".docx", delete=False) as out:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", suffix=".docx", delete=False
+            ) as out:
                 out_path = out.name
             try:
                 updated.save(out_path)
                 with open(out_path, "rb") as handle:
-                    payload["labeled_docx_base64"] = base64.b64encode(handle.read()).decode("ascii")
+                    payload["labeled_docx_base64"] = base64.b64encode(
+                        handle.read()
+                    ).decode("ascii")
             finally:
                 if os.path.exists(out_path):
                     os.remove(out_path)
@@ -378,7 +399,9 @@ def bootstrap_payload_from_request() -> Dict[str, Any]:
         upload = request.files["file"]
         filename = upload.filename or "upload.scss"
         if not filename.lower().endswith((".scss", ".sass")):
-            raise DashboardAPIValidationError("Bootstrap compile requires a .scss or .sass file.", status_code=415)
+            raise DashboardAPIValidationError(
+                "Bootstrap compile requires a .scss or .sass file.", status_code=415
+            )
         content = upload.read()
         _validate_upload_size(content)
         scss_path = _write_temp_file(filename, content)
@@ -393,7 +416,9 @@ def bootstrap_payload_from_request() -> Dict[str, Any]:
     options: Dict[str, Any] = dict(raw)
     if scss_path:
         with open(scss_path, "rb") as handle:
-            options["file_content_base64"] = base64.b64encode(handle.read()).decode("ascii")
+            options["file_content_base64"] = base64.b64encode(handle.read()).decode(
+                "ascii"
+            )
             options["filename"] = os.path.basename(scss_path)
     try:
         return bootstrap_payload_from_options(options)
@@ -403,6 +428,8 @@ def bootstrap_payload_from_request() -> Dict[str, Any]:
 
 
 def bootstrap_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    from .bootstrap_compiler import BootstrapCompileError, compile_bootstrap_theme
+
     raw = merge_raw_options(raw_options)
     include_css_base64 = parse_bool(raw.get("include_css_base64"), default=True)
 
@@ -414,14 +441,18 @@ def bootstrap_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         content = decode_base64_content(file_content_base64)
         _validate_upload_size(content)
         if not filename.lower().endswith((".scss", ".sass")):
-            raise DashboardAPIValidationError("Bootstrap compile requires a .scss or .sass file.", status_code=415)
+            raise DashboardAPIValidationError(
+                "Bootstrap compile requires a .scss or .sass file.", status_code=415
+            )
         scss_path = _write_temp_file(filename, content)
 
     if not scss_text and not scss_path:
         raise DashboardAPIValidationError("Provide scss_text or upload a .scss file.")
 
     try:
-        compiled = compile_bootstrap_theme(scss_text=str(scss_text) if scss_text else None, scss_path=scss_path)
+        compiled = compile_bootstrap_theme(
+            scss_text=str(scss_text) if scss_text else None, scss_path=scss_path
+        )
         payload: Dict[str, Any] = {
             "scss_filename": compiled["scss_filename"],
             "css_filename": compiled["css_filename"],
@@ -429,7 +460,9 @@ def bootstrap_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             "stdout": compiled.get("stdout", ""),
         }
         if include_css_base64:
-            payload["css_base64"] = base64.b64encode(compiled["css_text"].encode("utf-8")).decode("ascii")
+            payload["css_base64"] = base64.b64encode(
+                compiled["css_text"].encode("utf-8")
+            ).decode("ascii")
         else:
             payload["css_text"] = compiled["css_text"]
         return payload
@@ -452,7 +485,11 @@ def validate_translation_payload_from_request() -> Dict[str, Any]:
     )
 
 
-def validate_translation_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+def validate_translation_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .translation_validation import validate_translation_xlsx
+
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.xlsx")
     file_content_base64 = raw.get("file_content_base64")
@@ -462,7 +499,9 @@ def validate_translation_payload_from_options(raw_options: Mapping[str, Any]) ->
     _validate_upload_size(content)
 
     if not filename.lower().endswith(".xlsx"):
-        raise DashboardAPIValidationError("Only XLSX uploads are supported.", status_code=415)
+        raise DashboardAPIValidationError(
+            "Only XLSX uploads are supported.", status_code=415
+        )
 
     temp_path = _write_temp_file(filename, content)
     try:
@@ -480,17 +519,24 @@ def review_screen_payload_from_request() -> Dict[str, Any]:
 
     if "files" in request.files or "file" in request.files:
         uploads = _read_multi_uploads(field_name="files")
-        yaml_texts = [upload["content"].decode("utf-8", errors="replace") for upload in uploads]
+        yaml_texts = [
+            upload["content"].decode("utf-8", errors="replace") for upload in uploads
+        ]
     else:
         post_data = request.get_json(silent=True)
         if isinstance(post_data, dict):
             if isinstance(post_data.get("yaml_texts"), list):
-                yaml_texts = [str(item) for item in post_data["yaml_texts"] if str(item).strip()]
+                yaml_texts = [
+                    str(item) for item in post_data["yaml_texts"] if str(item).strip()
+                ]
             elif post_data.get("yaml_text"):
                 yaml_texts = [str(post_data.get("yaml_text"))]
             elif isinstance(post_data.get("files"), list):
                 uploads = _read_multi_uploads(field_name="files")
-                yaml_texts = [upload["content"].decode("utf-8", errors="replace") for upload in uploads]
+                yaml_texts = [
+                    upload["content"].decode("utf-8", errors="replace")
+                    for upload in uploads
+                ]
 
     if not yaml_texts:
         raise DashboardAPIValidationError(
@@ -506,7 +552,11 @@ def review_screen_payload_from_request() -> Dict[str, Any]:
     )
 
 
-def review_screen_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+def review_screen_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .review_screen_generator import generate_review_screen_yaml
+
     raw = merge_raw_options(raw_options)
     yaml_texts = []
     if isinstance(raw.get("yaml_texts"), list):
@@ -517,7 +567,9 @@ def review_screen_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[s
         for item in raw["files"]:
             if isinstance(item, dict) and item.get("file_content_base64"):
                 yaml_texts.append(
-                    decode_base64_content(item["file_content_base64"]).decode("utf-8", errors="replace")
+                    decode_base64_content(item["file_content_base64"]).decode(
+                        "utf-8", errors="replace"
+                    )
                 )
 
     if not yaml_texts:
@@ -528,7 +580,9 @@ def review_screen_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[s
     review_yaml = generate_review_screen_yaml(
         yaml_texts,
         build_revisit_blocks=parse_bool(raw.get("build_revisit_blocks"), default=True),
-        point_sections_to_review=parse_bool(raw.get("point_sections_to_review"), default=True),
+        point_sections_to_review=parse_bool(
+            raw.get("point_sections_to_review"), default=True
+        ),
     )
     return {"review_yaml": review_yaml}
 
@@ -541,7 +595,9 @@ def validate_docx_payload_from_request() -> Dict[str, Any]:
             "files": [
                 {
                     "filename": upload["filename"],
-                    "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+                    "file_content_base64": base64.b64encode(upload["content"]).decode(
+                        "ascii"
+                    ),
                 }
                 for upload in uploads
             ],
@@ -550,11 +606,17 @@ def validate_docx_payload_from_request() -> Dict[str, Any]:
     )
 
 
-def validate_docx_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+def validate_docx_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .validate_docx import get_jinja_errors
+
     raw = merge_raw_options(raw_options)
     files_option = raw.get("files")
     if not isinstance(files_option, list) or not files_option:
-        raise DashboardAPIValidationError("Expected files[] payload for DOCX validation.")
+        raise DashboardAPIValidationError(
+            "Expected files[] payload for DOCX validation."
+        )
 
     files = []
     for upload in files_option:
@@ -564,7 +626,9 @@ def validate_docx_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[s
         content = decode_base64_content(upload.get("file_content_base64"))
         _validate_upload_size(content)
         if not filename.lower().endswith(".docx"):
-            raise DashboardAPIValidationError("Only DOCX uploads are supported.", status_code=415)
+            raise DashboardAPIValidationError(
+                "Only DOCX uploads are supported.", status_code=415
+            )
 
         temp_path = _write_temp_file(filename, content)
         try:
@@ -622,8 +686,12 @@ def build_openapi_spec() -> Dict[str, Any]:
                 "get": {"summary": "Get async job status and result"},
                 "delete": {"summary": "Delete async job metadata"},
             },
-            f"{DASHBOARD_API_BASE_PATH}/openapi.json": {"get": {"summary": "Get OpenAPI document"}},
-            f"{DASHBOARD_API_BASE_PATH}/docs": {"get": {"summary": "Human-readable docs"}},
+            f"{DASHBOARD_API_BASE_PATH}/openapi.json": {
+                "get": {"summary": "Get OpenAPI document"}
+            },
+            f"{DASHBOARD_API_BASE_PATH}/docs": {
+                "get": {"summary": "Human-readable docs"}
+            },
         },
     }
 
@@ -664,6 +732,7 @@ def build_docs_html() -> str:
     <li><code>/docx/auto-label</code> uses <code>docassemble.ALToolbox.llms</code> for key/config lookup.</li>
     <li>You can pass optional <code>openai_api</code> to <code>/docx/auto-label</code> to override key per request.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
+    <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
   </ul>
 </body>
 </html>

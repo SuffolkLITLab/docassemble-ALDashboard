@@ -29,6 +29,7 @@ from .api_dashboard_utils import (
     build_openapi_spec,
     coerce_async_flag,
     merge_raw_options,
+    pdf_label_fields_payload_from_request,
     review_screen_payload_from_request,
     translation_payload_from_request,
     validate_docx_payload_from_request,
@@ -45,6 +46,7 @@ if not in_celery:
     from .api_dashboard_worker import (
         dashboard_autolabel_task,
         dashboard_bootstrap_task,
+        dashboard_pdf_label_fields_task,
         dashboard_review_screen_task,
         dashboard_validate_docx_task,
         dashboard_validate_translation_task,
@@ -390,6 +392,16 @@ def dashboard_review_screen_draft():
 def dashboard_docx_validate():
     return _run_endpoint(
         validate_docx_payload_from_request, dashboard_validate_docx_task
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_pdf_label_fields():
+    return _run_endpoint(
+        pdf_label_fields_payload_from_request,
+        dashboard_pdf_label_fields_task,
     )
 
 

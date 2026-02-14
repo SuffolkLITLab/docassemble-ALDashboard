@@ -640,6 +640,95 @@ def validate_docx_payload_from_options(
     return {"files": files}
 
 
+def pdf_label_fields_payload_from_request() -> Dict[str, Any]:
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return pdf_label_fields_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
+
+
+def pdf_label_fields_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .pdf_field_labeler import PDFLabelingError, apply_formfyxer_pdf_labeling
+
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.pdf")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError("file_content_base64 is required.")
+
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+
+    if not filename.lower().endswith(".pdf"):
+        raise DashboardAPIValidationError(
+            "Only PDF uploads are supported.", status_code=415
+        )
+
+    include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
+    include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
+    add_fields = parse_bool(raw.get("add_fields"), default=True)
+    normalize_fields = parse_bool(raw.get("normalize_fields"), default=True)
+    jur = str(raw.get("jur") or "MA").strip() or "MA"
+    tools_token = raw.get("tools_token")
+    openai_api = raw.get("openai_api")
+
+    if tools_token is not None:
+        tools_token = str(tools_token)
+    if openai_api is not None:
+        openai_api = str(openai_api)
+
+    input_path = _write_temp_file(filename, content)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_file:
+        output_path = out_file.name
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    try:
+        stats = apply_formfyxer_pdf_labeling(
+            input_pdf_path=input_path,
+            output_pdf_path=output_path,
+            add_fields=add_fields,
+            normalize_fields=normalize_fields,
+            jur=jur,
+            tools_token=tools_token,
+            openai_api=openai_api,
+        )
+        payload: Dict[str, Any] = {
+            "input_filename": filename,
+            "output_filename": f"labeled_{filename}",
+            "field_count": (
+                stats.get("total fields")
+                if isinstance(stats, dict)
+                and isinstance(stats.get("total fields"), int)
+                else None
+            ),
+            "fields": stats.get("fields", []) if isinstance(stats, dict) else [],
+        }
+        if include_parse_stats:
+            payload["parse_stats"] = stats
+        if include_pdf_base64:
+            with open(output_path, "rb") as handle:
+                payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
+        return payload
+    except PDFLabelingError as err:
+        raise DashboardAPIValidationError(str(err), status_code=400)
+    except Exception as err:
+        raise DashboardAPIValidationError(
+            f"FormFyxer PDF labeling failed: {err}", status_code=400
+        )
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
 def build_openapi_spec() -> Dict[str, Any]:
     return {
         "openapi": "3.1.0",
@@ -681,6 +770,9 @@ def build_openapi_spec() -> Dict[str, Any]:
             },
             f"{DASHBOARD_API_BASE_PATH}/docx/validate": {
                 "post": {"summary": "Validate DOCX Jinja template"}
+            },
+            f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
+                "post": {"summary": "Add and label PDF fields using FormFyxer"}
             },
             f"{DASHBOARD_API_BASE_PATH}/jobs/{{job_id}}": {
                 "get": {"summary": "Get async job status and result"},
@@ -726,6 +818,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/translation/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
   </ul>
   <h2>Notes</h2>
   <ul>
@@ -733,6 +826,7 @@ def build_docs_html() -> str:
     <li>You can pass optional <code>openai_api</code> to <code>/docx/auto-label</code> to override key per request.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
+    <li><code>/pdf/label-fields</code> runs FormFyxer to add and normalize fields in uploaded PDFs.</li>
   </ul>
 </body>
 </html>

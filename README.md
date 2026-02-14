@@ -47,6 +47,7 @@ When installed on a docassemble server, ALDashboard exposes a Flask API at:
 - `POST /al/api/v1/dashboard/translation/validate`
 - `POST /al/api/v1/dashboard/review-screen/draft`
 - `POST /al/api/v1/dashboard/docx/validate`
+- `POST /al/api/v1/dashboard/pdf/label-fields`
 - `GET /al/api/v1/dashboard/jobs/{job_id}`
 - `DELETE /al/api/v1/dashboard/jobs/{job_id}`
 - `GET /al/api/v1/dashboard/openapi.json`
@@ -87,6 +88,9 @@ celery modules:
 - `POST /al/api/v1/dashboard/docx/validate`
   - Input: one or more DOCX templates.
   - Output: per-file Jinja rendering errors.
+- `POST /al/api/v1/dashboard/pdf/label-fields`
+  - Input: PDF upload.
+  - Output: PDF with fields added/normalized using FormFyxer, plus optional parse stats/base64 output.
 
 Live docs:
 

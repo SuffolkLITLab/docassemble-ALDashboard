@@ -7,6 +7,7 @@ from docassemble.webapp.worker_common import bg_context, workerapp  # type: igno
 from .api_dashboard_utils import (
     autolabel_payload_from_options,
     bootstrap_payload_from_options,
+    pdf_label_fields_payload_from_options,
     review_screen_payload_from_options,
     translation_payload_from_options,
     validate_docx_payload_from_options,
@@ -48,3 +49,9 @@ def dashboard_review_screen_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_validate_docx_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return validate_docx_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_pdf_label_fields_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return pdf_label_fields_payload_from_options(payload)

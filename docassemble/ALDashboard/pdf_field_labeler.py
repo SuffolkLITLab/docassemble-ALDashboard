@@ -28,7 +28,7 @@ def _build_mapping_from_target_list(
 
 
 def list_existing_field_names(pdf_path: str) -> List[str]:
-    import formfyxer
+    import formfyxer  # type: ignore[import-not-found]
 
     fields_per_page = formfyxer.get_existing_pdf_fields(pdf_path)
     return _flatten_field_names(fields_per_page)
@@ -45,7 +45,7 @@ def relabel_existing_pdf_fields(
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
 ) -> Dict[str, Any]:
-    import formfyxer
+    import formfyxer  # type: ignore[import-not-found]
 
     current_names = list_existing_field_names(input_pdf_path)
     if not current_names:
@@ -109,7 +109,7 @@ def apply_formfyxer_pdf_labeling(
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
 ) -> Dict[str, Any]:
-    import formfyxer
+    import formfyxer  # type: ignore[import-not-found]
 
     if add_fields:
         formfyxer.auto_add_fields(input_pdf_path, output_pdf_path)

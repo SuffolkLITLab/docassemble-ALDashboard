@@ -30,13 +30,14 @@ def generate_review_screen_yaml(
 
     for doc in docs:
         if not any(
-            key in doc for key in ["fields", "question", "objects", "sections", "metadata"]
+            key in doc
+            for key in ["fields", "question", "objects", "sections", "metadata"]
         ):
             continue
         if doc.get("generic object"):
             continue
 
-        question = {"question": str(doc.get("question", "")).strip()}
+        question: Dict[str, Any] = {"question": str(doc.get("question", "")).strip()}
         fields_temp: List[Dict[str, Any]] = []
 
         if "fields" in doc and isinstance(doc["fields"], list):
@@ -47,7 +48,11 @@ def generate_review_screen_yaml(
                     try:
                         match = re.match(r"((\w+\[\d+\])|\w+)", str(field["code"]))
                         object_name = match[1] if match else None
-                        if object_name is None or object_name == "x" or "[i]" in str(field["code"]):
+                        if (
+                            object_name is None
+                            or object_name == "x"
+                            or "[i]" in str(field["code"])
+                        ):
                             continue
                     except Exception:
                         continue
@@ -85,17 +90,31 @@ def generate_review_screen_yaml(
                     else:
                         fields_temp.append(field)
         elif "yesno" in doc:
-            fields_temp.append({doc.get("question", ""): doc.get("yesno"), "datatype": "yesno"})
+            fields_temp.append(
+                {doc.get("question", ""): doc.get("yesno"), "datatype": "yesno"}
+            )
         elif "noyes" in doc:
-            fields_temp.append({doc.get("question", ""): doc.get("noyes"), "datatype": "noyes"})
+            fields_temp.append(
+                {doc.get("question", ""): doc.get("noyes"), "datatype": "noyes"}
+            )
         elif "signature" in doc:
-            fields_temp.append({doc.get("question", ""): doc.get("signature"), "datatype": "signature"})
+            fields_temp.append(
+                {doc.get("question", ""): doc.get("signature"), "datatype": "signature"}
+            )
         elif "field" in doc and ("choices" in doc or "buttons" in doc):
-            fields_temp.append({doc.get("question", ""): doc.get("field"), "datatype": "radio"})
+            fields_temp.append(
+                {doc.get("question", ""): doc.get("field"), "datatype": "radio"}
+            )
         elif "objects" in doc and isinstance(doc["objects"], list):
             objects_temp.extend(doc["objects"])
         elif "sections" in doc and isinstance(doc["sections"], list):
-            sections_temp.extend([next(iter(sec.keys()), "") for sec in doc["sections"] if isinstance(sec, dict)])
+            sections_temp.extend(
+                [
+                    next(iter(sec.keys()), "")
+                    for sec in doc["sections"]
+                    if isinstance(sec, dict)
+                ]
+            )
 
         question["fields"] = fields_temp
         if fields_temp:
@@ -121,7 +140,12 @@ def generate_review_screen_yaml(
             obj_type = next(iter(obj.values()), "")
             if not obj_name or not isinstance(obj_type, str):
                 continue
-            skippable_types = ["ALDocument.", "ALDocumentBundle.", "DAStaticFile.", "ALPeopleList."]
+            skippable_types = [
+                "ALDocument.",
+                "ALDocumentBundle.",
+                "DAStaticFile.",
+                "ALPeopleList.",
+            ]
             if any(obj_type.startswith(val) for val in skippable_types):
                 continue
             review_fields_temp.append(
@@ -205,11 +229,18 @@ def generate_review_screen_yaml(
     }
 
     for question in questions:
-        fields = question.get("fields", [])
+        raw_fields = question.get("fields", [])
+        if not isinstance(raw_fields, list):
+            continue
+        fields: List[Dict[str, Any]] = [
+            field for field in raw_fields if isinstance(field, dict)
+        ]
         if not fields:
             continue
 
-        first_label_pair = next((pair for pair in fields[0].items() if pair[0] not in not_labels), None)
+        first_label_pair = next(
+            (pair for pair in fields[0].items() if pair[0] not in not_labels), None
+        )
         if first_label_pair is None:
             first_label_pair = (fields[0].get("label", ""), fields[0].get("field", ""))
 
@@ -221,7 +252,9 @@ def generate_review_screen_yaml(
             review["button"] = f"**{question_text}**\\n\\n"
 
         for field in fields:
-            label_pair = next((pair for pair in field.items() if pair[0] not in not_labels), None)
+            label_pair = next(
+                (pair for pair in field.items() if pair[0] not in not_labels), None
+            )
             if label_pair is None:
                 label_pair = (field.get("label", ""), field.get("field", ""))
 

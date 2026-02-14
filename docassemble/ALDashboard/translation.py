@@ -82,7 +82,11 @@ def gpt_is_available() -> bool:
     """
     Return True if the GPT API is available.
     """
-    return get_config("open ai", {}).get("key") is not None
+    if os.getenv("OPENAI_API_KEY"):
+        return True
+    return bool(
+        get_config("open ai", {}).get("key") or get_config("openai api key")
+    )
 
 
 def may_have_mako(text: str) -> bool:

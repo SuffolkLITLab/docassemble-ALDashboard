@@ -1,17 +1,13 @@
 import docx
 import sys
-import os
-from openai import OpenAI
 
 import tiktoken
 import json
 from docx.oxml import OxmlElement
 import re
-from docassemble.base.util import get_config
+from docassemble.ALToolbox.llms import chat_completion
 
-os.environ["OPENAI_API_KEY"] = get_config("openai api key") or ""
-
-from typing import List, Tuple, Optional, Union
+from typing import Any, List, Tuple, Optional, Union
 
 __all__ = [
     "get_labeled_docx_runs",
@@ -78,21 +74,21 @@ def update_docx(
 
 def get_labeled_docx_runs(
     docx_path: str,
-    custom_people_names: Optional[Tuple[str, str]] = None,
-    openai_client: Optional[OpenAI] = None,
+    custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    openai_client: Optional[Any] = None,
+    openai_api: Optional[str] = None,
 ) -> List[Tuple[int, int, str, int]]:
     """Scan the DOCX and return a list of modified text with Jinja2 variable names inserted.
 
     Args:
         docx_path: path to the DOCX file
-        custom_people_names: a tuple of custom names and descriptions to use in addition to the default ones. Like: ("clients", "the person benefiting from the form")
+        custom_people_names: optional list of custom (name, description) pairs, e.g.
+            [("clients", "the person benefiting from the form")]
+        openai_api: optional API key override. If omitted, ALToolbox default resolution is used.
 
     Returns:
         A list of tuples, each containing a paragraph number, run number, and the modified text of the run.
     """
-    if not openai_client:
-        openai_client = OpenAI()
-
     role_description = """
     You will process a DOCX document and return a JSON structure that turns the DOCX file into a template 
     based on the following guidelines and examples. The DOCX will be provided as an annotated series of
@@ -128,9 +124,17 @@ def get_labeled_docx_runs(
     """
 
     custom_name_text = ""
-    if custom_people_names:
-        assert isinstance(custom_people_names, list)
-        for name, description in custom_people_names:
+    if custom_people_names is not None:
+        if not isinstance(custom_people_names, list):
+            raise ValueError(
+                "custom_people_names must be a list of [name, description] pairs."
+            )
+        for item in custom_people_names:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise ValueError(
+                    "Each custom_people_names item must be a [name, description] pair."
+                )
+            name, description = item
             custom_name_text += f"    {name} ({description}), \n"
 
     rules = f"""
@@ -141,7 +145,7 @@ def get_labeled_docx_runs(
         4. Use variable names and patterns from the list below. Invent new variable names when it is appropriate.
 
     List names for people:
-        {custom_people_names}
+{custom_name_text}
         users (for the person benefiting from the form, especially when for a pro se filer)
         other_parties (the opposing party in a lawsuit or transactional party)
         plaintiffs
@@ -245,22 +249,32 @@ def get_labeled_docx_runs(
             f"Input to OpenAI is too long ({token_count} tokens). Maximum is 128000 tokens."
         )
 
-    response = openai_client.chat.completions.create(
+    response = chat_completion(
         model="gpt-4-turbo",
         messages=[
             {"role": "system", "content": role_description + rules},
             {"role": "user", "content": repr(items)},
         ],
-        response_format={"type": "json_object"},
+        json_mode=True,
         temperature=0.5,
-        max_tokens=4096,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0,
+        max_output_tokens=4096,
+        openai_client=openai_client,
+        openai_api=openai_api,
     )
 
-    assert isinstance(response.choices[0].message.content, str)
-    guesses = json.loads(response.choices[0].message.content)["results"]
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except json.JSONDecodeError as exc:
+            raise ValueError("chat_completion returned non-JSON output") from exc
+    if not isinstance(response, dict):
+        raise ValueError("Unexpected response type from chat_completion")
+    results = response.get("results")
+    if not isinstance(results, list):
+        raise ValueError(
+            "chat_completion response did not contain a list 'results' field"
+        )
+    guesses = results
     return guesses
 
 

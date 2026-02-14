@@ -37,6 +37,77 @@ If you want the ALDashboard to be a dropdown option for admins and developers, a
           - admin
           - developer
 
+## ALDashboard API
+
+When installed on a docassemble server, ALDashboard exposes a Flask API at:
+
+- `POST /al/api/v1/dashboard/translation`
+- `POST /al/api/v1/dashboard/docx/auto-label`
+- `POST /al/api/v1/dashboard/bootstrap/compile`
+- `POST /al/api/v1/dashboard/translation/validate`
+- `POST /al/api/v1/dashboard/review-screen/draft`
+- `POST /al/api/v1/dashboard/docx/validate`
+- `POST /al/api/v1/dashboard/pdf/label-fields`
+- `POST /al/api/v1/dashboard/pdf/fields/detect`
+- `POST /al/api/v1/dashboard/pdf/fields/relabel`
+- `GET /al/api/v1/dashboard/jobs/{job_id}`
+- `DELETE /al/api/v1/dashboard/jobs/{job_id}`
+- `GET /al/api/v1/dashboard/openapi.json`
+- `GET /al/api/v1/dashboard/docs`
+
+The API uses docassemble API key authentication via `api_verify()`. Endpoints default to synchronous execution and support `mode=async` (or `async=true`) for Celery-backed processing.
+
+To enable async mode, add this module to your docassemble configuration:
+
+```yaml
+celery modules:
+  - docassemble.ALDashboard.api_dashboard_worker
+```
+
+### Endpoint Notes
+
+- `POST /al/api/v1/dashboard/translation`
+  - Input: `interview_path`, one or more target languages (`tr_langs`), optional GPT settings.
+  - Output: translation XLSX metadata and optional base64 file content.
+- `POST /al/api/v1/dashboard/docx/auto-label`
+  - Input: DOCX file upload, optional `custom_people_names`.
+  - Uses `docassemble.ALToolbox.llms` for OpenAI configuration.
+  - Optional per-request override: `openai_api`.
+- `POST /al/api/v1/dashboard/bootstrap/compile`
+  - Input: SCSS upload or `scss_text`.
+  - Output: compiled CSS text or base64.
+  - Operational notes:
+    - Requires `node` and `npm` available on server `PATH`.
+    - First run downloads Bootstrap source into `/tmp` and runs `npm install`/`npm run css-compile`, so it may be noticeably slower.
+    - Requires outbound HTTPS access to fetch Bootstrap and npm dependencies.
+    - Writes temporary build artifacts under `/tmp`; ensure adequate disk space and cleanup policies.
+- `POST /al/api/v1/dashboard/translation/validate`
+  - Input: translation XLSX.
+  - Output: structured errors/warnings/empty rows.
+- `POST /al/api/v1/dashboard/review-screen/draft`
+  - Input: one or more YAML files.
+  - Output: generated review-screen YAML draft.
+- `POST /al/api/v1/dashboard/docx/validate`
+  - Input: one or more DOCX templates.
+  - Output: per-file Jinja rendering errors.
+- `POST /al/api/v1/dashboard/pdf/label-fields`
+  - Input: PDF upload.
+  - Output: PDF with fields detected and optionally relabeled (backward-compatible alias of `/pdf/fields/detect`).
+- `POST /al/api/v1/dashboard/pdf/fields/detect`
+  - Input: PDF upload.
+  - Optional flags: `relabel_with_ai`, `include_pdf_base64`, `include_parse_stats`.
+  - Optional exact-name list: `target_field_names` (ordered list to apply after detection).
+  - Output: PDF with detected fields added, plus optional AI/target-name relabeling.
+- `POST /al/api/v1/dashboard/pdf/fields/relabel`
+  - Input: PDF with existing fields.
+  - Relabel modes: `field_name_mapping` (exact old->new map), ordered `target_field_names`, or AI (`relabel_with_ai=true`).
+  - Output: Relabeled PDF and resulting field names; optional parse stats/base64 output.
+
+Live docs:
+
+- `GET /al/api/v1/dashboard/openapi.json`
+- `GET /al/api/v1/dashboard/docs`
+
 ## Some screenshots
 
 ### Main page

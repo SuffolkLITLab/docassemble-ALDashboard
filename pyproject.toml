@@ -89,6 +89,14 @@ module="flask"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module="flask_cors"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="flask_cors.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module="docx"
 ignore_missing_imports = true
 
@@ -98,4 +106,12 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module="mako.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="formfyxer"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="formfyxer.*"
 ignore_missing_imports = true

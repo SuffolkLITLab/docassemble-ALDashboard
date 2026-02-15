@@ -34,9 +34,13 @@ def _coerce_modified_run_item(
     else:
         return None
 
+    if paragraph_number is None:
+        return None
     try:
         paragraph_number = int(paragraph_number)
     except (TypeError, ValueError):
+        return None
+    if run_number is None:
         return None
     try:
         run_number = int(run_number)
@@ -120,11 +124,13 @@ def _extract_model_results(response: Any) -> List[Any]:
         else:
             text_value = value
             new_paragraph = 0
-        mapped_results.append([paragraph_number, run_number, str(text_value), new_paragraph])
+        mapped_results.append(
+            [paragraph_number, run_number, str(text_value), new_paragraph]
+        )
     return mapped_results
 
 
-def _append_text_content(run_element: OxmlElement, text: str) -> None:
+def _append_text_content(run_element: Any, text: str) -> None:
     """Append text to a w:r element, preserving tabs/newlines in WordprocessingML."""
     parts = re.split(r"(\t|\n)", text)
     for part in parts:
@@ -188,7 +194,7 @@ def _collect_target_paragraphs(document: Any) -> List[Any]:
     return collected
 
 
-def _build_paragraph_with_text(source_paragraph: Any, text: str) -> OxmlElement:
+def _build_paragraph_with_text(source_paragraph: Any, text: str) -> Any:
     paragraph_element = OxmlElement("w:p")
 
     # Carry paragraph-level style/formatting so inserted tags don't look out of place.

@@ -412,6 +412,8 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
     if max_output_tokens_override in (None, ""):
         parsed_max_output_tokens = None
     else:
+        if max_output_tokens_override is None:
+            raise DashboardAPIValidationError("max_output_tokens must be an integer.")
         try:
             parsed_max_output_tokens = int(max_output_tokens_override)
         except (TypeError, ValueError) as exc:
@@ -494,6 +496,10 @@ def _coerce_label_item(item: Any, *, field_name: str) -> List[Any]:
         )
 
     try:
+        if paragraph is None or run is None:
+            raise DashboardAPIValidationError(
+                f"{field_name} paragraph/run values must be integers."
+            )
         paragraph_num = int(paragraph)
         run_num = int(run)
     except (TypeError, ValueError):
@@ -542,7 +548,9 @@ def _parse_index_text_map(raw_value: Any) -> Dict[int, str]:
 
 
 def _parse_skip_indexes(raw_value: Any) -> List[int]:
-    parsed = _load_json_field(raw_value, field_name="skip_label_indexes", expected_type=list)
+    parsed = _load_json_field(
+        raw_value, field_name="skip_label_indexes", expected_type=list
+    )
     if parsed is None:
         return []
     output: List[int] = []
@@ -550,7 +558,9 @@ def _parse_skip_indexes(raw_value: Any) -> List[int]:
         try:
             idx = int(item)
         except (TypeError, ValueError):
-            raise DashboardAPIValidationError("skip_label_indexes must contain integers.")
+            raise DashboardAPIValidationError(
+                "skip_label_indexes must contain integers."
+            )
         if idx < 0:
             raise DashboardAPIValidationError(
                 "skip_label_indexes values must be non-negative."
@@ -570,14 +580,24 @@ def _apply_add_label_rules(
 
     for rule in rules:
         if not isinstance(rule, dict):
-            raise DashboardAPIValidationError("add_label_rules entries must be objects.")
+            raise DashboardAPIValidationError(
+                "add_label_rules entries must be objects."
+            )
         if "paragraph_start" not in rule:
             raise DashboardAPIValidationError(
                 "Each add_label_rules entry requires paragraph_start."
             )
+        paragraph_start_raw = rule.get("paragraph_start")
+        paragraph_end_raw = rule.get("paragraph_end")
+        if paragraph_start_raw is None:
+            raise DashboardAPIValidationError(
+                "Each add_label_rules entry requires paragraph_start."
+            )
         try:
-            paragraph_start = int(rule.get("paragraph_start"))
-            paragraph_end = int(rule.get("paragraph_end", paragraph_start))
+            paragraph_start = int(paragraph_start_raw)
+            paragraph_end = int(
+                paragraph_end_raw if paragraph_end_raw is not None else paragraph_start
+            )
         except (TypeError, ValueError):
             raise DashboardAPIValidationError(
                 "add_label_rules paragraph_start/paragraph_end must be integers."
@@ -646,7 +666,11 @@ def _apply_add_label_rules(
             elif action == "regex_sub" and pattern is not None:
                 new_text = pattern.sub(replacement, str(run_text))
             elif action == "regex_group_1" and regex_match is not None:
-                group_text = regex_match.group(1) if regex_match.groups() else regex_match.group(0)
+                group_text = (
+                    regex_match.group(1)
+                    if regex_match.groups()
+                    else regex_match.group(0)
+                )
                 new_text = replacement.replace("{match}", group_text)
             else:
                 new_text = replacement
@@ -669,7 +693,9 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
         raw.get("include_labeled_docx_base64"), default=False
     )
 
-    raw_results = _load_json_field(raw.get("results"), field_name="results", expected_type=list)
+    raw_results = _load_json_field(
+        raw.get("results"), field_name="results", expected_type=list
+    )
     if raw_results is None and file_content_base64 is None:
         raise DashboardAPIValidationError(
             "Provide results or upload a DOCX file to relabel."
@@ -706,6 +732,8 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
     if max_output_tokens_override in (None, ""):
         parsed_max_output_tokens = None
     else:
+        if max_output_tokens_override is None:
+            raise DashboardAPIValidationError("max_output_tokens must be an integer.")
         try:
             parsed_max_output_tokens = int(max_output_tokens_override)
         except (TypeError, ValueError) as exc:
@@ -725,7 +753,9 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
 
     try:
         if raw_results is not None:
-            labels = [_coerce_label_item(item, field_name="results") for item in raw_results]
+            labels = [
+                _coerce_label_item(item, field_name="results") for item in raw_results
+            ]
         else:
             assert temp_path is not None
             labels = [
@@ -774,7 +804,11 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
                 raise DashboardAPIValidationError(
                     "include_labeled_docx_base64 requires an uploaded DOCX file."
                 )
-            updated = update_docx(temp_path, labels)
+            labels_for_update = [
+                (int(item[0]), int(item[1]), str(item[2]), int(item[3]))
+                for item in labels
+            ]
+            updated = update_docx(temp_path, labels_for_update)
             with tempfile.NamedTemporaryFile(
                 mode="wb", suffix=".docx", delete=False
             ) as out:

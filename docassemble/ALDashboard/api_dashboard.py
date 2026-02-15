@@ -326,11 +326,15 @@ def _collect_base64_artifacts(
                         "mime": meta["mime"],
                     }
                 )
-            artifacts.extend(_collect_base64_artifacts(item, path=child_path, parent=value))
+            artifacts.extend(
+                _collect_base64_artifacts(item, path=child_path, parent=value)
+            )
     elif isinstance(value, list):
         for idx, item in enumerate(value):
             child_path = f"{path}[{idx}]" if path else f"[{idx}]"
-            artifacts.extend(_collect_base64_artifacts(item, path=child_path, parent=parent))
+            artifacts.extend(
+                _collect_base64_artifacts(item, path=child_path, parent=parent)
+            )
     return artifacts
 
 
@@ -641,7 +645,9 @@ def dashboard_job_download(job_id: str):
     requested_field = request.args.get("field")
     selected = None
     if requested_field:
-        selected = next((item for item in artifacts if item["path"] == requested_field), None)
+        selected = next(
+            (item for item in artifacts if item["path"] == requested_field), None
+        )
         if selected is None:
             return jsonify_with_status(
                 {

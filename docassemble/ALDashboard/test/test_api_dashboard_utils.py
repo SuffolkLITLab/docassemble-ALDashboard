@@ -119,7 +119,11 @@ class TestDashboardAPIUtils(unittest.TestCase):
                 {
                     "results": [[0, 0, "{{ a }}", 0]],
                     "add_label_rules": [
-                        {"paragraph_start": 0, "paragraph_end": 5, "replacement": "{{ b }}"}
+                        {
+                            "paragraph_start": 0,
+                            "paragraph_end": 5,
+                            "replacement": "{{ b }}",
+                        }
                     ],
                 }
             )
@@ -146,9 +150,7 @@ class TestDashboardAPIUtils(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(
-            payload["results"], [[1, 0, "{{ users[0].name.full() }}", 0]]
-        )
+        self.assertEqual(payload["results"], [[1, 0, "{{ users[0].name.full() }}", 0]])
 
     @patch("docassemble.ALDashboard.docx_wrangling.get_docx_run_items")
     def test_docx_runs_payload_returns_indexed_runs(self, mock_get_docx_runs):

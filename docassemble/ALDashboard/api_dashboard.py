@@ -1,11 +1,13 @@
 # pre-load
 
 import base64
+import binascii
 import json
 import time
 import uuid
 import copy
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 from flask import Response, jsonify, request
 from flask_cors import cross_origin
@@ -25,6 +27,7 @@ from .api_dashboard_utils import (
     _validate_upload_size,
     autolabel_payload_from_request,
     bootstrap_payload_from_request,
+    docx_runs_payload_from_request,
     build_docs_html,
     build_openapi_spec,
     coerce_async_flag,
@@ -32,6 +35,7 @@ from .api_dashboard_utils import (
     pdf_fields_detect_payload_from_request,
     pdf_fields_relabel_payload_from_request,
     pdf_label_fields_payload_from_request,
+    relabel_payload_from_request,
     review_screen_payload_from_request,
     translation_payload_from_request,
     validate_docx_payload_from_request,
@@ -48,9 +52,11 @@ if not in_celery:
     from .api_dashboard_worker import (
         dashboard_autolabel_task,
         dashboard_bootstrap_task,
+        dashboard_docx_runs_task,
         dashboard_pdf_fields_detect_task,
         dashboard_pdf_fields_relabel_task,
         dashboard_pdf_label_fields_task,
+        dashboard_relabel_task,
         dashboard_review_screen_task,
         dashboard_validate_docx_task,
         dashboard_validate_translation_task,
@@ -271,6 +277,63 @@ def _normalize_result_for_json(value: Any) -> Any:
     return str(value)
 
 
+def _guess_download_metadata(field_name: str) -> Dict[str, str]:
+    lowered = field_name.lower()
+    if "docx" in lowered:
+        return {
+            "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "ext": ".docx",
+            "fallback_name": "output.docx",
+        }
+    if "pdf" in lowered:
+        return {"mime": "application/pdf", "ext": ".pdf", "fallback_name": "output.pdf"}
+    if "xlsx" in lowered:
+        return {
+            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ext": ".xlsx",
+            "fallback_name": "output.xlsx",
+        }
+    if "css" in lowered:
+        return {"mime": "text/css", "ext": ".css", "fallback_name": "output.css"}
+    return {
+        "mime": "application/octet-stream",
+        "ext": ".bin",
+        "fallback_name": "output.bin",
+    }
+
+
+def _collect_base64_artifacts(
+    value: Any, *, path: str = "", parent: Optional[Dict[str, Any]] = None
+) -> list:
+    artifacts = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_path = f"{path}.{key}" if path else key
+            if key.endswith("_base64") and isinstance(item, str):
+                meta = _guess_download_metadata(key)
+                suggested_name = value.get("filename") or value.get(
+                    f"{key[:-7]}_filename"
+                )
+                if not isinstance(suggested_name, str) or not suggested_name.strip():
+                    suggested_name = meta["fallback_name"]
+                if "." not in suggested_name:
+                    suggested_name = suggested_name + meta["ext"]
+                artifacts.append(
+                    {
+                        "path": child_path,
+                        "base64": item,
+                        "filename": suggested_name,
+                        "mime": meta["mime"],
+                    }
+                )
+            artifacts.extend(_collect_base64_artifacts(item, path=child_path, parent=value))
+    elif isinstance(value, list):
+        for idx, item in enumerate(value):
+            child_path = f"{path}[{idx}]" if path else f"[{idx}]"
+            artifacts.extend(_collect_base64_artifacts(item, path=child_path, parent=parent))
+    return artifacts
+
+
 @app.route(f"{DASHBOARD_API_BASE_PATH}/translation", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -362,6 +425,20 @@ def dashboard_translation():
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def dashboard_docx_auto_label():
     return _run_endpoint(autolabel_payload_from_request, dashboard_autolabel_task)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/docx/runs", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_docx_runs():
+    return _run_endpoint(docx_runs_payload_from_request, dashboard_docx_runs_task)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/docx/relabel", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_docx_relabel():
+    return _run_endpoint(relabel_payload_from_request, dashboard_relabel_task)
 
 
 @app.route(f"{DASHBOARD_API_BASE_PATH}/bootstrap/compile", methods=["POST"])
@@ -496,7 +573,13 @@ def dashboard_job(job_id: str):
         "created_at": task_info.get("created_at"),
     }
     if state == "SUCCESS":
-        response_body["data"] = _normalize_result_for_json(result.get())
+        normalized_data = _normalize_result_for_json(result.get())
+        response_body["data"] = normalized_data
+        artifacts = _collect_base64_artifacts(normalized_data)
+        if artifacts:
+            response_body["download_url"] = (
+                f"{DASHBOARD_API_BASE_PATH}/jobs/{job_id}/download"
+            )
     elif state == "FAILURE":
         error_obj = result.result
         response_body["error"] = {
@@ -504,6 +587,131 @@ def dashboard_job(job_id: str):
             "message": str(error_obj),
         }
     return jsonify(response_body)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/jobs/<job_id>/download", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def dashboard_job_download(job_id: str):
+    request_id = str(uuid.uuid4())
+    if not api_verify():
+        return _auth_fail(request_id)
+
+    task_info = _fetch_job_mapping(job_id)
+    if not task_info:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "not_found", "message": "Job not found."},
+            },
+            404,
+        )
+
+    result = workerapp.AsyncResult(id=task_info["id"])
+    state = (result.state or "").upper()
+    if state != "SUCCESS":
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {
+                    "type": "job_not_ready",
+                    "message": "Job is not completed yet.",
+                },
+            },
+            409,
+        )
+
+    normalized_data = _normalize_result_for_json(result.get())
+    artifacts = _collect_base64_artifacts(normalized_data)
+    if not artifacts:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {
+                    "type": "not_found",
+                    "message": "No downloadable file was found in the job result.",
+                },
+            },
+            404,
+        )
+
+    requested_field = request.args.get("field")
+    selected = None
+    if requested_field:
+        selected = next((item for item in artifacts if item["path"] == requested_field), None)
+        if selected is None:
+            return jsonify_with_status(
+                {
+                    "success": False,
+                    "request_id": request_id,
+                    "error": {
+                        "type": "not_found",
+                        "message": f"Requested field {requested_field!r} was not found.",
+                    },
+                },
+                404,
+            )
+    else:
+        index_raw = request.args.get("index")
+        if index_raw is None:
+            index = 0
+        else:
+            try:
+                index = int(index_raw)
+            except ValueError:
+                return jsonify_with_status(
+                    {
+                        "success": False,
+                        "request_id": request_id,
+                        "error": {
+                            "type": "validation_error",
+                            "message": "index must be an integer.",
+                        },
+                    },
+                    400,
+                )
+        if index < 0 or index >= len(artifacts):
+            return jsonify_with_status(
+                {
+                    "success": False,
+                    "request_id": request_id,
+                    "error": {
+                        "type": "not_found",
+                        "message": f"No downloadable artifact at index {index}.",
+                    },
+                },
+                404,
+            )
+        selected = artifacts[index]
+
+    try:
+        file_bytes = base64.b64decode(selected["base64"], validate=True)
+    except (binascii.Error, ValueError):
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {
+                    "type": "server_error",
+                    "message": "Stored file content is not valid base64.",
+                },
+            },
+            500,
+        )
+
+    filename = selected["filename"]
+    content_disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        file_bytes,
+        mimetype=selected["mime"],
+        headers={
+            "Content-Disposition": content_disposition,
+            "X-ALDashboard-Artifact-Field": selected["path"],
+        },
+    )
 
 
 @app.route(f"{DASHBOARD_API_BASE_PATH}/openapi.json", methods=["GET"])

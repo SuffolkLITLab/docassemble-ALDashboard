@@ -7,9 +7,6 @@ import json
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import re
-from urllib.parse import urlparse, urlunparse
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 from docassemble.ALToolbox.llms import chat_completion
 
 from typing import Any, List, Tuple, Optional, Union
@@ -17,6 +14,7 @@ from typing import Any, List, Tuple, Optional, Union
 __all__ = [
     "get_labeled_docx_runs",
     "get_docx_run_text",
+    "get_docx_run_items",
     "update_docx",
     "modify_docx_with_openai_guesses",
 ]
@@ -228,6 +226,18 @@ def get_docx_run_text(
     return paragraph.text
 
 
+def get_docx_run_items(document: Union[docx.document.Document, str]) -> List[List[Any]]:
+    """Return [paragraph_index, run_index, run_text] across body/tables/headers/footers."""
+    if isinstance(document, str):
+        document = docx.Document(document)
+    paragraphs = _collect_target_paragraphs(document)
+    items: List[List[Any]] = []
+    for pnum, paragraph in enumerate(paragraphs):
+        for rnum, run in enumerate(paragraph.runs):
+            items.append([pnum, rnum, run.text])
+    return items
+
+
 def update_docx(
     document: Union[docx.document.Document, str],
     modified_runs: List[Tuple[int, int, str, int]],
@@ -280,6 +290,9 @@ def get_labeled_docx_runs(
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     model: str = "gpt-5-nano",
+    custom_prompt: Optional[str] = None,
+    additional_instructions: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
 ) -> List[Tuple[int, int, str, int]]:
     """Scan the DOCX and return a list of modified text with Jinja2 variable names inserted.
 
@@ -292,7 +305,7 @@ def get_labeled_docx_runs(
     Returns:
         A list of tuples, each containing a paragraph number, run number, and the modified text of the run.
     """
-    role_description = """
+    role_description = custom_prompt or """
     You will process a DOCX document and return a JSON structure that turns the DOCX file into a template 
     based on the following guidelines and examples. The DOCX will be provided as an annotated series of
     paragraphs and runs.
@@ -436,6 +449,11 @@ def get_labeled_docx_runs(
         Examples: 
         "(State the reason for eviction)" transforms into `{{ eviction_reason }}`.
     """
+    if additional_instructions and additional_instructions.strip():
+        role_description += (
+            "\n\nAdditional instructions:\n" + additional_instructions.strip()
+        )
+
     encoding = tiktoken.encoding_for_model("gpt-4")
 
     doc = docx.Document(docx_path)
@@ -457,26 +475,16 @@ def get_labeled_docx_runs(
         {"role": "system", "content": role_description + rules},
         {"role": "user", "content": repr(items)},
     ]
-    if _is_azure_model_mesh_endpoint(openai_base_url):
-        response = _chat_completion_azure_model_mesh(
-            endpoint_url=str(openai_base_url),
-            api_key=openai_api,
-            model=model,
-            messages=messages,
-            temperature=0.5,
-            max_output_tokens=8192,
-        )
-    else:
-        response = chat_completion(
-            model=model,
-            messages=messages,
-            json_mode=True,
-            temperature=0.5,
-            max_output_tokens=4096,
-            openai_client=openai_client,
-            openai_api=openai_api,
-            openai_base_url=openai_base_url,
-        )
+    response = chat_completion(
+        model=model,
+        messages=messages,
+        json_mode=True,
+        temperature=0.5,
+        max_output_tokens=max_output_tokens,
+        openai_client=openai_client,
+        openai_api=openai_api,
+        openai_base_url=openai_base_url,
+    )
 
     if isinstance(response, str):
         try:
@@ -485,10 +493,6 @@ def get_labeled_docx_runs(
             raise ValueError("chat_completion returned non-JSON output") from exc
     results = _extract_model_results(response)
     guesses = _normalize_modified_runs(results)
-    if not guesses:
-        raise ValueError(
-            "chat_completion response did not contain any valid run modifications"
-        )
     return guesses
 
 
@@ -504,112 +508,6 @@ def modify_docx_with_openai_guesses(docx_path: str) -> docx.document.Document:
     guesses = get_labeled_docx_runs(docx_path)
 
     return update_docx(docx.Document(docx_path), guesses)
-
-
-def _is_azure_model_mesh_endpoint(openai_base_url: Optional[str]) -> bool:
-    if not openai_base_url:
-        return False
-    lowered = openai_base_url.lower()
-    return "services.ai.azure.com" in lowered and "/models" in lowered
-
-
-def _chat_completion_azure_model_mesh(
-    endpoint_url: str,
-    api_key: Optional[str],
-    model: str,
-    messages: List[dict],
-    temperature: float = 0.5,
-    max_output_tokens: int = 4096,
-) -> dict:
-    """Call Azure AI model-mesh chat completions endpoint directly."""
-    if not api_key:
-        raise ValueError(
-            "openai_api is required when using an Azure model-mesh endpoint URL."
-        )
-
-    parsed = urlparse(endpoint_url)
-    path = parsed.path.rstrip("/")
-    if not path.endswith("/chat/completions"):
-        path = path + "/chat/completions"
-    post_url = urlunparse(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            path,
-            parsed.params,
-            parsed.query,
-            parsed.fragment,
-        )
-    )
-
-    payload = {
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
-        "response_format": {"type": "json_object"},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    request = Request(
-        post_url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "x-ms-model-mesh-model-name": model,
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=120) as resp:
-            raw = resp.read().decode("utf-8")
-    except HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Azure model-mesh request failed with HTTP {exc.code}: {error_body}"
-        ) from exc
-    except URLError as exc:
-        raise RuntimeError(f"Azure model-mesh request failed: {exc}") from exc
-
-    parsed_json = json.loads(raw)
-    content = (
-        parsed_json.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content")
-    )
-    if not isinstance(content, str):
-        raise ValueError("Azure model-mesh response did not contain message content.")
-    return _loads_relaxed_json(content)
-
-
-def _loads_relaxed_json(text: str) -> Any:
-    text = text.strip()
-    if not text:
-        raise ValueError("Model response was empty")
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Try parsing the first JSON object/array if extra text was appended.
-    start_positions = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
-    if not start_positions:
-        raise ValueError("Model response did not contain JSON")
-    start = min(start_positions)
-
-    decoder = json.JSONDecoder()
-    try:
-        parsed, _ = decoder.raw_decode(text[start:])
-        return parsed
-    except json.JSONDecodeError:
-        pass
-
-    # Final fallback for truncated trailing text: trim to the last matching close brace.
-    end_obj = text.rfind("}")
-    end_arr = text.rfind("]")
-    end = max(end_obj, end_arr)
-    if end > start:
-        return json.loads(text[start : end + 1])
-    raise ValueError("Unable to parse model JSON response")
 
 
 if __name__ == "__main__":

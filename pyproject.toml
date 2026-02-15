@@ -39,6 +39,8 @@ extend-exclude = '(__init__.py|setup.py)'
 
 [tool.mypy]
 # global options
+namespace_packages = true
+explicit_package_bases = true
 exclude = '''(?x)(
     ^setup.py$
   )'''

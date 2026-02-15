@@ -3,6 +3,7 @@ import binascii
 import importlib.resources
 import json
 import os
+import re
 import tempfile
 from typing import Any, Dict, List, Mapping, Optional, cast
 
@@ -328,6 +329,51 @@ def autolabel_payload_from_request() -> Dict[str, Any]:
     )
 
 
+def docx_runs_payload_from_request() -> Dict[str, Any]:
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return docx_runs_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
+
+
+def docx_runs_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    from .docx_wrangling import get_docx_run_items
+
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.docx")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError("file_content_base64 is required.")
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+
+    if not filename.lower().endswith(".docx"):
+        raise DashboardAPIValidationError(
+            "Only DOCX uploads are supported.", status_code=415
+        )
+
+    temp_path = _write_temp_file(filename, content)
+    try:
+        runs = get_docx_run_items(temp_path)
+        paragraph_count = 0
+        if runs:
+            paragraph_count = max(int(item[0]) for item in runs) + 1
+        return {
+            "input_filename": filename,
+            "paragraph_count": paragraph_count,
+            "run_count": len(runs),
+            "results": runs,
+        }
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     from .docx_wrangling import get_labeled_docx_runs, update_docx
 
@@ -350,6 +396,36 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
     openai_api_override = raw.get("openai_api")
     if openai_api_override is not None:
         openai_api_override = str(openai_api_override)
+    openai_base_url_override = raw.get("openai_base_url")
+    if openai_base_url_override is not None:
+        openai_base_url_override = str(openai_base_url_override)
+    openai_model_override = raw.get("openai_model")
+    if openai_model_override is not None:
+        openai_model_override = str(openai_model_override)
+    custom_prompt_override = raw.get("custom_prompt")
+    if custom_prompt_override is not None:
+        custom_prompt_override = str(custom_prompt_override)
+        if not custom_prompt_override.strip():
+            custom_prompt_override = None
+    additional_instructions_override = raw.get("additional_instructions")
+    if additional_instructions_override is not None:
+        additional_instructions_override = str(additional_instructions_override)
+    max_output_tokens_override = raw.get("max_output_tokens")
+    if max_output_tokens_override in (None, ""):
+        parsed_max_output_tokens = None
+    else:
+        if max_output_tokens_override is None:
+            raise DashboardAPIValidationError("max_output_tokens must be an integer.")
+        try:
+            parsed_max_output_tokens = int(max_output_tokens_override)
+        except (TypeError, ValueError) as exc:
+            raise DashboardAPIValidationError(
+                "max_output_tokens must be an integer."
+            ) from exc
+        if parsed_max_output_tokens <= 0:
+            raise DashboardAPIValidationError(
+                "max_output_tokens must be a positive integer."
+            )
 
     custom_people_names = _load_json_field(
         raw.get("custom_people_names"),
@@ -363,6 +439,11 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             temp_path,
             custom_people_names=custom_people_names,
             openai_api=openai_api_override,
+            openai_base_url=openai_base_url_override,
+            model=openai_model_override or "gpt-5-nano",
+            custom_prompt=custom_prompt_override,
+            additional_instructions=additional_instructions_override,
+            max_output_tokens=parsed_max_output_tokens,
         )
         payload: Dict[str, Any] = {
             "input_filename": filename,
@@ -386,6 +467,369 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         return payload
     finally:
         if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def relabel_payload_from_request() -> Dict[str, Any]:
+    upload: Optional[Dict[str, Any]] = None
+    if "file" in request.files:
+        upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    options: Dict[str, Any] = dict(raw)
+    if upload is not None:
+        options.setdefault("filename", upload["filename"])
+        options.setdefault(
+            "file_content_base64", base64.b64encode(upload["content"]).decode("ascii")
+        )
+    return relabel_payload_from_options(options)
+
+
+def _coerce_label_item(item: Any, *, field_name: str) -> List[Any]:
+    if isinstance(item, dict):
+        paragraph = item.get("paragraph")
+        run = item.get("run")
+        text = item.get("text")
+        new_paragraph = item.get("new_paragraph", 0)
+    elif isinstance(item, (list, tuple)) and len(item) >= 4:
+        paragraph, run, text, new_paragraph = item[:4]
+    else:
+        raise DashboardAPIValidationError(
+            f"{field_name} entries must be [paragraph, run, text, new_paragraph] or objects."
+        )
+
+    try:
+        if paragraph is None or run is None:
+            raise DashboardAPIValidationError(
+                f"{field_name} paragraph/run values must be integers."
+            )
+        paragraph_num = int(paragraph)
+        run_num = int(run)
+    except (TypeError, ValueError):
+        raise DashboardAPIValidationError(
+            f"{field_name} paragraph/run values must be integers."
+        )
+    if paragraph_num < 0 or run_num < 0:
+        raise DashboardAPIValidationError(
+            f"{field_name} paragraph/run values must be non-negative."
+        )
+    if text is None:
+        raise DashboardAPIValidationError(f"{field_name} text cannot be null.")
+    try:
+        new_paragraph_num = int(new_paragraph)
+    except (TypeError, ValueError):
+        new_paragraph_num = 0
+    if new_paragraph_num not in (-1, 0, 1):
+        new_paragraph_num = 0
+    return [paragraph_num, run_num, str(text), new_paragraph_num]
+
+
+def _parse_index_text_map(raw_value: Any) -> Dict[int, str]:
+    parsed = _load_json_field(
+        raw_value, field_name="replace_labels_by_index", expected_type=(dict)
+    )
+    if parsed is None:
+        return {}
+    output: Dict[int, str] = {}
+    for key, value in parsed.items():
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            raise DashboardAPIValidationError(
+                "replace_labels_by_index keys must be integers."
+            )
+        if idx < 0:
+            raise DashboardAPIValidationError(
+                "replace_labels_by_index keys must be non-negative."
+            )
+        if value is None:
+            raise DashboardAPIValidationError(
+                "replace_labels_by_index values cannot be null."
+            )
+        output[idx] = str(value)
+    return output
+
+
+def _parse_skip_indexes(raw_value: Any) -> List[int]:
+    parsed = _load_json_field(
+        raw_value, field_name="skip_label_indexes", expected_type=list
+    )
+    if parsed is None:
+        return []
+    output: List[int] = []
+    for item in parsed:
+        try:
+            idx = int(item)
+        except (TypeError, ValueError):
+            raise DashboardAPIValidationError(
+                "skip_label_indexes must contain integers."
+            )
+        if idx < 0:
+            raise DashboardAPIValidationError(
+                "skip_label_indexes values must be non-negative."
+            )
+        output.append(idx)
+    return output
+
+
+def _apply_add_label_rules(
+    rules: List[dict], doc_path: str, existing_labels: List[List[Any]]
+) -> List[List[Any]]:
+    from .docx_wrangling import get_docx_run_items
+
+    doc_runs = get_docx_run_items(doc_path)
+    output: List[List[Any]] = []
+    existing_keys = {(int(item[0]), int(item[1])) for item in existing_labels}
+
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise DashboardAPIValidationError(
+                "add_label_rules entries must be objects."
+            )
+        if "paragraph_start" not in rule:
+            raise DashboardAPIValidationError(
+                "Each add_label_rules entry requires paragraph_start."
+            )
+        paragraph_start_raw = rule.get("paragraph_start")
+        paragraph_end_raw = rule.get("paragraph_end")
+        if paragraph_start_raw is None:
+            raise DashboardAPIValidationError(
+                "Each add_label_rules entry requires paragraph_start."
+            )
+        try:
+            paragraph_start = int(paragraph_start_raw)
+            paragraph_end = int(
+                paragraph_end_raw if paragraph_end_raw is not None else paragraph_start
+            )
+        except (TypeError, ValueError):
+            raise DashboardAPIValidationError(
+                "add_label_rules paragraph_start/paragraph_end must be integers."
+            )
+        if paragraph_start < 0 or paragraph_end < paragraph_start:
+            raise DashboardAPIValidationError(
+                "add_label_rules paragraph range is invalid."
+            )
+
+        contains = rule.get("contains")
+        regex_text = rule.get("regex")
+        replacement = rule.get("replacement")
+        if replacement is None:
+            raise DashboardAPIValidationError(
+                "Each add_label_rules entry requires replacement."
+            )
+        replacement = str(replacement)
+        action = str(rule.get("on_match", "whole_run"))
+        try:
+            max_matches = int(rule.get("max_matches", 0))
+        except (TypeError, ValueError):
+            raise DashboardAPIValidationError(
+                "add_label_rules max_matches must be an integer."
+            )
+        if max_matches < 0:
+            raise DashboardAPIValidationError(
+                "add_label_rules max_matches must be non-negative."
+            )
+        try:
+            new_paragraph = int(rule.get("new_paragraph", 0))
+        except (TypeError, ValueError):
+            new_paragraph = 0
+        if new_paragraph not in (-1, 0, 1):
+            new_paragraph = 0
+        overwrite_existing = parse_bool(rule.get("overwrite_existing"), default=False)
+
+        pattern = None
+        if regex_text:
+            try:
+                pattern = re.compile(str(regex_text))
+            except re.error as exc:
+                raise DashboardAPIValidationError(
+                    f"add_label_rules regex is invalid: {exc}"
+                )
+
+        matches = 0
+        for pnum, rnum, run_text in doc_runs:
+            pnum = int(pnum)
+            rnum = int(rnum)
+            if pnum < paragraph_start or pnum > paragraph_end:
+                continue
+            if contains is not None and str(contains) not in str(run_text):
+                continue
+            regex_match = None
+            if pattern is not None:
+                regex_match = pattern.search(str(run_text))
+                if regex_match is None:
+                    continue
+
+            key = (pnum, rnum)
+            if key in existing_keys and not overwrite_existing:
+                continue
+
+            if action == "replace_contains" and contains is not None:
+                new_text = str(run_text).replace(str(contains), replacement)
+            elif action == "regex_sub" and pattern is not None:
+                new_text = pattern.sub(replacement, str(run_text))
+            elif action == "regex_group_1" and regex_match is not None:
+                group_text = (
+                    regex_match.group(1)
+                    if regex_match.groups()
+                    else regex_match.group(0)
+                )
+                new_text = replacement.replace("{match}", group_text)
+            else:
+                new_text = replacement
+
+            output.append([pnum, rnum, new_text, new_paragraph])
+            existing_keys.add(key)
+            matches += 1
+            if max_matches and matches >= max_matches:
+                break
+    return output
+
+
+def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    from .docx_wrangling import get_labeled_docx_runs, update_docx
+
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.docx")
+    file_content_base64 = raw.get("file_content_base64")
+    include_labeled_docx_base64 = parse_bool(
+        raw.get("include_labeled_docx_base64"), default=False
+    )
+
+    raw_results = _load_json_field(
+        raw.get("results"), field_name="results", expected_type=list
+    )
+    if raw_results is None and file_content_base64 is None:
+        raise DashboardAPIValidationError(
+            "Provide results or upload a DOCX file to relabel."
+        )
+
+    content: Optional[bytes] = None
+    temp_path: Optional[str] = None
+    if file_content_base64 is not None:
+        content = decode_base64_content(file_content_base64)
+        _validate_upload_size(content)
+        if not filename.lower().endswith(".docx"):
+            raise DashboardAPIValidationError(
+                "Only DOCX uploads are supported.", status_code=415
+            )
+        temp_path = _write_temp_file(filename, content)
+
+    openai_api_override = raw.get("openai_api")
+    if openai_api_override is not None:
+        openai_api_override = str(openai_api_override)
+    openai_base_url_override = raw.get("openai_base_url")
+    if openai_base_url_override is not None:
+        openai_base_url_override = str(openai_base_url_override)
+    openai_model_override = raw.get("openai_model")
+    if openai_model_override is not None:
+        openai_model_override = str(openai_model_override)
+    custom_prompt_override = raw.get("custom_prompt")
+    if custom_prompt_override is not None:
+        custom_prompt_override = str(custom_prompt_override)
+        if not custom_prompt_override.strip():
+            custom_prompt_override = None
+    additional_instructions_override = raw.get("additional_instructions")
+    if additional_instructions_override is not None:
+        additional_instructions_override = str(additional_instructions_override)
+
+    max_output_tokens_override = raw.get("max_output_tokens")
+    if max_output_tokens_override in (None, ""):
+        parsed_max_output_tokens = None
+    else:
+        if max_output_tokens_override is None:
+            raise DashboardAPIValidationError("max_output_tokens must be an integer.")
+        try:
+            parsed_max_output_tokens = int(max_output_tokens_override)
+        except (TypeError, ValueError) as exc:
+            raise DashboardAPIValidationError(
+                "max_output_tokens must be an integer."
+            ) from exc
+        if parsed_max_output_tokens <= 0:
+            raise DashboardAPIValidationError(
+                "max_output_tokens must be a positive integer."
+            )
+
+    custom_people_names = _load_json_field(
+        raw.get("custom_people_names"),
+        field_name="custom_people_names",
+        expected_type=list,
+    )
+
+    try:
+        if raw_results is not None:
+            labels = [
+                _coerce_label_item(item, field_name="results") for item in raw_results
+            ]
+        else:
+            assert temp_path is not None
+            labels = [
+                list(item)
+                for item in get_labeled_docx_runs(
+                    temp_path,
+                    custom_people_names=custom_people_names,
+                    openai_api=openai_api_override,
+                    openai_base_url=openai_base_url_override,
+                    model=openai_model_override or "gpt-5-nano",
+                    custom_prompt=custom_prompt_override,
+                    additional_instructions=additional_instructions_override,
+                    max_output_tokens=parsed_max_output_tokens,
+                )
+            ]
+
+        replace_by_index = _parse_index_text_map(raw.get("replace_labels_by_index"))
+        for idx, replacement_text in replace_by_index.items():
+            if idx < len(labels):
+                labels[idx][2] = replacement_text
+
+        skip_indexes = set(_parse_skip_indexes(raw.get("skip_label_indexes")))
+        labels = [label for idx, label in enumerate(labels) if idx not in skip_indexes]
+
+        add_labels_raw = _load_json_field(
+            raw.get("add_labels"), field_name="add_labels", expected_type=list
+        )
+        if add_labels_raw:
+            for item in add_labels_raw:
+                labels.append(_coerce_label_item(item, field_name="add_labels"))
+
+        add_label_rules = _load_json_field(
+            raw.get("add_label_rules"), field_name="add_label_rules", expected_type=list
+        )
+        if add_label_rules:
+            if temp_path is None:
+                raise DashboardAPIValidationError(
+                    "add_label_rules requires an uploaded DOCX file."
+                )
+            labels.extend(_apply_add_label_rules(add_label_rules, temp_path, labels))
+
+        payload: Dict[str, Any] = {"input_filename": filename, "results": labels}
+
+        if include_labeled_docx_base64:
+            if temp_path is None:
+                raise DashboardAPIValidationError(
+                    "include_labeled_docx_base64 requires an uploaded DOCX file."
+                )
+            labels_for_update = [
+                (int(item[0]), int(item[1]), str(item[2]), int(item[3]))
+                for item in labels
+            ]
+            updated = update_docx(temp_path, labels_for_update)
+            with tempfile.NamedTemporaryFile(
+                mode="wb", suffix=".docx", delete=False
+            ) as out:
+                out_path = out.name
+            try:
+                updated.save(out_path)
+                with open(out_path, "rb") as handle:
+                    payload["labeled_docx_base64"] = base64.b64encode(
+                        handle.read()
+                    ).decode("ascii")
+            finally:
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+
+        return payload
+    finally:
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 
@@ -877,7 +1321,27 @@ def build_openapi_spec() -> Dict[str, Any]:
                     "summary": "Auto-label DOCX with variable placeholders",
                     "description": (
                         "Uses ALToolbox LLM helpers. Optional `openai_api` request field "
-                        "can override configured API key for this request."
+                        "can override configured API key for this request. Supports optional "
+                        "`custom_prompt`, `additional_instructions`, and `max_output_tokens`."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/docx/runs": {
+                "post": {
+                    "summary": "Return parsed DOCX runs with paragraph/run indexes",
+                    "description": (
+                        "Returns `results` as `[paragraph_index, run_index, run_text]` "
+                        "using the same traversal as auto-labeling (body, tables, headers, footers)."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/docx/relabel": {
+                "post": {
+                    "summary": "Relabel/edit DOCX suggestions by index and rules",
+                    "description": (
+                        "Accepts first-pass `results` and supports `replace_labels_by_index`, "
+                        "`skip_label_indexes`, explicit `add_labels`, and range-based "
+                        "`add_label_rules`. Can optionally return labeled DOCX base64."
                     ),
                 }
             },
@@ -927,6 +1391,15 @@ def build_openapi_spec() -> Dict[str, Any]:
                 "get": {"summary": "Get async job status and result"},
                 "delete": {"summary": "Delete async job metadata"},
             },
+            f"{DASHBOARD_API_BASE_PATH}/jobs/{{job_id}}/download": {
+                "get": {
+                    "summary": "Download file artifact from completed async job",
+                    "description": (
+                        "Streams the first base64 file artifact from job result by default. "
+                        "Optional query params: `index` or `field`."
+                    ),
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/openapi.json": {
                 "get": {"summary": "Get OpenAPI document"}
             },
@@ -958,11 +1431,14 @@ def build_docs_html() -> str:
   <p>Uses docassemble API key authentication (<code>api_verify()</code>).</p>
   <h2>Async mode</h2>
   <p>Send <code>mode=async</code> (or <code>async=true</code>) and poll <code>GET {DASHBOARD_API_BASE_PATH}/jobs/&lt;job_id&gt;</code>.</p>
+  <p>When the job is complete and includes file output, download binary content at <code>GET {DASHBOARD_API_BASE_PATH}/jobs/&lt;job_id&gt;/download</code>.</p>
   <p>Celery config: <code>celery modules: [docassemble.ALDashboard.api_dashboard_worker]</code></p>
   <h2>Endpoints</h2>
   <ul>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/translation</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/auto-label</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/runs</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/relabel</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/bootstrap/compile</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/translation/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
@@ -970,17 +1446,63 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>
+    <li><code>GET {DASHBOARD_API_BASE_PATH}/jobs/&lt;job_id&gt;/download</code></li>
   </ul>
   <h2>Notes</h2>
   <ul>
     <li><code>/docx/auto-label</code> uses <code>docassemble.ALToolbox.llms</code> for key/config lookup.</li>
-    <li>You can pass optional <code>openai_api</code> to <code>/docx/auto-label</code> to override key per request.</li>
+    <li><code>/docx/runs</code> returns parsed run coordinates as <code>[paragraph_index, run_index, run_text]</code>.</li>
+    <li>You can pass optional <code>openai_api</code>, <code>openai_base_url</code>, and <code>openai_model</code> to <code>/docx/auto-label</code>.</li>
+    <li>You can customize labeling behavior with <code>custom_prompt</code>, <code>additional_instructions</code>, and optional <code>max_output_tokens</code>.</li>
+    <li><code>/docx/relabel</code> can replace or skip labels by index and add labels via explicit updates or paragraph-range rules.</li>
+    <li><code>/jobs/&lt;job_id&gt;/download</code> streams file outputs from async job results. Use <code>?index=1</code> or <code>?field=...</code> when multiple file artifacts exist.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
     <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>.</li>
     <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>.</li>
   </ul>
+  <h2>DOCX Modes</h2>
+  <ul>
+    <li><code>/docx/runs</code>: inspection mode (returns run coordinates).</li>
+    <li><code>/docx/auto-label</code>: draft generation mode (returns initial <code>results</code> labels).</li>
+    <li><code>/docx/relabel</code>: edit/apply mode (change, delete, add labels; optionally build output DOCX).</li>
+    <li><code>/jobs/&lt;job_id&gt;/download</code>: async file download mode (streams final DOCX/PDF/XLSX artifacts).</li>
+  </ul>
+  <h2>End-to-End Workflow</h2>
+  <p><strong>Step 1: Upload DOCX and generate draft labels (async):</strong></p>
+  <pre><code>curl -X POST "https://YOURSERVER{DASHBOARD_API_BASE_PATH}/docx/auto-label" \\
+  -H "X-API-Key: YOUR_API_KEY" \\
+  -F "mode=async" \\
+  -F "file=@/path/to/input.docx" \\
+  -F "openai_base_url=https://YOURRESOURCE.openai.azure.com/openai/v1/" \\
+  -F "openai_api=YOUR_AZURE_OPENAI_KEY" \\
+  -F "openai_model=gpt-5-mini"</code></pre>
+  <p><strong>Step 2: Poll job and read <code>data.results</code>:</strong></p>
+  <pre><code>curl -H "X-API-Key: YOUR_API_KEY" \\
+  "https://YOURSERVER{DASHBOARD_API_BASE_PATH}/jobs/JOB_ID"</code></pre>
+  <p><strong>Step 3: Manual edit pass (change one, delete one, add one), request final DOCX (async):</strong></p>
+  <pre><code>curl -X POST "https://YOURSERVER{DASHBOARD_API_BASE_PATH}/docx/relabel" \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: YOUR_API_KEY" \\
+  -d '{{
+    "mode": "async",
+    "filename": "input.docx",
+    "file_content_base64": "BASE64_DOCX_HERE",
+    "results": [[1,0,"{{{{ letter_date }}}}",0],[2,0,"{{{{ old_name }}}}",0],[3,0,"{{{{ keep_me }}}}",0]],
+    "replace_labels_by_index": {{"0":"{{{{ edited_letter_date }}}}"}},
+    "skip_label_indexes": [1],
+    "add_labels": [[0,0,"{{{{ added_new_label }}}}",0]],
+    "include_labeled_docx_base64": true
+  }}'</code></pre>
+  <p><strong>Step 4: Poll relabel job and download final edited DOCX:</strong></p>
+  <pre><code>curl -H "X-API-Key: YOUR_API_KEY" \\
+  "https://YOURSERVER{DASHBOARD_API_BASE_PATH}/jobs/JOB_ID"
+
+curl -L -o final_labeled.docx \\
+  -H "X-API-Key: YOUR_API_KEY" \\
+  "https://YOURSERVER{DASHBOARD_API_BASE_PATH}/jobs/JOB_ID/download"</code></pre>
+  <p>Default behavior: <code>/docx/auto-label</code> and <code>/docx/relabel</code> return a <code>results</code> array. To produce a downloadable DOCX from relabel, include DOCX content and set <code>include_labeled_docx_base64=true</code>.</p>
 </body>
 </html>
 """

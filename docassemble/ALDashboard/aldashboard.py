@@ -191,8 +191,7 @@ def speedy_get_sessions(
     modtime,
     key
     """
-    get_sessions_query = text(
-        """
+    get_sessions_query = text("""
 SELECT 
     userdict.filename as filename,
     num_keys,
@@ -229,8 +228,7 @@ WHERE
 ORDER BY 
     modtime DESC 
 LIMIT 500;
-        """
-    )
+        """)
     if not filename:
         if not user_has_privilege(["admin", "developer"]):
             raise Exception(
@@ -654,16 +652,16 @@ def list_question_files_in_package(package_name: str) -> Optional[List[str]]:
         # Locate the directory within the package
         ref = importlib.resources.files(package_name) / "data" / "questions"
         with importlib.resources.as_file(ref) as directory_path:
-          # List all files in the directory
-          if os.path.isdir(directory_path):
-              files = os.listdir(directory_path)
-              # Filter out directories, only keep files
-              files = [
-                  f for f in files if os.path.isfile(os.path.join(directory_path, f))
-              ]
-              return files
-          else:
-              return []
+            # List all files in the directory
+            if os.path.isdir(directory_path):
+                files = os.listdir(directory_path)
+                # Filter out directories, only keep files
+                files = [
+                    f for f in files if os.path.isfile(os.path.join(directory_path, f))
+                ]
+                return files
+            else:
+                return []
     except Exception as e:
         log(f"An error occurred with package '{package_name}': {e}")
         return []

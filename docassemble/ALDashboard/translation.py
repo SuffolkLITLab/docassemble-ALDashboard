@@ -84,9 +84,7 @@ def gpt_is_available() -> bool:
     """
     if os.getenv("OPENAI_API_KEY"):
         return True
-    return bool(
-        get_config("open ai", {}).get("key") or get_config("openai api key")
-    )
+    return bool(get_config("open ai", {}).get("key") or get_config("openai api key"))
 
 
 def may_have_mako(text: str) -> bool:
@@ -211,9 +209,7 @@ def translate_fragments_gpt(
                     temperature=0.0,
                 )
             if isinstance(response, str):
-                results[
-                    row_number
-                ] = (
+                results[row_number] = (
                     response.rstrip()
                 )  # Remove any trailing whitespace some LLM models might add
             else:
@@ -275,7 +271,9 @@ def translation_file(
         reasoning_effort: Reasoning effort setting, used for GPT-5 models.
         validate_mako: When True, retry GPT translations that break Mako syntax (default).
     """
-    filetype: str = "XLSX"  # Look in server.py for support of XLIFF format, but we won't implement it here
+    filetype: str = (
+        "XLSX"  # Look in server.py for support of XLIFF format, but we won't implement it here
+    )
     output_file = DAFile()
     setup_translation()
     if yaml_filename is None or not re.search(r"\S", yaml_filename):

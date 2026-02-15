@@ -350,6 +350,12 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
     openai_api_override = raw.get("openai_api")
     if openai_api_override is not None:
         openai_api_override = str(openai_api_override)
+    openai_base_url_override = raw.get("openai_base_url")
+    if openai_base_url_override is not None:
+        openai_base_url_override = str(openai_base_url_override)
+    openai_model_override = raw.get("openai_model")
+    if openai_model_override is not None:
+        openai_model_override = str(openai_model_override)
 
     custom_people_names = _load_json_field(
         raw.get("custom_people_names"),
@@ -363,6 +369,8 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             temp_path,
             custom_people_names=custom_people_names,
             openai_api=openai_api_override,
+            openai_base_url=openai_base_url_override,
+            model=openai_model_override or "gpt-5-nano",
         )
         payload: Dict[str, Any] = {
             "input_filename": filename,

@@ -32,7 +32,7 @@ continue button field: show_stats
 question: |
   Your DOCX file has been processed
 subquestion: |
-  GPT-4 found ${ len(draft_labels) } labels in your DOCX file.
+  The model found ${ len(draft_labels) } labels in your DOCX file.
 
   On the next screen, you can review and make any necessary changes
   to the draft Jinja2 labels.
@@ -40,7 +40,7 @@ subquestion: |
 question: |
   Upload a DOCX file
 subquestion: |
-  We will use GPT-4 to try to add variables in the
+  We will use AI to try to add variables in the
   [AssemblyLine 
   convention](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/label_variables) 
   to your DOCX file.
@@ -102,7 +102,7 @@ code: |
 
     # Results will be a tuple of paragraph number, run, modified text with label
     label_question.append({
-      'label': original_doc.paragraphs[item[0]].runs[item[1]].text,
+      'label': get_docx_run_text(original_doc, item[0], item[1]),
       'field': f'final_labels[{idx}].label',
       'default': item[2],
       'label above field': True,

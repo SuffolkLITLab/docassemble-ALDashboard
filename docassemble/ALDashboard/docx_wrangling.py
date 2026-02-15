@@ -9,7 +9,7 @@ from docx.oxml.ns import qn
 import re
 from docassemble.ALToolbox.llms import chat_completion
 
-from typing import Any, List, Tuple, Optional, Union
+from typing import Any, List, Tuple, Optional, Union, Sequence
 
 __all__ = [
     "get_labeled_docx_runs",
@@ -80,7 +80,7 @@ def _coerce_modified_run_item(
 
 
 def _normalize_modified_runs(
-    modified_runs: List[Tuple[int, int, str, int]],
+    modified_runs: Sequence[Any],
 ) -> List[Tuple[int, int, str, int]]:
     normalized: List[Tuple[int, int, str, int]] = []
     for item in modified_runs:

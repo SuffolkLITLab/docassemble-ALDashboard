@@ -405,6 +405,8 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
     custom_prompt_override = raw.get("custom_prompt")
     if custom_prompt_override is not None:
         custom_prompt_override = str(custom_prompt_override)
+        if not custom_prompt_override.strip():
+            custom_prompt_override = None
     additional_instructions_override = raw.get("additional_instructions")
     if additional_instructions_override is not None:
         additional_instructions_override = str(additional_instructions_override)
@@ -724,6 +726,8 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
     custom_prompt_override = raw.get("custom_prompt")
     if custom_prompt_override is not None:
         custom_prompt_override = str(custom_prompt_override)
+        if not custom_prompt_override.strip():
+            custom_prompt_override = None
     additional_instructions_override = raw.get("additional_instructions")
     if additional_instructions_override is not None:
         additional_instructions_override = str(additional_instructions_override)

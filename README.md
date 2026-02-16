@@ -130,6 +130,54 @@ Live docs:
 - `GET /al/api/v1/dashboard/openapi.json`
 - `GET /al/api/v1/dashboard/docs`
 
+## MCP Bridge API
+
+ALDashboard also exposes a lightweight MCP-style discovery layer over HTTP:
+
+- `POST /al/api/v1/mcp` (JSON-RPC 2.0 endpoint)
+- `GET /al/api/v1/mcp` (endpoint metadata)
+- `GET /al/api/v1/mcp/tools` (convenience tool listing)
+- `GET /al/api/v1/mcp/docs` (human-readable docs)
+
+Supported JSON-RPC methods:
+
+- `initialize`
+- `ping`
+- `tools/list`
+- `tools/call`
+
+`tools/list` discovers tools generated from:
+
+- ALDashboard REST OpenAPI paths (`/al/api/v1/dashboard/...`)
+- ALWeaver REST paths (`/al/api/v1/weaver...`) only when `docassemble.ALWeaver` is installed.
+
+For development-only fallback discovery from a local checkout, set:
+
+```bash
+export ALDASHBOARD_MCP_DEV_MODE=true
+export ALWEAVER_REPO_PATH=~/docassemble-ALWeaver
+```
+
+Example:
+
+```bash
+curl -X POST "https://YOURSERVER/al/api/v1/mcp" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+Tool execution example:
+
+```bash
+curl -X POST "https://YOURSERVER/al/api/v1/mcp" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aldashboard.get_al_api_v1_dashboard_openapi_json","arguments":{}}}'
+```
+
+`tools/call` securely reuses the same authenticated request context (for example `X-API-Key` or `Authorization`) and does not require storing a separate API key in MCP configuration.
+
 ### DOCX Modes and End-to-End Workflow
 
 Purpose of each mode:

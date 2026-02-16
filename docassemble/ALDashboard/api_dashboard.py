@@ -41,6 +41,7 @@ from .api_dashboard_utils import (
     validate_docx_payload_from_request,
     validate_translation_payload_from_request,
 )
+from . import api_mcp  # noqa: F401
 
 __all__ = []
 

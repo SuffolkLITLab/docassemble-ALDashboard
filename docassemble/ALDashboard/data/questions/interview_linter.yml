@@ -5,6 +5,9 @@ include:
 ---
 metadata:
   title: Interview Text Linter
+  required privileges:
+    - admin
+    - developer
 ---
 modules:
   - .interview_linter
@@ -129,7 +132,7 @@ subquestion: |
   % for finding in report['result']["findings_by_severity"]["red"]:
   * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
     % if finding.get("problematic_text"):
-    Problematic text: `${ finding["problematic_text"] }`
+    Problematic text: ${ finding["problematic_text"] }
     % endif
   % endfor
   % endif
@@ -139,7 +142,7 @@ subquestion: |
   % for finding in report['result']["findings_by_severity"]["yellow"]:
   * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
     % if finding.get("problematic_text"):
-    Problematic text: `${ finding["problematic_text"] }`
+    Problematic text: ${ finding["problematic_text"] }
     % endif
   % endfor
   % endif
@@ -149,7 +152,7 @@ subquestion: |
   % for finding in report['result']["findings_by_severity"]["green"]:
   * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
     % if finding.get("problematic_text"):
-    Problematic text: `${ finding["problematic_text"] }`
+    Problematic text: ${ finding["problematic_text"] }
     % endif
   % endfor
   % endif

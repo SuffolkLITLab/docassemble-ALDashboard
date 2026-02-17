@@ -250,7 +250,9 @@ def _weaver_dev_mode_enabled() -> bool:
 
 def get_weaver_openapi_spec() -> Optional[Dict[str, Any]]:
     try:
-        from docassemble.ALWeaver.api_utils import build_openapi_spec as weaver_openapi
+        from docassemble.ALWeaver.api_utils import (  # type: ignore[import-untyped]
+            build_openapi_spec as weaver_openapi,
+        )
 
         spec = weaver_openapi()
         if isinstance(spec, dict) and isinstance(spec.get("paths"), dict):

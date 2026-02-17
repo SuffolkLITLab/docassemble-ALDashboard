@@ -19,14 +19,20 @@ from typing import (
 import mako.runtime
 import mako.template
 import ruamel.yaml
-import textstat
+import textstat  # type: ignore[import-untyped]
 from spellchecker import SpellChecker
 
 import docassemble.base.filter
 import docassemble.webapp.screenreader
 
+ChatCompletionFn = Callable[..., Union[List[Any], Dict[str, Any], str]]
+chat_completion: Optional[ChatCompletionFn]
 try:
-    from docassemble.ALToolbox.llms import chat_completion
+    from docassemble.ALToolbox.llms import (
+        chat_completion as _chat_completion,  # type: ignore[attr-defined]
+    )
+
+    chat_completion = _chat_completion
 except Exception:
     chat_completion = None
 
@@ -252,10 +258,17 @@ def get_corrections(
     misspelled: Union[Set[str], List[str]], language: str = "en"
 ) -> Mapping[str, Set[str]]:
     spell = SpellChecker(language=language)
-    return {
-        misspelled_word: spell.corrections(misspelled_word)
-        for misspelled_word in misspelled
-    }
+    corrections_fn = getattr(spell, "corrections", None)
+    if callable(corrections_fn):
+        return {
+            misspelled_word: set(corrections_fn(misspelled_word))
+            for misspelled_word in misspelled
+        }
+    fallback: Dict[str, Set[str]] = {}
+    for misspelled_word in misspelled:
+        correction = spell.correction(misspelled_word)
+        fallback[misspelled_word] = {correction} if correction else set()
+    return fallback
 
 
 def load_interview(content: str) -> List[dict]:
@@ -268,8 +281,6 @@ def remove_mako(text: str) -> str:
     input_text = _stringify(text)
     if not input_text:
         return ""
-    original_undefined = mako.runtime.UNDEFINED
-    mako.runtime.UNDEFINED = DAEmpty()
     try:
         template = mako.template.Template(input_text)
         markdown_text = template.render()
@@ -277,8 +288,6 @@ def remove_mako(text: str) -> str:
         return docassemble.webapp.screenreader.to_text(html_text)
     except Exception:
         return input_text
-    finally:
-        mako.runtime.UNDEFINED = original_undefined
 
 
 def get_all_headings(yaml_parsed: Sequence[dict]) -> Dict[str, str]:
@@ -590,6 +599,24 @@ def _attach_screen_links_and_evidence(
         if not finding.get("problematic_text"):
             finding["problematic_text"] = _shorten(screen.get("text", ""))
     return findings
+
+
+def _build_screen_payload(
+    screen_catalog: Sequence[Dict[str, str]],
+    max_screens: int = 40,
+    max_chars_per_screen: int = 800,
+) -> str:
+    trimmed: List[Dict[str, str]] = []
+    for screen in list(screen_catalog)[:max_screens]:
+        trimmed.append(
+            {
+                "screen_id": _stringify(screen.get("screen_id")),
+                "text": _shorten(
+                    remove_mako(_stringify(screen.get("text"))), max_chars_per_screen
+                ),
+            }
+        )
+    return json.dumps(trimmed, ensure_ascii=False)
 
 
 def readability_scores(paragraph: str) -> Dict[str, Union[float, str]]:
@@ -1240,7 +1267,9 @@ def run_deterministic_rules(
 def findings_by_severity(
     findings: Sequence[Dict[str, Any]],
 ) -> Dict[str, List[Dict[str, Any]]]:
-    grouped = {severity: [] for severity in SEVERITY_ORDER}
+    grouped: Dict[str, List[Dict[str, Any]]] = {
+        severity: [] for severity in SEVERITY_ORDER
+    }
     for finding in findings:
         sev = _stringify(finding.get("severity")).lower()
         if sev not in grouped:
@@ -1269,9 +1298,9 @@ def load_llm_prompt_templates() -> Dict[str, Any]:
 
     # Fallback for local/dev execution.
     try:
-        prompt_path = importlib.resources.files(
-            f"{package_name}.data.sources"
-        ).joinpath("interview_linter_prompts.yml")
+        prompt_path = importlib.resources.files(package_name).joinpath(
+            "data", "sources", "interview_linter_prompts.yml"
+        )
         return yaml.load(prompt_path.read_text(encoding="utf-8")) or {}
     except Exception as err:
         log(
@@ -1321,23 +1350,14 @@ def run_llm_rules(
         return []
     if screen_catalog is None:
         screen_catalog = get_screen_catalog(docs)
-    screen_payload = json.dumps(
-        [
-            {
-                "screen_id": s.get("screen_id"),
-                "text": remove_mako(_stringify(s.get("text"))),
-            }
-            for s in screen_catalog
-        ],
-        ensure_ascii=False,
-    )
+    screen_payload = _build_screen_payload(screen_catalog)
 
     findings: List[Dict[str, Any]] = []
     for rule in llm_rules:
         system_prompt = _stringify(rule.get("system_prompt"))
         user_template = _stringify(rule.get("user_prompt"))
         user_prompt = user_template.replace("{interview_text}", combined_text[:12000])
-        user_prompt = user_prompt.replace("{screens_json}", screen_payload[:20000])
+        user_prompt = user_prompt.replace("{screens_json}", screen_payload)
 
         try:
             response = chat_completion(

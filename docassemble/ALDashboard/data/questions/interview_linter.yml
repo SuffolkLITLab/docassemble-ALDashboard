@@ -44,6 +44,11 @@ fields:
     default: False
     help: |
       Uses the configured `docassemble.ALToolbox.llms` provider and may take longer.
+  - Spellcheck languages: spellcheck_languages
+    default: en
+    help: |
+      Comma-separated language codes for spellcheck, e.g. `en` or `en,es`.
+      A word is flagged only if unknown in all selected languages.
 ---
 code: |
   installed_package_map = list_question_files_in_docassemble_packages()
@@ -105,7 +110,7 @@ code: |
     for token in selected_playground_files.true_values():
       lint_sources.append({"name": token.split('/')[-1], "token": token})
 
-  lint_reports = lint_multiple_sources(lint_sources, include_llm=run_ai_checks)
+  lint_reports = lint_multiple_sources(lint_sources, language=spellcheck_languages, include_llm=run_ai_checks)
 ---
 event: show_results
 question: |

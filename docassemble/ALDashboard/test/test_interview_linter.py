@@ -5,6 +5,7 @@ import os
 
 from docassemble.ALDashboard.interview_linter import (
     get_all_text,
+    get_misspelled_words,
     get_user_facing_text,
     lint_interview_content,
     lint_multiple_sources,
@@ -365,6 +366,26 @@ class TestReadabilityConsensus(unittest.TestCase):
         mock_text_standard.return_value = "11th and 12th grade"
         result = readability_consensus_assessment("dummy")
         self.assertEqual(result["severity"], "red")
+
+
+class TestSpellcheckLanguages(unittest.TestCase):
+    @patch("docassemble.ALDashboard.interview_linter.SpellChecker")
+    def test_misspelled_words_uses_intersection_for_multiple_languages(self, mock_spell):
+        language_unknown = {
+            "en": {"hola", "formulario"},
+            "es": {"the", "form"},
+        }
+
+        class _FakeSpell:
+            def __init__(self, language="en"):
+                self.language = language
+
+            def unknown(self, words):
+                return language_unknown.get(self.language, set())
+
+        mock_spell.side_effect = lambda language="en": _FakeSpell(language=language)
+        misspelled = get_misspelled_words("the form hola formulario", language="en,es")
+        self.assertEqual(misspelled, set())
 
 
 class TestLintMultipleSources(unittest.TestCase):

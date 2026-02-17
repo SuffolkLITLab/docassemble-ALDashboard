@@ -239,7 +239,6 @@ def _iter_doc_texts(doc: dict) -> List[Tuple[str, str]]:
 
 
 def get_misspelled_words(text: str, language: str = "en") -> Set[str]:
-    spell = SpellChecker(language=language)
     tokens = re.findall(r"\b[\w-]+\b", text)
     filtered_tokens: List[str] = []
     for token in tokens:
@@ -251,7 +250,30 @@ def get_misspelled_words(text: str, language: str = "en") -> Set[str]:
         if re.search(r"\d", token):
             continue
         filtered_tokens.append(token)
-    return spell.unknown(filtered_tokens)
+    if not filtered_tokens:
+        return set()
+
+    languages = [lang.strip() for lang in str(language).split(",") if lang.strip()]
+    if not languages:
+        languages = ["en"]
+
+    unknown_sets: List[Set[str]] = []
+    for lang in languages:
+        try:
+            spell = SpellChecker(language=lang)
+            unknown_sets.append(set(spell.unknown(filtered_tokens)))
+        except Exception:
+            continue
+
+    if not unknown_sets:
+        try:
+            spell = SpellChecker(language="en")
+            return set(spell.unknown(filtered_tokens))
+        except Exception:
+            return set()
+
+    # Treat as misspelled only if unknown in all selected languages.
+    return set.intersection(*unknown_sets)
 
 
 def get_corrections(

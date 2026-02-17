@@ -4,12 +4,14 @@ import sys
 
 import tiktoken
 import json
+import html
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import re
 from docassemble.ALToolbox.llms import chat_completion
+from openai import OpenAI
 
-from typing import Any, List, Tuple, Optional, Union, Sequence
+from typing import Any, Dict, List, Tuple, Optional, Union, Sequence, Set
 
 __all__ = [
     "get_labeled_docx_runs",
@@ -233,7 +235,11 @@ def get_docx_run_text(
 
 
 def get_docx_run_items(document: Union[docx.document.Document, str]) -> List[List[Any]]:
-    """Return [paragraph_index, run_index, run_text] across body/tables/headers/footers."""
+    """Return [paragraph_index, run_index, run_text] across body/tables/headers/footers.
+
+    Includes synthetic run items for legacy/content controls where visible run text can be
+    missing or incomplete.
+    """
     if isinstance(document, str):
         document = docx.Document(document)
     paragraphs = _collect_target_paragraphs(document)
@@ -241,7 +247,222 @@ def get_docx_run_items(document: Union[docx.document.Document, str]) -> List[Lis
     for pnum, paragraph in enumerate(paragraphs):
         for rnum, run in enumerate(paragraph.runs):
             items.append([pnum, rnum, run.text])
+        synthetic_hints = _collect_form_control_hints(paragraph)
+        if synthetic_hints:
+            synthetic_text = " [FORM_CONTROL_HINT: " + "; ".join(synthetic_hints) + "]"
+            synthetic_run_index = len(paragraph.runs)
+            items.append([pnum, synthetic_run_index, synthetic_text])
     return items
+
+
+def _collect_form_control_hints(paragraph: Any) -> List[str]:
+    """Collect content-control hints from paragraph XML for prompting context."""
+    hints: List[str] = []
+    seen: Set[str] = set()
+    paragraph_xml = paragraph._element.xml
+
+    def _add_hint(value: str) -> None:
+        cleaned = value.strip()
+        if not cleaned:
+            return
+        if cleaned in seen:
+            return
+        seen.add(cleaned)
+        hints.append(cleaned)
+
+    for pattern in (
+        r'<w:alias[^>]*w:val="([^"]+)"',
+        r'<w:tag[^>]*w:val="([^"]+)"',
+        r'<w:name[^>]*w:val="([^"]+)"',
+        r'<w:instrText[^>]*>([^<]+)</w:instrText>',
+        r'<w:fldSimple[^>]*w:instr="([^"]+)"',
+    ):
+        for match in re.findall(pattern, paragraph_xml):
+            _add_hint(match)
+
+    return hints
+
+
+def _collect_sdt_context_hints(paragraph: Any) -> List[str]:
+    """Collect content-control (w:sdt) hints that may not appear in paragraph.runs."""
+    hints: List[str] = []
+    seen: Set[str] = set()
+    paragraph_xml = paragraph._element.xml
+    sdt_blocks = re.findall(r"<w:sdt[\s\S]*?</w:sdt>", paragraph_xml)
+    for block in sdt_blocks:
+        control_type = "text"
+        if "<w:dropDownList" in block:
+            control_type = "dropdown"
+        elif "<w:comboBox" in block:
+            control_type = "combobox"
+        elif "<w:date" in block:
+            control_type = "date"
+
+        text_chunks = [
+            html.unescape(chunk).strip()
+            for chunk in re.findall(r"<w:t(?:\s[^>]*)?>([\s\S]*?)</w:t>", block)
+            if isinstance(chunk, str) and html.unescape(chunk).strip()
+        ]
+        text_hint = " ".join(text_chunks)
+
+        placeholder_parts = re.findall(r'<w:docPart[^>]*w:val="([^"]+)"', block)
+        placeholder_hint = (
+            f" placeholder={placeholder_parts[0]}" if placeholder_parts else ""
+        )
+
+        if text_hint or placeholder_hint:
+            hint = f"SDT({control_type}): {text_hint}{placeholder_hint}"
+            if hint not in seen:
+                seen.add(hint)
+                hints.append(hint)
+
+    return hints
+
+
+def _variable_name_from_hint(text: str) -> str:
+    cleaned = re.sub(r"\{\{|\}\}|\{%\s*|\s*%}", " ", text)
+    cleaned = re.sub(r"[{}[\]()<>\"]", " ", cleaned)
+    parts = [p.lower() for p in re.split(r"[^a-zA-Z0-9]+", cleaned) if p]
+    if not parts:
+        return "value"
+    filtered = [p for p in parts if p not in {"the", "a", "an", "of", "for", "and"}]
+    if not filtered:
+        filtered = parts
+    stem = "_".join(filtered[:4])
+    if stem != "date" and "date" in filtered and not stem.endswith("_date"):
+        stem += "_date"
+    return stem[:80]
+
+
+def _regex_placeholder_fallback(
+    items: Sequence[Sequence[Any]],
+) -> List[Tuple[int, int, str, int]]:
+    """Generate deterministic label candidates for obvious placeholders."""
+    fallback: List[Tuple[int, int, str, int]] = []
+    seen_targets: Set[Tuple[int, int]] = set()
+    patterns = [
+        r"\{[^{}]{1,80}\}",
+        r"_{3,}",
+        r"<[^<>]{1,80}>",
+        r"\[[^\[\]]{1,80}\]",
+    ]
+    for item in items:
+        if len(item) < 3:
+            continue
+        try:
+            paragraph_number = int(item[0])
+            run_number = int(item[1])
+        except (TypeError, ValueError):
+            continue
+        original_text = str(item[2] or "")
+        if not original_text.strip():
+            continue
+        if "{{" in original_text or "{%" in original_text:
+            continue
+        combined = re.compile("|".join(patterns))
+        matches = list(combined.finditer(original_text))
+        if not matches:
+            continue
+        if (paragraph_number, run_number) in seen_targets:
+            continue
+        first = matches[0].group(0)
+        replacement_var = _variable_name_from_hint(first)
+        replacement_text = original_text.replace(first, "{{ " + replacement_var + " }}", 1)
+        fallback.append((paragraph_number, run_number, replacement_text, 0))
+        seen_targets.add((paragraph_number, run_number))
+    return fallback
+
+
+def _merge_label_candidates(
+    *candidate_lists: Sequence[Tuple[int, int, str, int]],
+) -> List[Tuple[int, int, str, int]]:
+    """Merge candidate lists by target run, preferring Jinja-bearing text."""
+    best_by_target: Dict[Tuple[int, int, int], Tuple[int, int, str, int]] = {}
+
+    def _score(item: Tuple[int, int, str, int]) -> Tuple[int, int]:
+        text = item[2]
+        has_jinja = 1 if ("{{" in text or "{%" in text) else 0
+        return (has_jinja, len(text))
+
+    for candidates in candidate_lists:
+        for item in candidates:
+            key = (item[0], item[1], item[3])
+            existing = best_by_target.get(key)
+            if existing is None or _score(item) > _score(existing):
+                best_by_target[key] = item
+
+    merged = list(best_by_target.values())
+    merged.sort(key=lambda x: (x[0], x[1], x[3], x[2]))
+    return merged
+
+
+def _is_mistral_model(model: str) -> bool:
+    return "mistral" in (model or "").lower()
+
+
+def _is_max_completion_tokens_unsupported_error(error: Exception) -> bool:
+    lowered = str(error).lower()
+    if "max_completion_tokens" not in lowered:
+        return False
+    return (
+        "extra_forbidden" in lowered
+        or "extra inputs are not permitted" in lowered
+        or "invalid input" in lowered
+    )
+
+
+def _chat_completion_with_model_compat(
+    *,
+    model: str,
+    messages: List[Dict[str, str]],
+    json_mode: bool,
+    temperature: float,
+    max_output_tokens: Optional[int],
+    openai_client: Optional[Any],
+    openai_api: Optional[str],
+    openai_base_url: Optional[str],
+) -> Any:
+    """Call ALToolbox wrapper, with provider-specific fallback for Mistral max_tokens."""
+    try:
+        return chat_completion(
+            model=model,
+            messages=messages,
+            json_mode=json_mode,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            openai_client=openai_client,
+            openai_api=openai_api,
+            openai_base_url=openai_base_url,
+        )
+    except Exception as exc:
+        if not (_is_mistral_model(model) and _is_max_completion_tokens_unsupported_error(exc)):
+            raise
+        # Retry with OpenAI-compatible client call using `max_tokens`, which some
+        # Mistral-compatible endpoints require.
+        client = openai_client
+        if client is None:
+            if not openai_api:
+                raise
+            client_kwargs: Dict[str, Any] = {"api_key": openai_api}
+            if openai_base_url:
+                client_kwargs["base_url"] = openai_base_url
+            client = OpenAI(**client_kwargs)
+        completion_args: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if json_mode:
+            completion_args["response_format"] = {"type": "json_object"}
+        if max_output_tokens is not None:
+            completion_args["max_tokens"] = max_output_tokens
+        response = client.chat.completions.create(**completion_args)
+        if not response.choices:
+            raise ValueError("Provider returned no choices.")
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("Provider returned empty content.")
+        return content
 
 
 def update_docx(
@@ -296,9 +517,12 @@ def get_labeled_docx_runs(
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     model: str = "gpt-5-nano",
+    ensemble_models: Optional[List[str]] = None,
     custom_prompt: Optional[str] = None,
     additional_instructions: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
+    min_label_count: Optional[int] = None,
+    use_regex_fallback: bool = True,
 ) -> List[Tuple[int, int, str, int]]:
     """Scan the DOCX and return a list of modified text with Jinja2 variable names inserted.
 
@@ -463,12 +687,20 @@ def get_labeled_docx_runs(
     encoding = tiktoken.encoding_for_model("gpt-4")
 
     doc = docx.Document(docx_path)
+    items = get_docx_run_items(doc)
     paragraphs = _collect_target_paragraphs(doc)
-
-    items = []
-    for pnum, para in enumerate(paragraphs):
-        for rnum, run in enumerate(para.runs):
-            items.append([pnum, rnum, run.text])
+    sdt_context_lines: List[str] = []
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        sdt_hints = _collect_sdt_context_hints(paragraph)
+        if not sdt_hints:
+            continue
+        for hint in sdt_hints:
+            sdt_context_lines.append(f"[paragraph {paragraph_index}] {hint}")
+    if sdt_context_lines:
+        role_description += (
+            "\n\nAdditional DOCX content-control context (reference only, do not edit these lines directly):\n"
+            + "\n".join(sdt_context_lines)
+        )
 
     encoding = tiktoken.encoding_for_model("gpt-4")
     token_count = len(encoding.encode(role_description + rules + repr(items)))
@@ -481,25 +713,51 @@ def get_labeled_docx_runs(
         {"role": "system", "content": role_description + rules},
         {"role": "user", "content": repr(items)},
     ]
-    response = chat_completion(
-        model=model,
-        messages=messages,
-        json_mode=True,
-        temperature=0.5,
-        max_output_tokens=max_output_tokens,
-        openai_client=openai_client,
-        openai_api=openai_api,
-        openai_base_url=openai_base_url,
-    )
+    def _run_model(target_model: str) -> List[Tuple[int, int, str, int]]:
+        response = _chat_completion_with_model_compat(
+            model=target_model,
+            messages=messages,
+            json_mode=True,
+            temperature=0.5,
+            max_output_tokens=max_output_tokens,
+            openai_client=openai_client,
+            openai_api=openai_api,
+            openai_base_url=openai_base_url,
+        )
 
-    if isinstance(response, str):
-        try:
-            response = json.loads(response)
-        except json.JSONDecodeError as exc:
-            raise ValueError("chat_completion returned non-JSON output") from exc
-    results = _extract_model_results(response)
-    guesses = _normalize_modified_runs(results)
-    return guesses
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except json.JSONDecodeError as exc:
+                raise ValueError("chat_completion returned non-JSON output") from exc
+        results = _extract_model_results(response)
+        return _normalize_modified_runs(results)
+
+    model_candidates = _run_model(model)
+
+    merged = list(model_candidates)
+    normalized_ensemble = [m for m in (ensemble_models or []) if m and m != model]
+    if normalized_ensemble:
+        ensemble_results: List[List[Tuple[int, int, str, int]]] = []
+        for ensemble_model in normalized_ensemble:
+            try:
+                ensemble_results.append(_run_model(ensemble_model))
+            except Exception:
+                # Ensemble is best-effort; keep primary model output if an extra model fails.
+                continue
+        if ensemble_results:
+            merged = _merge_label_candidates(merged, *ensemble_results)
+
+    fallback_candidates: List[Tuple[int, int, str, int]] = []
+    if use_regex_fallback:
+        fallback_candidates = _regex_placeholder_fallback(items)
+        if fallback_candidates:
+            merged = _merge_label_candidates(merged, fallback_candidates)
+
+    if min_label_count and len(merged) < int(min_label_count) and fallback_candidates:
+        merged = _merge_label_candidates(merged, fallback_candidates)
+
+    return merged
 
 
 def modify_docx_with_openai_guesses(docx_path: str) -> docx.document.Document:

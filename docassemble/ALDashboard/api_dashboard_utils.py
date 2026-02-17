@@ -426,12 +426,44 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             raise DashboardAPIValidationError(
                 "max_output_tokens must be a positive integer."
             )
+    min_label_count_override = raw.get("min_label_count")
+    if min_label_count_override in (None, ""):
+        parsed_min_label_count = None
+    else:
+        try:
+            parsed_min_label_count = int(min_label_count_override)
+        except (TypeError, ValueError) as exc:
+            raise DashboardAPIValidationError(
+                "min_label_count must be an integer."
+            ) from exc
+        if parsed_min_label_count <= 0:
+            raise DashboardAPIValidationError(
+                "min_label_count must be a positive integer."
+            )
+
+    use_regex_fallback_override = parse_bool(
+        raw.get("use_regex_fallback"), default=True
+    )
 
     custom_people_names = _load_json_field(
         raw.get("custom_people_names"),
         field_name="custom_people_names",
         expected_type=list,
     )
+    ensemble_models = _load_json_field(
+        raw.get("ensemble_models"),
+        field_name="ensemble_models",
+        expected_type=list,
+    )
+    if ensemble_models is not None:
+        normalized_ensemble_models: List[str] = []
+        for item in ensemble_models:
+            if item is None:
+                continue
+            model_name = str(item).strip()
+            if model_name:
+                normalized_ensemble_models.append(model_name)
+        ensemble_models = normalized_ensemble_models
 
     temp_path = _write_temp_file(filename, content)
     try:
@@ -444,6 +476,9 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             custom_prompt=custom_prompt_override,
             additional_instructions=additional_instructions_override,
             max_output_tokens=parsed_max_output_tokens,
+            ensemble_models=ensemble_models,
+            min_label_count=parsed_min_label_count,
+            use_regex_fallback=use_regex_fallback_override,
         )
         payload: Dict[str, Any] = {
             "input_filename": filename,

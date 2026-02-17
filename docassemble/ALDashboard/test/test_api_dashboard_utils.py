@@ -58,6 +58,9 @@ class TestDashboardAPIUtils(unittest.TestCase):
                 "custom_prompt": "Use concise labels.",
                 "additional_instructions": "Prefer landlord/tenant naming.",
                 "max_output_tokens": "9000",
+                "ensemble_models": '["gpt-4-turbo","gpt-4o-mini"]',
+                "min_label_count": "10",
+                "use_regex_fallback": "true",
             }
         )
         self.assertEqual(payload["results"], [[0, 0, "{{ users[0] }}", 0]])
@@ -68,6 +71,9 @@ class TestDashboardAPIUtils(unittest.TestCase):
             kwargs["additional_instructions"], "Prefer landlord/tenant naming."
         )
         self.assertEqual(kwargs["max_output_tokens"], 9000)
+        self.assertEqual(kwargs["ensemble_models"], ["gpt-4-turbo", "gpt-4o-mini"])
+        self.assertEqual(kwargs["min_label_count"], 10)
+        self.assertTrue(kwargs["use_regex_fallback"])
 
     def test_autolabel_rejects_invalid_max_output_tokens(self):
         with self.assertRaises(DashboardAPIValidationError):
@@ -88,6 +94,26 @@ class TestDashboardAPIUtils(unittest.TestCase):
                         "ascii"
                     ),
                     "max_output_tokens": "0",
+                }
+            )
+        with self.assertRaises(DashboardAPIValidationError):
+            autolabel_payload_from_options(
+                {
+                    "filename": "sample.docx",
+                    "file_content_base64": base64.b64encode(b"docx-bytes").decode(
+                        "ascii"
+                    ),
+                    "min_label_count": "nope",
+                }
+            )
+        with self.assertRaises(DashboardAPIValidationError):
+            autolabel_payload_from_options(
+                {
+                    "filename": "sample.docx",
+                    "file_content_base64": base64.b64encode(b"docx-bytes").decode(
+                        "ascii"
+                    ),
+                    "min_label_count": "0",
                 }
             )
 

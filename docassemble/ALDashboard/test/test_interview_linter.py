@@ -1,10 +1,13 @@
 import unittest
 from unittest.mock import patch
+import tempfile
+import os
 
 from docassemble.ALDashboard.interview_linter import (
     get_all_text,
     get_user_facing_text,
     lint_interview_content,
+    lint_multiple_sources,
     load_interview,
     load_llm_prompt_templates,
     readability_consensus_assessment,
@@ -349,6 +352,36 @@ class TestReadabilityConsensus(unittest.TestCase):
         mock_text_standard.return_value = "11th and 12th grade"
         result = readability_consensus_assessment("dummy")
         self.assertEqual(result["severity"], "red")
+
+
+class TestLintMultipleSources(unittest.TestCase):
+    def test_lint_multiple_sources_processes_multiple_files(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f1, tempfile.NamedTemporaryFile(
+            "w", suffix=".yml", delete=False
+        ) as f2:
+            f1.write("---\nid: q1\nquestion: Hello world\n")
+            f2.write("---\nid: q2\nquestion: Another screen\n")
+            path1 = f1.name
+            path2 = f2.name
+        try:
+            reports = lint_multiple_sources(
+                [
+                    {"name": "file1", "token": path1},
+                    {"name": "file2", "token": path2},
+                ]
+            )
+            self.assertEqual(len(reports), 2)
+            self.assertTrue(all(report["error"] is None for report in reports))
+            self.assertTrue(all(report["result"] is not None for report in reports))
+        finally:
+            os.unlink(path1)
+            os.unlink(path2)
+
+    def test_lint_multiple_sources_reports_missing_path(self):
+        reports = lint_multiple_sources([{"name": "missing", "token": "/no/such/file.yml"}])
+        self.assertEqual(len(reports), 1)
+        self.assertIsNotNone(reports[0]["error"])
+        self.assertIsNone(reports[0]["result"])
 
 
 if __name__ == "__main__":

@@ -32,6 +32,11 @@ except Exception:
     def log(*pargs: Any, **kwargs: Any) -> None:  # type: ignore
         return None
 
+try:
+    from docassemble.base.util import user_info
+except Exception:
+    user_info = None  # type: ignore
+
 __all__ = [
     "get_misspelled_words",
     "get_corrections",
@@ -51,6 +56,9 @@ __all__ = [
     "run_llm_rules",
     "load_llm_prompt_templates",
     "get_screen_catalog",
+    "list_playground_projects",
+    "list_playground_yaml_files",
+    "lint_multiple_sources",
 ]
 
 
@@ -109,6 +117,62 @@ def _anchor_slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", _stringify(value).strip().lower())
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
     return slug or "unknown"
+
+
+def _resolve_source_token(token: str) -> Optional[str]:
+    token = _stringify(token).strip()
+    if not token:
+        return None
+    if token.startswith("ref:"):
+        if path_and_mimetype is None:
+            return None
+        try:
+            path, _ = path_and_mimetype(token[4:])
+            return path
+        except Exception:
+            return None
+    return token
+
+
+def list_playground_projects() -> List[str]:
+    if user_info is None:
+        return []
+    try:
+        from docassemble.webapp.files import SavedFile
+
+        uid = user_info().id
+        playground = SavedFile(uid, fix=False, section="playground")
+        projects = playground.list_of_dirs() or []
+        projects = [proj for proj in projects if isinstance(proj, str) and proj]
+        if "default" not in projects:
+            projects.append("default")
+        return sorted(set(projects))
+    except Exception as err:
+        log(f"interview_linter: unable to list playground projects: {err}")
+        return []
+
+
+def list_playground_yaml_files(project: str = "default") -> List[Dict[str, str]]:
+    if user_info is None:
+        return []
+    try:
+        from docassemble.webapp.files import SavedFile
+        from docassemble.webapp.backend import directory_for
+
+        uid = user_info().id
+        area = SavedFile(uid, fix=True, section="playground")
+        project_dir = directory_for(area, project or "default")
+        if not project_dir or not os.path.isdir(project_dir):
+            return []
+        output: List[Dict[str, str]] = []
+        for filename in sorted(os.listdir(project_dir)):
+            full_path = os.path.join(project_dir, filename)
+            if os.path.isfile(full_path) and filename.lower().endswith((".yml", ".yaml")):
+                output.append({"label": filename, "token": full_path})
+        return output
+    except Exception as err:
+        log(f"interview_linter: unable to list playground files for project {project}: {err}")
+        return []
 
 
 def _block_label(doc: dict, fallback: str) -> str:
@@ -1134,6 +1198,38 @@ def lint_interview_content(content: str, language: str = "en", include_llm: bool
         "findings": findings,
         "findings_by_severity": findings_by_severity(findings),
     }
+
+
+def lint_multiple_sources(
+    sources: Sequence[Dict[str, str]], language: str = "en", include_llm: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Lint multiple source files. Each source item should contain:
+    - name: display name
+    - token: either absolute path or "ref:<package>:data/questions/file.yml"
+    """
+    reports: List[Dict[str, Any]] = []
+    for source in sources:
+        name = _stringify(source.get("name")) or _stringify(source.get("token")) or "unknown"
+        token = _stringify(source.get("token"))
+        path = _resolve_source_token(token)
+        if not path or not os.path.exists(path):
+            reports.append(
+                {
+                    "name": name,
+                    "token": token,
+                    "error": f"Could not resolve file path for {token}",
+                    "result": None,
+                }
+            )
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as fp:
+                result = lint_interview_content(fp.read(), language=language, include_llm=include_llm)
+            reports.append({"name": name, "token": token, "error": None, "result": result})
+        except Exception as err:
+            reports.append({"name": name, "token": token, "error": str(err), "result": None})
+    return reports
 
 
 def lint_uploaded_interview(path: str, language: str = "en", include_llm: bool = False) -> Dict[str, Any]:

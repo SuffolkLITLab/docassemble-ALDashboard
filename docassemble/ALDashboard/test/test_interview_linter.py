@@ -33,7 +33,9 @@ fields:
   - Name: user_name
 """
         findings = self._findings(yaml_content)
-        self.assertIn("missing-question-id", {finding["rule_id"] for finding in findings})
+        self.assertIn(
+            "missing-question-id", {finding["rule_id"] for finding in findings}
+        )
         missing_id = next(f for f in findings if f["rule_id"] == "missing-question-id")
         self.assertTrue(missing_id.get("problematic_text"))
 
@@ -132,9 +134,16 @@ code: |
   warning_text = "You should complete all required fields before moving on"
 """
         findings = self._findings(yaml_content)
-        self.assertIn("hardcoded-user-text-in-code", {finding["rule_id"] for finding in findings})
-        hardcoded = next(f for f in findings if f["rule_id"] == "hardcoded-user-text-in-code")
-        self.assertIn("You should complete all required fields", hardcoded.get("problematic_text", ""))
+        self.assertIn(
+            "hardcoded-user-text-in-code", {finding["rule_id"] for finding in findings}
+        )
+        hardcoded = next(
+            f for f in findings if f["rule_id"] == "hardcoded-user-text-in-code"
+        )
+        self.assertIn(
+            "You should complete all required fields",
+            hardcoded.get("problematic_text", ""),
+        )
 
     def test_image_missing_alt_markdown(self):
         yaml_content = """
@@ -144,8 +153,12 @@ question: |
   ![](docassemble.demo:data/static/logo.png)
 """
         findings = self._findings(yaml_content)
-        self.assertIn("image-missing-alt-text", {finding["rule_id"] for finding in findings})
-        image_finding = next(f for f in findings if f["rule_id"] == "image-missing-alt-text")
+        self.assertIn(
+            "image-missing-alt-text", {finding["rule_id"] for finding in findings}
+        )
+        image_finding = next(
+            f for f in findings if f["rule_id"] == "image-missing-alt-text"
+        )
         self.assertIn("![](", image_finding.get("problematic_text", ""))
 
     def test_image_missing_alt_file_tag(self):
@@ -356,9 +369,9 @@ class TestReadabilityConsensus(unittest.TestCase):
 
 class TestLintMultipleSources(unittest.TestCase):
     def test_lint_multiple_sources_processes_multiple_files(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f1, tempfile.NamedTemporaryFile(
+        with tempfile.NamedTemporaryFile(
             "w", suffix=".yml", delete=False
-        ) as f2:
+        ) as f1, tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f2:
             f1.write("---\nid: q1\nquestion: Hello world\n")
             f2.write("---\nid: q2\nquestion: Another screen\n")
             path1 = f1.name
@@ -378,7 +391,9 @@ class TestLintMultipleSources(unittest.TestCase):
             os.unlink(path2)
 
     def test_lint_multiple_sources_reports_missing_path(self):
-        reports = lint_multiple_sources([{"name": "missing", "token": "/no/such/file.yml"}])
+        reports = lint_multiple_sources(
+            [{"name": "missing", "token": "/no/such/file.yml"}]
+        )
         self.assertEqual(len(reports), 1)
         self.assertIsNotNone(reports[0]["error"])
         self.assertIsNone(reports[0]["result"])

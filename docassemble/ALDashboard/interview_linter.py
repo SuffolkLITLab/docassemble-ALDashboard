@@ -3,7 +3,18 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 import mako.runtime
 import mako.template
@@ -31,6 +42,7 @@ except Exception:
 
     def log(*pargs: Any, **kwargs: Any) -> None:  # type: ignore
         return None
+
 
 try:
     from docassemble.base.util import user_info
@@ -62,7 +74,16 @@ __all__ = [
 ]
 
 
-TEXT_SECTIONS = ["question", "subquestion", "under", "pre", "post", "right", "note", "html"]
+TEXT_SECTIONS = [
+    "question",
+    "subquestion",
+    "under",
+    "pre",
+    "post",
+    "right",
+    "note",
+    "html",
+]
 READABILITY_METRICS = [
     ("Flesch Reading Ease", textstat.flesch_reading_ease),
     ("Flesch-Kincaid Grade Level", textstat.flesch_kincaid_grade),
@@ -167,11 +188,15 @@ def list_playground_yaml_files(project: str = "default") -> List[Dict[str, str]]
         output: List[Dict[str, str]] = []
         for filename in sorted(os.listdir(project_dir)):
             full_path = os.path.join(project_dir, filename)
-            if os.path.isfile(full_path) and filename.lower().endswith((".yml", ".yaml")):
+            if os.path.isfile(full_path) and filename.lower().endswith(
+                (".yml", ".yaml")
+            ):
                 output.append({"label": filename, "token": full_path})
         return output
     except Exception as err:
-        log(f"interview_linter: unable to list playground files for project {project}: {err}")
+        log(
+            f"interview_linter: unable to list playground files for project {project}: {err}"
+        )
         return []
 
 
@@ -197,7 +222,9 @@ def _iter_doc_texts(doc: dict) -> List[Tuple[str, str]]:
             if not isinstance(field, dict):
                 continue
             for field_key in ["label", "help", "hint", "note", "html"]:
-                values.append((f"fields[{idx}].{field_key}", _stringify(field.get(field_key))))
+                values.append(
+                    (f"fields[{idx}].{field_key}", _stringify(field.get(field_key)))
+                )
             # first key is often label shorthand, keep it available for checks
             if field:
                 first_key = next(iter(field.keys()))
@@ -225,7 +252,10 @@ def get_corrections(
     misspelled: Union[Set[str], List[str]], language: str = "en"
 ) -> Mapping[str, Set[str]]:
     spell = SpellChecker(language=language)
-    return {misspelled_word: spell.corrections(misspelled_word) for misspelled_word in misspelled}
+    return {
+        misspelled_word: spell.corrections(misspelled_word)
+        for misspelled_word in misspelled
+    }
 
 
 def load_interview(content: str) -> List[dict]:
@@ -307,8 +337,23 @@ def headings_violations(headings: Mapping[str, str]) -> List[str]:
 
 def text_violations(interview_texts: Sequence[str]) -> List[Tuple[str, str]]:
     base_docs_url = "https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/style_guide"
-    contractions = ("can't", "won't", "don't", "wouldn't", "shouldn't", "couldn't", "y'all", "you've")
-    idioms = ("get the hang of", "sit tight", "up in the air", "on the ball", "rule of thumb")
+    contractions = (
+        "can't",
+        "won't",
+        "don't",
+        "wouldn't",
+        "shouldn't",
+        "couldn't",
+        "y'all",
+        "you've",
+    )
+    idioms = (
+        "get the hang of",
+        "sit tight",
+        "up in the air",
+        "on the ball",
+        "rule of thumb",
+    )
     big_words = {
         "obtain": "get",
         "receive": "get",
@@ -531,7 +576,9 @@ def get_screen_catalog(yaml_parsed: Sequence[dict]) -> List[Dict[str, str]]:
 def _attach_screen_links_and_evidence(
     findings: List[Dict[str, Any]], screen_catalog: Sequence[Dict[str, str]]
 ) -> List[Dict[str, Any]]:
-    by_id = {item["screen_id"]: item for item in screen_catalog if item.get("screen_id")}
+    by_id = {
+        item["screen_id"]: item for item in screen_catalog if item.get("screen_id")
+    }
     for finding in findings:
         screen_id = _stringify(finding.get("screen_id")).strip()
         if not screen_id:
@@ -555,7 +602,9 @@ def readability_scores(paragraph: str) -> Dict[str, Union[float, str]]:
     return scores
 
 
-def readability_consensus_assessment(paragraph: str) -> Dict[str, Optional[Union[str, int]]]:
+def readability_consensus_assessment(
+    paragraph: str,
+) -> Dict[str, Optional[Union[str, int]]]:
     """
     Return readability consensus plus severity guidance:
     - yellow when consensus grade is > 7
@@ -566,7 +615,10 @@ def readability_consensus_assessment(paragraph: str) -> Dict[str, Optional[Union
     except Exception:
         consensus = "N/A"
 
-    grades = [int(num) for num in re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", _stringify(consensus))]
+    grades = [
+        int(num)
+        for num in re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", _stringify(consensus))
+    ]
     max_grade = max(grades) if grades else None
 
     severity: Optional[str] = None
@@ -587,7 +639,9 @@ def readability_consensus_assessment(paragraph: str) -> Dict[str, Optional[Union
     }
 
 
-def _check_missing_id(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_missing_id(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         if doc.get("question") and not doc.get("id"):
@@ -604,7 +658,9 @@ def _check_missing_id(docs: Sequence[dict], _: Sequence[str], __: str) -> List[L
     return findings
 
 
-def _check_multiple_mandatory(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_multiple_mandatory(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     mandatory_docs = [doc for doc in docs if doc.get("mandatory") is True]
     if len(mandatory_docs) <= 1:
         return []
@@ -620,7 +676,9 @@ def _check_multiple_mandatory(docs: Sequence[dict], _: Sequence[str], __: str) -
     ]
 
 
-def _check_yesno_shortcuts(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_yesno_shortcuts(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         for key in ["yesno", "noyes", "yesnomaybe", "noyesmaybe"]:
@@ -638,7 +696,9 @@ def _check_yesno_shortcuts(docs: Sequence[dict], _: Sequence[str], __: str) -> L
     return findings
 
 
-def _check_combobox_usage(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_combobox_usage(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         if "combobox" in doc:
@@ -657,7 +717,10 @@ def _check_combobox_usage(docs: Sequence[dict], _: Sequence[str], __: str) -> Li
             fields = [fields]
         if isinstance(fields, list):
             for field in fields:
-                if isinstance(field, dict) and _stringify(field.get("datatype")).lower() == "combobox":
+                if (
+                    isinstance(field, dict)
+                    and _stringify(field.get("datatype")).lower() == "combobox"
+                ):
                     findings.append(
                         LintIssue(
                             rule_id="avoid-combobox",
@@ -671,7 +734,9 @@ def _check_combobox_usage(docs: Sequence[dict], _: Sequence[str], __: str) -> Li
     return findings
 
 
-def _check_subquestion_h1(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_subquestion_h1(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         subq = _stringify(doc.get("subquestion"))
@@ -690,7 +755,9 @@ def _check_subquestion_h1(docs: Sequence[dict], _: Sequence[str], __: str) -> Li
     return findings
 
 
-def _check_skipped_heading_levels(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_skipped_heading_levels(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     heading_re = re.compile(r"(?m)^\s*(#{1,6})\s+")
     for idx, doc in enumerate(docs):
@@ -716,7 +783,9 @@ def _check_skipped_heading_levels(docs: Sequence[dict], _: Sequence[str], __: st
     return findings
 
 
-def _check_choices_without_values(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_choices_without_values(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
 
     def has_unstable_choices(choices: Any) -> bool:
@@ -753,7 +822,9 @@ def _check_choices_without_values(docs: Sequence[dict], _: Sequence[str], __: st
             fields = [fields]
         if isinstance(fields, list):
             for field in fields:
-                if isinstance(field, dict) and has_unstable_choices(field.get("choices")):
+                if isinstance(field, dict) and has_unstable_choices(
+                    field.get("choices")
+                ):
                     findings.append(
                         LintIssue(
                             rule_id="choices-without-stable-values",
@@ -767,7 +838,9 @@ def _check_choices_without_values(docs: Sequence[dict], _: Sequence[str], __: st
     return findings
 
 
-def _check_language_en_flag(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_language_en_flag(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         if _stringify(doc.get("language")).strip().lower() == "en":
@@ -784,7 +857,9 @@ def _check_language_en_flag(docs: Sequence[dict], _: Sequence[str], __: str) -> 
     return findings
 
 
-def _check_hardcoded_strings_in_code(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_hardcoded_strings_in_code(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     quoted = re.compile(r"(['\"])([^'\"]{20,})\1")
     for idx, doc in enumerate(docs):
@@ -793,7 +868,11 @@ def _check_hardcoded_strings_in_code(docs: Sequence[dict], _: Sequence[str], __:
             continue
         for _, content in quoted.findall(code):
             normalized = content.strip()
-            if " " in normalized and not normalized.startswith("http") and not re.match(r"^[A-Za-z0-9_./:-]+$", normalized):
+            if (
+                " " in normalized
+                and not normalized.startswith("http")
+                and not re.match(r"^[A-Za-z0-9_./:-]+$", normalized)
+            ):
                 findings.append(
                     LintIssue(
                         rule_id="hardcoded-user-text-in-code",
@@ -808,7 +887,9 @@ def _check_hardcoded_strings_in_code(docs: Sequence[dict], _: Sequence[str], __:
     return findings
 
 
-def _check_long_sentences(_: Sequence[dict], interview_texts: Sequence[str], __: str) -> List[LintIssue]:
+def _check_long_sentences(
+    _: Sequence[dict], interview_texts: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     sentence_re = re.compile(r"[^.!?]+[.!?]")
     for text in interview_texts:
@@ -828,7 +909,9 @@ def _check_long_sentences(_: Sequence[dict], interview_texts: Sequence[str], __:
     return findings
 
 
-def _check_compound_questions(_: Sequence[dict], interview_texts: Sequence[str], __: str) -> List[LintIssue]:
+def _check_compound_questions(
+    _: Sequence[dict], interview_texts: Sequence[str], __: str
+) -> List[LintIssue]:
     for text in interview_texts:
         plain = remove_mako(text).lower()
         if "and/or" in plain or re.search(r"\b(or|and)\b", plain) and "?" in plain:
@@ -844,7 +927,9 @@ def _check_compound_questions(_: Sequence[dict], interview_texts: Sequence[str],
     return []
 
 
-def _check_overlong_labels(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_overlong_labels(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         question = _stringify(doc.get("question"))
@@ -884,7 +969,9 @@ def _check_overlong_labels(docs: Sequence[dict], _: Sequence[str], __: str) -> L
     return findings
 
 
-def _check_too_many_fields(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_too_many_fields(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         fields = doc.get("fields")
@@ -902,12 +989,16 @@ def _check_too_many_fields(docs: Sequence[dict], _: Sequence[str], __: str) -> L
     return findings
 
 
-def _check_wall_of_text(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_wall_of_text(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         subq = _stringify(doc.get("subquestion"))
         word_count = len(re.findall(r"\b\w+\b", remove_mako(subq)))
-        has_structure = bool(re.search(r"(?m)^\s*[-*]\s+", subq) or re.search(r"(?m)^\s*#{2,6}\s+", subq))
+        has_structure = bool(
+            re.search(r"(?m)^\s*[-*]\s+", subq) or re.search(r"(?m)^\s*#{2,6}\s+", subq)
+        )
         if word_count > 120 and not has_structure:
             findings.append(
                 LintIssue(
@@ -922,7 +1013,9 @@ def _check_wall_of_text(docs: Sequence[dict], _: Sequence[str], __: str) -> List
     return findings
 
 
-def _check_missing_help_on_complex_screens(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_missing_help_on_complex_screens(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     for idx, doc in enumerate(docs):
         fields = doc.get("fields")
@@ -930,14 +1023,19 @@ def _check_missing_help_on_complex_screens(docs: Sequence[dict], _: Sequence[str
             continue
         has_help = bool(doc.get("help"))
         for field in fields:
-            if isinstance(field, dict) and (field.get("help") or field.get("hint") or field.get("note")):
+            if isinstance(field, dict) and (
+                field.get("help") or field.get("hint") or field.get("note")
+            ):
                 has_help = True
                 break
         if not has_help:
             sample_labels: List[str] = []
             for field in fields:
                 if isinstance(field, dict):
-                    sample_labels.append(_stringify(field.get("label")) or _stringify(next(iter(field.keys()))))
+                    sample_labels.append(
+                        _stringify(field.get("label"))
+                        or _stringify(next(iter(field.keys())))
+                    )
             findings.append(
                 LintIssue(
                     rule_id="complex-screen-missing-help",
@@ -945,16 +1043,23 @@ def _check_missing_help_on_complex_screens(docs: Sequence[dict], _: Sequence[str
                     message="Complex screen has no inline help/hint text.",
                     url=f"{STYLE_GUIDE_URL}/question_style_organize_fields/",
                     screen_id=_block_label(doc, f"block-{idx}"),
-                    problematic_text=_shorten(", ".join(label for label in sample_labels if label) or f"{len(fields)} fields"),
+                    problematic_text=_shorten(
+                        ", ".join(label for label in sample_labels if label)
+                        or f"{len(fields)} fields"
+                    ),
                 )
             )
     return findings
 
 
-def _check_image_alt_text(docs: Sequence[dict], _: Sequence[str], __: str) -> List[LintIssue]:
+def _check_image_alt_text(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
     findings: List[LintIssue] = []
     md_image_re = re.compile(r"!\[(.*?)\]\((.*?)\)")
-    file_tag_re = re.compile(r"\[FILE\s+([^,\]]+)(?:\s*,\s*([^,\]]+))?(?:\s*,\s*([^\]]+))?\]")
+    file_tag_re = re.compile(
+        r"\[FILE\s+([^,\]]+)(?:\s*,\s*([^,\]]+))?(?:\s*,\s*([^\]]+))?\]"
+    )
     img_tag_re = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 
     for idx, doc in enumerate(docs):
@@ -980,11 +1085,15 @@ def _check_image_alt_text(docs: Sequence[dict], _: Sequence[str], __: str) -> Li
                             message=f"[FILE ...] image in `{location}` is missing alt text argument.",
                             url="https://docassemble.org/docs/markup.html#inserting%20images",
                             screen_id=_block_label(doc, f"block-{idx}"),
-                            problematic_text=_shorten(f"[FILE {file_target}, {width_value}]"),
+                            problematic_text=_shorten(
+                                f"[FILE {file_target}, {width_value}]"
+                            ),
                         )
                     )
             for img_tag in img_tag_re.findall(text):
-                alt_match = re.search(r"\balt\s*=\s*([\"\'])(.*?)\1", img_tag, re.IGNORECASE)
+                alt_match = re.search(
+                    r"\balt\s*=\s*([\"\'])(.*?)\1", img_tag, re.IGNORECASE
+                )
                 if not alt_match or not alt_match.group(2).strip():
                     findings.append(
                         LintIssue(
@@ -1000,26 +1109,102 @@ def _check_image_alt_text(docs: Sequence[dict], _: Sequence[str], __: str) -> Li
 
 
 RULES: List[LintRule] = [
-    LintRule("missing-question-id", "red", f"{CODING_STYLE_URL}/yaml_structure/", _check_missing_id),
-    LintRule("multiple-mandatory-blocks", "red", f"{CODING_STYLE_URL}/yaml_structure/", _check_multiple_mandatory),
-    LintRule("avoid-yesno-shortcuts", "red", f"{CODING_STYLE_URL}/accessibility/", _check_yesno_shortcuts),
-    LintRule("avoid-combobox", "red", f"{CODING_STYLE_URL}/accessibility/", _check_combobox_usage),
-    LintRule("subquestion-h1", "red", f"{STYLE_GUIDE_URL}/formatting/", _check_subquestion_h1),
-    LintRule("skipped-heading-level", "red", f"{STYLE_GUIDE_URL}/formatting/", _check_skipped_heading_levels),
-    LintRule("choices-without-stable-values", "red", f"{CODING_STYLE_URL}/yaml_interface/", _check_choices_without_values),
-    LintRule("remove-language-en", "red", f"{CODING_STYLE_URL}/yaml_translation/", _check_language_en_flag),
-    LintRule("hardcoded-user-text-in-code", "red", f"{CODING_STYLE_URL}/yaml_translation/", _check_hardcoded_strings_in_code),
-    LintRule("image-missing-alt-text", "red", "https://docassemble.org/docs/markup.html#inserting%20images", _check_image_alt_text),
-    LintRule("long-sentences", "yellow", f"{STYLE_GUIDE_URL}/readability/", _check_long_sentences),
-    LintRule("compound-questions", "yellow", f"{STYLE_GUIDE_URL}/question_overview/", _check_compound_questions),
-    LintRule("overlong-question-label", "yellow", f"{STYLE_GUIDE_URL}/question_style_organize_fields/", _check_overlong_labels),
-    LintRule("too-many-fields-on-screen", "yellow", f"{STYLE_GUIDE_URL}/question_style_organize_fields/", _check_too_many_fields),
-    LintRule("wall-of-text", "yellow", f"{STYLE_GUIDE_URL}/formatting/", _check_wall_of_text),
-    LintRule("complex-screen-missing-help", "green", f"{STYLE_GUIDE_URL}/question_style_organize_fields/", _check_missing_help_on_complex_screens),
+    LintRule(
+        "missing-question-id",
+        "red",
+        f"{CODING_STYLE_URL}/yaml_structure/",
+        _check_missing_id,
+    ),
+    LintRule(
+        "multiple-mandatory-blocks",
+        "red",
+        f"{CODING_STYLE_URL}/yaml_structure/",
+        _check_multiple_mandatory,
+    ),
+    LintRule(
+        "avoid-yesno-shortcuts",
+        "red",
+        f"{CODING_STYLE_URL}/accessibility/",
+        _check_yesno_shortcuts,
+    ),
+    LintRule(
+        "avoid-combobox",
+        "red",
+        f"{CODING_STYLE_URL}/accessibility/",
+        _check_combobox_usage,
+    ),
+    LintRule(
+        "subquestion-h1", "red", f"{STYLE_GUIDE_URL}/formatting/", _check_subquestion_h1
+    ),
+    LintRule(
+        "skipped-heading-level",
+        "red",
+        f"{STYLE_GUIDE_URL}/formatting/",
+        _check_skipped_heading_levels,
+    ),
+    LintRule(
+        "choices-without-stable-values",
+        "red",
+        f"{CODING_STYLE_URL}/yaml_interface/",
+        _check_choices_without_values,
+    ),
+    LintRule(
+        "remove-language-en",
+        "red",
+        f"{CODING_STYLE_URL}/yaml_translation/",
+        _check_language_en_flag,
+    ),
+    LintRule(
+        "hardcoded-user-text-in-code",
+        "red",
+        f"{CODING_STYLE_URL}/yaml_translation/",
+        _check_hardcoded_strings_in_code,
+    ),
+    LintRule(
+        "image-missing-alt-text",
+        "red",
+        "https://docassemble.org/docs/markup.html#inserting%20images",
+        _check_image_alt_text,
+    ),
+    LintRule(
+        "long-sentences",
+        "yellow",
+        f"{STYLE_GUIDE_URL}/readability/",
+        _check_long_sentences,
+    ),
+    LintRule(
+        "compound-questions",
+        "yellow",
+        f"{STYLE_GUIDE_URL}/question_overview/",
+        _check_compound_questions,
+    ),
+    LintRule(
+        "overlong-question-label",
+        "yellow",
+        f"{STYLE_GUIDE_URL}/question_style_organize_fields/",
+        _check_overlong_labels,
+    ),
+    LintRule(
+        "too-many-fields-on-screen",
+        "yellow",
+        f"{STYLE_GUIDE_URL}/question_style_organize_fields/",
+        _check_too_many_fields,
+    ),
+    LintRule(
+        "wall-of-text", "yellow", f"{STYLE_GUIDE_URL}/formatting/", _check_wall_of_text
+    ),
+    LintRule(
+        "complex-screen-missing-help",
+        "green",
+        f"{STYLE_GUIDE_URL}/question_style_organize_fields/",
+        _check_missing_help_on_complex_screens,
+    ),
 ]
 
 
-def run_deterministic_rules(docs: Sequence[dict], interview_texts: Sequence[str], raw_content: str) -> List[Dict[str, Any]]:
+def run_deterministic_rules(
+    docs: Sequence[dict], interview_texts: Sequence[str], raw_content: str
+) -> List[Dict[str, Any]]:
     findings: List[LintIssue] = []
     for rule in RULES:
         findings.extend(rule.check(docs, interview_texts, raw_content))
@@ -1052,7 +1237,9 @@ def run_deterministic_rules(docs: Sequence[dict], interview_texts: Sequence[str]
     return deduped
 
 
-def findings_by_severity(findings: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def findings_by_severity(
+    findings: Sequence[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
     grouped = {severity: [] for severity in SEVERITY_ORDER}
     for finding in findings:
         sev = _stringify(finding.get("severity")).lower()
@@ -1076,16 +1263,20 @@ def load_llm_prompt_templates() -> Dict[str, Any]:
                 with open(prompt_path, "r", encoding="utf-8") as fp:
                     return yaml.load(fp.read()) or {}
         except Exception as err:
-            log(f"interview_linter: failed resolving {file_ref} with path_and_mimetype: {err}")
+            log(
+                f"interview_linter: failed resolving {file_ref} with path_and_mimetype: {err}"
+            )
 
     # Fallback for local/dev execution.
     try:
-        prompt_path = importlib.resources.files(f"{package_name}.data.sources").joinpath(
-            "interview_linter_prompts.yml"
-        )
+        prompt_path = importlib.resources.files(
+            f"{package_name}.data.sources"
+        ).joinpath("interview_linter_prompts.yml")
         return yaml.load(prompt_path.read_text(encoding="utf-8")) or {}
     except Exception as err:
-        log(f"interview_linter: could not load prompt templates from package {package_name}: {err}")
+        log(
+            f"interview_linter: could not load prompt templates from package {package_name}: {err}"
+        )
         return {}
 
 
@@ -1121,7 +1312,9 @@ def run_llm_rules(
 
     if enabled_rules:
         enabled = set(enabled_rules)
-        llm_rules = [rule for rule in llm_rules if _stringify(rule.get("rule_id")) in enabled]
+        llm_rules = [
+            rule for rule in llm_rules if _stringify(rule.get("rule_id")) in enabled
+        ]
 
     combined_text = "\n\n".join(remove_mako(text) for text in interview_texts if text)
     if not combined_text.strip():
@@ -1129,7 +1322,13 @@ def run_llm_rules(
     if screen_catalog is None:
         screen_catalog = get_screen_catalog(docs)
     screen_payload = json.dumps(
-        [{"screen_id": s.get("screen_id"), "text": remove_mako(_stringify(s.get("text")))} for s in screen_catalog],
+        [
+            {
+                "screen_id": s.get("screen_id"),
+                "text": remove_mako(_stringify(s.get("text"))),
+            }
+            for s in screen_catalog
+        ],
         ensure_ascii=False,
     )
 
@@ -1155,25 +1354,33 @@ def run_llm_rules(
         for item in parsed:
             findings.append(
                 {
-                    "rule_id": _stringify(item.get("rule_id")) or _stringify(rule.get("rule_id")),
-                    "severity": _stringify(item.get("severity")).lower() or _stringify(rule.get("default_severity", "yellow")),
-                    "message": _stringify(item.get("message")) or "LLM identified a potential issue.",
+                    "rule_id": _stringify(item.get("rule_id"))
+                    or _stringify(rule.get("rule_id")),
+                    "severity": _stringify(item.get("severity")).lower()
+                    or _stringify(rule.get("default_severity", "yellow")),
+                    "message": _stringify(item.get("message"))
+                    or "LLM identified a potential issue.",
                     "url": _stringify(rule.get("url")),
                     "screen_id": _stringify(item.get("screen_id")) or None,
-                    "problematic_text": _stringify(item.get("problematic_text")) or None,
+                    "problematic_text": _stringify(item.get("problematic_text"))
+                    or None,
                     "source": "llm",
                 }
             )
     return findings
 
 
-def lint_interview_content(content: str, language: str = "en", include_llm: bool = False) -> Dict[str, Any]:
+def lint_interview_content(
+    content: str, language: str = "en", include_llm: bool = False
+) -> Dict[str, Any]:
     yaml_parsed = load_interview(content)
     interview_texts = get_all_text(yaml_parsed)
     user_facing_texts = get_user_facing_text(yaml_parsed)
     screen_catalog = get_screen_catalog(yaml_parsed)
     interview_texts_no_mako = [remove_mako(text) for text in user_facing_texts]
-    headings = {key: remove_mako(text) for key, text in get_all_headings(yaml_parsed).items()}
+    headings = {
+        key: remove_mako(text) for key, text in get_all_headings(yaml_parsed).items()
+    }
     paragraph = " ".join(text for text in interview_texts_no_mako if text).strip()
     style_warnings = [
         {"message": message, "url": url}
@@ -1182,7 +1389,9 @@ def lint_interview_content(content: str, language: str = "en", include_llm: bool
 
     findings = run_deterministic_rules(yaml_parsed, interview_texts, content)
     if include_llm:
-        findings.extend(run_llm_rules(yaml_parsed, interview_texts, screen_catalog=screen_catalog))
+        findings.extend(
+            run_llm_rules(yaml_parsed, interview_texts, screen_catalog=screen_catalog)
+        )
     findings = _attach_screen_links_and_evidence(findings, screen_catalog)
 
     readability = readability_consensus_assessment(paragraph)
@@ -1210,7 +1419,11 @@ def lint_multiple_sources(
     """
     reports: List[Dict[str, Any]] = []
     for source in sources:
-        name = _stringify(source.get("name")) or _stringify(source.get("token")) or "unknown"
+        name = (
+            _stringify(source.get("name"))
+            or _stringify(source.get("token"))
+            or "unknown"
+        )
         token = _stringify(source.get("token"))
         path = _resolve_source_token(token)
         if not path or not os.path.exists(path):
@@ -1225,13 +1438,23 @@ def lint_multiple_sources(
             continue
         try:
             with open(path, "r", encoding="utf-8") as fp:
-                result = lint_interview_content(fp.read(), language=language, include_llm=include_llm)
-            reports.append({"name": name, "token": token, "error": None, "result": result})
+                result = lint_interview_content(
+                    fp.read(), language=language, include_llm=include_llm
+                )
+            reports.append(
+                {"name": name, "token": token, "error": None, "result": result}
+            )
         except Exception as err:
-            reports.append({"name": name, "token": token, "error": str(err), "result": None})
+            reports.append(
+                {"name": name, "token": token, "error": str(err), "result": None}
+            )
     return reports
 
 
-def lint_uploaded_interview(path: str, language: str = "en", include_llm: bool = False) -> Dict[str, Any]:
+def lint_uploaded_interview(
+    path: str, language: str = "en", include_llm: bool = False
+) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as yaml_file:
-        return lint_interview_content(yaml_file.read(), language=language, include_llm=include_llm)
+        return lint_interview_content(
+            yaml_file.read(), language=language, include_llm=include_llm
+        )

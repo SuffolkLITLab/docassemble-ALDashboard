@@ -1,0 +1,67 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: Interview Text Linter
+---
+modules:
+  - .interview_linter
+---
+mandatory: True
+code: |
+  upload_yaml
+  lint_results
+  show_results
+---
+question: |
+  Upload a YAML interview file
+fields:
+  - YAML file: upload_yaml
+    datatype: file
+---
+code: |
+  lint_results = lint_interview_content(upload_yaml.slurp())
+---
+event: show_results
+question: |
+  Interview Suggestions
+subquestion: |
+  ### Readability
+  
+  % for key, val in lint_results["interview_scores"].items():
+  * ${ key } : ${ val }
+  % endfor
+  
+  % if lint_results["misspelled"]:
+  ### Misspelled words
+  
+  It looks like these words are misspelled:
+  
+  % for misspelled_word in lint_results["misspelled"]:
+  * ${ misspelled_word }
+  % endfor
+  % endif
+  
+  % if lint_results["headings_warnings"] or lint_results["style_warnings"]:
+  ### Warnings
+  
+  % for warning in lint_results["headings_warnings"]:
+  * ${ warning }
+  % endfor
+  
+  % for warning in lint_results["style_warnings"]:
+  * ${ warning["message"] } [Read more](${ warning["url"] })
+  % endfor
+  % endif
+help:
+  label: |
+    Text used
+  content: |
+    % for text in lint_results["interview_texts"]:
+  
+    ${ text }
+  
+    ---
+    <br>
+    % endfor

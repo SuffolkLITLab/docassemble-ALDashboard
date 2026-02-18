@@ -21,12 +21,19 @@ mandatory: True
 code: |
   start_screen
   installed
+  easy_mode_ready
   upload_choice
   compiled
   done
 ---
 code: |
   bootstrap_dir = "/tmp/bootstrap-5.3.0/"
+---
+code: |
+  import importlib
+  _theme_mod = importlib.import_module(user_info().package + ".bootstrap_theme_generator")
+  easy_theme_scss = _theme_mod.easy_theme_scss
+  random_seed_colors = _theme_mod.random_seed_colors
 ---
 need:
   - bootstrap_dir
@@ -55,9 +62,15 @@ code: |
   from pathlib import Path
   file_name = uuid.uuid4()
   full_path = os.path.join(bootstrap_dir, "scss", f"{file_name}.scss")
-  if upload_choice == "type_out":
+  if upload_choice == "easy_mode":
+    scss_text = file_text_easy
+  elif upload_choice == "type_out":
+    scss_text = file_text_manual
+  else:
+    scss_text = None
+  if scss_text is not None:
     with open(full_path, "w") as text_to_file:
-      text_to_file.write(file_text)
+      text_to_file.write(scss_text)
     output_scss.copy_into(full_path)
   else: # upload_file
     shutil.copy(uploaded_file.path(), os.path.join(bootstrap_dir, "scss", f"{file_name}.scss"))
@@ -70,6 +83,25 @@ code: |
   output_file.copy_into(bootstrap_dir + f"dist/css/{file_name}.css")
   output_file.commit()
   compiled = True
+---
+id: easy mode defaults
+need:
+  - installed
+code: |
+  if not defined("easy_mode_seed"):
+    easy_mode_seed = random_seed_colors(1)[0]
+  if not defined("easy_mode_font_choice"):
+    easy_mode_font_choice = "system"
+  if not defined("easy_mode_style_choice"):
+    easy_mode_style_choice = "rounded"
+  easy_mode_seed_options = random_seed_colors(3)
+  easy_mode_preview = easy_theme_scss(
+    seed_color=easy_mode_seed,
+    font_choice=easy_mode_font_choice,
+    style_choice=easy_mode_style_choice,
+  )
+  easy_mode_default_scss = easy_mode_preview["scss"]
+  easy_mode_ready = True
 ---
 id: start-page
 comment: |
@@ -98,8 +130,51 @@ fields:
   - How do you want to provide the file?: upload_choice
     datatype: radio
     choices:
+      - Easy mode (generate a theme from a seed color): easy_mode
       - Upload file: upload_file
       - Type it out here: type_out
+  - Easy mode seed color: easy_mode_seed
+    datatype: text
+    input type: color
+    default: ${ easy_mode_seed }
+    show if:
+      variable: upload_choice
+      is: easy_mode
+  - Font style: easy_mode_font_choice
+    datatype: radio
+    choices:
+      - System sans: system
+      - Source Sans Pro: source_sans
+      - Georgia serif: georgia
+      - Atkinson Hyperlegible: atkinson
+    default: ${ easy_mode_font_choice }
+    show if:
+      variable: upload_choice
+      is: easy_mode
+  - Corner style: easy_mode_style_choice
+    datatype: radio
+    choices:
+      - Rounded: rounded
+      - Square: square
+      - Beveled: beveled
+    default: ${ easy_mode_style_choice }
+    show if:
+      variable: upload_choice
+      is: easy_mode
+  - note: |
+      <div class="mb-2">
+        Try one of these seed colors:
+        % for seed in easy_mode_seed_options:
+        <button type="button" class="btn btn-sm btn-outline-secondary easy-seed-option" data-color="${ seed }" style="margin-right:.25rem;">${ seed }</button>
+        % endfor
+      </div>
+      <div class="mb-3">
+        <button type="button" class="btn btn-sm btn-primary" id="easy-mode-refresh">Refresh colors</button>
+      </div>
+      <div id="easy-mode-swatches" class="easy-mode-swatches"></div>
+    show if:
+      variable: upload_choice
+      is: easy_mode
   - SCSS file: uploaded_file
     datatype: file
     accept: |
@@ -113,6 +188,14 @@ fields:
       variable: upload_choice
       is: type_out
   - no label: file_text
+  - no label: file_text_easy
+    input type: area
+    rows: 15
+    show if:
+      variable: upload_choice
+      is: easy_mode
+    default: ${ easy_mode_default_scss }
+  - no label: file_text_manual
     input type: area
     rows: 15
     show if:
@@ -134,8 +217,293 @@ fields:
         );
         @import "bootstrap";
 validation code: |
-  if upload_choice == "type_out" and not '@import "bootstrap";' in file_text:
-    validation_error('You need to include the exact text \'@import "bootstrap";\' at the end of your SCSS block', field="file_text")
+  if upload_choice == "easy_mode" and not '@import "bootstrap";' in file_text_easy:
+    validation_error('You need to include the exact text \'@import "bootstrap";\' at the end of your SCSS block', field="file_text_easy")
+  if upload_choice == "type_out" and not '@import "bootstrap";' in file_text_manual:
+    validation_error('You need to include the exact text \'@import "bootstrap";\' at the end of your SCSS block', field="file_text_manual")
+  if upload_choice == "easy_mode":
+    import re
+    if not re.match(r"^#[0-9a-fA-F]{6}$", easy_mode_seed):
+      validation_error("Pick a valid seed color in #RRGGBB format", field="easy_mode_seed")
+script: |
+  <script type="text/javascript">
+    (function () {
+      const FONT_STACKS = {
+        system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        source_sans: '"Source Sans Pro", "Helvetica Neue", Arial, sans-serif',
+        georgia: 'Georgia, "Times New Roman", Times, serif',
+        atkinson: '"Atkinson Hyperlegible", "Segoe UI", Arial, sans-serif'
+      };
+      const STYLE_SCSS = {
+        square: { borderRadius: "0", borderRadiusSm: "0", borderRadiusLg: "0", borderRadiusPill: "0", btnBoxShadow: "none" },
+        rounded: { borderRadius: ".5rem", borderRadiusSm: ".35rem", borderRadiusLg: ".75rem", borderRadiusPill: "50rem", btnBoxShadow: "none" },
+        beveled: { borderRadius: ".25rem", borderRadiusSm: ".2rem", borderRadiusLg: ".4rem", borderRadiusPill: "50rem", btnBoxShadow: "inset 0 1px 0 rgba(255,255,255,.22), 0 2px 0 rgba(0,0,0,.15)" }
+      };
+      const colorNames = ["primary", "secondary", "success", "info", "warning", "danger", "light", "dark"];
+
+      function hexToRgb(hex) {
+        const clean = hex.replace("#", "");
+        return {
+          r: parseInt(clean.slice(0, 2), 16),
+          g: parseInt(clean.slice(2, 4), 16),
+          b: parseInt(clean.slice(4, 6), 16)
+        };
+      }
+
+      function rgbToHex(r, g, b) {
+        return "#" + [r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("").toUpperCase();
+      }
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h, s;
+        const l = (max + min) / 2;
+        if (max === min) {
+          h = 0; s = 0;
+        } else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            default: h = (r - g) / d + 4;
+          }
+          h /= 6;
+        }
+        return { h, s, l };
+      }
+
+      function hslToRgb(h, s, l) {
+        function hue2rgb(p, q, t) {
+          if (t < 0) t += 1;
+          if (t > 1) t -= 1;
+          if (t < 1 / 6) return p + (q - p) * 6 * t;
+          if (t < 1 / 2) return q;
+          if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+          return p;
+        }
+        let r, g, b;
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          const p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1 / 3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1 / 3);
+        }
+        return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+      }
+
+      function relLum(hex) {
+        const { r, g, b } = hexToRgb(hex);
+        const f = (c) => {
+          const x = c / 255;
+          return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+        };
+        const rr = f(r), gg = f(g), bb = f(b);
+        return 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+      }
+
+      function contrast(a, b) {
+        const l1 = relLum(a);
+        const l2 = relLum(b);
+        const lighter = Math.max(l1, l2);
+        const darker = Math.min(l1, l2);
+        return (lighter + 0.05) / (darker + 0.05);
+      }
+
+      function adjustLightness(hex, amount) {
+        const { r, g, b } = hexToRgb(hex);
+        const hsl = rgbToHsl(r, g, b);
+        const l = Math.min(1, Math.max(0, hsl.l + amount));
+        const rgb = hslToRgb(hsl.h, hsl.s, l);
+        return rgbToHex(rgb.r, rgb.g, rgb.b);
+      }
+
+      function ensureContrastAgainstWhite(color) {
+        if (contrast(color, "#FFFFFF") >= 4.5) return color;
+        let best = color;
+        let bestRatio = contrast(color, "#FFFFFF");
+        for (let i = 1; i <= 40; i++) {
+          const delta = i * 0.02;
+          const darker = adjustLightness(color, -delta);
+          const lighter = adjustLightness(color, delta);
+          const darkerRatio = contrast(darker, "#FFFFFF");
+          const lighterRatio = contrast(lighter, "#FFFFFF");
+          if (darkerRatio > bestRatio) { best = darker; bestRatio = darkerRatio; }
+          if (lighterRatio > bestRatio) { best = lighter; bestRatio = lighterRatio; }
+          if (bestRatio >= 4.5) return best;
+        }
+        return best;
+      }
+
+      function bestTextColor(bg) {
+        return contrast(bg, "#FFFFFF") >= contrast(bg, "#000000") ? "#FFFFFF" : "#000000";
+      }
+
+      function rotateHue(baseHue, delta) {
+        const value = (baseHue + delta) % 360;
+        return value < 0 ? value + 360 : value;
+      }
+
+      function fromHsl(h, s, l) {
+        const rgb = hslToRgb((h % 360) / 360, s, l);
+        return rgbToHex(rgb.r, rgb.g, rgb.b);
+      }
+
+      function buildPalette(seedHex) {
+        const rgb = hexToRgb(seedHex);
+        const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+        const hue = hsl.h * 360;
+        const sat = Math.max(0.38, Math.min(0.78, hsl.s + 0.08));
+        const palette = {
+          primary: fromHsl(hue, sat, 0.4),
+          secondary: fromHsl(rotateHue(hue, 25), Math.max(0.2, sat * 0.5), 0.38),
+          success: fromHsl(rotateHue(hue, 125), Math.max(0.4, sat * 0.85), 0.36),
+          info: fromHsl(rotateHue(hue, 200), Math.max(0.35, sat * 0.8), 0.4),
+          warning: fromHsl(rotateHue(hue, 80), Math.max(0.45, sat * 0.92), 0.42),
+          danger: fromHsl(rotateHue(hue, -35), Math.max(0.4, sat * 0.88), 0.37),
+          light: "#F8F9FA",
+          dark: "#212529"
+        };
+        ["primary", "secondary", "success", "info", "warning", "danger"].forEach((k) => {
+          palette[k] = ensureContrastAgainstWhite(palette[k]);
+        });
+        return palette;
+      }
+
+      function buildScss(palette, fontChoice, styleChoice) {
+        const style = STYLE_SCSS[styleChoice] || STYLE_SCSS.rounded;
+        const linkHover = ensureContrastAgainstWhite(adjustLightness(palette.primary, -0.1));
+        const fontStack = FONT_STACKS[fontChoice] || FONT_STACKS.system;
+        return [
+          "$white: #FFFFFF;",
+          "$black: #000000;",
+          "$body-bg: #FFFFFF;",
+          "$body-color: #212529;",
+          "$link-color: " + palette.primary + ";",
+          "$link-hover-color: " + linkHover + ";",
+          "$font-family-sans-serif: " + fontStack + ";",
+          "$border-radius: " + style.borderRadius + ";",
+          "$border-radius-sm: " + style.borderRadiusSm + ";",
+          "$border-radius-lg: " + style.borderRadiusLg + ";",
+          "$border-radius-pill: " + style.borderRadiusPill + ";",
+          "$btn-box-shadow: " + style.btnBoxShadow + ";",
+          "",
+          "$theme-colors: (",
+          '  "primary": ' + palette.primary + ",",
+          '  "secondary": ' + palette.secondary + ",",
+          '  "success": ' + palette.success + ",",
+          '  "info": ' + palette.info + ",",
+          '  "warning": ' + palette.warning + ",",
+          '  "danger": ' + palette.danger + ",",
+          '  "light": ' + palette.light + ",",
+          '  "dark": ' + palette.dark,
+          ");",
+          "",
+          '@import "bootstrap";',
+          ""
+        ].join("\\n");
+      }
+
+      function renderSwatches(palette) {
+        const container = document.getElementById("easy-mode-swatches");
+        if (!container) return;
+        container.innerHTML = colorNames.map((name) => {
+          const hex = palette[name];
+          const textColor = bestTextColor(hex);
+          const ratio = contrast(hex, "#FFFFFF").toFixed(2);
+          return '<div class="easy-mode-swatch" style="background:' + hex + ";color:" + textColor + ';">'
+            + "<div>" + name + "</div>"
+            + '<div style="font-size:.75rem;font-weight:500;">' + hex + "</div>"
+            + '<div style="font-size:.72rem;font-weight:500;">W:' + ratio + ":1</div>"
+            + "</div>";
+        }).join("");
+      }
+
+      function getChecked(name) {
+        const input = document.querySelector('input[name="' + name + '"]:checked');
+        return input ? input.value : "";
+      }
+
+      function easyModeSelected() {
+        return getChecked("upload_choice") === "easy_mode";
+      }
+
+      function applyEasyModeTheme() {
+        if (!easyModeSelected()) return;
+        const seedEl = document.getElementById("da-field-easy_mode_seed");
+        const fileText = document.getElementById("da-field-file_text_easy");
+        if (!seedEl || !fileText) return;
+        const seed = (seedEl.value || "").toUpperCase();
+        if (!/^#[0-9A-F]{6}$/.test(seed)) return;
+        const palette = buildPalette(seed);
+        renderSwatches(palette);
+        fileText.value = buildScss(palette, getChecked("easy_mode_font_choice"), getChecked("easy_mode_style_choice"));
+      }
+
+      function randomHex() {
+        const value = Math.floor(Math.random() * 0xffffff);
+        return "#" + value.toString(16).padStart(6, "0").toUpperCase();
+      }
+
+      function wire() {
+        document.querySelectorAll('input[name="upload_choice"], input[name="easy_mode_font_choice"], input[name="easy_mode_style_choice"]').forEach((el) => {
+          el.addEventListener("change", applyEasyModeTheme);
+        });
+        const seedEl = document.getElementById("da-field-easy_mode_seed");
+        if (seedEl) {
+          seedEl.addEventListener("input", applyEasyModeTheme);
+          seedEl.addEventListener("change", applyEasyModeTheme);
+        }
+        const refresh = document.getElementById("easy-mode-refresh");
+        if (refresh && seedEl) {
+          refresh.addEventListener("click", function () {
+            seedEl.value = randomHex();
+            applyEasyModeTheme();
+          });
+        }
+        document.querySelectorAll(".easy-seed-option").forEach((btn) => {
+          btn.addEventListener("click", function () {
+            if (!seedEl) return;
+            seedEl.value = btn.getAttribute("data-color") || seedEl.value;
+            applyEasyModeTheme();
+          });
+        });
+        applyEasyModeTheme();
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", wire);
+      } else {
+        wire();
+      }
+    })();
+  </script>
+css: |
+  <style>
+    .easy-mode-swatches {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      gap: .5rem;
+      margin-bottom: 1rem;
+    }
+    .easy-mode-swatch {
+      border: 1px solid #d0d7de;
+      border-radius: .5rem;
+      padding: .5rem;
+      min-height: 74px;
+      font-size: .85rem;
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+    }
+  </style>
 ---
 template: output_template
 subject: Bootstrap CSS Contents
@@ -162,7 +530,7 @@ subquestion: |
 
   **[Bootstrap CSS file](${output_file.url_for(attachment=True)})**
 
-  % if upload_choice == "type_out":
+  % if upload_choice in ("type_out", "easy_mode"):
   **[:download: SCSS source file](${ output_scss.url_for(attachment=True) })**
   % else:
   **[:download: SCSS source file](${ uploaded_file.url_for(attachment=True) })**

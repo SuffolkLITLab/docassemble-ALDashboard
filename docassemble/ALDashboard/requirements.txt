@@ -5,3 +5,4 @@ types-requests
 mypy
 openai
 tiktoken
+spellchecker

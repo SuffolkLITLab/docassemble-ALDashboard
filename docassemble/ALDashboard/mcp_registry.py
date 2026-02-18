@@ -42,13 +42,17 @@ def _pick_input_schema(operation: Dict[str, Any]) -> Dict[str, Any]:
         return form_schema
 
     first_content = next(iter(content.values()), None)
-    if isinstance(first_content, dict) and isinstance(first_content.get("schema"), dict):
+    if isinstance(first_content, dict) and isinstance(
+        first_content.get("schema"), dict
+    ):
         return first_content["schema"]
 
     return {"type": "object", "additionalProperties": True}
 
 
-def _openapi_to_tool_entries(spec: Dict[str, Any], namespace: str) -> List[Dict[str, Any]]:
+def _openapi_to_tool_entries(
+    spec: Dict[str, Any], namespace: str
+) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     paths = spec.get("paths", {})
     if not isinstance(paths, dict):
@@ -79,9 +83,7 @@ def _openapi_to_tool_entries(spec: Dict[str, Any], namespace: str) -> List[Dict[
             else:
                 description_text = summary or description or "REST endpoint"
 
-            base_name = (
-                f"{namespace}.{method.lower()}_{_sanitize_for_tool_name(normalized_path)}"
-            )
+            base_name = f"{namespace}.{method.lower()}_{_sanitize_for_tool_name(normalized_path)}"
             name = base_name
             i = 2
             while name in used_names:
@@ -129,7 +131,9 @@ def _extract_base_path_from_api_utils(api_utils_path: str) -> str:
                 continue
             if target.id != "WEAVER_API_BASE_PATH":
                 continue
-            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            if isinstance(node.value, ast.Constant) and isinstance(
+                node.value.value, str
+            ):
                 return node.value.value
     except Exception:
         pass
@@ -147,7 +151,9 @@ def _eval_route_path_expr(node: ast.AST, base_path: str) -> Optional[str]:
             if isinstance(part, ast.Constant) and isinstance(part.value, str):
                 chunks.append(part.value)
                 continue
-            if isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name):
+            if isinstance(part, ast.FormattedValue) and isinstance(
+                part.value, ast.Name
+            ):
                 if part.value.id == "WEAVER_API_BASE_PATH":
                     chunks.append(base_path)
                     continue
@@ -158,7 +164,9 @@ def _eval_route_path_expr(node: ast.AST, base_path: str) -> Optional[str]:
 
 def _parse_weaver_routes_from_repo(repo_root: str) -> Dict[str, Any]:
     api_utils_path = os.path.join(repo_root, "docassemble", "ALWeaver", "api_utils.py")
-    api_weaver_path = os.path.join(repo_root, "docassemble", "ALWeaver", "api_weaver.py")
+    api_weaver_path = os.path.join(
+        repo_root, "docassemble", "ALWeaver", "api_weaver.py"
+    )
     base_path = _extract_base_path_from_api_utils(api_utils_path)
     paths: Dict[str, Dict[str, Dict[str, str]]] = {}
 
@@ -195,9 +203,8 @@ def _parse_weaver_routes_from_repo(repo_root: str) -> Dict[str, Any]:
                 if isinstance(keyword.value, ast.List):
                     parsed_methods = []
                     for method_node in keyword.value.elts:
-                        if (
-                            isinstance(method_node, ast.Constant)
-                            and isinstance(method_node.value, str)
+                        if isinstance(method_node, ast.Constant) and isinstance(
+                            method_node.value, str
                         ):
                             parsed_methods.append(method_node.value.upper())
                     if parsed_methods:
@@ -243,7 +250,9 @@ def _weaver_dev_mode_enabled() -> bool:
 
 def get_weaver_openapi_spec() -> Optional[Dict[str, Any]]:
     try:
-        from docassemble.ALWeaver.api_utils import build_openapi_spec as weaver_openapi
+        from docassemble.ALWeaver.api_utils import (  # type: ignore[import-untyped]
+            build_openapi_spec as weaver_openapi,
+        )
 
         spec = weaver_openapi()
         if isinstance(spec, dict) and isinstance(spec.get("paths"), dict):
@@ -311,14 +320,20 @@ def _split_path_and_query_args(
 
 
 def _jsonrpc_error(error_id: Any, code: int, message: str) -> Dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": error_id, "error": {"code": code, "message": message}}
+    return {
+        "jsonrpc": "2.0",
+        "id": error_id,
+        "error": {"code": code, "message": message},
+    }
 
 
 def _jsonrpc_result(result_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": result_id, "result": result}
 
 
-def handle_jsonrpc_request(payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], int]:
+def handle_jsonrpc_request(
+    payload: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], int]:
     if not isinstance(payload, dict):
         return _jsonrpc_error(None, -32600, "Invalid Request"), 200
 
@@ -376,13 +391,19 @@ def handle_jsonrpc_request(payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, 
         name = params.get("name")
         arguments = params.get("arguments") if "arguments" in params else {}
         if not isinstance(name, str) or not name.strip():
-            return _jsonrpc_error(request_id, -32602, "tools/call requires tool name"), 200
+            return (
+                _jsonrpc_error(request_id, -32602, "tools/call requires tool name"),
+                200,
+            )
         if arguments is None:
             arguments = {}
         if not isinstance(arguments, dict):
-            return _jsonrpc_error(
-                request_id, -32602, "tools/call arguments must be an object"
-            ), 200
+            return (
+                _jsonrpc_error(
+                    request_id, -32602, "tools/call arguments must be an object"
+                ),
+                200,
+            )
 
         tool_entry = get_tool_entry_by_name(name)
         if tool_entry is None:
@@ -393,11 +414,14 @@ def handle_jsonrpc_request(payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, 
         )
         if missing:
             missing_csv = ", ".join(sorted(missing))
-            return _jsonrpc_error(
-                request_id,
-                -32602,
-                f"Missing required path parameters for {name}: {missing_csv}",
-            ), 200
+            return (
+                _jsonrpc_error(
+                    request_id,
+                    -32602,
+                    f"Missing required path parameters for {name}: {missing_csv}",
+                ),
+                200,
+            )
 
         if is_notification:
             return None, 204

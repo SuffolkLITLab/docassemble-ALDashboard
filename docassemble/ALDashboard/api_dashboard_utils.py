@@ -1084,6 +1084,90 @@ def validate_docx_payload_from_options(
     return {"files": files}
 
 
+def interview_lint_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    uploads: List[Dict[str, Any]] = []
+    try:
+        uploads = _read_multi_uploads(field_name="files")
+    except DashboardAPIValidationError:
+        uploads = []
+    return interview_lint_payload_from_options(raw, uploads=uploads)
+
+
+def interview_lint_payload_from_options(
+    raw_options: Mapping[str, Any], *, uploads: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    from .interview_linter import lint_multiple_sources
+
+    raw = merge_raw_options(raw_options)
+    include_llm = parse_bool(raw.get("include_llm"), default=False)
+    language = str(raw.get("language") or "en")
+
+    temp_paths: List[str] = []
+    lint_sources: List[Dict[str, str]] = []
+
+    source_items = _load_json_field(
+        raw.get("sources"), field_name="sources", expected_type=list
+    )
+    if isinstance(source_items, list):
+        for item in source_items:
+            if not isinstance(item, dict):
+                raise DashboardAPIValidationError(
+                    "sources entries must be objects with token."
+                )
+            token = item.get("token")
+            if token is None:
+                raise DashboardAPIValidationError("Each sources entry requires token.")
+            name = str(item.get("name") or token)
+            lint_sources.append({"name": name, "token": str(token)})
+
+    source_tokens = _load_json_field(
+        raw.get("source_tokens"), field_name="source_tokens", expected_type=list
+    )
+    if isinstance(source_tokens, list):
+        for token in source_tokens:
+            lint_sources.append({"name": str(token), "token": str(token)})
+
+    yaml_filenames = _load_json_field(
+        raw.get("yaml_filenames"), field_name="yaml_filenames", expected_type=list
+    )
+    if isinstance(yaml_filenames, list):
+        for yaml_filename in yaml_filenames:
+            filename = str(yaml_filename)
+            lint_sources.append({"name": filename, "token": f"ref:{filename}"})
+
+    if uploads:
+        for upload in uploads:
+            filename = str(upload.get("filename") or "upload.yml")
+            content = upload.get("content")
+            if not isinstance(content, (bytes, bytearray)):
+                raise DashboardAPIValidationError("Upload content must be bytes.")
+            temp_path = _write_temp_file(filename, bytes(content))
+            temp_paths.append(temp_path)
+            lint_sources.append({"name": filename, "token": temp_path})
+
+    if not lint_sources:
+        raise DashboardAPIValidationError(
+            "Provide at least one source via multipart files[], JSON files[], sources[], source_tokens[], or yaml_filenames[]."
+        )
+
+    try:
+        reports = lint_multiple_sources(
+            lint_sources, language=language, include_llm=include_llm
+        )
+    finally:
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    return {
+        "include_llm": include_llm,
+        "language": language,
+        "count": len(reports),
+        "reports": reports,
+    }
+
+
 def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.pdf")
@@ -1360,6 +1444,15 @@ def build_openapi_spec() -> Dict[str, Any]:
             f"{DASHBOARD_API_BASE_PATH}/docx/validate": {
                 "post": {"summary": "Validate DOCX Jinja template"}
             },
+            f"{DASHBOARD_API_BASE_PATH}/interview/lint": {
+                "post": {
+                    "summary": "Lint interview YAML text",
+                    "description": (
+                        "Run deterministic (and optional LLM) lint checks on one or more interview YAML files. "
+                        "Accepts multipart uploads (files[]) and/or JSON source tokens."
+                    ),
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
                 "post": {
                     "summary": "Detect and optionally relabel PDF fields (alias)",
@@ -1443,6 +1536,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/translation/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/lint</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>

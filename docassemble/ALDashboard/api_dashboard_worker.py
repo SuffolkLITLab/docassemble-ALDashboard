@@ -8,6 +8,7 @@ from .api_dashboard_utils import (
     autolabel_payload_from_options,
     bootstrap_payload_from_options,
     docx_runs_payload_from_options,
+    interview_lint_payload_from_options,
     pdf_fields_detect_payload_from_options,
     pdf_fields_relabel_payload_from_options,
     pdf_label_fields_payload_from_options,
@@ -65,6 +66,12 @@ def dashboard_review_screen_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_validate_docx_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return validate_docx_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_interview_lint_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return interview_lint_payload_from_options(payload)
 
 
 @workerapp.task

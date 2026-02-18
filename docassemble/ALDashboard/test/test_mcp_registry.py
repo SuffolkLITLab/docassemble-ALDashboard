@@ -41,7 +41,9 @@ class TestMCPRegistry(unittest.TestCase):
         self.assertIn("example.post_al_api_v1_example", names)
         self.assertIn("example.get_al_api_v1_example_job_id", names)
         self.assertIn("example.delete_al_api_v1_example_job_id", names)
-        post_tool = next(tool for tool in tools if tool["name"] == "example.post_al_api_v1_example")
+        post_tool = next(
+            tool for tool in tools if tool["name"] == "example.post_al_api_v1_example"
+        )
         self.assertEqual(post_tool["inputSchema"]["type"], "object")
 
     def test_handle_initialize_and_tools_list(self):
@@ -49,11 +51,19 @@ class TestMCPRegistry(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
         )
         self.assertEqual(init_status, 200)
-        self.assertEqual(init_response["result"]["capabilities"]["tools"]["listChanged"], False)
+        self.assertEqual(
+            init_response["result"]["capabilities"]["tools"]["listChanged"], False
+        )
 
         with patch(
             "docassemble.ALDashboard.mcp_registry.get_discovered_tools",
-            return_value=[{"name": "sample.tool", "description": "x", "inputSchema": {"type": "object"}}],
+            return_value=[
+                {
+                    "name": "sample.tool",
+                    "description": "x",
+                    "inputSchema": {"type": "object"},
+                }
+            ],
         ):
             tools_response, tools_status = handle_jsonrpc_request(
                 {"jsonrpc": "2.0", "id": "abc", "method": "tools/list", "params": {}}
@@ -124,16 +134,20 @@ class TestMCPRegistry(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             api_dir = os.path.join(td, "docassemble", "ALWeaver")
             os.makedirs(api_dir, exist_ok=True)
-            with open(os.path.join(api_dir, "api_utils.py"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(api_dir, "api_utils.py"), "w", encoding="utf-8"
+            ) as f:
                 f.write('WEAVER_API_BASE_PATH = "/al/api/v1/weaver"\n')
-            with open(os.path.join(api_dir, "api_weaver.py"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(api_dir, "api_weaver.py"), "w", encoding="utf-8"
+            ) as f:
                 f.write(
                     "\n".join(
                         [
                             "from docassemble.webapp.app_object import app",
                             '@app.route(WEAVER_API_BASE_PATH, methods=["POST"])',
                             "def a(): pass",
-                            '@app.route(f\"{WEAVER_API_BASE_PATH}/jobs/<job_id>\", methods=[\"GET\", \"DELETE\"] )',
+                            '@app.route(f"{WEAVER_API_BASE_PATH}/jobs/<job_id>", methods=["GET", "DELETE"] )',
                             "def b(job_id): pass",
                         ]
                     )
@@ -144,9 +158,15 @@ class TestMCPRegistry(unittest.TestCase):
             self.assertIn("post", spec["paths"]["/al/api/v1/weaver"])
             self.assertIn("get", spec["paths"]["/al/api/v1/weaver/jobs/{job_id}"])
 
-    @patch("docassemble.ALDashboard.mcp_registry._weaver_dev_mode_enabled", return_value=False)
+    @patch(
+        "docassemble.ALDashboard.mcp_registry._weaver_dev_mode_enabled",
+        return_value=False,
+    )
     @patch("docassemble.ALDashboard.mcp_registry.build_dashboard_openapi_spec")
-    @patch("docassemble.ALDashboard.mcp_registry.get_weaver_openapi_spec", return_value=None)
+    @patch(
+        "docassemble.ALDashboard.mcp_registry.get_weaver_openapi_spec",
+        return_value=None,
+    )
     def test_discovery_skips_weaver_when_missing_and_not_dev(
         self, _mock_weaver, mock_dashboard, _mock_dev
     ):

@@ -28,6 +28,7 @@ from .api_dashboard_utils import (
     autolabel_payload_from_request,
     bootstrap_payload_from_request,
     docx_runs_payload_from_request,
+    interview_lint_payload_from_request,
     build_docs_html,
     build_openapi_spec,
     coerce_async_flag,
@@ -54,6 +55,7 @@ if not in_celery:
         dashboard_autolabel_task,
         dashboard_bootstrap_task,
         dashboard_docx_runs_task,
+        dashboard_interview_lint_task,
         dashboard_pdf_fields_detect_task,
         dashboard_pdf_fields_relabel_task,
         dashboard_pdf_label_fields_task,
@@ -478,6 +480,15 @@ def dashboard_review_screen_draft():
 def dashboard_docx_validate():
     return _run_endpoint(
         validate_docx_payload_from_request, dashboard_validate_docx_task
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/interview/lint", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_interview_lint():
+    return _run_endpoint(
+        interview_lint_payload_from_request, dashboard_interview_lint_task
     )
 
 

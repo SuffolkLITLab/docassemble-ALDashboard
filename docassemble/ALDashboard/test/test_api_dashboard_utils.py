@@ -10,6 +10,7 @@ from docassemble.ALDashboard.api_dashboard_utils import (
     coerce_async_flag,
     decode_base64_content,
     docx_runs_payload_from_options,
+    interview_lint_payload_from_options,
     parse_bool,
     relabel_payload_from_options,
 )
@@ -169,6 +170,30 @@ class TestDashboardAPIUtils(unittest.TestCase):
         self.assertEqual(payload["paragraph_count"], 2)
         self.assertEqual(payload["run_count"], 3)
         self.assertEqual(payload["results"][1], [1, 0, "Dear ____"])
+
+    @patch("docassemble.ALDashboard.interview_linter.lint_multiple_sources")
+    def test_interview_lint_payload_accepts_sources(self, mock_lint):
+        mock_lint.return_value = [{"name": "x.yml", "error": None, "result": {}}]
+        payload = interview_lint_payload_from_options(
+            {
+                "include_llm": "true",
+                "language": "en",
+                "sources": [
+                    {
+                        "name": "x.yml",
+                        "token": "ref:docassemble.Example:data/questions/test.yml",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["count"], 1)
+        self.assertTrue(payload["include_llm"])
+        self.assertEqual(payload["language"], "en")
+        self.assertTrue(mock_lint.called)
+
+    def test_interview_lint_payload_requires_any_source(self):
+        with self.assertRaises(DashboardAPIValidationError):
+            interview_lint_payload_from_options({})
 
 
 if __name__ == "__main__":

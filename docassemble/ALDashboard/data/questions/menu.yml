@@ -82,6 +82,9 @@ data:
   - name: Validate an attachment fields block
     url: ${ interview_url(i=user_info().package + ":validate_attachment.yml", reset=1) }
     image: paperclip
+  - name: Lint interview text
+    url: ${ interview_url(i=user_info().package + ":interview_linter.yml", reset=1) }
+    image: spell-check
   - name: PDF tools
     url: ${ interview_url(i=user_info().package + ":pdf_wrangling.yml", reset=1) }
     image: file-pdf

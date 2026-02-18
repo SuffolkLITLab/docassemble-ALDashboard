@@ -1,0 +1,212 @@
+---
+include:
+  - docassemble.AssemblyLine:assembly_line.yml
+  - nav.yml
+---
+metadata:
+  title: Interview Text Linter
+  required privileges:
+    - admin
+    - developer
+---
+modules:
+  - .interview_linter
+  - .aldashboard
+---
+mandatory: True
+code: |
+  source_mode
+  run_ai_checks
+  if source_mode == 'upload':
+    uploaded_yaml_files
+  elif source_mode == 'installed':
+    selected_installed_package
+    selected_installed_files
+  elif source_mode == 'playground':
+    selected_playground_project
+    selected_playground_files
+  lint_reports
+  show_results
+---
+question: |
+  Interview text linter
+subquestion: |
+  Choose where to lint YAML files from.
+fields:
+  - Source: source_mode
+    datatype: radio
+    choices:
+      - Upload YAML file(s): upload
+      - Installed package: installed
+      - Playground project: playground
+  - Run AI checks?: run_ai_checks
+    datatype: yesno
+    default: False
+    help: |
+      Uses the configured `docassemble.ALToolbox.llms` provider and may take longer.
+  - Spellcheck languages: spellcheck_languages
+    default: en
+    help: |
+      Comma-separated language codes for spellcheck, e.g. `en` or `en,es`.
+      A word is flagged only if unknown in all selected languages.
+---
+code: |
+  installed_package_map = list_question_files_in_docassemble_packages()
+  installed_package_names = sorted(installed_package_map.keys())
+---
+question: |
+  Upload YAML files
+fields:
+  - YAML files: uploaded_yaml_files
+    datatype: files
+    accept: |
+      ".yml,.yaml,text/yaml,text/x-yaml"
+---
+question: |
+  Select installed package
+fields:
+  - Package: selected_installed_package
+    code: |
+      installed_package_names
+---
+question: |
+  Select installed package files to lint
+fields:
+  - Files: selected_installed_files
+    datatype: checkboxes
+    required: False
+    code: |
+      [
+        {f"ref:{selected_installed_package}:data/questions/{filename}": filename}
+        for filename in sorted(installed_package_map.get(selected_installed_package, []))
+        if filename.lower().endswith(('.yml', '.yaml'))
+      ]
+---
+question: |
+  Select playground project
+fields:
+  - Playground project: selected_playground_project
+    code: |
+      list_playground_projects()
+---
+question: |
+  Select playground files to lint
+fields:
+  - Files: selected_playground_files
+    datatype: checkboxes
+    required: False
+    code: |
+      [{item['token']: item['label']} for item in list_playground_yaml_files(selected_playground_project)]
+---
+code: |
+  lint_sources = []
+  if source_mode == 'upload':
+    for yaml_file in uploaded_yaml_files:
+      lint_sources.append({"name": yaml_file.filename, "token": yaml_file.path()})
+  elif source_mode == 'installed':
+    for token in selected_installed_files.true_values():
+      lint_sources.append({"name": token.replace('ref:', ''), "token": token})
+  elif source_mode == 'playground':
+    for token in selected_playground_files.true_values():
+      lint_sources.append({"name": token.split('/')[-1], "token": token})
+
+  lint_reports = lint_multiple_sources(lint_sources, language=spellcheck_languages, include_llm=run_ai_checks)
+---
+event: show_results
+question: |
+  Interview Suggestions
+subquestion: |
+
+  ${ collapse_template(text_used) }
+
+  % if not lint_reports:
+  No files were selected.
+  % endif
+
+  % for report in lint_reports:
+  ### ${ report['name'] }
+
+  % if report.get('error'):
+  * Error: ${ report['error'] }
+  % else:
+  % if report['result']["findings_by_severity"]["red"] or report['result']["findings_by_severity"]["yellow"] or report['result']["findings_by_severity"]["green"]:
+  #### Findings
+
+  % if report['result']["findings_by_severity"]["red"]:
+  ##### Red (fix required)
+  % for finding in report['result']["findings_by_severity"]["red"]:
+  * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
+    % if finding.get("problematic_text"):
+    Problematic text: ${ finding["problematic_text"] }
+    % endif
+  % endfor
+  % endif
+
+  % if report['result']["findings_by_severity"]["yellow"]:
+  ##### Yellow (warning)
+  % for finding in report['result']["findings_by_severity"]["yellow"]:
+  * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
+    % if finding.get("problematic_text"):
+    Problematic text: ${ finding["problematic_text"] }
+    % endif
+  % endfor
+  % endif
+
+  % if report['result']["findings_by_severity"]["green"]:
+  ##### Green (advisory)
+  % for finding in report['result']["findings_by_severity"]["green"]:
+  * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
+    % if finding.get("problematic_text"):
+    Problematic text: ${ finding["problematic_text"] }
+    % endif
+  % endfor
+  % endif
+  % endif
+
+  #### Readability
+  * Consensus: ${ report['result']["readability"]["consensus"] }
+  % if report['result']["readability"]["severity"] == "red":
+  * **Red warning:** ${ report['result']["readability"]["warning"] }
+  % elif report['result']["readability"]["severity"] == "yellow":
+  * **Yellow warning:** ${ report['result']["readability"]["warning"] }
+  % endif
+
+  % if report['result']["misspelled"]:
+  #### Misspelled words
+  % for misspelled_word in report['result']["misspelled"]:
+  * ${ misspelled_word }
+  % endfor
+  % endif
+
+  % if report['result']["headings_warnings"] or report['result']["style_warnings"]:
+  #### Additional warnings
+  % for warning in report['result']["headings_warnings"]:
+  * ${ warning }
+  % endfor
+  % for warning in report['result']["style_warnings"]:
+  * ${ warning["message"] } [Read more](${ warning["url"] })
+  % endfor
+  % endif
+  % endif
+
+  ---
+  % endfor
+---
+template: text_used
+subject: |
+    Text used
+content: |
+    % for report in lint_reports:
+    % if report.get('result'):
+    ### ${ report['name'] }
+    % for screen in report['result']["screen_catalog"]:
+    <a id="${ screen['anchor'] }"></a>
+    #### Screen `${ screen['screen_id'] }`
+
+    ${ screen['text'] }
+
+    ---
+    <br>
+    % endfor
+    % endif
+    % endfor

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docassemble.ALDashboard"
-version = "1.0.0"
+version = "1.0.2"
 description= "Dashboard for some admin tasks"
 readme = "README.md"
 authors = [
@@ -114,6 +114,11 @@ ignore_missing_imports = true
 module="formfyxer"
 ignore_missing_imports = true
 
+
 [[tool.mypy.overrides]]
 module="formfyxer.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="spellchecker.*"
 ignore_missing_imports = true

@@ -7,9 +7,8 @@ from github import Github  # PyGithub
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
-from typing import List, Tuple, Dict, Optional, Callable
+from typing import List, Tuple, Dict, Optional, Callable, Any
 import math
-
 import docassemble.webapp.worker
 from docassemble.webapp.server import (
     user_can_edit_package,
@@ -44,6 +43,14 @@ from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import re
 import werkzeug
+from flask import send_file
+from werkzeug.utils import secure_filename
+import tempfile
+import zipfile
+
+from docassemble.webapp.backend import get_info_from_file_number
+from docassemble.webapp.files import get_ext_and_mimetype, SavedFile
+from docassemble.webapp.server import secure_filename_unicode_ok
 import importlib.resources
 from datetime import datetime, timedelta
 
@@ -70,9 +77,14 @@ __all__ = [
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
+    "get_session_details",
     "increment_index_value",
     "get_current_index_value",
     "get_latest_s3_folder",
+    "get_file_ids_associated_with_session",
+    "get_files_associated_with_session",
+    "build_session_files_zip",
+    "download_file_by_id",
 ]
 
 
@@ -254,6 +266,252 @@ LIMIT 500;
     sessions = [session for session in rs]
 
     return sessions
+
+
+def get_session_details(session_id: str) -> Dict[str, str]:
+    """
+    Get filename, user_id, modtime, key, and other details for a given session ID.
+    """
+    query = text(
+        """
+        SELECT
+        userdict.filename as filename,
+        userdict.user_id as user_id,
+        userdict.modtime as modtime,
+        userdict.key as key,
+        jsonstorage.data->>'auto_title' as auto_title,
+        jsonstorage.data->>'title' as title,
+        jsonstorage.data->>'description' as description,
+        jsonstorage.data->>'steps' as steps,
+        jsonstorage.data->>'progress' as progress
+        FROM userdict
+        LEFT JOIN jsonstorage ON jsonstorage.key = userdict.key
+        WHERE userdict.key = :session_id
+        LIMIT 1;
+        """
+    )
+    with db.connect() as con:
+        rs = con.execute(query, {"session_id": session_id})
+        session_details = rs.fetchone()
+    if session_details is None:
+        raise ValueError(f"No session found with ID: {session_id}")
+    return {
+        "filename": session_details.filename,
+        "user_id": session_details.user_id,
+        "modtime": session_details.modtime,
+        "key": session_details.key,
+        "auto_title": session_details.auto_title,
+        "title": session_details.title,
+        "description": session_details.description,
+        "steps": session_details.steps,
+        "progress": session_details.progress,
+    }
+
+
+def get_file_ids_associated_with_session(
+    session_id: str, yaml_filename: Optional[str] = None
+) -> List[int]:
+    """
+    Get a list of file IDs associated with a given session ID.
+    """
+    # files are stored in uploads db with a key that is the session id
+    query = text(
+        """
+        SELECT indexno
+        FROM uploads
+        WHERE key = :session_id
+          AND (:yaml_filename IS NULL OR yamlfile = :yaml_filename)
+        ORDER BY indexno
+    """
+    )
+    with db.connect() as con:
+        rs = con.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename}
+        )
+        file_ids = [row.indexno for row in rs]
+    return file_ids
+
+
+def get_files_associated_with_session(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return metadata for files associated with a session.
+    """
+    files: List[Dict[str, Any]] = []
+    query = text(
+        """
+        SELECT indexno, filename
+        FROM uploads
+        WHERE key = :session_id
+          AND (:yaml_filename IS NULL OR yamlfile = :yaml_filename)
+        ORDER BY indexno
+    """
+    )
+    with db.connect() as con:
+        rs = con.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename}
+        )
+        upload_rows = list(rs)
+
+    for row in upload_rows:
+        file_id = int(row.indexno)
+        filename = row.filename or f"file-{file_id}"
+        extension, mimetype = get_ext_and_mimetype(filename)
+        if not extension:
+            continue
+        try:
+            sf = SavedFile(file_id, extension=extension, fix=True)
+            fullpath = f"{sf.path}.{extension}"
+        except Exception:
+            continue
+        if not os.path.isfile(fullpath):
+            continue
+        files.append(
+            {
+                "file_id": file_id,
+                "filename": filename,
+                "path": fullpath,
+                "fullpath": fullpath,
+                "mimetype": mimetype,
+                "extension": extension,
+            }
+        )
+    return files
+
+
+def build_session_files_zip(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+) -> Optional[str]:
+    """
+    Build a temporary ZIP containing all files associated with a session.
+    Returns the ZIP path or None if no files were found.
+    """
+    files = get_files_associated_with_session(
+        session_id=session_id,
+        yaml_filename=yaml_filename,
+        privileged=privileged,
+        uids=uids,
+    )
+    if not files:
+        return None
+
+    safe_session_id = secure_filename_unicode_ok(str(session_id))
+    tmp = tempfile.NamedTemporaryFile(
+        delete=False, suffix=f"-session-{safe_session_id}.zip"
+    )
+    zip_path = tmp.name
+    tmp.close()
+
+    used_names = set()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in files:
+            file_id = item["file_id"]
+            src_path = item.get("fullpath") or item.get("path")
+            if not os.path.isfile(src_path):
+                continue
+            candidate = secure_filename_unicode_ok(
+                item.get("filename") or f"file-{file_id}"
+            )
+            if not candidate:
+                candidate = f"file-{file_id}"
+            arcname = candidate
+            if arcname in used_names:
+                arcname = f"{file_id}-{candidate}"
+            used_names.add(arcname)
+            zf.write(src_path, arcname=arcname)
+    return zip_path
+
+
+def download_file_by_id(
+    file_number: str,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+    extension: Optional[str] = None,
+    filename_override: Optional[str] = None,
+    return_file_info: Optional[bool] = False,
+):
+    """Fetches a file by its ID and returns a Flask Response for downloading it.
+
+    Args:
+        file_number (str): Raw file ID (may contain non-digit characters).
+        privileged (bool): Whether to perform an admin/advocate lookup. Defaults to False.
+        uids (list, optional): List of session UIDs for scoping the lookup. Defaults to None.
+        extension (str, optional): File extension to force (e.g. "pdf"). Defaults to None.
+        filename_override (str, optional): Specific filename to serve (e.g. "report.docx"). Defaults to None.
+        return_file_info (bool, optional): If True, return metadata needed for a
+            `response(file=...)` call instead of a Flask response.
+
+    Raises:
+        FileNotFound: If no record or filesystem path exists for the given ID,
+                      or the requested variant is missing on disk.
+
+    Returns:
+        Response: A Flask Response object from `send_file`, with caching disabled.
+    """
+    # 1. Normalize to digits only
+    number = re.sub(r"[^0-9]", "", str(file_number))
+
+    # 2. Lookup base info
+    try:
+        file_info = get_info_from_file_number(number, privileged=privileged, uids=uids)
+    except Exception:
+        raise FileNotFoundError(f"No record for file ID {number!r}")
+
+    if "path" not in file_info and "fullpath" not in file_info:
+        raise FileNotFoundError(f"No filesystem path for file ID {number!r}")
+
+    base_path = file_info["path"]
+    extension_from_info = file_info.get("extension")
+    default_fullpath = file_info.get("fullpath")
+    if not default_fullpath and base_path and extension_from_info:
+        default_fullpath = f"{base_path}.{extension_from_info}"
+
+    # 3. Resolve which physical file to serve
+    if extension:
+        ext = secure_filename(extension)
+        candidate = f"{base_path}.{ext}"
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Extension variant not found: {candidate}")
+        the_path = candidate
+        _, mimetype = get_ext_and_mimetype(candidate)
+
+    elif filename_override:
+        safe_name = secure_filename_unicode_ok(filename_override)
+        candidate = os.path.join(os.path.dirname(base_path), safe_name)
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Filename variant not found: {candidate}")
+        the_path = candidate
+        _, mimetype = get_ext_and_mimetype(safe_name)
+
+    else:
+        the_path = default_fullpath or base_path
+        mimetype = file_info.get("mimetype")
+
+    # 4. Final sanity check
+    if not os.path.isfile(the_path):
+        raise FileNotFoundError(f"File not found on disk: {the_path}")
+
+    if return_file_info:
+        return {
+            "file_id": int(number),
+            "path": the_path,
+            "mimetype": mimetype,
+            "filename": os.path.basename(the_path),
+        }
+
+    # 5. Build and return the download response
+    resp = send_file(the_path, mimetype=mimetype)
+    resp.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+    )
+    return resp
 
 
 def dashboard_get_session_variables(session_id: str, filename: str):

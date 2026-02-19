@@ -7,12 +7,15 @@ from docassemble.ALDashboard.api_dashboard_utils import (
     DashboardAPIValidationError,
     _validate_upload_size,
     autolabel_payload_from_options,
+    build_openapi_spec,
     coerce_async_flag,
     decode_base64_content,
     docx_runs_payload_from_options,
     interview_lint_payload_from_options,
     parse_bool,
     relabel_payload_from_options,
+    yaml_check_payload_from_options,
+    yaml_reformat_payload_from_options,
 )
 
 
@@ -194,6 +197,62 @@ class TestDashboardAPIUtils(unittest.TestCase):
     def test_interview_lint_payload_requires_any_source(self):
         with self.assertRaises(DashboardAPIValidationError):
             interview_lint_payload_from_options({})
+
+    @patch("docassemble.ALDashboard.api_dashboard_utils._run_dayaml_checker")
+    def test_yaml_check_payload_classifies_warning_and_error(self, mock_dayaml):
+        class _Issue:
+            def __init__(self, err_str, line_number, file_name, experimental=True):
+                self.err_str = err_str
+                self.line_number = line_number
+                self.file_name = file_name
+                self.experimental = experimental
+
+        mock_dayaml.return_value = [
+            _Issue(
+                "validation code does not call validation_error(); consider calling validation_error(...) to provide user-facing error messages",
+                4,
+                "sample.yml",
+            ),
+            _Issue("Keys that shouldn't exist! ['bad key']", 2, "sample.yml", False),
+        ]
+        payload = yaml_check_payload_from_options(
+            {"yaml_text": "question: hi", "filename": "sample.yml"}
+        )
+        self.assertFalse(payload["valid"])
+        self.assertEqual(payload["warning_count"], 1)
+        self.assertEqual(payload["error_count"], 1)
+        self.assertEqual(len(payload["warnings"]), 1)
+        self.assertEqual(len(payload["errors"]), 1)
+
+    @patch("docassemble.ALDashboard.api_dashboard_utils._run_dayaml_reformat")
+    def test_yaml_reformat_payload_returns_formatted_yaml(self, mock_reformat):
+        mock_reformat.return_value = ("question: |\n  Hello\n", True)
+        payload = yaml_reformat_payload_from_options(
+            {
+                "yaml_text": "question: |\n    Hello\n",
+                "line_length": "99",
+                "convert_indent_4_to_2": "true",
+            }
+        )
+        self.assertTrue(payload["changed"])
+        self.assertEqual(payload["line_length"], 99)
+        self.assertTrue(payload["convert_indent_4_to_2"])
+        self.assertEqual(payload["formatted_yaml"], "question: |\n  Hello\n")
+
+    def test_yaml_reformat_rejects_invalid_line_length(self):
+        with self.assertRaises(DashboardAPIValidationError):
+            yaml_reformat_payload_from_options(
+                {"yaml_text": "question: hi", "line_length": "abc"}
+            )
+        with self.assertRaises(DashboardAPIValidationError):
+            yaml_reformat_payload_from_options(
+                {"yaml_text": "question: hi", "line_length": "0"}
+            )
+
+    def test_openapi_includes_yaml_paths(self):
+        spec = build_openapi_spec()
+        self.assertIn("/al/api/v1/dashboard/yaml/check", spec["paths"])
+        self.assertIn("/al/api/v1/dashboard/yaml/reformat", spec["paths"])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ from .api_dashboard_utils import (
     translation_payload_from_options,
     validate_docx_payload_from_options,
     validate_translation_payload_from_options,
+    yaml_check_payload_from_options,
+    yaml_reformat_payload_from_options,
 )
 
 
@@ -90,3 +92,15 @@ def dashboard_pdf_fields_detect_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_pdf_fields_relabel_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return pdf_fields_relabel_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_yaml_check_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return yaml_check_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_yaml_reformat_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return yaml_reformat_payload_from_options(payload)

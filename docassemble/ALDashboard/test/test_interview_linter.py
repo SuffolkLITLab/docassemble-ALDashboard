@@ -393,6 +393,33 @@ fields:
 """
         self.assertIn("prefer-person-objects", self._rule_ids(yaml_content))
 
+    def test_yaml_errors_reported_before_style_checks(self):
+        yaml_content = """
+---
+id q1
+question: Bad block
+fields:
+  - Name: user_name
+"""
+        result = lint_interview_content(yaml_content)
+        self.assertTrue(result.get("yaml_errors"))
+        self.assertIn(
+            "yaml-parse-errors", {finding["rule_id"] for finding in result["findings"]}
+        )
+        self.assertNotIn(
+            "missing-custom-theme",
+            {finding["rule_id"] for finding in result["findings"]},
+        )
+
+    def test_valid_yaml_has_no_yaml_errors(self):
+        yaml_content = """
+---
+id: q1
+question: Hello
+"""
+        result = lint_interview_content(yaml_content)
+        self.assertEqual(result.get("yaml_errors"), [])
+
 
 class TestInterviewLinterLLM(unittest.TestCase):
     def test_prompt_templates_load(self):

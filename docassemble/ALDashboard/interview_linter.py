@@ -2,6 +2,7 @@ import importlib.resources
 import json
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -54,6 +55,11 @@ try:
     from docassemble.base.util import user_info
 except Exception:
     user_info = None  # type: ignore
+
+try:
+    from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors
+except Exception:
+    _dayaml_find_errors = None  # type: ignore
 
 __all__ = [
     "get_misspelled_words",
@@ -768,6 +774,31 @@ def readability_consensus_assessment(
         "severity": severity,
         "warning": warning,
     }
+
+
+def _run_dayamlchecker(content: str) -> List[str]:
+    if _dayaml_find_errors is None:
+        return []
+    temp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yml", delete=False, encoding="utf-8"
+        ) as temp_file:
+            temp_file.write(_stringify(content))
+            temp_path = temp_file.name
+        errors = _dayaml_find_errors(temp_path)
+        if not isinstance(errors, list):
+            return []
+        return [_stringify(error).strip() for error in errors if _stringify(error).strip()]
+    except Exception as err:
+        log(f"interview_linter: dayamlchecker failed: {err}")
+        return []
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
 
 
 def _check_missing_id(
@@ -1868,6 +1899,38 @@ def run_llm_rules(
 def lint_interview_content(
     content: str, language: str = "en", include_llm: bool = False
 ) -> Dict[str, Any]:
+    yaml_errors = _run_dayamlchecker(content)
+    if yaml_errors:
+        findings = [
+            {
+                "rule_id": "yaml-parse-errors",
+                "severity": "red",
+                "message": "YAML validation failed. Fix these errors before style checks.",
+                "url": "https://assemblyline.suffolklitlab.org/docs/authoring/yaml/",
+                "screen_id": None,
+                "problematic_text": _shorten(error, limit=400),
+                "source": "yaml",
+            }
+            for error in yaml_errors
+        ]
+        return {
+            "interview_scores": {"Readability Consensus": "N/A"},
+            "readability": {
+                "consensus": "N/A",
+                "max_grade": None,
+                "severity": None,
+                "warning": None,
+            },
+            "yaml_errors": yaml_errors,
+            "misspelled": [],
+            "headings_warnings": [],
+            "style_warnings": [],
+            "interview_texts": [],
+            "screen_catalog": [],
+            "findings": findings,
+            "findings_by_severity": findings_by_severity(findings),
+        }
+
     yaml_parsed = load_interview(content)
     interview_texts = get_all_text(yaml_parsed)
     user_facing_texts = get_user_facing_text(yaml_parsed)
@@ -1894,6 +1957,7 @@ def lint_interview_content(
     return {
         "interview_scores": {"Readability Consensus": readability["consensus"]},
         "readability": readability,
+        "yaml_errors": [],
         "misspelled": sorted(get_misspelled_words(paragraph, language=language)),
         "headings_warnings": headings_violations(headings),
         "style_warnings": style_warnings,

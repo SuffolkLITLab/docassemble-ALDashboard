@@ -53,7 +53,7 @@ setup(name='docassemble.ALDashboard',
       license='The MIT License (MIT)',
       url='https://github.com/SuffolkLITLab/docassemble-ALDashboard',
       packages=find_namespace_packages(),
-      install_requires=['PyGithub>=2.1.1', 'docassemble.ALToolbox>=0.9.2', 'python-docx>=1.1.1', 'openai>=1.0', 'tiktoken', 'pyaml', 'formfyxer>=1.0.1', 'Mako>=1.1.4', 'pyspellchecker>=0.6.3', 'ruamel.yaml>=0.17.4', 'textstat>=0.7.0', 'dayamlchecker'],
+      install_requires=['PyGithub>=2.1.1', 'docassemble.ALToolbox>=0.9.2', 'python-docx>=1.1.1', 'openai>=1.0', 'tiktoken', 'pyaml', 'formfyxer>=1.0.1', 'dayamlchecker>=0.2.0', 'Mako>=1.1.4', 'pyspellchecker>=0.6.3', 'ruamel.yaml>=0.17.4', 'textstat>=0.7.0'],
       zip_safe=False,
       package_data=find_package_data(where='docassemble/ALDashboard/', package='docassemble.ALDashboard'),
      )

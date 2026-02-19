@@ -1168,6 +1168,151 @@ def interview_lint_payload_from_options(
     }
 
 
+def _dayaml_issue_severity(message: str) -> str:
+    normalized = message.strip().lower()
+    if (
+        "does not call validation_error" in normalized
+        or normalized.startswith("warning:")
+    ):
+        return "warning"
+    return "error"
+
+
+def _run_dayaml_checker(yaml_text: str, *, input_file: str) -> List[Any]:
+    try:
+        from dayamlchecker.yaml_structure import find_errors_from_string
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            "DAYamlChecker is not installed; install it to use /yaml/check."
+        ) from exc
+
+    try:
+        return list(find_errors_from_string(yaml_text, input_file=input_file))
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            f"DAYamlChecker validation failed: {exc}"
+        ) from exc
+
+
+def _run_dayaml_reformat(
+    yaml_text: str, *, line_length: int, convert_indent_4_to_2: bool
+) -> Any:
+    try:
+        from dayamlchecker.code_formatter import FormatterConfig, format_yaml_string
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            "DAYamlChecker formatter is not available; install a DAYamlChecker "
+            "version that provides dayamlchecker.code_formatter to use /yaml/reformat."
+        ) from exc
+
+    try:
+        config = FormatterConfig(
+            black_line_length=line_length,
+            convert_indent_4_to_2=convert_indent_4_to_2,
+        )
+        return format_yaml_string(yaml_text, config=config)
+    except Exception as exc:
+        raise DashboardAPIValidationError(f"DAYamlChecker reformat failed: {exc}") from exc
+
+
+def _coerce_yaml_text(raw: Mapping[str, Any], *, required_field: str = "yaml_text") -> str:
+    yaml_raw = raw.get("yaml_text")
+    if yaml_raw is None:
+        yaml_raw = raw.get("yaml_content")
+    if yaml_raw is None:
+        raise DashboardAPIValidationError(
+            f"{required_field} is required (or provide yaml_content)."
+        )
+    yaml_text = str(yaml_raw)
+    if not yaml_text.strip():
+        raise DashboardAPIValidationError(
+            f"{required_field} is required (or provide yaml_content)."
+        )
+    return yaml_text
+
+
+def yaml_check_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    return yaml_check_payload_from_options(raw)
+
+
+def yaml_check_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    raw = merge_raw_options(raw_options)
+    yaml_text = _coerce_yaml_text(raw)
+    input_file = str(raw.get("filename") or raw.get("input_file") or "<string input>")
+    raw_issues = _run_dayaml_checker(yaml_text, input_file=input_file)
+
+    issues: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for issue in raw_issues:
+        message = str(getattr(issue, "err_str", issue))
+        line_value = getattr(issue, "line_number", 1)
+        try:
+            line = int(line_value)
+        except Exception:
+            line = 1
+        file_name = str(getattr(issue, "file_name", input_file))
+        experimental = bool(getattr(issue, "experimental", True))
+        severity = _dayaml_issue_severity(message)
+        normalized_issue = {
+            "severity": severity,
+            "message": message,
+            "line": line,
+            "filename": file_name,
+            "experimental": experimental,
+        }
+        issues.append(normalized_issue)
+        if severity == "warning":
+            warnings.append(normalized_issue)
+        else:
+            errors.append(normalized_issue)
+
+    return {
+        "valid": len(errors) == 0,
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "issues": issues,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def yaml_reformat_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    return yaml_reformat_payload_from_options(raw)
+
+
+def yaml_reformat_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    raw = merge_raw_options(raw_options)
+    yaml_text = _coerce_yaml_text(raw)
+
+    raw_line_length = raw.get("line_length")
+    if raw_line_length in (None, ""):
+        line_length = 88
+    else:
+        try:
+            line_length = int(raw_line_length)
+        except (TypeError, ValueError) as exc:
+            raise DashboardAPIValidationError("line_length must be an integer.") from exc
+        if line_length <= 0:
+            raise DashboardAPIValidationError("line_length must be a positive integer.")
+
+    convert_indent_4_to_2 = parse_bool(raw.get("convert_indent_4_to_2"), default=True)
+    formatted_yaml, changed = _run_dayaml_reformat(
+        yaml_text,
+        line_length=line_length,
+        convert_indent_4_to_2=convert_indent_4_to_2,
+    )
+
+    return {
+        "changed": bool(changed),
+        "line_length": line_length,
+        "convert_indent_4_to_2": convert_indent_4_to_2,
+        "formatted_yaml": str(formatted_yaml),
+    }
+
+
 def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.pdf")
@@ -1453,6 +1598,24 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
+            f"{DASHBOARD_API_BASE_PATH}/yaml/check": {
+                "post": {
+                    "summary": "Check and warn on docassemble YAML with DAYamlChecker",
+                    "description": (
+                        "Runs DAYamlChecker against `yaml_text`/`yaml_content` and returns "
+                        "structured issues split into errors and warnings."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/yaml/reformat": {
+                "post": {
+                    "summary": "Reformat docassemble YAML with DAYamlChecker formatter",
+                    "description": (
+                        "Formats embedded Python code blocks in YAML (for example `code` and "
+                        "`validation code`) and returns `formatted_yaml` plus `changed`."
+                    ),
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
                 "post": {
                     "summary": "Detect and optionally relabel PDF fields (alias)",
@@ -1537,6 +1700,8 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/lint</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/check</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/reformat</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>
@@ -1549,6 +1714,8 @@ def build_docs_html() -> str:
     <li>You can pass optional <code>openai_api</code>, <code>openai_base_url</code>, and <code>openai_model</code> to <code>/docx/auto-label</code>.</li>
     <li>You can customize labeling behavior with <code>custom_prompt</code>, <code>additional_instructions</code>, and optional <code>max_output_tokens</code>.</li>
     <li><code>/docx/relabel</code> can replace or skip labels by index and add labels via explicit updates or paragraph-range rules.</li>
+    <li><code>/yaml/check</code> runs DAYamlChecker and classifies returned issues into <code>errors</code> and <code>warnings</code>.</li>
+    <li><code>/yaml/reformat</code> uses DAYamlChecker's formatter and returns the updated YAML as <code>formatted_yaml</code>.</li>
     <li><code>/jobs/&lt;job_id&gt;/download</code> streams file outputs from async job results. Use <code>?index=1</code> or <code>?field=...</code> when multiple file artifacts exist.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>

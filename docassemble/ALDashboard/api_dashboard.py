@@ -41,6 +41,8 @@ from .api_dashboard_utils import (
     translation_payload_from_request,
     validate_docx_payload_from_request,
     validate_translation_payload_from_request,
+    yaml_check_payload_from_request,
+    yaml_reformat_payload_from_request,
 )
 from . import api_mcp  # noqa: F401
 
@@ -63,6 +65,8 @@ if not in_celery:
         dashboard_review_screen_task,
         dashboard_validate_docx_task,
         dashboard_validate_translation_task,
+        dashboard_yaml_check_task,
+        dashboard_yaml_reformat_task,
     )
 
 
@@ -489,6 +493,22 @@ def dashboard_docx_validate():
 def dashboard_interview_lint():
     return _run_endpoint(
         interview_lint_payload_from_request, dashboard_interview_lint_task
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/yaml/check", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_yaml_check():
+    return _run_endpoint(yaml_check_payload_from_request, dashboard_yaml_check_task)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/yaml/reformat", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_yaml_reformat():
+    return _run_endpoint(
+        yaml_reformat_payload_from_request, dashboard_yaml_reformat_task
     )
 
 

@@ -49,6 +49,8 @@ When installed on a docassemble server, ALDashboard exposes a Flask API at:
 - `POST /al/api/v1/dashboard/translation/validate`
 - `POST /al/api/v1/dashboard/review-screen/draft`
 - `POST /al/api/v1/dashboard/docx/validate`
+- `POST /al/api/v1/dashboard/yaml/check`
+- `POST /al/api/v1/dashboard/yaml/reformat`
 - `POST /al/api/v1/dashboard/pdf/label-fields`
 - `POST /al/api/v1/dashboard/pdf/fields/detect`
 - `POST /al/api/v1/dashboard/pdf/fields/relabel`
@@ -107,6 +109,12 @@ celery modules:
 - `POST /al/api/v1/dashboard/docx/validate`
   - Input: one or more DOCX templates.
   - Output: per-file Jinja rendering errors.
+- `POST /al/api/v1/dashboard/yaml/check`
+  - Input: `yaml_text` (or `yaml_content`) and optional `filename`.
+  - Output: structured DAYamlChecker issues with `errors`, `warnings`, and `valid`.
+- `POST /al/api/v1/dashboard/yaml/reformat`
+  - Input: `yaml_text` (or `yaml_content`), optional `line_length` and `convert_indent_4_to_2`.
+  - Output: reformatted YAML in `formatted_yaml` and `changed` boolean.
 - `POST /al/api/v1/dashboard/pdf/label-fields`
   - Input: PDF upload.
   - Output: PDF with fields detected and optionally relabeled (backward-compatible alias of `/pdf/fields/detect`).

@@ -19,7 +19,8 @@ dependencies = [
     'openai>=1.0',
     'tiktoken',
     'pyaml',
-    'formfyxer>=1.0.1'
+    'formfyxer>=1.0.1',
+    'dayamlchecker>=0.2.0'
 ]
 license="MIT"
 license-files = [

@@ -20,7 +20,10 @@ dependencies = [
     'tiktoken',
     'pyaml',
     'formfyxer>=1.0.1',
-    'dayamlchecker>=0.2.0'
+    'dayamlchecker>=0.2.0',
+    'pyspellchecker>=0.6.3',
+    'ruamel.yaml>=0.17.4',
+    'textstat>=0.7.0'
 ]
 license="MIT"
 license-files = [

@@ -1170,9 +1170,8 @@ def interview_lint_payload_from_options(
 
 def _dayaml_issue_severity(message: str) -> str:
     normalized = message.strip().lower()
-    if (
-        "does not call validation_error" in normalized
-        or normalized.startswith("warning:")
+    if "does not call validation_error" in normalized or normalized.startswith(
+        "warning:"
     ):
         return "warning"
     return "error"
@@ -1180,7 +1179,9 @@ def _dayaml_issue_severity(message: str) -> str:
 
 def _run_dayaml_checker(yaml_text: str, *, input_file: str) -> List[Any]:
     try:
-        from dayamlchecker.yaml_structure import find_errors_from_string
+        from dayamlchecker.yaml_structure import (  # type: ignore[import-untyped]
+            find_errors_from_string,
+        )
     except Exception as exc:
         raise DashboardAPIValidationError(
             "DAYamlChecker is not installed; install it to use /yaml/check."
@@ -1198,7 +1199,10 @@ def _run_dayaml_reformat(
     yaml_text: str, *, line_length: int, convert_indent_4_to_2: bool
 ) -> Any:
     try:
-        from dayamlchecker.code_formatter import FormatterConfig, format_yaml_string
+        from dayamlchecker.code_formatter import (  # type: ignore[import-untyped]
+            FormatterConfig,
+            format_yaml_string,
+        )
     except Exception as exc:
         raise DashboardAPIValidationError(
             "DAYamlChecker formatter is not available; install a DAYamlChecker "
@@ -1212,10 +1216,14 @@ def _run_dayaml_reformat(
         )
         return format_yaml_string(yaml_text, config=config)
     except Exception as exc:
-        raise DashboardAPIValidationError(f"DAYamlChecker reformat failed: {exc}") from exc
+        raise DashboardAPIValidationError(
+            f"DAYamlChecker reformat failed: {exc}"
+        ) from exc
 
 
-def _coerce_yaml_text(raw: Mapping[str, Any], *, required_field: str = "yaml_text") -> str:
+def _coerce_yaml_text(
+    raw: Mapping[str, Any], *, required_field: str = "yaml_text"
+) -> str:
     yaml_raw = raw.get("yaml_text")
     if yaml_raw is None:
         yaml_raw = raw.get("yaml_content")
@@ -1283,18 +1291,22 @@ def yaml_reformat_payload_from_request() -> Dict[str, Any]:
     return yaml_reformat_payload_from_options(raw)
 
 
-def yaml_reformat_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+def yaml_reformat_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
     raw = merge_raw_options(raw_options)
     yaml_text = _coerce_yaml_text(raw)
 
     raw_line_length = raw.get("line_length")
-    if raw_line_length in (None, ""):
+    if raw_line_length is None or str(raw_line_length).strip() == "":
         line_length = 88
     else:
         try:
-            line_length = int(raw_line_length)
+            line_length = int(str(raw_line_length))
         except (TypeError, ValueError) as exc:
-            raise DashboardAPIValidationError("line_length must be an integer.") from exc
+            raise DashboardAPIValidationError(
+                "line_length must be an integer."
+            ) from exc
         if line_length <= 0:
             raise DashboardAPIValidationError("line_length must be a positive integer.")
 

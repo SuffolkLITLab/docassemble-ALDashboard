@@ -2,6 +2,7 @@ import importlib.resources
 import json
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -55,6 +56,11 @@ try:
 except Exception:
     user_info = None  # type: ignore
 
+try:
+    from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors  # type: ignore[import-untyped]
+except Exception:
+    _dayaml_find_errors = None  # type: ignore
+
 __all__ = [
     "get_misspelled_words",
     "get_corrections",
@@ -105,6 +111,48 @@ READABILITY_METRICS = [
 SEVERITY_ORDER = ["red", "yellow", "green"]
 STYLE_GUIDE_URL = "https://assemblyline.suffolklitlab.org/docs/style_guide"
 CODING_STYLE_URL = "https://assemblyline.suffolklitlab.org/docs/coding_style"
+AUTHORING_GUIDE_URL = (
+    "https://assemblyline.suffolklitlab.org/docs/authoring/generated_yaml/"
+)
+METADATA_GUIDE_URL = f"{AUTHORING_GUIDE_URL}#interview-metadata-and-metadata-for-publishing-on-courtformsonline"
+
+FIELD_NON_LABEL_KEYS = {
+    "label",
+    "field",
+    "datatype",
+    "input type",
+    "required",
+    "required if",
+    "show if",
+    "hide if",
+    "code",
+    "default",
+    "help",
+    "hint",
+    "note",
+    "html",
+    "under text",
+    "maxlength",
+    "minlength",
+    "min",
+    "max",
+    "step",
+    "validation messages",
+    "choice variable",
+    "choices",
+    "none of the above",
+    "address autocomplete",
+    "disable others",
+    "js show if",
+    "js hide if",
+    "js disable if",
+    "list collect",
+    "list collect allow delete",
+    "rows",
+    "columns",
+    "grid",
+    "table",
+}
 
 
 @dataclass(frozen=True)
@@ -236,6 +284,48 @@ def _iter_doc_texts(doc: dict) -> List[Tuple[str, str]]:
                 first_key = next(iter(field.keys()))
                 values.append((f"fields[{idx}].first_key", _stringify(first_key)))
     return [(k, v) for k, v in values if v]
+
+
+def _coerce_fields(doc: dict) -> List[dict]:
+    fields = doc.get("fields")
+    if isinstance(fields, dict):
+        fields = [fields]
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, dict)]
+
+
+def _extract_field_variable(field: dict) -> str:
+    explicit = _stringify(field.get("field")).strip()
+    if explicit:
+        return explicit
+    for key, value in field.items():
+        if key in FIELD_NON_LABEL_KEYS:
+            continue
+        return _stringify(value).strip()
+    return ""
+
+
+def _find_metadata(docs: Sequence[dict]) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    for doc in docs:
+        block = doc.get("metadata")
+        if isinstance(block, dict):
+            metadata.update(block)
+    return metadata
+
+
+def _iter_include_values(docs: Sequence[dict]) -> List[str]:
+    include_values: List[str] = []
+    for doc in docs:
+        include = doc.get("include")
+        if isinstance(include, str):
+            include_values.append(include)
+        elif isinstance(include, list):
+            include_values.extend(
+                _stringify(item) for item in include if _stringify(item).strip()
+            )
+    return include_values
 
 
 def get_misspelled_words(text: str, language: str = "en") -> Set[str]:
@@ -686,6 +776,33 @@ def readability_consensus_assessment(
         "severity": severity,
         "warning": warning,
     }
+
+
+def _run_dayamlchecker(content: str) -> List[str]:
+    if _dayaml_find_errors is None:
+        return []
+    temp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yml", delete=False, encoding="utf-8"
+        ) as temp_file:
+            temp_file.write(_stringify(content))
+            temp_path = temp_file.name
+        errors = _dayaml_find_errors(temp_path)
+        if not isinstance(errors, list):
+            return []
+        return [
+            _stringify(error).strip() for error in errors if _stringify(error).strip()
+        ]
+    except Exception as err:
+        log(f"interview_linter: dayamlchecker failed: {err}")
+        return []
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
 
 
 def _check_missing_id(
@@ -1157,7 +1274,356 @@ def _check_image_alt_text(
     return findings
 
 
+def _check_metadata_fields(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    metadata = _find_metadata(docs)
+    required_fields = [
+        "title",
+        "short title",
+        "description",
+        "LIST_topics",
+        "jurisdiction",
+        "landing_page_url",
+    ]
+    missing = [field for field in required_fields if not metadata.get(field)]
+    findings: List[LintIssue] = []
+    if missing:
+        findings.append(
+            LintIssue(
+                rule_id="missing-metadata-fields",
+                severity="red",
+                message="Metadata block is missing key CourtFormsOnline/AssemblyLine fields.",
+                url=METADATA_GUIDE_URL,
+                problematic_text=", ".join(missing),
+            )
+        )
+    return findings
+
+
+def _check_placeholder_language(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    placeholder_patterns = [
+        re.compile(r"\bplaceholder\b", re.IGNORECASE),
+        re.compile(r"\blorem ipsum\b", re.IGNORECASE),
+        re.compile(r"\btodo\b", re.IGNORECASE),
+        re.compile(r"\btbd\b", re.IGNORECASE),
+        re.compile(r"\bto be determined\b", re.IGNORECASE),
+        re.compile(r"\bcoming soon\b", re.IGNORECASE),
+        re.compile(r"\[insert[^\]]*\]", re.IGNORECASE),
+        re.compile(r"\byour text here\b", re.IGNORECASE),
+    ]
+
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            plain = remove_mako(text)
+            for pattern in placeholder_patterns:
+                match = pattern.search(plain)
+                if not match:
+                    continue
+                findings.append(
+                    LintIssue(
+                        rule_id="placeholder-language",
+                        severity="yellow",
+                        message=f"Possible placeholder language found in `{location}`.",
+                        url=f"{STYLE_GUIDE_URL}/question_overview/",
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(match.group(0)),
+                    )
+                )
+                break
+    return findings
+
+
+def _check_exit_criteria_and_screen(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    metadata = _find_metadata(docs)
+    screening_signal = bool(_stringify(metadata.get("can_I_use_this_form")).strip())
+    for doc in docs:
+        combined = " ".join(
+            [
+                _stringify(doc.get("question")),
+                _stringify(doc.get("subquestion")),
+                _stringify(doc.get("id")),
+                _stringify(doc.get("event")),
+            ]
+        ).lower()
+        if any(
+            marker in combined
+            for marker in [
+                "can i use",
+                "eligible",
+                "qualify",
+                "right form",
+                "wrong form",
+            ]
+        ):
+            screening_signal = True
+            break
+
+    if not screening_signal:
+        return []
+
+    exit_signal = False
+    for doc in docs:
+        combined = " ".join(
+            [
+                _stringify(doc.get("question")),
+                _stringify(doc.get("subquestion")),
+                _stringify(doc.get("under")),
+                _stringify(doc.get("id")),
+                _stringify(doc.get("event")),
+            ]
+        ).lower()
+        if any(
+            marker in combined
+            for marker in [
+                "not eligible",
+                "may not be able",
+                "cannot help",
+                "can't help",
+                "wrong form",
+                "stop here",
+                "exit",
+            ]
+        ):
+            exit_signal = True
+            break
+
+    if exit_signal:
+        return []
+    return [
+        LintIssue(
+            rule_id="missing-exit-criteria-screen",
+            severity="green",
+            message="Interview appears to screen for eligibility but no clear ineligible/exit screen was detected.",
+            url=f"{STYLE_GUIDE_URL}/question_overview/",
+            problematic_text="Add clear criteria and a screen for users this tool cannot help.",
+        )
+    ]
+
+
+def _check_theme_usage(
+    docs: Sequence[dict], _: Sequence[str], raw_content: str
+) -> List[LintIssue]:
+    include_values = [item.lower() for item in _iter_include_values(docs)]
+    has_theme_include = any(
+        "docassemble.massaccess" in item
+        or "docassemble.litlabtheme" in item
+        or "theme" in item
+        for item in include_values
+    )
+    has_css_reference = bool(
+        re.search(r"docassemble\.[A-Za-z0-9_]+:data/static/[^\s\"']+\.css", raw_content)
+        or re.search(r"(?m)^\s*css\s*:\s*$", raw_content)
+    )
+    if has_theme_include or has_css_reference:
+        return []
+    return [
+        LintIssue(
+            rule_id="missing-custom-theme",
+            severity="yellow",
+            message="No explicit custom theme/CSS dependency detected (for example MassAccess or LITLabTheme).",
+            url="https://assemblyline.suffolklitlab.org/docs/customizing-look-and-feel/",
+        )
+    ]
+
+
+def _extract_decision_variables(docs: Sequence[dict]) -> Set[str]:
+    decision_datatypes = {
+        "yesno",
+        "noyes",
+        "yesnoradio",
+        "noyesradio",
+        "yesnowide",
+        "radio",
+        "dropdown",
+    }
+    decision_vars: Set[str] = set()
+    for doc in docs:
+        for field in _coerce_fields(doc):
+            datatype = _stringify(field.get("datatype")).lower().strip()
+            if datatype in decision_datatypes or field.get("choices"):
+                var = _extract_field_variable(field)
+                if var:
+                    decision_vars.add(var)
+    return decision_vars
+
+
+def _check_review_screen_editability(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    review_docs: List[dict] = []
+    for doc in docs:
+        text = " ".join(
+            [
+                _stringify(doc.get("id")),
+                _stringify(doc.get("event")),
+                _stringify(doc.get("question")),
+            ]
+        ).lower()
+        if "review" in text or "review" in doc:
+            review_docs.append(doc)
+
+    if not review_docs:
+        return []
+
+    editable_vars: Set[str] = set()
+    for review_doc in review_docs:
+        review_entries = review_doc.get("review")
+        if isinstance(review_entries, dict):
+            review_entries = [review_entries]
+        if not isinstance(review_entries, list):
+            continue
+        for item in review_entries:
+            if not isinstance(item, dict):
+                continue
+            edit_target = _stringify(item.get("Edit")).strip()
+            if edit_target:
+                editable_vars.add(edit_target)
+
+    if not editable_vars:
+        return [
+            LintIssue(
+                rule_id="review-screen-missing-edit-links",
+                severity="yellow",
+                message="Review screen detected but no editable `Edit:` links were found.",
+                url="https://assemblyline.suffolklitlab.org/docs/authoring/review_screen/",
+            )
+        ]
+
+    decision_vars = _extract_decision_variables(
+        [doc for doc in docs if doc not in review_docs]
+    )
+    if not decision_vars:
+        return []
+
+    for decision_var in decision_vars:
+        if decision_var in editable_vars:
+            return []
+
+    return [
+        LintIssue(
+            rule_id="review-screen-missing-key-choice-edits",
+            severity="green",
+            message="Review screen exists but does not appear to allow editing decision/key choice fields.",
+            url="https://assemblyline.suffolklitlab.org/docs/authoring/review_screen/",
+            problematic_text=_shorten(", ".join(sorted(list(decision_vars))[:5])),
+        )
+    ]
+
+
+def _extract_variable_references(docs: Sequence[dict]) -> Set[str]:
+    refs: Set[str] = set()
+    for doc in docs:
+        for key in ["yesno", "noyes", "yesnomaybe", "noyesmaybe"]:
+            value = _stringify(doc.get(key)).strip()
+            if value:
+                refs.add(value)
+        for field in _coerce_fields(doc):
+            value = _extract_field_variable(field)
+            if value:
+                refs.add(value)
+    return refs
+
+
+def _check_variable_conventions(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    refs = _extract_variable_references(docs)
+    valid_root_re = re.compile(r"^[a-z][a-z0-9_]*$")
+    name_part_vars = {
+        "first_name",
+        "middle_name",
+        "last_name",
+        "name_first",
+        "name_middle",
+        "name_last",
+        "name_suffix",
+    }
+    address_part_vars = {
+        "address",
+        "address_line_1",
+        "address_line_2",
+        "street",
+        "street_address",
+        "city",
+        "state",
+        "zip",
+        "postal_code",
+        "county",
+        "country",
+    }
+
+    bad_roots: Set[str] = set()
+    for ref in refs:
+        root = re.split(r"[.\[]", ref, maxsplit=1)[0].strip()
+        if not root:
+            continue
+        if not valid_root_re.match(root):
+            bad_roots.add(root)
+
+    if bad_roots:
+        findings.append(
+            LintIssue(
+                rule_id="variable-root-not-snake-case",
+                severity="yellow",
+                message="Variable names should use snake_case roots.",
+                url=f"{CODING_STYLE_URL}/yaml_interface/",
+                problematic_text=", ".join(sorted(bad_roots)),
+            )
+        )
+
+    uses_person_objects = False
+    for doc in docs:
+        objects = doc.get("objects")
+        if isinstance(objects, list):
+            for item in objects:
+                if "ALIndividual" in _stringify(item) or "ALPeopleList" in _stringify(
+                    item
+                ):
+                    uses_person_objects = True
+                    break
+        if uses_person_objects:
+            break
+    if not uses_person_objects:
+        uses_person_objects = any(
+            ".name." in ref or ".address." in ref
+            for ref in refs
+            if isinstance(ref, str)
+        )
+
+    simple_refs = {ref for ref in refs if "." not in ref and "[" not in ref}
+    standalone_name_parts = simple_refs.intersection(name_part_vars)
+    standalone_address_parts = simple_refs.intersection(address_part_vars)
+    if not uses_person_objects and (
+        len(standalone_name_parts) >= 2 or len(standalone_address_parts) >= 3
+    ):
+        findings.append(
+            LintIssue(
+                rule_id="prefer-person-objects",
+                severity="green",
+                message="Interview appears to use disconnected name/address variables; prefer ALIndividual/ALPeopleList patterns.",
+                url=f"{CODING_STYLE_URL}/yaml_interface/",
+                problematic_text=_shorten(
+                    ", ".join(sorted(standalone_name_parts | standalone_address_parts))
+                ),
+            )
+        )
+    return findings
+
+
 RULES: List[LintRule] = [
+    LintRule(
+        "missing-metadata-fields",
+        "red",
+        METADATA_GUIDE_URL,
+        _check_metadata_fields,
+    ),
     LintRule(
         "missing-question-id",
         "red",
@@ -1216,6 +1682,24 @@ RULES: List[LintRule] = [
         _check_image_alt_text,
     ),
     LintRule(
+        "placeholder-language",
+        "yellow",
+        f"{STYLE_GUIDE_URL}/question_overview/",
+        _check_placeholder_language,
+    ),
+    LintRule(
+        "missing-custom-theme",
+        "yellow",
+        "https://assemblyline.suffolklitlab.org/docs/customizing-look-and-feel/",
+        _check_theme_usage,
+    ),
+    LintRule(
+        "variable-root-not-snake-case",
+        "yellow",
+        f"{CODING_STYLE_URL}/yaml_interface/",
+        _check_variable_conventions,
+    ),
+    LintRule(
         "long-sentences",
         "yellow",
         f"{STYLE_GUIDE_URL}/readability/",
@@ -1247,6 +1731,18 @@ RULES: List[LintRule] = [
         "green",
         f"{STYLE_GUIDE_URL}/question_style_organize_fields/",
         _check_missing_help_on_complex_screens,
+    ),
+    LintRule(
+        "missing-exit-criteria-screen",
+        "green",
+        f"{STYLE_GUIDE_URL}/question_overview/",
+        _check_exit_criteria_and_screen,
+    ),
+    LintRule(
+        "review-screen-missing-edit-links",
+        "yellow",
+        "https://assemblyline.suffolklitlab.org/docs/authoring/review_screen/",
+        _check_review_screen_editability,
     ),
 ]
 
@@ -1415,6 +1911,38 @@ def run_llm_rules(
 def lint_interview_content(
     content: str, language: str = "en", include_llm: bool = False
 ) -> Dict[str, Any]:
+    yaml_errors = _run_dayamlchecker(content)
+    if yaml_errors:
+        findings = [
+            {
+                "rule_id": "yaml-parse-errors",
+                "severity": "red",
+                "message": "YAML validation failed. Fix these errors before style checks.",
+                "url": "https://assemblyline.suffolklitlab.org/docs/authoring/yaml/",
+                "screen_id": None,
+                "problematic_text": _shorten(error, limit=400),
+                "source": "yaml",
+            }
+            for error in yaml_errors
+        ]
+        return {
+            "interview_scores": {"Readability Consensus": "N/A"},
+            "readability": {
+                "consensus": "N/A",
+                "max_grade": None,
+                "severity": None,
+                "warning": None,
+            },
+            "yaml_errors": yaml_errors,
+            "misspelled": [],
+            "headings_warnings": [],
+            "style_warnings": [],
+            "interview_texts": [],
+            "screen_catalog": [],
+            "findings": findings,
+            "findings_by_severity": findings_by_severity(findings),
+        }
+
     yaml_parsed = load_interview(content)
     interview_texts = get_all_text(yaml_parsed)
     user_facing_texts = get_user_facing_text(yaml_parsed)
@@ -1441,6 +1969,7 @@ def lint_interview_content(
     return {
         "interview_scores": {"Readability Consensus": readability["consensus"]},
         "readability": readability,
+        "yaml_errors": [],
         "misspelled": sorted(get_misspelled_words(paragraph, language=language)),
         "headings_warnings": headings_violations(headings),
         "style_warnings": style_warnings,

@@ -283,6 +283,143 @@ choices:
 """
         self.assertIn("choices-without-stable-values", self._rule_ids(yaml_content))
 
+    def test_missing_metadata_fields(self):
+        yaml_content = """
+---
+metadata:
+  title: Test title
+"""
+        self.assertIn("missing-metadata-fields", self._rule_ids(yaml_content))
+
+    def test_placeholder_language(self):
+        yaml_content = """
+---
+id: q1
+question: This is placeholder text.
+"""
+        self.assertIn("placeholder-language", self._rule_ids(yaml_content))
+
+    def test_missing_exit_criteria_screen(self):
+        yaml_content = """
+---
+metadata:
+  can_I_use_this_form: |
+    Ask if the user qualifies.
+---
+id: qualify
+question: Are you eligible?
+fields:
+  - Eligible: user_eligible
+    datatype: yesno
+"""
+        self.assertIn("missing-exit-criteria-screen", self._rule_ids(yaml_content))
+
+    def test_missing_custom_theme(self):
+        yaml_content = """
+---
+id: q1
+question: Hello
+"""
+        self.assertIn("missing-custom-theme", self._rule_ids(yaml_content))
+
+    def test_theme_include_passes(self):
+        yaml_content = """
+---
+include:
+  - docassemble.LITLabTheme:litlab_theme.yml
+---
+id: q1
+question: Hello
+"""
+        self.assertNotIn("missing-custom-theme", self._rule_ids(yaml_content))
+
+    def test_review_screen_missing_edit_links(self):
+        yaml_content = """
+---
+id: q1
+question: Pick one
+fields:
+  - Proceed: proceed_now
+    datatype: yesno
+---
+id: review screen
+question: Review your answers
+subquestion: |
+  This is a summary.
+"""
+        self.assertIn("review-screen-missing-edit-links", self._rule_ids(yaml_content))
+
+    def test_review_screen_missing_key_choice_edits(self):
+        yaml_content = """
+---
+id: q1
+question: Pick one
+fields:
+  - Proceed: proceed_now
+    datatype: yesno
+---
+id: review screen
+question: Review your answers
+review:
+  - Edit: users[0].name.first
+    button: |
+      Name: ${ users[0].name.first }
+"""
+        self.assertIn(
+            "review-screen-missing-key-choice-edits", self._rule_ids(yaml_content)
+        )
+
+    def test_variable_root_not_snake_case(self):
+        yaml_content = """
+---
+id: q1
+question: Name
+fields:
+  - First name: FirstName
+"""
+        self.assertIn("variable-root-not-snake-case", self._rule_ids(yaml_content))
+
+    def test_prefer_person_objects(self):
+        yaml_content = """
+---
+id: q1
+question: Person info
+fields:
+  - First name: first_name
+  - Last name: last_name
+  - Street: street_address
+  - City: city
+  - State: state
+"""
+        self.assertIn("prefer-person-objects", self._rule_ids(yaml_content))
+
+    def test_yaml_errors_reported_before_style_checks(self):
+        yaml_content = """
+---
+id q1
+question: Bad block
+fields:
+  - Name: user_name
+"""
+        result = lint_interview_content(yaml_content)
+        self.assertTrue(result.get("yaml_errors"))
+        self.assertIn(
+            "yaml-parse-errors", {finding["rule_id"] for finding in result["findings"]}
+        )
+        self.assertNotIn(
+            "missing-custom-theme",
+            {finding["rule_id"] for finding in result["findings"]},
+        )
+
+    def test_valid_yaml_has_no_yaml_errors(self):
+        yaml_content = """
+---
+id: q1
+question: Hello
+"""
+        result = lint_interview_content(yaml_content)
+        self.assertEqual(result.get("yaml_errors"), [])
+
 
 class TestInterviewLinterLLM(unittest.TestCase):
     def test_prompt_templates_load(self):
@@ -370,7 +507,9 @@ class TestReadabilityConsensus(unittest.TestCase):
 
 class TestSpellcheckLanguages(unittest.TestCase):
     @patch("docassemble.ALDashboard.interview_linter.SpellChecker")
-    def test_misspelled_words_uses_intersection_for_multiple_languages(self, mock_spell):
+    def test_misspelled_words_uses_intersection_for_multiple_languages(
+        self, mock_spell
+    ):
         language_unknown = {
             "en": {"hola", "formulario"},
             "es": {"the", "form"},

@@ -57,7 +57,7 @@ except Exception:
     user_info = None  # type: ignore
 
 try:
-    from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors
+    from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors  # type: ignore[import-untyped]
 except Exception:
     _dayaml_find_errors = None  # type: ignore
 
@@ -111,7 +111,9 @@ READABILITY_METRICS = [
 SEVERITY_ORDER = ["red", "yellow", "green"]
 STYLE_GUIDE_URL = "https://assemblyline.suffolklitlab.org/docs/style_guide"
 CODING_STYLE_URL = "https://assemblyline.suffolklitlab.org/docs/coding_style"
-AUTHORING_GUIDE_URL = "https://assemblyline.suffolklitlab.org/docs/authoring/generated_yaml/"
+AUTHORING_GUIDE_URL = (
+    "https://assemblyline.suffolklitlab.org/docs/authoring/generated_yaml/"
+)
 METADATA_GUIDE_URL = f"{AUTHORING_GUIDE_URL}#interview-metadata-and-metadata-for-publishing-on-courtformsonline"
 
 FIELD_NON_LABEL_KEYS = {
@@ -789,7 +791,9 @@ def _run_dayamlchecker(content: str) -> List[str]:
         errors = _dayaml_find_errors(temp_path)
         if not isinstance(errors, list):
             return []
-        return [_stringify(error).strip() for error in errors if _stringify(error).strip()]
+        return [
+            _stringify(error).strip() for error in errors if _stringify(error).strip()
+        ]
     except Exception as err:
         log(f"interview_linter: dayamlchecker failed: {err}")
         return []
@@ -1349,7 +1353,13 @@ def _check_exit_criteria_and_screen(
         ).lower()
         if any(
             marker in combined
-            for marker in ["can i use", "eligible", "qualify", "right form", "wrong form"]
+            for marker in [
+                "can i use",
+                "eligible",
+                "qualify",
+                "right form",
+                "wrong form",
+            ]
         ):
             screening_signal = True
             break
@@ -1582,7 +1592,9 @@ def _check_variable_conventions(
             break
     if not uses_person_objects:
         uses_person_objects = any(
-            ".name." in ref or ".address." in ref for ref in refs if isinstance(ref, str)
+            ".name." in ref or ".address." in ref
+            for ref in refs
+            if isinstance(ref, str)
         )
 
     simple_refs = {ref for ref in refs if "." not in ref and "[" not in ref}

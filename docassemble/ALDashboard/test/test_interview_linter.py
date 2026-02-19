@@ -507,7 +507,9 @@ class TestReadabilityConsensus(unittest.TestCase):
 
 class TestSpellcheckLanguages(unittest.TestCase):
     @patch("docassemble.ALDashboard.interview_linter.SpellChecker")
-    def test_misspelled_words_uses_intersection_for_multiple_languages(self, mock_spell):
+    def test_misspelled_words_uses_intersection_for_multiple_languages(
+        self, mock_spell
+    ):
         language_unknown = {
             "en": {"hola", "formulario"},
             "es": {"the", "form"},

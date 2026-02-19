@@ -1,35 +1,247 @@
+import copy
 import docx
 import sys
-import os
-from openai import OpenAI
 
 import tiktoken
 import json
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 import re
-from docassemble.base.util import get_config
+from docassemble.ALToolbox.llms import chat_completion
 
-os.environ["OPENAI_API_KEY"] = get_config("openai api key") or ""
-
-from typing import List, Tuple, Optional, Union
+from typing import Any, List, Tuple, Optional, Union, Sequence
 
 __all__ = [
     "get_labeled_docx_runs",
+    "get_docx_run_text",
+    "get_docx_run_items",
     "update_docx",
     "modify_docx_with_openai_guesses",
 ]
 
 
-def add_paragraph_after(paragraph, text):
-    p = OxmlElement("w:p")
-    p.text = text
-    paragraph._element.addnext(p)
+def _coerce_modified_run_item(
+    item: Any,
+) -> Optional[Tuple[int, int, str, int]]:
+    """Normalize one model result into (paragraph, run, text, paragraph_delta)."""
+    if isinstance(item, dict):
+        paragraph_number = item.get("paragraph")
+        run_number = item.get("run")
+        modified_text = item.get("text")
+        new_paragraph = item.get("new_paragraph", 0)
+    elif isinstance(item, (list, tuple)) and len(item) >= 4:
+        paragraph_number, run_number, modified_text, new_paragraph = item[:4]
+    else:
+        return None
+
+    if paragraph_number is None:
+        return None
+    try:
+        paragraph_number = int(paragraph_number)
+    except (TypeError, ValueError):
+        return None
+    if run_number is None:
+        return None
+    try:
+        run_number = int(run_number)
+    except (TypeError, ValueError):
+        # Some models emit [paragraph, original_text, replacement_text, ...].
+        if (
+            isinstance(item, (list, tuple))
+            and len(item) >= 3
+            and isinstance(item[1], str)
+            and item[2] is not None
+        ):
+            run_number = 0
+            modified_text = item[2]
+            new_paragraph = 0
+        else:
+            return None
+
+    if paragraph_number < 0:
+        return None
+    if run_number < 0:
+        run_number = 0
+
+    if isinstance(new_paragraph, bool):
+        new_paragraph = 0
+    else:
+        try:
+            new_paragraph = int(new_paragraph)
+        except (TypeError, ValueError):
+            new_paragraph = 0
+    if new_paragraph not in (-1, 0, 1):
+        new_paragraph = 0
+
+    if modified_text is None:
+        return None
+
+    return (paragraph_number, run_number, str(modified_text), new_paragraph)
 
 
-def add_paragraph_before(paragraph, text):
-    p = OxmlElement("w:p")
-    p.text = text
-    paragraph._element.addprevious(p)
+def _normalize_modified_runs(
+    modified_runs: Sequence[Any],
+) -> List[Tuple[int, int, str, int]]:
+    normalized: List[Tuple[int, int, str, int]] = []
+    for item in modified_runs:
+        coerced = _coerce_modified_run_item(item)
+        if coerced is not None:
+            normalized.append(coerced)
+    return normalized
+
+
+def _extract_model_results(response: Any) -> List[Any]:
+    """Extract a best-effort list of run updates from varied model JSON shapes."""
+    if isinstance(response, list):
+        return response
+    if not isinstance(response, dict):
+        return []
+
+    results = response.get("results")
+    if isinstance(results, list):
+        return results
+
+    for alt_key in ("suggestions", "items", "changes", "labels"):
+        alt = response.get(alt_key)
+        if isinstance(alt, list):
+            return alt
+
+    # Some lightweight models return {"p,r": "replacement text"} maps.
+    mapped_results: List[Any] = []
+    for key, value in response.items():
+        if not isinstance(key, str):
+            continue
+        match = re.match(r"^\s*(\d+)\s*,\s*(\d+)\s*$", key)
+        if not match:
+            continue
+        if value is None:
+            continue
+        paragraph_number = int(match.group(1))
+        run_number = int(match.group(2))
+        if isinstance(value, dict):
+            text_value = value.get("text")
+            new_paragraph = value.get("new_paragraph", 0)
+        else:
+            text_value = value
+            new_paragraph = 0
+        mapped_results.append(
+            [paragraph_number, run_number, str(text_value), new_paragraph]
+        )
+    return mapped_results
+
+
+def _append_text_content(run_element: Any, text: str) -> None:
+    """Append text to a w:r element, preserving tabs/newlines in WordprocessingML."""
+    parts = re.split(r"(\t|\n)", text)
+    for part in parts:
+        if part == "\t":
+            run_element.append(OxmlElement("w:tab"))
+            continue
+        if part == "\n":
+            run_element.append(OxmlElement("w:br"))
+            continue
+        if not part:
+            continue
+
+        text_element = OxmlElement("w:t")
+        # Preserve leading/trailing spaces exactly when present.
+        if part[:1].isspace() or part[-1:].isspace():
+            text_element.set(qn("xml:space"), "preserve")
+        text_element.text = part
+        run_element.append(text_element)
+
+
+def _collect_paragraphs_from_table(
+    table: Any, collected: List[Any], seen_elements: set
+) -> None:
+    for row in table.rows:
+        for cell in row.cells:
+            _collect_paragraphs_from_container(cell, collected, seen_elements)
+
+
+def _collect_paragraphs_from_container(
+    container: Any, collected: List[Any], seen_elements: set
+) -> None:
+    for paragraph in getattr(container, "paragraphs", []):
+        paragraph_element_id = id(paragraph._element)
+        if paragraph_element_id not in seen_elements:
+            seen_elements.add(paragraph_element_id)
+            collected.append(paragraph)
+
+    for table in getattr(container, "tables", []):
+        _collect_paragraphs_from_table(table, collected, seen_elements)
+
+
+def _collect_target_paragraphs(document: Any) -> List[Any]:
+    """Collect paragraphs from body, tables, headers, and footers."""
+    collected: List[Any] = []
+    seen_elements: set = set()
+
+    _collect_paragraphs_from_container(document, collected, seen_elements)
+
+    for section in document.sections:
+        section_parts = [
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        ]
+        for part in section_parts:
+            _collect_paragraphs_from_container(part, collected, seen_elements)
+
+    return collected
+
+
+def _build_paragraph_with_text(source_paragraph: Any, text: str) -> Any:
+    paragraph_element = OxmlElement("w:p")
+
+    # Carry paragraph-level style/formatting so inserted tags don't look out of place.
+    if source_paragraph is not None and source_paragraph._p.pPr is not None:
+        paragraph_element.append(copy.deepcopy(source_paragraph._p.pPr))
+
+    run_element = OxmlElement("w:r")
+    _append_text_content(run_element, text)
+    paragraph_element.append(run_element)
+    return paragraph_element
+
+
+def add_paragraph_after(paragraph: Any, text: str) -> None:
+    paragraph._element.addnext(_build_paragraph_with_text(paragraph, text))
+
+
+def add_paragraph_before(paragraph: Any, text: str) -> None:
+    paragraph._element.addprevious(_build_paragraph_with_text(paragraph, text))
+
+
+def get_docx_run_text(
+    document: Union[docx.document.Document, str], paragraph_number: int, run_number: int
+) -> str:
+    """Get run text by unified paragraph index across body/tables/headers/footers."""
+    if isinstance(document, str):
+        document = docx.Document(document)
+
+    paragraphs = _collect_target_paragraphs(document)
+    if paragraph_number < 0 or paragraph_number >= len(paragraphs):
+        return ""
+
+    paragraph = paragraphs[paragraph_number]
+    if 0 <= run_number < len(paragraph.runs):
+        return paragraph.runs[run_number].text
+    return paragraph.text
+
+
+def get_docx_run_items(document: Union[docx.document.Document, str]) -> List[List[Any]]:
+    """Return [paragraph_index, run_index, run_text] across body/tables/headers/footers."""
+    if isinstance(document, str):
+        document = docx.Document(document)
+    paragraphs = _collect_target_paragraphs(document)
+    items: List[List[Any]] = []
+    for pnum, paragraph in enumerate(paragraphs):
+        for rnum, run in enumerate(paragraph.runs):
+            items.append([pnum, rnum, run.text])
+    return items
 
 
 def update_docx(
@@ -47,53 +259,59 @@ def update_docx(
     Returns:
         The modified document.
     """
-    modified_runs.sort(key=lambda x: x[0], reverse=True)
+    normalized_runs = _normalize_modified_runs(modified_runs)
+    normalized_runs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
     if isinstance(document, str):
         document = docx.Document(document)
 
-    for item in modified_runs:
-        if len(item) != 4:
-            continue  # Skip items with incorrect format
-
-        paragraph_number, run_number, modified_text, new_paragraph = item
-
-        if paragraph_number >= len(document.paragraphs):
+    paragraphs = _collect_target_paragraphs(document)
+    for paragraph_number, run_number, modified_text, new_paragraph in normalized_runs:
+        if paragraph_number >= len(paragraphs):
             continue  # Skip invalid paragraph index
 
-        paragraph = document.paragraphs[paragraph_number]
-
-        if run_number >= len(paragraph.runs):
-            continue  # Skip invalid run index
+        paragraph = paragraphs[paragraph_number]
 
         if new_paragraph == 1:
             add_paragraph_after(paragraph, modified_text)
-        elif new_paragraph == -1:
+            continue
+        if new_paragraph == -1:
             add_paragraph_before(paragraph, modified_text)
-        else:
+            continue
+
+        if run_number < len(paragraph.runs):
             paragraph.runs[run_number].text = modified_text
+        else:
+            # Empty or run-mismatched paragraphs are common in legal forms.
+            # Fall back to appending a run so we do not silently drop a valid label.
+            paragraph.add_run(modified_text)
 
     return document
 
 
 def get_labeled_docx_runs(
     docx_path: str,
-    custom_people_names: Optional[Tuple[str, str]] = None,
-    openai_client: Optional[OpenAI] = None,
+    custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    openai_client: Optional[Any] = None,
+    openai_api: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
+    model: str = "gpt-5-nano",
+    custom_prompt: Optional[str] = None,
+    additional_instructions: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
 ) -> List[Tuple[int, int, str, int]]:
     """Scan the DOCX and return a list of modified text with Jinja2 variable names inserted.
 
     Args:
         docx_path: path to the DOCX file
-        custom_people_names: a tuple of custom names and descriptions to use in addition to the default ones. Like: ("clients", "the person benefiting from the form")
+        custom_people_names: optional list of custom (name, description) pairs, e.g.
+            [("clients", "the person benefiting from the form")]
+        openai_api: optional API key override. If omitted, ALToolbox default resolution is used.
 
     Returns:
         A list of tuples, each containing a paragraph number, run number, and the modified text of the run.
     """
-    if not openai_client:
-        openai_client = OpenAI()
-
-    role_description = """
+    role_description = custom_prompt or """
     You will process a DOCX document and return a JSON structure that turns the DOCX file into a template 
     based on the following guidelines and examples. The DOCX will be provided as an annotated series of
     paragraphs and runs.
@@ -128,9 +346,17 @@ def get_labeled_docx_runs(
     """
 
     custom_name_text = ""
-    if custom_people_names:
-        assert isinstance(custom_people_names, list)
-        for name, description in custom_people_names:
+    if custom_people_names is not None:
+        if not isinstance(custom_people_names, list):
+            raise ValueError(
+                "custom_people_names must be a list of [name, description] pairs."
+            )
+        for item in custom_people_names:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise ValueError(
+                    "Each custom_people_names item must be a [name, description] pair."
+                )
+            name, description = item
             custom_name_text += f"    {name} ({description}), \n"
 
     rules = f"""
@@ -141,7 +367,7 @@ def get_labeled_docx_runs(
         4. Use variable names and patterns from the list below. Invent new variable names when it is appropriate.
 
     List names for people:
-        {custom_people_names}
+{custom_name_text}
         users (for the person benefiting from the form, especially when for a pro se filer)
         other_parties (the opposing party in a lawsuit or transactional party)
         plaintiffs
@@ -229,12 +455,18 @@ def get_labeled_docx_runs(
         Examples: 
         "(State the reason for eviction)" transforms into `{{ eviction_reason }}`.
     """
+    if additional_instructions and additional_instructions.strip():
+        role_description += (
+            "\n\nAdditional instructions:\n" + additional_instructions.strip()
+        )
+
     encoding = tiktoken.encoding_for_model("gpt-4")
 
     doc = docx.Document(docx_path)
+    paragraphs = _collect_target_paragraphs(doc)
 
     items = []
-    for pnum, para in enumerate(doc.paragraphs):
+    for pnum, para in enumerate(paragraphs):
         for rnum, run in enumerate(para.runs):
             items.append([pnum, rnum, run.text])
 
@@ -245,22 +477,28 @@ def get_labeled_docx_runs(
             f"Input to OpenAI is too long ({token_count} tokens). Maximum is 128000 tokens."
         )
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4-turbo",
-        messages=[
-            {"role": "system", "content": role_description + rules},
-            {"role": "user", "content": repr(items)},
-        ],
-        response_format={"type": "json_object"},
+    messages = [
+        {"role": "system", "content": role_description + rules},
+        {"role": "user", "content": repr(items)},
+    ]
+    response = chat_completion(
+        model=model,
+        messages=messages,
+        json_mode=True,
         temperature=0.5,
-        max_tokens=4096,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0,
+        max_output_tokens=max_output_tokens,
+        openai_client=openai_client,
+        openai_api=openai_api,
+        openai_base_url=openai_base_url,
     )
 
-    assert isinstance(response.choices[0].message.content, str)
-    guesses = json.loads(response.choices[0].message.content)["results"]
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except json.JSONDecodeError as exc:
+            raise ValueError("chat_completion returned non-JSON output") from exc
+    results = _extract_model_results(response)
+    guesses = _normalize_modified_runs(results)
     return guesses
 
 

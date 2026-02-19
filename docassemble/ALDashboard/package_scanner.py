@@ -1,10 +1,10 @@
-import pkg_resources
 import time
 import json
 import math
-import pycurl
-import certifi
+import requests
 from io import BytesIO
+from typing import List
+from importlib.metadata import distributions
 from docassemble.base.util import as_datetime
 
 
@@ -22,20 +22,21 @@ def get_server_name(interview_url):
 # Crawl installed packages on the current server.
 # Store key and non key docassemble packages separately.
 # -----------------------------------------------------
-def installed_pkg_list(target: list) -> dict:
+def installed_pkg_list(target: List[str]) -> dict:
     installed_packages = {}
     key_packages = {}
     non_key_packages = {}
+    target_lowercase = [t.casefold() for t in target]
 
-    for p in pkg_resources.working_set:
+    for p in distributions():
         # docassemble packages
-        if "docassemble" in p.project_name:
+        if "docassemble" in p.name:
             # Key packages
-            if p.project_name in target:
-                key_packages[p.project_name] = p.version
+            if p.name.casefold() in target_lowercase:
+                key_packages[p.name] = p.version
             # non-key packages
-            if p.project_name not in target:
-                non_key_packages[p.project_name] = p.version
+            else:
+                non_key_packages[p.name] = p.version
 
     sorted_key_packages = sort_dict(key_packages)
     sorted_non_key_packages = sort_dict(non_key_packages)
@@ -72,17 +73,7 @@ DELAY_BETWEEN_QUERYS = 3  # The time to wait between different queries to GitHub
 
 def getUrl(url):
     """Given a URL it returns its body"""
-    buffer = BytesIO()
-    c = pycurl.Curl()
-    c.setopt(c.URL, url)
-    c.setopt(c.WRITEDATA, buffer)
-    c.setopt(c.CAINFO, certifi.where())
-    c.perform()
-    c.close()
-    body = buffer.getvalue()
-    # Body is a byte string.
-    # We have to know the encoding in order to print it to a text file.
-    return body.decode("iso-8859-1")
+    return requests.get(url).text
 
 
 def fetch_github_repos(github_user, sub_queries) -> dict:

@@ -27,6 +27,8 @@ code: |
 ---
 question: |
   Test an API key
+subquestion: |
+  Quickly test some common API integrations. Make sure you have set up the relevant API keys in your configuration first.
 fields:
   - note: |
       ---
@@ -60,6 +62,17 @@ fields:
     datatype: email
     required: False
   - note: |
+      % if get_config("error notification email"):
+      ${ action_button_html(url_ask("api_test"), label="Trigger an error notification message") }
+
+      Your error notification setting is: `${ get_config("error notification email") }` [BR]
+      An error notification email will be sent to that address when you click the button above.
+
+      Make sure to check your SPAM folder if you don't see the message in your inbox.
+      % else:      
+      You do not have an error notification email address set up in your configuration.
+      % endif
+  - note: |
       ---
       SMS sending
 
@@ -69,6 +82,10 @@ fields:
   - Enter a phone number to get a test message: my_person.phone_number
     datatype: phone
     required: False
+---
+event: api_test
+code: |
+  a = 1 / 0
 ---
 event: api_results
 question: |

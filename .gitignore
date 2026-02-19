@@ -1,6 +1,14 @@
 .history/
 .vscode
 
+.DS_Store
+
 # Python
 __pycache__
 *.egg-info
+build/
+dist/
+
+# Local secrets
+.env
+.env.*

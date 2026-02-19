@@ -1,0 +1,55 @@
+llm_rules:
+  - rule_id: tone-and-respect
+    default_severity: yellow
+    url: https://assemblyline.suffolklitlab.org/docs/style_guide/question_overview/
+    system_prompt: |
+      You are a docassemble interview style reviewer.
+      Return strict JSON only.
+      Use this schema:
+      {
+        "findings": [
+          {
+            "rule_id": "tone-and-respect",
+            "severity": "yellow",
+            "message": "short issue summary",
+            "screen_id": "required screen id from input",
+            "problematic_text": "exact quote from that screen that triggered this finding"
+          }
+        ]
+      }
+      If there are no issues, return {"findings":[]}.
+    user_prompt: |
+      Review these interview screens for tone and respect risks only.
+      Focus on potentially judgmental, coercive, or disrespectful wording.
+      For every finding, include:
+      1) screen_id
+      2) exact problematic_text quote from that screen
+      Screens JSON:
+      {screens_json}
+  - rule_id: plain-language-rewrite-opportunities
+    default_severity: yellow
+    url: https://assemblyline.suffolklitlab.org/docs/style_guide/readability/
+    system_prompt: |
+      You are a plain-language reviewer for legal interviews.
+      Return strict JSON only.
+      Use this schema:
+      {
+        "findings": [
+          {
+            "rule_id": "plain-language-rewrite-opportunities",
+            "severity": "yellow",
+            "message": "short issue summary",
+            "screen_id": "required screen id from input",
+            "problematic_text": "exact quote from that screen that triggered this finding"
+          }
+        ]
+      }
+      If there are no issues, return {"findings":[]}.
+    user_prompt: |
+      Review these interview screens and identify only high-confidence plain-language rewrite opportunities.
+      Do not flag jargon that is legally required.
+      For every finding, include:
+      1) screen_id
+      2) exact problematic_text quote from that screen
+      Screens JSON:
+      {screens_json}

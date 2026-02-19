@@ -9,6 +9,10 @@ default screen parts:
     ${ action_button_html(interview_url(i=f"{user_info().package}:menu.yml"), label="Back to Dashboard") }
     % endif
 ---
+features:
+  css:
+    - docassemble.ALDashboard:data/static/heatmap.css
+---
 modules:
   - .aldashboard
 ---
@@ -33,6 +37,15 @@ code: |
       allowed_interviews.update(get_config("assembly line",{}).get("interview viewers",{}).get(privilege,[]))
     interviews = {interview['filename']:interview for interview in interview_menu() if interview['filename'] in allowed_interviews}
 ---
+code: |
+  # Compute current interview usage and apply heatmap styles
+  if user_has_privilege(['admin', 'developer']):
+    current_interview_usage = dashboard_session_activity()
+    current_usage_rows = make_usage_rows(current_interview_usage, nicer_interview_filename, limit=10)
+    current_usage_rows = compute_heatmap_styles(current_usage_rows)
+  else:
+    current_usage_rows = []
+---
 question: |
   What interview do you want to view sessions for?
 subquestion: |
@@ -40,6 +53,42 @@ subquestion: |
   Pick an interview from the list below, or type a filename like: `docassemble.playground1:data/questions/interview.yml`
   % else:
   You can only view sessions for interviews you have access to.
+  % endif
+under: |
+  % if user_has_privilege(['admin', 'developer']):
+  % if current_usage_rows:
+  <h2 class="h4">Current Interview Usage</h2>
+  <table class="table table-sm table-striped">
+    <thead>
+      <tr>
+        <th>Interview</th>
+        <th class="text-center">1m</th>
+        <th class="text-center">5m</th>
+        <th class="text-center">10m</th>
+        <th class="text-center">30m</th>
+        <th class="text-center">60m</th>
+        <th class="text-center">120m</th>
+        <th class="text-center">Users</th>
+      </tr>
+    </thead>
+        <tbody>
+        % for r in current_usage_rows:
+          <tr>
+            <td><a href="${ url_action("set_interview_to_browse", filename=r['filename']) }">${ r['title'] }</a></td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_1','') }">${ r['s_1'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_5','') }">${ r['s_5'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_10','') }">${ r['s_10'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_30','') }">${ r['s_30'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_60','') }">${ r['s_60'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_120','') }">${ r['s_120'] }</td>
+            <td class="text-center heat-cell" style="${ r.get('style_attr_users','') }">${ r['users'] }</td>
+          </tr>
+        % endfor
+        </tbody>
+  </table>
+  % else:
+  <div class="alert alert-secondary">Nobody is using the server right now (no sessions started in last 120 minutes).</div>
+  % endif
   % endif
 fields:
   - View: view_sessions_method
@@ -56,7 +105,10 @@ fields:
     required: False
     datatype: combobox
     code: |
-      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+      sorted(list(interviews.keys()), key=lambda fname: (
+        interviews.get(fname).get('title') if isinstance(interviews.get(fname), dict)
+        else (getattr(interviews.get(fname), 'title', None) or (interviews.get(fname) if isinstance(interviews.get(fname), str) else fname))
+      ))
     show if:
       variable: view_sessions_method
       is: browse
@@ -64,7 +116,10 @@ fields:
         user_has_privilege(['admin', 'developer'])
   - Filename: filename
     code: |
-      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+      sorted(list(interviews.keys()), key=lambda fname: (
+        interviews.get(fname).get('title') if isinstance(interviews.get(fname), dict)
+        else (getattr(interviews.get(fname), 'title', None) or (interviews.get(fname) if isinstance(interviews.get(fname), str) else fname))
+      ))
     show if:
       variable: view_sessions_method
       is: browse
@@ -78,7 +133,7 @@ fields:
       variable: view_sessions_method
       is: browse
     code: |
-      speedy_get_users()
+      speedy_get_users() if user_has_privilege(['admin', 'developer']) else [{user_info().id: user_info().email}]
   - Filter out interviews that are on the first page: filter_step1
     required: False
     datatype: yesno
@@ -88,10 +143,21 @@ fields:
       is: browse
 ---
 code: |
+  requested_session_id = action_argument('session_id')
+  if requested_session_id:
+    session_id = requested_session_id
   try:
     single_session_details = get_session_details(session_id)
   except ValueError:
     session_not_found
+---
+code: |
+  single_session_files = get_files_associated_with_session(
+    session_id,
+    yaml_filename=single_session_details.get('filename'),
+    privileged=user_has_privilege(['admin', 'developer'])
+  )
+  single_session_files_count = len(single_session_files)
 ---
 event: session_not_found
 question: |
@@ -124,14 +190,87 @@ subquestion: |
         <br/>
         <a href="${ interview_url_action('view_session_variables', session_id=session_id, filename=single_session_details.get('filename')) }">
           <i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+        <br/>
+        <a href="${ interview_url_action('view_session_files', session_id=session_id, filename=single_session_details.get('filename')) }">
+          <i class="fa-solid fa-paperclip"></i>&nbsp;Files (${ single_session_files_count })</a>
       </td>
     </tr>
   </table>
+  % if single_session_files:
+  <h2 class="h5 mt-4">Files for this session</h2>
+  <table class="table table-sm">
+    <thead>
+      <tr>
+        <th>File ID</th>
+        <th>Filename</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      % for f in single_session_files:
+      <tr>
+        <td>${ f.get('file_id') }</td>
+        <td class="text-wrap text-break">${ f.get('filename') }</td>
+        <td>
+          <a href="${ interview_url_action('download_session_file', session_id=session_id, filename=single_session_details.get('filename'), file_id=f.get('file_id')) }">
+            <i class="fa-solid fa-download"></i>&nbsp;Download</a>
+        </td>
+      </tr>
+      % endfor
+    </tbody>
+  </table>
+  <a href="${ interview_url_action('download_all_session_files', session_id=session_id, filename=single_session_details.get('filename')) }">
+    <i class="fa-solid fa-file-zipper"></i>&nbsp;Download all files (.zip)</a>
+  % else:
+  <div class="alert alert-secondary">No uploaded files are associated with this session.</div>
+  % endif
+back button: True
+---
+event: view_session_files
+question: |
+  Files for session ${ action_argument('session_id') or session_id }
+subquestion: |
+  % if get_files_associated_with_session(
+  %   action_argument('session_id') or session_id,
+  %   yaml_filename=action_argument('filename'),
+  %   privileged=user_has_privilege(['admin', 'developer'])
+  % ):
+  <table class="table">
+    <thead>
+      <tr>
+        <th>File ID</th>
+        <th>Filename</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    % for f in get_files_associated_with_session(
+    %   action_argument('session_id') or session_id,
+    %   yaml_filename=action_argument('filename'),
+    %   privileged=user_has_privilege(['admin', 'developer'])
+    % ):
+      <tr>
+        <td>${ f.get('file_id') }</td>
+        <td class="text-wrap text-break">${ f.get('filename') }</td>
+        <td>
+          <a href="${ interview_url_action('download_session_file', session_id=action_argument('session_id') or session_id, filename=action_argument('filename'), file_id=f.get('file_id')) }">
+            <i class="fa-solid fa-download"></i>&nbsp;Download</a>
+        </td>
+      </tr>
+    % endfor
+    </tbody>
+  </table>
+  <a href="${ interview_url_action('download_all_session_files', session_id=action_argument('session_id') or session_id, filename=action_argument('filename')) }">
+    <i class="fa-solid fa-file-zipper"></i>&nbsp;Download all files (.zip)</a>
+  % else:
+  <div class="alert alert-secondary">No uploaded files are associated with this session.</div>
+  % endif
+back button: True
 ---
 # next((item.get('title') for item in interviews if item.get('filename') == interview['filename']), interview['filename'] )
 ---
 code: |
-  # For debugging purposes
+  # Retrieve sessions once to render the browse table.
   sessions_list = speedy_get_sessions(user_id=chosen_user, filename=filename, filter_step1=filter_step1)
 ---
 code: |
@@ -144,6 +283,12 @@ code: |
       in get_users_and_name() 
     }
 ---
+event: set_interview_to_browse
+code: |
+  filename = action_argument('filename')
+  chosen_user = None
+  filter_step1 = True
+---
 mandatory: True
 event: load_answer
 question: |
@@ -155,6 +300,7 @@ question: |
   Recently started sessions for all users
   % endif
 subquestion: |
+  ${ action_button_html(url_action('go_to_session_id_lookup'), label='Find Session By ID') }
 
   <table class="table">
     <thead>
@@ -167,7 +313,7 @@ subquestion: |
       </tr>
     </thead>
 
-  % for interview in speedy_get_sessions(user_id=chosen_user, filename=filename, filter_step1=filter_step1):
+  % for interview in sessions_list:
   <tr>
     <td class="text-wrap text-break">
       <strong>${ interview.title if interview.title else interview.auto_title }</strong>
@@ -187,7 +333,11 @@ subquestion: |
       <a href="${ interview_url(i=interview.filename, session=interview.key) }">
         <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>
     <br/>
+    <a href="${ interview_url_action('view_single_session', session_id=interview.key) }"><i class="fa-solid fa-magnifying-glass"></i>&nbsp;Details</a>
+    <br/>
     <a href="${ interview_url_action('view_session_variables', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+    <br/>
+    <a href="${ interview_url_action('view_session_files', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-paperclip"></i>&nbsp;Files</a>
   % if user_has_privilege('admin'):
     <br/>
     <a href="${ url_action('delete_session', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-trash"></i>&nbsp;Delete</a>
@@ -198,9 +348,54 @@ subquestion: |
   </table>
 back button: True
 ---
+event: go_to_session_id_lookup
+code: |
+  view_sessions_method = "session_id"
+---
 event: view_session_variables
 code: |
   response(binaryresponse=json.dumps(dashboard_get_session_variables(session_id=action_argument('session_id'), filename=action_argument('filename'))).encode('utf-8'), content_type="application/json", response_code=200)
+---
+event: download_session_file
+code: |
+  target_session_id = action_argument('session_id')
+  target_filename = action_argument('filename')
+  requested_file_id = str(action_argument('file_id') or "")
+  allowed_file_ids = [
+    f.get("file_id")
+    for f in get_files_associated_with_session(
+      target_session_id,
+      yaml_filename=target_filename,
+      privileged=user_has_privilege(['admin', 'developer'])
+    )
+  ]
+
+  if not requested_file_id.isdigit() or int(requested_file_id) not in allowed_file_ids:
+    response(response="File not found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+
+  file_info = download_file_by_id(
+    requested_file_id,
+    privileged=user_has_privilege(['admin', 'developer']),
+    return_file_info=True
+  )
+  with open(file_info.get("path"), "rb") as fp:
+    payload = fp.read()
+  response(binaryresponse=payload, content_type=file_info.get("mimetype") or "application/octet-stream", response_code=200)
+---
+event: download_all_session_files
+code: |
+  target_session_id = action_argument('session_id')
+  target_filename = action_argument('filename')
+  zip_path = build_session_files_zip(
+    target_session_id,
+    yaml_filename=target_filename,
+    privileged=user_has_privilege(['admin', 'developer'])
+  )
+  if not zip_path:
+    response(response="No files found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  with open(zip_path, "rb") as fp:
+    payload = fp.read()
+  response(binaryresponse=payload, content_type="application/zip", response_code=200)
 ---
 event: delete_session
 code: |

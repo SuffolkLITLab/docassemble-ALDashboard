@@ -46,8 +46,9 @@ code: |
         tr_lang, 
         use_gpt=use_gpt, 
         openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
-        interview_context=interview_context if use_context else None,
-        model = model,
+        interview_context=showifdef("interview_context") if use_gpt and showifdef("use_context") else None,
+        model=showifdef("model") if use_gpt else None,
+        validate_mako=showifdef("validate_mako", True),
       )
     for tr_lang
     in tr_langs.split()
@@ -80,11 +81,17 @@ fields:
   - Model to use (nano is normally smart enough): model
     input type: radio
     choices:
-      - Nano (cheapest): gpt-4.1-nano
-      - Mini (still cheap): gpt-4.1-mini
-      - Normal (moderately expensive): gpt-4.1
+      - GPT-5 Nano (cheapest, default): gpt-5-nano
+      - GPT-5 Mini (more reasoning): gpt-5-mini
+      - GPT-5 (highest quality): gpt-5
+      - GPT-4.1 Mini (legacy): gpt-4.1-mini
+      - GPT-4.1 (legacy): gpt-4.1
     show if: use_gpt
-    default: gpt-4.1-nano
+    default: gpt-5-nano
+  - Validate GPT draft Mako syntax (slower but safer): validate_mako
+    datatype: yesno
+    default: True
+    show if: use_gpt
   - Include context to help the translation: use_context
     datatype: yesno
     show if: use_gpt

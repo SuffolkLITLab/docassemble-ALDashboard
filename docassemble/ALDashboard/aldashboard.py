@@ -7,7 +7,8 @@ from github import Github  # PyGithub
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
-from typing import List, Tuple, Dict, Optional, Any
+from typing import List, Tuple, Dict, Optional, Callable, Any
+import math
 import docassemble.webapp.worker
 from docassemble.webapp.server import (
     user_can_edit_package,
@@ -42,16 +43,16 @@ from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import re
 import werkzeug
-import pkg_resources
-
-import os
-import re
 from flask import send_file
 from werkzeug.utils import secure_filename
+import tempfile
+import zipfile
 
 from docassemble.webapp.backend import get_info_from_file_number
-from docassemble.webapp.files import get_ext_and_mimetype
+from docassemble.webapp.files import get_ext_and_mimetype, SavedFile
 from docassemble.webapp.server import secure_filename_unicode_ok
+import importlib.resources
+from datetime import datetime, timedelta
 
 db = init_sqlalchemy()
 
@@ -70,6 +71,9 @@ __all__ = [
     "install_fonts",
     "list_installed_fonts",
     "dashboard_get_session_variables",
+    "dashboard_session_activity",
+    "make_usage_rows",
+    "compute_heatmap_styles",
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
@@ -78,6 +82,8 @@ __all__ = [
     "get_current_index_value",
     "get_latest_s3_folder",
     "get_file_ids_associated_with_session",
+    "get_files_associated_with_session",
+    "build_session_files_zip",
     "download_file_by_id",
 ]
 
@@ -197,8 +203,7 @@ def speedy_get_sessions(
     modtime,
     key
     """
-    get_sessions_query = text(
-        """
+    get_sessions_query = text("""
 SELECT 
     userdict.filename as filename,
     num_keys,
@@ -235,8 +240,7 @@ WHERE
 ORDER BY 
     modtime DESC 
 LIMIT 500;
-        """
-    )
+        """)
     if not filename:
         if not user_has_privilege(["admin", "developer"]):
             raise Exception(
@@ -304,24 +308,125 @@ def get_session_details(session_id: str) -> Dict[str, str]:
     }
 
 
-def get_file_ids_associated_with_session(session_id: str) -> List[int]:
+def get_file_ids_associated_with_session(
+    session_id: str, yaml_filename: Optional[str] = None
+) -> List[int]:
     """
     Get a list of file IDs associated with a given session ID.
     """
     # files are stored in uploads db with a key that is the session id
     query = text(
         """
-        SELECT indexno,
-        filename,
-          
-        FROM uploads 
+        SELECT indexno
+        FROM uploads
         WHERE key = :session_id
+          AND (:yaml_filename IS NULL OR yamlfile = :yaml_filename)
+        ORDER BY indexno
     """
     )
     with db.connect() as con:
-        rs = con.execute(query, {"session_id": session_id})
+        rs = con.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename}
+        )
         file_ids = [row.indexno for row in rs]
     return file_ids
+
+
+def get_files_associated_with_session(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return metadata for files associated with a session.
+    """
+    files: List[Dict[str, Any]] = []
+    query = text(
+        """
+        SELECT indexno, filename
+        FROM uploads
+        WHERE key = :session_id
+          AND (:yaml_filename IS NULL OR yamlfile = :yaml_filename)
+        ORDER BY indexno
+    """
+    )
+    with db.connect() as con:
+        rs = con.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename}
+        )
+        upload_rows = list(rs)
+
+    for row in upload_rows:
+        file_id = int(row.indexno)
+        filename = row.filename or f"file-{file_id}"
+        extension, mimetype = get_ext_and_mimetype(filename)
+        if not extension:
+            continue
+        try:
+            sf = SavedFile(file_id, extension=extension, fix=True)
+            fullpath = f"{sf.path}.{extension}"
+        except Exception:
+            continue
+        if not os.path.isfile(fullpath):
+            continue
+        files.append(
+            {
+                "file_id": file_id,
+                "filename": filename,
+                "path": fullpath,
+                "fullpath": fullpath,
+                "mimetype": mimetype,
+                "extension": extension,
+            }
+        )
+    return files
+
+
+def build_session_files_zip(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+) -> Optional[str]:
+    """
+    Build a temporary ZIP containing all files associated with a session.
+    Returns the ZIP path or None if no files were found.
+    """
+    files = get_files_associated_with_session(
+        session_id=session_id,
+        yaml_filename=yaml_filename,
+        privileged=privileged,
+        uids=uids,
+    )
+    if not files:
+        return None
+
+    safe_session_id = secure_filename_unicode_ok(str(session_id))
+    tmp = tempfile.NamedTemporaryFile(
+        delete=False, suffix=f"-session-{safe_session_id}.zip"
+    )
+    zip_path = tmp.name
+    tmp.close()
+
+    used_names = set()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in files:
+            file_id = item["file_id"]
+            src_path = item.get("fullpath") or item.get("path")
+            if not os.path.isfile(src_path):
+                continue
+            candidate = secure_filename_unicode_ok(
+                item.get("filename") or f"file-{file_id}"
+            )
+            if not candidate:
+                candidate = f"file-{file_id}"
+            arcname = candidate
+            if arcname in used_names:
+                arcname = f"{file_id}-{candidate}"
+            used_names.add(arcname)
+            zf.write(src_path, arcname=arcname)
+    return zip_path
 
 
 def download_file_by_id(
@@ -330,6 +435,7 @@ def download_file_by_id(
     uids: Optional[List[Any]] = None,
     extension: Optional[str] = None,
     filename_override: Optional[str] = None,
+    return_file_info: Optional[bool] = False,
 ):
     """Fetches a file by its ID and returns a Flask Response for downloading it.
 
@@ -339,6 +445,8 @@ def download_file_by_id(
         uids (list, optional): List of session UIDs for scoping the lookup. Defaults to None.
         extension (str, optional): File extension to force (e.g. "pdf"). Defaults to None.
         filename_override (str, optional): Specific filename to serve (e.g. "report.docx"). Defaults to None.
+        return_file_info (bool, optional): If True, return metadata needed for a
+            `response(file=...)` call instead of a Flask response.
 
     Raises:
         FileNotFound: If no record or filesystem path exists for the given ID,
@@ -356,10 +464,14 @@ def download_file_by_id(
     except Exception:
         raise FileNotFoundError(f"No record for file ID {number!r}")
 
-    if "path" not in file_info:
+    if "path" not in file_info and "fullpath" not in file_info:
         raise FileNotFoundError(f"No filesystem path for file ID {number!r}")
 
     base_path = file_info["path"]
+    extension_from_info = file_info.get("extension")
+    default_fullpath = file_info.get("fullpath")
+    if not default_fullpath and base_path and extension_from_info:
+        default_fullpath = f"{base_path}.{extension_from_info}"
 
     # 3. Resolve which physical file to serve
     if extension:
@@ -379,12 +491,20 @@ def download_file_by_id(
         _, mimetype = get_ext_and_mimetype(safe_name)
 
     else:
-        the_path = base_path
+        the_path = default_fullpath or base_path
         mimetype = file_info.get("mimetype")
 
     # 4. Final sanity check
     if not os.path.isfile(the_path):
         raise FileNotFoundError(f"File not found on disk: {the_path}")
+
+    if return_file_info:
+        return {
+            "file_id": int(number),
+            "path": the_path,
+            "mimetype": mimetype,
+            "filename": os.path.basename(the_path),
+        }
 
     # 5. Build and return the download response
     resp = send_file(the_path, mimetype=mimetype)
@@ -528,6 +648,254 @@ def nicer_interview_filename(filename: str) -> str:
     return filename_parts[0]
 
 
+def make_usage_rows(
+    current_interview_usage: Optional[Dict[int, List[Dict]]],
+    nicer_fn: Callable[[str], str] = lambda x: x,
+    limit: int = 10,
+) -> List[Dict]:
+    """Convert the nested `current_interview_usage` structure into a list of rows
+    suitable for rendering in the template.
+
+    Args:
+        current_interview_usage: mapping of minute -> list of dicts with keys
+            including 'filename', 'sessions', 'users'. Typically the output
+            of `dashboard_session_activity`.
+        nicer_fn: callable that receives a filename and returns a display title.
+        limit: maximum number of rows to return (sorted by total recent sessions).
+
+    Returns:
+        A list of dicts with keys: filename, title, s_1, s_5, s_10, s_30, s_60,
+        s_120, users, total
+    """
+    if not current_interview_usage:
+        return []
+
+    filenames = set()
+    for items in current_interview_usage.values():
+        for it in items:
+            # tolerate malformed items
+            fname = it.get("filename") if isinstance(it, dict) else None
+            if fname:
+                filenames.add(fname)
+
+    rows: List[Dict] = []
+    for fname in filenames:
+        row = {"filename": fname, "title": nicer_fn(fname)}
+        total = 0
+        # Iterate over the registered minute windows instead of hardcoding them
+        # Use sorted() to ensure a deterministic order
+        for minute in sorted(current_interview_usage.keys()):
+            found = next(
+                (
+                    i
+                    for i in current_interview_usage.get(minute, [])
+                    if i.get("filename") == fname
+                ),
+                None,
+            )
+            count = 0
+            if found:
+                try:
+                    count = int(found.get("sessions", 0) or 0)
+                except Exception:
+                    count = 0
+            row[f"s_{minute}"] = count
+            total += count
+        row["total"] = total
+        # Use the largest available window (max key) so this
+        # function adapts to the provided windows in current_interview_usage.
+        largest_window = max(current_interview_usage.keys())
+        # Use the largest available time window to provide a conservative
+        # users count; change this heuristic here if another window is preferred.
+        found_users_window = next(
+            (
+                i
+                for i in current_interview_usage.get(largest_window, [])
+                if i.get("filename") == fname
+            ),
+            None,
+        )
+        users = 0
+        if found_users_window:
+            try:
+                users = int(found_users_window.get("users", 0) or 0)
+            except Exception:
+                users = 0
+        row["users"] = users
+        rows.append(row)
+
+    rows = sorted(rows, key=lambda r: r["total"], reverse=True)[
+        : int(limit) if limit else None
+    ]
+    return rows
+
+
+def dashboard_session_activity(
+    minutes_list=None, limit: int = 10, exclude_filenames=None
+):
+    """
+    Return a dict mapping each minutes value to a list of top interviews by session starts
+    during the last N minutes. Each list contains dicts with keys: filename, sessions, users, title.
+
+    Args:
+        minutes_list: time windows to report on (default: [1, 5, 10, 30, 60, 120])
+        limit: max interviews per window (default: 10)
+        exclude_filenames: list of exact filenames or package prefixes to exclude.
+            By default, excludes docassemble.ALDashboard: and entries from
+            get_config("assembly line",{}).get("interview list",{}).get("exclude from interview list")
+
+    Example return value:
+    {60: [{'filename': 'docassemble.foo:data/questions/x.yml', 'sessions': 12, 'users': 9, 'title': 'foo:x'}, ...], ...}
+    """
+    if minutes_list is None:
+        minutes_list = [1, 5, 10, 30, 60, 120]
+
+    # Build exclude set from config + defaults
+    if exclude_filenames is None:
+        exclude_filenames = []
+    exclude_set = set(exclude_filenames)
+    exclude_set.add("docassemble.ALDashboard:")
+    # Add entries from config
+    config_excludes = (
+        get_config("assembly line", {})
+        .get("interview list", {})
+        .get("exclude from interview list", [])
+    )
+    if config_excludes:
+        exclude_set.update(config_excludes)
+
+    results = {}
+
+    # Build dynamic WHERE clause for exclusions using safe parameterization
+    # Separate prefixes from exact filenames for cleaner logic
+    exclude_prefixes = [excl for excl in sorted(exclude_set) if excl.endswith(":")]
+    exclude_exact = [excl for excl in sorted(exclude_set) if not excl.endswith(":")]
+
+    exclude_where_parts = []
+    exclude_params = {}
+
+    # For prefixes: use NOT LIKE with concatenation to avoid SQL injection
+    for idx, prefix in enumerate(exclude_prefixes):
+        param_key = f"excl_prefix_{idx}"
+        exclude_params[param_key] = prefix
+        exclude_where_parts.append(f"sub.filename NOT LIKE CONCAT(:{param_key}, '%')")
+
+    # For exact matches: use safe != comparisons
+    for idx, fname in enumerate(exclude_exact):
+        param_key = f"excl_exact_{idx}"
+        exclude_params[param_key] = fname
+        exclude_where_parts.append(f"sub.filename != :{param_key}")
+
+    exclude_where = " AND ".join(exclude_where_parts) if exclude_where_parts else "1=1"
+
+    # Build the query with the WHERE clause safely embedded
+    query_sql = f"""
+SELECT sub.filename as filename, COUNT(sub.key) AS sessions, COUNT(DISTINCT userdictkeys.user_id) AS users
+FROM (
+    SELECT key, filename, MIN(modtime) AS starttime
+    FROM userdict
+    GROUP BY key, filename
+) sub
+LEFT JOIN userdictkeys ON userdictkeys.key = sub.key
+WHERE sub.starttime >= :cutoff AND {exclude_where}
+GROUP BY sub.filename
+ORDER BY sessions DESC
+LIMIT :limit
+    """
+    query = text(query_sql)
+
+    with db.connect() as con:
+        for m in minutes_list:
+            cutoff = datetime.utcnow() - timedelta(minutes=int(m))
+            query_params = {"cutoff": cutoff, "limit": int(limit)}
+            query_params.update(exclude_params)
+            rs = con.execute(query, query_params)
+            rows = []
+            for row in rs:
+                # SQLAlchemy result rows may be mapping-like or tuple-like depending on version/context.
+                if hasattr(row, "_mapping"):
+                    mapping = row._mapping
+                    fname = mapping.get("filename")
+                    sessions_count = mapping.get("sessions")
+                    users_count = mapping.get("users")
+                else:
+                    # positional fallback: filename, sessions, users
+                    fname = row[0] if len(row) > 0 else None
+                    sessions_count = row[1] if len(row) > 1 else None
+                    users_count = row[2] if len(row) > 2 else None
+
+                try:
+                    sessions_val = int(sessions_count or 0)
+                except Exception:
+                    sessions_val = 0
+                try:
+                    users_val = int(users_count or 0)
+                except Exception:
+                    users_val = 0
+
+                rows.append(
+                    {
+                        "filename": fname,
+                        "sessions": sessions_val,
+                        "users": users_val,
+                        "title": nicer_interview_filename(fname) if fname else "",
+                    }
+                )
+            results[int(m)] = rows
+    return results
+
+
+def compute_heatmap_styles(rows, windows: Optional[tuple] = None):
+    """Add inline styles for a log-scaled heatmap to each row dict."""
+
+    if not rows:
+        return rows
+
+    time_windows = windows or (1, 5, 10, 30, 60, 120)
+    min_alpha = 0.15
+    max_alpha = 0.95  # visually "full" red but still readable with black text
+    text_color = "black"
+
+    def safe_int(value) -> int:
+        try:
+            return int(value or 0)
+        except Exception:
+            return 0
+
+    # Use a single maximum so every cell shares the same color scale.
+    max_activity = 0
+    for row in rows:
+        max_activity = max(max_activity, safe_int(row.get("users", 0)))
+        for minutes in time_windows:
+            max_activity = max(max_activity, safe_int(row.get(f"s_{minutes}", 0)))
+
+    log_denominator = math.log10(max_activity + 1) if max_activity > 0 else 1.0
+
+    def compute_alpha(count: int) -> float:
+        """Return opacity between min_alpha and max_alpha on a log scale."""
+        if max_activity <= 0:
+            normalized = 0.0
+        else:
+            normalized = math.log10(count + 1) / log_denominator
+        return min_alpha + (max_alpha - min_alpha) * normalized
+
+    def build_style(count: int) -> str:
+        alpha = compute_alpha(count)
+        return f"background-color: rgba(255,0,0,{alpha:.3f}); color: {text_color}"
+
+    for row in rows:
+        for minutes in time_windows:
+            count = safe_int(row.get(f"s_{minutes}", 0))
+            row[f"text_color_{minutes}"] = text_color
+            row[f"style_attr_{minutes}"] = build_style(count)
+
+        user_count = safe_int(row.get("users", 0))
+        row["text_color_users"] = text_color
+        row["style_attr_users"] = build_style(user_count)
+
+    return rows
+
+
 def list_question_files_in_package(package_name: str) -> Optional[List[str]]:
     """
     List all the files in the 'data/questions' directory of a package.
@@ -540,18 +908,18 @@ def list_question_files_in_package(package_name: str) -> Optional[List[str]]:
     """
     try:
         # Locate the directory within the package
-        directory_path = pkg_resources.resource_filename(package_name, "data/questions")
-
-        # List all files in the directory
-        if os.path.isdir(directory_path):
-            files = os.listdir(directory_path)
-            # Filter out directories, only keep files
-            files = [
-                f for f in files if os.path.isfile(os.path.join(directory_path, f))
-            ]
-            return files
-        else:
-            return []
+        ref = importlib.resources.files(package_name) / "data" / "questions"
+        with importlib.resources.as_file(ref) as directory_path:
+            # List all files in the directory
+            if os.path.isdir(directory_path):
+                files = os.listdir(directory_path)
+                # Filter out directories, only keep files
+                files = [
+                    f for f in files if os.path.isfile(os.path.join(directory_path, f))
+                ]
+                return files
+            else:
+                return []
     except Exception as e:
         log(f"An error occurred with package '{package_name}': {e}")
         return []

@@ -3,6 +3,9 @@ include:
   - docassemble.ALToolbox:display_template.yml
   - nav.yml
 ---
+modules:
+  - docassemble.ALToolbox.llms
+---
 metadata:
   title: Test API keys
   sessions are unique: True
@@ -23,7 +26,9 @@ code: |
     email_success = send_email(to=my_person, subject="Test message from Docassemble", body="Test message body. Thanks for testing with ALDashboard.")
   if my_person.phone_number:
     sms_success = send_sms(to=my_person, body="Test message from Docassemble. Thanks for testing with ALDashboard.")
-  api_results  
+  if test_chat_message:
+    chat_response = chat_completion("you are a helpful assistant", test_chat_message)
+  api_results
 ---
 question: |
   Test an API key
@@ -82,6 +87,32 @@ fields:
   - Enter a phone number to get a test message: my_person.phone_number
     datatype: phone
     required: False
+  - note: |
+      Chat Completion (OpenAI, Google Gemini, Azure, etc.)
+
+      Will only try the default model specified by llms.py, which
+      as of this writing is gpt-5-nano.
+
+      % if user_has_privilege("admin"):
+      Dictionary-style config: 
+
+      ```
+      ${ get_config("open ai")}
+      ```
+
+      Top level style, API key and url: 
+
+      ```
+      ${ get_config("openai base url") }
+      ${ get_config("openai api key") }      
+      ```
+      % else:
+      Only admins can view the relevant configuration for chat completions.
+      % endif
+
+  - Enter a test chat: test_chat_message
+    datatype: area
+    required: False
 ---
 event: api_test
 code: |
@@ -107,6 +138,12 @@ subquestion: |
 
   % if my_person.phone_number:
   SMS success: ${ sms_success }
+  % endif
+
+  % if test_chat_message:
+  Chat response: 
+  
+  ${ chat_response }
   % endif
 
   Use the back button to try again

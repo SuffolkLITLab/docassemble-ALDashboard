@@ -795,6 +795,8 @@ def get_screen_catalog(yaml_parsed: Sequence[dict]) -> List[Dict[str, str]]:
     """
     Build a screen catalog with stable ids and anchor links for report navigation.
     """
+    yaml_writer = ruamel.yaml.YAML()
+    yaml_writer.default_flow_style = False
     catalog: List[Dict[str, str]] = []
     for idx, doc in enumerate(yaml_parsed):
         if not isinstance(doc, dict):
@@ -809,13 +811,18 @@ def get_screen_catalog(yaml_parsed: Sequence[dict]) -> List[Dict[str, str]]:
             else:
                 parts.append(_stringify(value))
         screen_text = "\n\n".join(part for part in parts if part).strip()
-        if not screen_text:
-            continue
+        stream = ruamel.yaml.compat.StringIO()
+        try:
+            yaml_writer.dump(doc, stream)
+            yaml_text = stream.getvalue().strip()
+        except Exception:
+            yaml_text = _stringify(doc).strip()
         catalog.append(
             {
                 "screen_id": screen_id,
                 "anchor": f"screen-{_anchor_slug(screen_id)}",
                 "text": screen_text,
+                "yaml_text": yaml_text,
             }
         )
     return catalog

@@ -13,6 +13,12 @@ modules:
   - .interview_linter
   - .aldashboard
 ---
+features:
+  css:
+    - interview_linter.css
+  javascript:
+    - interview_linter.js
+---
 mandatory: True
 code: |
   source_mode
@@ -128,85 +134,225 @@ code: |
     lint_mode=lint_mode,
   )
 ---
+code: |
+  import html
+  import re
+
+  severity_rank = {"red": 0, "yellow": 1, "green": 2}
+  severity_label = {"red": "Fix required", "yellow": "Warning", "green": "Advisory"}
+
+  def _safe_id(value, prefix="id"):
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip().lower())
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug or prefix
+
+  def _sort_findings(findings):
+    return sorted(
+      findings,
+      key=lambda finding: (
+        severity_rank.get(str(finding.get("severity", "")).lower(), 9),
+        str(finding.get("screen_id") or ""),
+        str(finding.get("rule_id") or ""),
+        str(finding.get("message") or ""),
+      ),
+    )
+
+  lint_reports_ui = []
+  for report_idx, report in enumerate(lint_reports):
+    name = str(report.get("name") or "unknown")
+    file_anchor = f"lint-file-{report_idx}-{_safe_id(name, prefix='file')}"
+    error = report.get("error")
+    result = report.get("result")
+
+    if error or not result:
+      lint_reports_ui.append(
+        {
+          "name": name,
+          "file_anchor": file_anchor,
+          "error": error or "Unknown error",
+          "counts": {"red": 0, "yellow": 0, "green": 0},
+          "priority_findings": [],
+          "screens": [],
+          "orphan_findings": [],
+          "misspelled": [],
+          "headings_warnings": [],
+          "style_warnings": [],
+          "readability": {"consensus": "N/A", "severity": None, "warning": None},
+        }
+      )
+      continue
+
+    findings = _sort_findings(result.get("findings", []))
+    counts = {
+      "red": len(result.get("findings_by_severity", {}).get("red", [])),
+      "yellow": len(result.get("findings_by_severity", {}).get("yellow", [])),
+      "green": len(result.get("findings_by_severity", {}).get("green", [])),
+    }
+    screen_catalog = result.get("screen_catalog", [])
+    by_screen = {str(screen.get("screen_id") or ""): [] for screen in screen_catalog}
+    orphan_findings = []
+
+    for finding in findings:
+      screen_id = str(finding.get("screen_id") or "")
+      if screen_id and screen_id in by_screen:
+        by_screen[screen_id].append(finding)
+      else:
+        orphan_findings.append(finding)
+
+    screens = []
+    for screen in screen_catalog:
+      screen_id = str(screen.get("screen_id") or "")
+      screen_findings = by_screen.get(screen_id, [])
+      if not screen_findings:
+        continue
+      screen_anchor = f"{file_anchor}-screen-{_safe_id(screen_id, prefix='screen')}"
+      screens.append(
+        {
+          "screen_id": screen_id,
+          "screen_anchor": screen_anchor,
+          "yaml_text": str(screen.get("yaml_text") or ""),
+          "findings": screen_findings,
+        }
+      )
+
+    priority_findings = findings[:6]
+
+    lint_reports_ui.append(
+      {
+        "name": name,
+        "file_anchor": file_anchor,
+        "error": None,
+        "counts": counts,
+        "priority_findings": priority_findings,
+        "screens": screens,
+        "orphan_findings": orphan_findings,
+        "misspelled": result.get("misspelled", []),
+        "headings_warnings": result.get("headings_warnings", []),
+        "style_warnings": result.get("style_warnings", []),
+        "readability": result.get("readability", {}),
+      }
+    )
+---
 event: show_results
 question: |
   Interview Suggestions
 subquestion: |
-
-  ${ collapse_template(text_used) }
-
-  % if not lint_reports:
+  % if not lint_reports_ui:
   No files were selected.
   % endif
 
-  % for report in lint_reports:
-  ### ${ report['name'] }
+  <section class="al-lint-results">
+      % for report in lint_reports_ui:
+      <details id="${ report['file_anchor'] }" open>
+        <summary>
+          ${ html.escape(report['name']) }
+          <span class="al-lint-badge red">Red ${ report['counts']['red'] }</span>
+          <span class="al-lint-badge yellow">Yellow ${ report['counts']['yellow'] }</span>
+          <span class="al-lint-badge green">Green ${ report['counts']['green'] }</span>
+        </summary>
+        <div class="al-lint-file-body">
+          <div>
+            % if report['error']:
+            <div class="al-lint-finding red">${ html.escape(report['error']) }</div>
+            % else:
+            <div class="al-lint-priority-inline">
+              <strong>Priority:</strong>
+              % if report['priority_findings']:
+              % for finding in report['priority_findings']:
+              <a class="al-lint-priority-item" href="#${ report['file_anchor'] }-screen-${ _safe_id(finding.get('screen_id'), prefix='screen') if finding.get('screen_id') else report['file_anchor'] }">
+                <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
+                % if finding.get('screen_id'):
+                <code>${ html.escape(str(finding.get('screen_id'))) }</code>
+                % else:
+                <code>general</code>
+                % endif
+              </a>
+              % endfor
+              % else:
+              <span>No findings.</span>
+              % endif
+            </div>
+            <div class="al-lint-meta-line">
+              Readability: <strong>${ html.escape(str(report['readability'].get('consensus', 'N/A'))) }</strong>
+              % if report['readability'].get('warning'):
+              <span class="al-lint-badge ${ report['readability'].get('severity') or 'yellow' }">${ html.escape(str(report['readability'].get('warning')))}</span>
+              % endif
+            </div>
+            % if report['misspelled']:
+            <div class="al-lint-meta-line">Misspelled: ${ html.escape(", ".join(report['misspelled'][:25])) }</div>
+            % endif
+            % if not report['error']:
+            % for screen in report['screens']:
+            <article class="al-lint-screen" id="${ screen['screen_anchor'] }">
+              <div class="al-lint-screen-header">
+                <strong>Section</strong>
+                <span class="al-lint-screen-id" title="Triple-click to toggle highlight and select this id">${ html.escape(screen['screen_id']) }</span>
+              </div>
 
-  % if report.get('error'):
-  * Error: ${ report['error'] }
-  % else:
-  % if report['result']["findings_by_severity"]["red"] or report['result']["findings_by_severity"]["yellow"] or report['result']["findings_by_severity"]["green"]:
-  #### Findings
+              % for finding in screen['findings']:
+              <div class="al-lint-finding ${ str(finding.get('severity') or 'yellow') }">
+                <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
+                ${ "✨ " if finding.get("source") == "llm" else "" }${ html.escape(str(finding.get('message') or '')) }
+                % if finding.get("confidence"):
+                <em>(confidence: ${ html.escape(str(finding.get("confidence"))) })</em>
+                % endif
+                % if finding.get("url"):
+                <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference</a>
+                % endif
+                % if finding.get("problematic_text"):
+                <div class="al-lint-problem">${ html.escape(str(finding.get("problematic_text"))) }</div>
+                % endif
+              </div>
+              % endfor
 
-  % if report['result']["findings_by_severity"]["red"]:
-  ##### Red (fix required)
-  % for finding in report['result']["findings_by_severity"]["red"]:
-  * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" }${ " (confidence: " + str(finding.get("confidence")) + ")" if finding.get("confidence") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
-    % if finding.get("problematic_text"):
-    Problematic text: ${ finding["problematic_text"] }
-    % endif
-  % endfor
-  % endif
+              <div class="al-lint-yaml">
+                <pre>${ html.escape(screen['yaml_text']) }</pre>
+              </div>
+            </article>
+            % endfor
 
-  % if report['result']["findings_by_severity"]["yellow"]:
-  ##### Yellow (warning)
-  % for finding in report['result']["findings_by_severity"]["yellow"]:
-  * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" }${ " (confidence: " + str(finding.get("confidence")) + ")" if finding.get("confidence") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
-    % if finding.get("problematic_text"):
-    Problematic text: ${ finding["problematic_text"] }
-    % endif
-  % endfor
-  % endif
+            % if not report['screens'] and not report['orphan_findings']:
+            <article class="al-lint-screen">
+              <div class="al-lint-empty">No findings in this file.</div>
+            </article>
+            % endif
 
-  % if report['result']["findings_by_severity"]["green"]:
-  ##### Green (advisory)
-  % for finding in report['result']["findings_by_severity"]["green"]:
-  * ${ "✨ " if finding.get("source") == "llm" else "" }${ finding["message"] }${ " (screen: `" + str(finding["screen_id"]) + "`)" if finding.get("screen_id") else "" }${ " (confidence: " + str(finding.get("confidence")) + ")" if finding.get("confidence") else "" } [Reference](${ finding["url"] })${ " [Go to screen](" + finding["screen_link"] + ")" if finding.get("screen_link") else "" }
-    % if finding.get("problematic_text"):
-    Problematic text: ${ finding["problematic_text"] }
-    % endif
-  % endfor
-  % endif
-  % endif
+            % if report['orphan_findings']:
+            <article class="al-lint-screen">
+              <div class="al-lint-screen-header"><strong>General findings (no section id)</strong></div>
+              % for finding in report['orphan_findings']:
+              <div class="al-lint-finding ${ str(finding.get('severity') or 'yellow') }">
+                <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
+                ${ html.escape(str(finding.get('message') or '')) }
+                % if finding.get("url"):
+                <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference</a>
+                % endif
+                % if finding.get("problematic_text"):
+                <div class="al-lint-problem">${ html.escape(str(finding.get("problematic_text"))) }</div>
+                % endif
+              </div>
+              % endfor
+            </article>
+            % endif
 
-  #### Readability
-  * Consensus: ${ report['result']["readability"]["consensus"] }
-  % if report['result']["readability"]["severity"] == "red":
-  * **Red warning:** ${ report['result']["readability"]["warning"] }
-  % elif report['result']["readability"]["severity"] == "yellow":
-  * **Yellow warning:** ${ report['result']["readability"]["warning"] }
-  % endif
-
-  % if report['result']["misspelled"]:
-  #### Misspelled words
-  % for misspelled_word in report['result']["misspelled"]:
-  * ${ misspelled_word }
-  % endfor
-  % endif
-
-  % if report['result']["headings_warnings"] or report['result']["style_warnings"]:
-  #### Additional warnings
-  % for warning in report['result']["headings_warnings"]:
-  * ${ warning }
-  % endfor
-  % for warning in report['result']["style_warnings"]:
-  * ${ warning["message"] } [Read more](${ warning["url"] })
-  % endfor
-  % endif
-  % endif
-
-  ---
-  % endfor
+            % if report['headings_warnings'] or report['style_warnings']:
+            <article class="al-lint-screen">
+              <div class="al-lint-screen-header"><strong>Additional warnings</strong></div>
+              % for warning in report['headings_warnings']:
+              <div class="al-lint-finding yellow">${ html.escape(str(warning)) }</div>
+              % endfor
+              % for warning in report['style_warnings']:
+              <div class="al-lint-finding yellow">${ html.escape(str(warning.get("message") or "")) } <a href="${ html.escape(str(warning.get('url') or '')) }" target="_blank" rel="noopener noreferrer">Read more</a></div>
+              % endfor
+            </article>
+            % endif
+            % endif
+            % endif
+          </div>
+        </div>
+      </details>
+      % endfor
+  </section>
 ---
 template: text_used
 subject: |
@@ -216,13 +362,10 @@ content: |
     % if report.get('result'):
     ### ${ report['name'] }
     % for screen in report['result']["screen_catalog"]:
-    <a id="${ screen['anchor'] }"></a>
     #### Screen `${ screen['screen_id'] }`
-
-    ${ screen['text'] }
-
-    ---
-    <br>
+    ```yaml
+    ${ screen.get('yaml_text', '') }
+    ```
     % endfor
     % endif
     % endfor

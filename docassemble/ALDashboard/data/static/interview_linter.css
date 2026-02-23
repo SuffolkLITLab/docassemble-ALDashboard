@@ -1,0 +1,178 @@
+.al-lint-results details {
+  border: 1px solid #d8e0ea;
+  border-radius: 0.6rem;
+  margin-bottom: 0.8rem;
+  background: #fff;
+}
+
+.al-lint-results summary {
+  cursor: pointer;
+  padding: 0.7rem 0.8rem;
+  font-weight: 600;
+  background: #f6f8fb;
+  border-radius: 0.6rem;
+}
+
+.al-lint-file-body {
+  display: block;
+  padding: 0.8rem;
+}
+
+.al-lint-priority-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.55rem;
+  padding: 0.5rem 0.55rem;
+  border: 1px solid #e5eaf2;
+  border-radius: 0.45rem;
+  background: #fbfcfe;
+}
+
+.al-lint-priority-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  text-decoration: none;
+  padding: 0.1rem 0.2rem;
+  border-radius: 0.3rem;
+}
+
+.al-lint-priority-item:hover {
+  background: #eef3fb;
+}
+
+.al-lint-meta-line {
+  margin-bottom: 0.55rem;
+  font-size: 0.9rem;
+}
+
+.al-lint-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.08rem 0.48rem;
+  margin-left: 0.3rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.al-lint-badge.red {
+  background: #fde2e2;
+  color: #922;
+}
+
+.al-lint-badge.yellow {
+  background: #fff3d6;
+  color: #7a5700;
+}
+
+.al-lint-badge.green {
+  background: #e0f7ea;
+  color: #165d33;
+}
+
+.al-lint-screen {
+  border: 1px solid #e4e8ef;
+  border-radius: 0.5rem;
+  margin-bottom: 0.7rem;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.al-lint-screen-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid #edf1f7;
+  background: #f8fafd;
+}
+
+.al-lint-screen-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.83rem;
+  background: #edf1f7;
+  border: 1px solid #d6dde8;
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.45rem;
+  user-select: text;
+  cursor: text;
+}
+
+.al-lint-screen-id.is-highlighted {
+  background: #fff4cc;
+  border-color: #f2c94c;
+  box-shadow: 0 0 0 1px #f2c94c inset;
+}
+
+.al-lint-finding {
+  margin: 0.5rem 0.7rem;
+  padding: 0.45rem 0.55rem;
+  border-left: 3px solid #cbd5e1;
+  background: #fafcff;
+  font-size: 0.92rem;
+}
+
+.al-lint-finding.red {
+  border-left-color: #c53030;
+  background: #fff5f5;
+}
+
+.al-lint-finding.yellow {
+  border-left-color: #b7791f;
+  background: #fffbf0;
+}
+
+.al-lint-finding.green {
+  border-left-color: #2f855a;
+  background: #f2fff7;
+}
+
+.al-lint-problem {
+  margin-top: 0.3rem;
+  padding: 0.25rem 0.35rem;
+  background: #f2f5fa;
+  border-radius: 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
+.al-lint-yaml {
+  margin: 0.45rem 0.7rem 0.7rem 0.7rem;
+  border: 1px solid #e6ebf2;
+  border-radius: 0.4rem;
+  background: #f9fbfe;
+  overflow-x: auto;
+  max-height: 24rem;
+}
+
+.al-lint-yaml pre {
+  margin: 0;
+  padding: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.42;
+  white-space: pre;
+}
+
+.al-lint-empty {
+  margin: 0.45rem 0.7rem;
+  color: #596579;
+  font-size: 0.9rem;
+}
+
+/* Match ALWeaver approach: widen only the linter results screen. */
+.question-show-results div.container,
+.question-show_results div.container {
+  max-width: 96vw;
+}
+
+@media (min-width: 1400px) {
+  .question-show-results div.container,
+  .question-show_results div.container {
+    max-width: 1800px;
+  }
+}

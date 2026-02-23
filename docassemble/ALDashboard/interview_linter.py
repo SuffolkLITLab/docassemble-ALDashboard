@@ -2569,7 +2569,7 @@ RULES: List[LintRule] = [
     ),
     LintRule(
         "duplicate-field-label",
-        "red",
+        "yellow",
         WCAG_LABELS_INSTRUCTIONS_URL,
         _check_duplicate_field_labels,
     ),

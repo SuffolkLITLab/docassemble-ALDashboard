@@ -11,6 +11,7 @@ from docassemble.ALDashboard.interview_linter import (
     lint_multiple_sources,
     load_interview,
     load_llm_prompt_templates,
+    normalize_lint_mode,
     readability_consensus_assessment,
     run_deterministic_rules,
     run_llm_rules,
@@ -18,13 +19,15 @@ from docassemble.ALDashboard.interview_linter import (
 
 
 class TestInterviewLinterRules(unittest.TestCase):
-    def _findings(self, yaml_content):
+    def _findings(self, yaml_content, lint_mode="full"):
         docs = load_interview(yaml_content)
         texts = get_all_text(docs)
-        return run_deterministic_rules(docs, texts, yaml_content)
+        return run_deterministic_rules(docs, texts, yaml_content, lint_mode=lint_mode)
 
-    def _rule_ids(self, yaml_content):
-        return {finding["rule_id"] for finding in self._findings(yaml_content)}
+    def _rule_ids(self, yaml_content, lint_mode="full"):
+        return {
+            finding["rule_id"] for finding in self._findings(yaml_content, lint_mode)
+        }
 
     def test_missing_question_id(self):
         yaml_content = """
@@ -39,6 +42,17 @@ fields:
         )
         missing_id = next(f for f in findings if f["rule_id"] == "missing-question-id")
         self.assertTrue(missing_id.get("problematic_text"))
+
+    def test_deterministic_finding_has_confidence(self):
+        yaml_content = """
+---
+question: Missing id
+fields:
+  - Name: user_name
+"""
+        findings = self._findings(yaml_content)
+        missing_id = next(f for f in findings if f["rule_id"] == "missing-question-id")
+        self.assertEqual(missing_id.get("confidence"), "definite")
 
     def test_multiple_mandatory_blocks(self):
         yaml_content = """
@@ -171,6 +185,15 @@ question: |
 """
         self.assertIn("image-missing-alt-text", self._rule_ids(yaml_content))
 
+    def test_image_file_tag_alt_with_none_width_allowed(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  [FILE docassemble.demo:data/static/al_logo.svg, None, Assembly Line logo]
+"""
+        self.assertNotIn("image-missing-alt-text", self._rule_ids(yaml_content))
+
     def test_image_missing_alt_html(self):
         yaml_content = """
 ---
@@ -179,6 +202,232 @@ subquestion: |
   <img src="/packagestatic/demo/logo.png">
 """
         self.assertIn("image-missing-alt-text", self._rule_ids(yaml_content))
+
+    def test_field_missing_label(self):
+        yaml_content = """
+---
+id: q1
+question: Your email
+fields:
+  - field: user_email
+    datatype: email
+"""
+        self.assertIn("field-missing-label", self._rule_ids(yaml_content))
+
+    def test_no_label_is_treated_as_missing_label(self):
+        yaml_content = """
+---
+id: q1
+question: Your info
+fields:
+  - no label: user_info
+    datatype: text
+"""
+        self.assertIn("field-missing-label", self._rule_ids(yaml_content))
+
+    def test_non_descriptive_field_label(self):
+        yaml_content = """
+---
+id: q1
+question: Please answer
+fields:
+  - label: Value
+    field: user_value
+"""
+        self.assertIn("non-descriptive-field-label", self._rule_ids(yaml_content))
+
+    def test_blank_choice_label(self):
+        yaml_content = """
+---
+id: q1
+question: Pick one
+fields:
+  - Choice: user_choice
+    choices:
+      - "": empty_value
+      - Good option: good_value
+"""
+        self.assertIn("blank-choice-label", self._rule_ids(yaml_content))
+
+    def test_duplicate_field_labels(self):
+        yaml_content = """
+---
+id: q1
+question: Contact info
+fields:
+  - Email: user_email
+  - Email: partner_email
+"""
+        self.assertIn("duplicate-field-label", self._rule_ids(yaml_content))
+
+    def test_missing_screen_title(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  This screen has instructions but no explicit question title. It should be reviewed.
+fields:
+  - Name: user_name
+"""
+        self.assertIn("missing-screen-title", self._rule_ids(yaml_content))
+
+    def test_color_only_instructions(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  Fields in red are required.
+"""
+        self.assertIn("color-only-instructions", self._rule_ids(yaml_content))
+
+    def test_inline_color_styling(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  <span style="color: #f00;">Important</span>
+"""
+        self.assertIn("inline-color-styling", self._rule_ids(yaml_content))
+
+    def test_non_descriptive_link_text(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  [Click here](https://example.com/forms)
+"""
+        self.assertIn("non-descriptive-link-text", self._rule_ids(yaml_content))
+
+    def test_empty_link_text(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  [](https://example.com/blank)
+"""
+        self.assertIn("empty-link-text", self._rule_ids(yaml_content))
+
+    def test_ambiguous_link_destinations(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  [Learn more](https://example.com/one)
+  [Learn more](https://example.com/two)
+"""
+        self.assertIn("ambiguous-link-destinations", self._rule_ids(yaml_content))
+
+    def test_new_tab_without_warning(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  <a href="https://example.com/forms" target="_blank">Form page</a>
+"""
+        self.assertIn("opens-new-tab-without-warning", self._rule_ids(yaml_content))
+
+    def test_svg_missing_accessible_name(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  <svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"></circle></svg>
+"""
+        self.assertIn("svg-missing-accessible-name", self._rule_ids(yaml_content))
+
+    def test_table_missing_headers(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  <table>
+    <tr><td>A</td><td>B</td></tr>
+    <tr><td>1</td><td>2</td></tr>
+  </table>
+"""
+        self.assertIn("table-missing-headers", self._rule_ids(yaml_content))
+
+    def test_positive_tabindex(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  <input type="text" tabindex="2">
+"""
+        self.assertIn("positive-tabindex", self._rule_ids(yaml_content))
+
+    def test_clickable_non_control_html(self):
+        yaml_content = """
+---
+id: q1
+subquestion: |
+  <div onclick="openPanel()">Open details</div>
+"""
+        self.assertIn("clickable-non-control-html", self._rule_ids(yaml_content))
+
+    def test_required_field_not_indicated(self):
+        yaml_content = """
+---
+id: q1
+question: Contact details
+fields:
+  - Email address: user_email
+    required: True
+"""
+        self.assertIn("required-field-not-indicated", self._rule_ids(yaml_content))
+
+    def test_validation_without_guidance(self):
+        yaml_content = """
+---
+id: q1
+question: PIN
+fields:
+  - PIN: user_pin
+    pattern: "^[0-9]{4}$"
+"""
+        self.assertIn("validation-without-guidance", self._rule_ids(yaml_content))
+
+    def test_maxlength_does_not_trigger_validation_without_guidance(self):
+        yaml_content = """
+---
+id: q1
+question: Name
+fields:
+  - Name: user_name
+    maxlength: 24
+"""
+        self.assertNotIn("validation-without-guidance", self._rule_ids(yaml_content))
+
+    def test_generic_validation_message(self):
+        yaml_content = """
+---
+id: q1
+question: Number
+fields:
+  - Age: user_age
+    validation messages:
+      min: Invalid input
+"""
+        self.assertIn("generic-validation-message", self._rule_ids(yaml_content))
+
+    def test_ambiguous_button_text(self):
+        yaml_content = """
+---
+id: q1
+question: Continue?
+buttons:
+  - Go: next_screen
+"""
+        self.assertIn("ambiguous-button-text", self._rule_ids(yaml_content))
+
+    def test_descriptive_link_text_allowed(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  [Download the filing checklist](https://example.com/checklist)
+"""
+        self.assertNotIn("non-descriptive-link-text", self._rule_ids(yaml_content))
 
     def test_long_sentence(self):
         yaml_content = """
@@ -197,6 +446,49 @@ question: |
   Do you want to continue or stop?
 """
         self.assertIn("compound-questions", self._rule_ids(yaml_content))
+
+    def test_plain_language_replacements_single_word(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  We will commence the review now.
+"""
+        findings = self._findings(yaml_content)
+        matching = [
+            finding
+            for finding in findings
+            if finding["rule_id"] == "plain-language-replacements"
+        ]
+        self.assertTrue(matching)
+        self.assertTrue(
+            any(
+                "commence" in finding.get("problematic_text", "").lower()
+                for finding in matching
+            )
+        )
+        self.assertTrue(all(finding["severity"] == "yellow" for finding in matching))
+
+    def test_plain_language_replacements_phrase(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  This step is in accordance with the court order.
+"""
+        findings = self._findings(yaml_content)
+        matching = [
+            finding
+            for finding in findings
+            if finding["rule_id"] == "plain-language-replacements"
+        ]
+        self.assertTrue(matching)
+        self.assertTrue(
+            any(
+                "in accordance with" in finding.get("problematic_text", "").lower()
+                for finding in matching
+            )
+        )
 
     def test_overlong_labels(self):
         yaml_content = """
@@ -419,6 +711,34 @@ question: Hello
 """
         result = lint_interview_content(yaml_content)
         self.assertEqual(result.get("yaml_errors"), [])
+
+    def test_wcag_mode_limits_rules(self):
+        yaml_content = """
+---
+question: Missing id
+subquestion: |
+  ## Section title
+  #### Skipped heading
+fields:
+  - Option: selected_option
+    datatype: combobox
+"""
+        wcag_rule_ids = self._rule_ids(yaml_content, lint_mode="wcag-basic")
+        self.assertIn("skipped-heading-level", wcag_rule_ids)
+        self.assertIn("avoid-combobox", wcag_rule_ids)
+        self.assertNotIn("missing-question-id", wcag_rule_ids)
+
+    def test_lint_interview_content_sets_lint_mode(self):
+        yaml_content = """
+---
+id: q1
+question: Hello
+"""
+        result = lint_interview_content(yaml_content, lint_mode="wcag")
+        self.assertEqual(result.get("lint_mode"), "wcag-basic")
+
+    def test_normalize_lint_mode_invalid_defaults(self):
+        self.assertEqual(normalize_lint_mode("not-a-mode"), "full")
 
 
 class TestInterviewLinterLLM(unittest.TestCase):

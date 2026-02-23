@@ -52,7 +52,7 @@ fields:
       is: copy
 ---
 code: |
-  # import os  
+  # import os
   base_name = source_pdf[0].filename
 ---
 id: field_normalize_waiting_screen
@@ -70,35 +70,51 @@ code: |
 ---
 event: rename_pdf_action
 code: |
-  formfyxer.parse_form(source_pdf[0].path(), title=base_name, jur="MA", normalize=1,rewrite=1, tools_token=get_config("assembly line", {}).get("tools.suffolklitlab.org api key"))
+  formfyxer.parse_form(
+    source_pdf[0].path(),
+    title=base_name,
+    jur="MA",
+    normalize=1,
+    rewrite=1,
+    tools_token=get_config("assembly line", {}).get("tools.suffolklitlab.org api key"),
+  )
   source_pdf[0].commit()
   background_response_action("save_normalized_pdf", source_pdf=source_pdf)
 ---
 event: save_normalized_pdf
 code: |
-  source_pdf = action_argument('source_pdf')  
+  source_pdf = action_argument("source_pdf")
   background_response()
 ---
 code: |
-  new_pdf.initialize(filename = f"fields_{base_name}")
+  new_pdf.initialize(filename=f"fields_{base_name}")
   formfyxer.auto_add_fields(source_pdf[0].path(), new_pdf.path())
-  
+
   # also normalize field names after newly recognizing them
-  formfyxer.parse_form(new_pdf.path(), title=base_name, jur="MA", normalize=1, rewrite=1, tools_token=get_config("assembly line", {}).get("tools.suffolklitlab.org api key"))
-  
+  formfyxer.parse_form(
+    new_pdf.path(),
+    title=base_name,
+    jur="MA",
+    normalize=1,
+    rewrite=1,
+    tools_token=get_config("assembly line", {}).get("tools.suffolklitlab.org api key"),
+  )
+
   new_pdf.commit()
   process_field_recognition = True
 ---
 code: |
   new_pdf.initialize(filename=destination_pdf[0].filename)
-  
+
   # Returns a PikePDF object
-  tmp_pdf = formfyxer.swap_pdf_page(source_pdf=source_pdf[0].path(), destination_pdf=destination_pdf[0].path())
-  
-  tmp_pdf.save(new_pdf.path())  
+  tmp_pdf = formfyxer.swap_pdf_page(
+    source_pdf=source_pdf[0].path(), destination_pdf=destination_pdf[0].path()
+  )
+
+  tmp_pdf.save(new_pdf.path())
   new_pdf.commit()
-  
-  del tmp_pdf # PikePDF might not be serializable with Pickle
+
+  del tmp_pdf  # PikePDF might not be serializable with Pickle
   copy_pdf_fields = True
 ---
 event: view_normalized_pdf
@@ -143,7 +159,15 @@ question: |
   Rename fields
 fields: 
   - code: |
-      [{item[0]: f"rename_fields['{item[0]}']", "default" : item[0], "label above field": True, "required": False} for item in source_pdf[0].get_pdf_fields()]
+      [
+        {
+          item[0]: f"rename_fields['{item[0]}']",
+          "default": item[0],
+          "label above field": True,
+          "required": False,
+        }
+        for item in source_pdf[0].get_pdf_fields()
+      ]
 right: |
   #### Preview of PDF label placement
   
@@ -161,7 +185,7 @@ attachment:
       source_pdf
   code: |
     [
-      {field[0]: "Yes" if field[4] == "/Btn" else field[0]} 
+      {field[0]: "Yes" if field[4] == "/Btn" else field[0]}
       for field in source_pdf[0].get_pdf_fields()
     ]
 ---
@@ -173,13 +197,14 @@ attachment:
       new_pdf
   code: |
     [
-      {field[0]: "Yes" if field[4] == "/Btn" else field[0]} 
+      {field[0]: "Yes" if field[4] == "/Btn" else field[0]}
       for field in new_pdf.get_pdf_fields()
     ]
 ---
 code: |
   new_pdf.initialize(filename=base_name)
-  formfyxer.rename_pdf_fields(in_file=source_pdf[0].path(), out_file=new_pdf.path(), mapping=rename_fields)
-  
+  formfyxer.rename_pdf_fields(
+    in_file=source_pdf[0].path(), out_file=new_pdf.path(), mapping=rename_fields
+  )
+
   renamed_fields = True
-  

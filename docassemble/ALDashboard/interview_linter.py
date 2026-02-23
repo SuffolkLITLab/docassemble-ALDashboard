@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import (
     Any,
     Callable,
@@ -83,6 +84,8 @@ __all__ = [
     "list_playground_projects",
     "list_playground_yaml_files",
     "lint_multiple_sources",
+    "list_lint_modes",
+    "normalize_lint_mode",
 ]
 
 
@@ -114,7 +117,17 @@ CODING_STYLE_URL = "https://assemblyline.suffolklitlab.org/docs/coding_style"
 AUTHORING_GUIDE_URL = (
     "https://assemblyline.suffolklitlab.org/docs/authoring/generated_yaml/"
 )
+PLAIN_LANGUAGE_GUIDE_URL = (
+    "https://www.plainlanguage.gov/guidelines/words/use-simple-words-phrases/"
+)
 METADATA_GUIDE_URL = f"{AUTHORING_GUIDE_URL}#interview-metadata-and-metadata-for-publishing-on-courtformsonline"
+WCAG_LABELS_INSTRUCTIONS_URL = (
+    "https://www.w3.org/WAI/WCAG21/Understanding/labels-or-instructions.html"
+)
+WCAG_LINK_PURPOSE_URL = (
+    "https://www.w3.org/WAI/WCAG21/Understanding/link-purpose-in-context.html"
+)
+DEFAULT_LINT_MODE = "full"
 
 FIELD_NON_LABEL_KEYS = {
     "label",
@@ -154,6 +167,60 @@ FIELD_NON_LABEL_KEYS = {
     "table",
 }
 
+GENERIC_LINK_TEXT = {
+    "click here",
+    "go here",
+    "here",
+    "learn more",
+    "link",
+    "more",
+    "read more",
+    "read this",
+    "this link",
+}
+
+NON_DESCRIPTIVE_FIELD_LABELS = {
+    "answer",
+    "click here",
+    "n/a",
+    "na",
+    "option",
+    "option 1",
+    "select",
+    "value",
+}
+
+AMBIGUOUS_BUTTON_TEXT = {
+    "go",
+    "ok",
+    "submit",
+}
+
+COLOR_WORDS = {
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "orange",
+    "purple",
+    "pink",
+    "black",
+    "white",
+    "gray",
+    "grey",
+}
+
+DEFINITE_RULE_IDS = {
+    "image-missing-alt-text",
+    "field-missing-label",
+    "blank-choice-label",
+    "empty-link-text",
+    "table-missing-headers",
+    "positive-tabindex",
+    "missing-question-id",
+    "multiple-mandatory-blocks",
+}
+
 
 @dataclass(frozen=True)
 class LintIssue:
@@ -186,6 +253,26 @@ def _shorten(text: Any, limit: int = 180) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def _normalize_human_text(value: Any) -> str:
+    plain_text = remove_mako(_stringify(value))
+    plain_text = re.sub(r"<[^>]+>", " ", plain_text)
+    plain_text = re.sub(r"\s+", " ", plain_text).strip().lower()
+    return re.sub(r"[^\w\s]", "", plain_text)
+
+
+def _looks_like_emoji_or_punctuation_only(value: str) -> bool:
+    stripped = _stringify(value).strip()
+    if not stripped:
+        return False
+    # If no alphanumeric characters remain, this is likely punctuation/symbol-only text.
+    return not bool(re.search(r"[A-Za-z0-9]", stripped))
+
+
+def _is_no_label_marker(value: Any) -> bool:
+    normalized = _normalize_human_text(value)
+    return normalized in {"no label", "nolabel"}
 
 
 def _anchor_slug(value: str) -> str:
@@ -304,6 +391,46 @@ def _extract_field_variable(field: dict) -> str:
             continue
         return _stringify(value).strip()
     return ""
+
+
+def _extract_field_label(field: dict) -> str:
+    explicit = _stringify(field.get("label")).strip()
+    if explicit and not _is_no_label_marker(explicit):
+        return explicit
+    for key in field.keys():
+        key_text = _stringify(key).strip()
+        if _is_no_label_marker(key_text):
+            return ""
+        if key_text and key_text not in FIELD_NON_LABEL_KEYS:
+            return key_text
+    return ""
+
+
+def _iter_choice_labels(choices: Any) -> List[str]:
+    labels: List[str] = []
+    if isinstance(choices, list):
+        for choice in choices:
+            if isinstance(choice, str):
+                if ": " in choice:
+                    labels.append(choice.split(": ", 1)[0])
+                else:
+                    labels.append(choice)
+            elif isinstance(choice, dict):
+                label = _stringify(choice.get("label"))
+                if label:
+                    labels.append(label)
+                elif len(choice) == 1:
+                    labels.append(_stringify(next(iter(choice.keys()))))
+    elif isinstance(choices, dict):
+        labels.extend(_stringify(key) for key in choices.keys())
+    return labels
+
+
+def _is_truthy_yaml_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = _stringify(value).strip().lower()
+    return normalized in {"true", "yes", "1", "on"}
 
 
 def _find_metadata(docs: Sequence[dict]) -> Dict[str, Any]:
@@ -1274,6 +1401,741 @@ def _check_image_alt_text(
     return findings
 
 
+def _check_missing_field_labels(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        for field in _coerce_fields(doc):
+            if "code" in field:
+                continue
+            variable_name = _extract_field_variable(field)
+            if not variable_name:
+                continue
+
+            label_text = _extract_field_label(field)
+            if label_text:
+                continue
+
+            findings.append(
+                LintIssue(
+                    rule_id="field-missing-label",
+                    severity="red",
+                    message=(
+                        "Field appears to collect user input but has no visible label."
+                    ),
+                    url=WCAG_LABELS_INSTRUCTIONS_URL,
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=f"field variable `{variable_name}`",
+                )
+            )
+    return findings
+
+
+def _check_non_descriptive_field_labels(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        for field in _coerce_fields(doc):
+            label_text = _extract_field_label(field)
+            if not label_text:
+                continue
+            normalized = _normalize_human_text(label_text)
+            if (
+                normalized in NON_DESCRIPTIVE_FIELD_LABELS
+                or _looks_like_emoji_or_punctuation_only(label_text)
+            ):
+                findings.append(
+                    LintIssue(
+                        rule_id="non-descriptive-field-label",
+                        severity="yellow",
+                        message="Field label may be too vague for assistive technology users.",
+                        url=WCAG_LABELS_INSTRUCTIONS_URL,
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(label_text),
+                    )
+                )
+    return findings
+
+
+def _check_choice_label_quality(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+
+    def inspect_labels(
+        labels: Sequence[str], doc: dict, idx: int, location: str
+    ) -> None:
+        for label in labels:
+            clean = _stringify(label).strip()
+            if not clean:
+                findings.append(
+                    LintIssue(
+                        rule_id="blank-choice-label",
+                        severity="red",
+                        message=f"Choice in `{location}` has an empty label.",
+                        url=WCAG_LABELS_INSTRUCTIONS_URL,
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(label),
+                    )
+                )
+                continue
+
+            normalized = _normalize_human_text(clean)
+            if (
+                normalized in NON_DESCRIPTIVE_FIELD_LABELS
+                or _looks_like_emoji_or_punctuation_only(clean)
+            ):
+                findings.append(
+                    LintIssue(
+                        rule_id="non-descriptive-choice-label",
+                        severity="yellow",
+                        message=f"Choice label in `{location}` may be too vague.",
+                        url=WCAG_LABELS_INSTRUCTIONS_URL,
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(clean),
+                    )
+                )
+
+    for idx, doc in enumerate(docs):
+        for key in ["choices", "dropdown", "combobox", "buttons"]:
+            inspect_labels(_iter_choice_labels(doc.get(key)), doc, idx, key)
+
+        for field_idx, field in enumerate(_coerce_fields(doc)):
+            inspect_labels(
+                _iter_choice_labels(field.get("choices")),
+                doc,
+                idx,
+                f"fields[{field_idx}].choices",
+            )
+    return findings
+
+
+def _check_duplicate_field_labels(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    ignorable_labels = {"no label", "note", "html"}
+    for idx, doc in enumerate(docs):
+        by_label: Dict[str, Set[str]] = {}
+        by_label_conditionals: Dict[str, bool] = {}
+        for field in _coerce_fields(doc):
+            label_text = _extract_field_label(field)
+            variable = _extract_field_variable(field)
+            if not label_text or not variable:
+                continue
+            normalized = _normalize_human_text(label_text)
+            if not normalized or normalized in ignorable_labels:
+                continue
+            by_label.setdefault(normalized, set()).add(variable)
+            by_label_conditionals[normalized] = by_label_conditionals.get(
+                normalized, False
+            ) or bool(field.get("show if") or field.get("js show if"))
+
+        duplicates = []
+        for label, variables in by_label.items():
+            if len(variables) <= 1:
+                continue
+            # Conditional duplicates are often intentional (for alternate paths).
+            if by_label_conditionals.get(label):
+                continue
+            duplicates.append(label)
+        if duplicates:
+            findings.append(
+                LintIssue(
+                    rule_id="duplicate-field-label",
+                    severity="yellow",
+                    message="Multiple fields on this screen share the same label text.",
+                    url=WCAG_LABELS_INSTRUCTIONS_URL,
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(", ".join(sorted(duplicates))),
+                )
+            )
+    return findings
+
+
+def _check_empty_screen_title(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        question_text = remove_mako(_stringify(doc.get("question"))).strip()
+        if question_text:
+            continue
+
+        has_fields = len(_coerce_fields(doc)) > 0
+        supplemental = " ".join(
+            remove_mako(_stringify(doc.get(key)))
+            for key in ["subquestion", "under", "help", "note", "html"]
+        ).strip()
+        if not has_fields and len(supplemental) < 60:
+            continue
+
+        findings.append(
+            LintIssue(
+                rule_id="missing-screen-title",
+                severity="yellow",
+                message="Screen appears to have content but no meaningful `question` title.",
+                url=f"{STYLE_GUIDE_URL}/question_overview/",
+                screen_id=_block_label(doc, f"block-{idx}"),
+                problematic_text=_shorten(supplemental or "question is blank"),
+            )
+        )
+    return findings
+
+
+def _check_color_only_instructions(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    color_pattern = "|".join(sorted(COLOR_WORDS))
+    semantic_pattern = (
+        r"required|important|correct|wrong|invalid|valid|error|highlighted"
+    )
+    nearby_pattern = re.compile(
+        rf"\b(?:{color_pattern})\b[^.?!\n]{{0,40}}\b(?:{semantic_pattern})\b"
+        rf"|\b(?:{semantic_pattern})\b[^.?!\n]{{0,40}}\b(?:{color_pattern})\b",
+        re.IGNORECASE,
+    )
+    symbol_pattern = re.compile(
+        r"(✅|❌|✔|✖|⚠)\s*(means|indicates|shows)\b", re.IGNORECASE
+    )
+
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            plain = remove_mako(text)
+            match = nearby_pattern.search(plain) or symbol_pattern.search(plain)
+            if not match:
+                continue
+            findings.append(
+                LintIssue(
+                    rule_id="color-only-instructions",
+                    severity="yellow",
+                    message=(
+                        f"Text in `{location}` may rely on color/symbols alone to convey meaning."
+                    ),
+                    url="https://www.w3.org/WAI/WCAG21/Understanding/use-of-color.html",
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(match.group(0)),
+                )
+            )
+    return findings
+
+
+def _check_inline_color_styling(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    style_color_re = re.compile(r"\bstyle\s*=\s*([\"\']).*?color\s*:", re.IGNORECASE)
+    font_color_re = re.compile(r"<font\b[^>]*\bcolor\s*=", re.IGNORECASE)
+    text_class_re = re.compile(
+        r"\bclass\s*=\s*([\"\']).*?\btext-(danger|warning|success|info)\b",
+        re.IGNORECASE,
+    )
+
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            match = (
+                style_color_re.search(text)
+                or font_color_re.search(text)
+                or text_class_re.search(text)
+            )
+            if not match:
+                continue
+            findings.append(
+                LintIssue(
+                    rule_id="inline-color-styling",
+                    severity="yellow",
+                    message=(
+                        f"Text in `{location}` uses inline or semantic color classes; verify contrast and non-color cues."
+                    ),
+                    url="https://www.w3.org/WAI/WCAG21/Understanding/non-text-contrast.html",
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(match.group(0)),
+                )
+            )
+    return findings
+
+
+def _extract_links_from_text(text: str) -> List[Dict[str, str]]:
+    links: List[Dict[str, str]] = []
+    markdown_link_re = re.compile(r"(?<!!)\[(.*?)\]\((.*?)\)")
+    html_link_re = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+    for link_text, target in markdown_link_re.findall(text):
+        links.append(
+            {
+                "kind": "markdown",
+                "text": _stringify(link_text),
+                "target": _stringify(target),
+                "attrs": "",
+                "aria_label": "",
+                "title": "",
+            }
+        )
+    for attrs, inner in html_link_re.findall(text):
+        href_match = re.search(r"\bhref\s*=\s*([\"\'])(.*?)\1", attrs, re.IGNORECASE)
+        aria_label_match = re.search(
+            r"\baria-label\s*=\s*([\"\'])(.*?)\1", attrs, re.IGNORECASE
+        )
+        title_match = re.search(r"\btitle\s*=\s*([\"\'])(.*?)\1", attrs, re.IGNORECASE)
+        links.append(
+            {
+                "kind": "html",
+                "text": _stringify(inner),
+                "target": _stringify(href_match.group(2) if href_match else ""),
+                "attrs": _stringify(attrs),
+                "aria_label": _stringify(
+                    aria_label_match.group(2) if aria_label_match else ""
+                ),
+                "title": _stringify(title_match.group(2) if title_match else ""),
+            }
+        )
+    return links
+
+
+def _normalize_link_text(label_text: str) -> str:
+    return _normalize_human_text(label_text)
+
+
+def _check_generic_link_text(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for link in _extract_links_from_text(text):
+                link_text = _stringify(link.get("text"))
+                target = _stringify(link.get("target"))
+                normalized = _normalize_link_text(link_text)
+                text_stripped = link_text.strip().lower()
+                target_stripped = target.strip().lower()
+
+                looks_like_url = bool(re.match(r"^(https?://|www\.)", text_stripped))
+                same_as_target_url = (
+                    bool(target_stripped)
+                    and _normalize_link_text(link_text) == _normalize_link_text(target)
+                    and bool(re.match(r"^(https?://|www\.)", target_stripped))
+                )
+                if (
+                    normalized in GENERIC_LINK_TEXT
+                    or looks_like_url
+                    or same_as_target_url
+                ):
+                    findings.append(
+                        LintIssue(
+                            rule_id="non-descriptive-link-text",
+                            severity="yellow",
+                            message=(
+                                f"Link text in `{location}` is not descriptive enough."
+                            ),
+                            url=WCAG_LINK_PURPOSE_URL,
+                            screen_id=_block_label(doc, f"block-{idx}"),
+                            problematic_text=_shorten(link_text or target),
+                        )
+                    )
+    return findings
+
+
+def _check_empty_link_text(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for link in _extract_links_from_text(text):
+                link_text = _stringify(link.get("text")).strip()
+                aria_label = _stringify(link.get("aria_label")).strip()
+                title = _stringify(link.get("title")).strip()
+                normalized = _normalize_link_text(link_text)
+                if normalized:
+                    continue
+                if link.get("kind") == "html" and (aria_label or title):
+                    continue
+                findings.append(
+                    LintIssue(
+                        rule_id="empty-link-text",
+                        severity="red",
+                        message=f"Link in `{location}` has no accessible text.",
+                        url=WCAG_LINK_PURPOSE_URL,
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(link.get("target")),
+                    )
+                )
+    return findings
+
+
+def _check_ambiguous_link_destinations(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        destinations_by_text: Dict[str, Set[str]] = {}
+        display_by_text: Dict[str, str] = {}
+        for _, text in _iter_doc_texts(doc):
+            for link in _extract_links_from_text(text):
+                link_text = _stringify(link.get("text")).strip()
+                target = _stringify(link.get("target")).strip()
+                normalized = _normalize_link_text(link_text)
+                if not normalized or not target:
+                    continue
+                # Skip template-evaluated links where static destination is unknown.
+                if "${" in target or "% if" in target or "% for" in target:
+                    continue
+                canonical_target = re.sub(
+                    r"^https?://", "", target, flags=re.IGNORECASE
+                )
+                canonical_target = canonical_target.rstrip("/")
+                destinations_by_text.setdefault(normalized, set()).add(canonical_target)
+                display_by_text.setdefault(normalized, link_text)
+
+        for normalized, destinations in destinations_by_text.items():
+            if len(destinations) <= 1:
+                continue
+            findings.append(
+                LintIssue(
+                    rule_id="ambiguous-link-destinations",
+                    severity="yellow",
+                    message=(
+                        "Same link text points to multiple destinations on one screen."
+                    ),
+                    url=WCAG_LINK_PURPOSE_URL,
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(
+                        f"{display_by_text.get(normalized, normalized)} -> {', '.join(sorted(destinations))}"
+                    ),
+                )
+            )
+    return findings
+
+
+def _check_new_tab_links_without_warning(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    new_tab_re = re.compile(r"\btarget\s*=\s*([\"\'])_blank\1", re.IGNORECASE)
+    warning_re = re.compile(r"new (tab|window)|opens in", re.IGNORECASE)
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for link in _extract_links_from_text(text):
+                if link.get("kind") != "html":
+                    continue
+                attrs = _stringify(link.get("attrs"))
+                if not new_tab_re.search(attrs):
+                    continue
+                warning_text = " ".join(
+                    [
+                        _stringify(link.get("text")),
+                        _stringify(link.get("aria_label")),
+                        _stringify(link.get("title")),
+                    ]
+                )
+                if warning_re.search(warning_text):
+                    continue
+                findings.append(
+                    LintIssue(
+                        rule_id="opens-new-tab-without-warning",
+                        severity="yellow",
+                        message=(
+                            f"Link in `{location}` opens a new tab/window without warning text."
+                        ),
+                        url=WCAG_LINK_PURPOSE_URL,
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(link.get("target")),
+                    )
+                )
+    return findings
+
+
+def _check_svg_accessible_names(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    svg_re = re.compile(r"<svg\b([^>]*)>(.*?)</svg>", re.IGNORECASE | re.DOTALL)
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for attrs, body in svg_re.findall(text):
+                has_aria = bool(
+                    re.search(
+                        r"\baria-label\b|\baria-labelledby\b", attrs, re.IGNORECASE
+                    )
+                )
+                has_title = bool(
+                    re.search(
+                        r"<title\b[^>]*>.*?</title>", body, re.IGNORECASE | re.DOTALL
+                    )
+                )
+                if has_aria or has_title:
+                    continue
+                findings.append(
+                    LintIssue(
+                        rule_id="svg-missing-accessible-name",
+                        severity="yellow",
+                        message=f"Inline SVG in `{location}` is missing a title/ARIA label.",
+                        url="https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten("<svg ...>"),
+                    )
+                )
+    return findings
+
+
+def _check_tables_accessibility(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    table_re = re.compile(r"<table\b[^>]*>(.*?)</table>", re.IGNORECASE | re.DOTALL)
+    row_re = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+    cell_re = re.compile(r"<t[dh]\b", re.IGNORECASE)
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for table_body in table_re.findall(text):
+                has_th = bool(re.search(r"<th\b", table_body, re.IGNORECASE))
+                has_caption = bool(re.search(r"<caption\b", table_body, re.IGNORECASE))
+                rows = row_re.findall(table_body)
+                row_count = len(rows)
+                max_cells = max((len(cell_re.findall(row)) for row in rows), default=0)
+
+                if row_count >= 2 and max_cells >= 2 and not has_th:
+                    findings.append(
+                        LintIssue(
+                            rule_id="table-missing-headers",
+                            severity="red",
+                            message=f"Table in `{location}` appears to be data but has no `<th>` headers.",
+                            url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+                            screen_id=_block_label(doc, f"block-{idx}"),
+                            problematic_text=_shorten("<table ...>"),
+                        )
+                    )
+                elif not has_th and not has_caption:
+                    findings.append(
+                        LintIssue(
+                            rule_id="layout-table-needs-review",
+                            severity="yellow",
+                            message=(
+                                f"Table in `{location}` has no headers/caption; confirm it is not layout-only."
+                            ),
+                            url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+                            screen_id=_block_label(doc, f"block-{idx}"),
+                            problematic_text=_shorten("<table ...>"),
+                        )
+                    )
+    return findings
+
+
+def _check_positive_tabindex(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    tabindex_re = re.compile(
+        r"\btabindex\s*=\s*([\"\'])?\s*([1-9][0-9]*)\s*([\"\'])?",
+        re.IGNORECASE,
+    )
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for match in tabindex_re.finditer(text):
+                findings.append(
+                    LintIssue(
+                        rule_id="positive-tabindex",
+                        severity="red",
+                        message=f"HTML in `{location}` uses `tabindex` greater than 0.",
+                        url="https://www.w3.org/WAI/WCAG21/Understanding/focus-order.html",
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(match.group(0)),
+                    )
+                )
+    return findings
+
+
+def _check_clickable_non_controls(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    tag_re = re.compile(r"<(div|span|p|li)\b([^>]*)>", re.IGNORECASE)
+    for idx, doc in enumerate(docs):
+        for location, text in _iter_doc_texts(doc):
+            for tag_name, attrs in tag_re.findall(text):
+                attrs_lower = _stringify(attrs).lower()
+                if "onclick" not in attrs_lower:
+                    continue
+                has_role = bool(
+                    re.search(r"\brole\s*=\s*['\"](button|link)['\"]", attrs_lower)
+                )
+                has_keyboard = any(
+                    key in attrs_lower
+                    for key in ["onkeydown", "onkeypress", "onkeyup", "tabindex"]
+                )
+                if has_role and has_keyboard:
+                    continue
+                findings.append(
+                    LintIssue(
+                        rule_id="clickable-non-control-html",
+                        severity="yellow",
+                        message=(
+                            f"`<{tag_name}>` in `{location}` uses `onclick` without clear keyboard semantics."
+                        ),
+                        url="https://www.w3.org/WAI/WCAG21/Understanding/keyboard.html",
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(f"<{tag_name}{attrs}>"),
+                    )
+                )
+    return findings
+
+
+def _check_required_fields_indicated(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        question_text = _stringify(doc.get("question"))
+        for field in _coerce_fields(doc):
+            if not _is_truthy_yaml_value(field.get("required")):
+                continue
+            label_text = _extract_field_label(field)
+            support_text = " ".join(
+                [
+                    label_text,
+                    _stringify(field.get("help")),
+                    _stringify(field.get("hint")),
+                    _stringify(field.get("note")),
+                    question_text,
+                ]
+            )
+            normalized = _normalize_human_text(support_text)
+            if "required" in normalized or "*" in _stringify(label_text):
+                continue
+            findings.append(
+                LintIssue(
+                    rule_id="required-field-not-indicated",
+                    severity="yellow",
+                    message=(
+                        "Required field may not clearly indicate that it is required."
+                    ),
+                    url=WCAG_LABELS_INSTRUCTIONS_URL,
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(
+                        label_text or _extract_field_variable(field)
+                    ),
+                )
+            )
+    return findings
+
+
+def _collect_validation_messages(field: dict) -> List[str]:
+    messages: List[str] = []
+    val = field.get("validation messages")
+    if isinstance(val, dict):
+        messages.extend(_stringify(item) for item in val.values())
+    elif isinstance(val, list):
+        messages.extend(_stringify(item) for item in val)
+    else:
+        messages.append(_stringify(val))
+    return [msg for msg in messages if _stringify(msg).strip()]
+
+
+def _check_validation_guidance(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    constraint_keys = {
+        "validation code",
+        "pattern",
+        "regex",
+    }
+    for idx, doc in enumerate(docs):
+        for field in _coerce_fields(doc):
+            present_constraints = {key for key in constraint_keys if key in field}
+            has_constraints = bool(present_constraints)
+            validation_messages = _collect_validation_messages(field)
+            has_constraints = has_constraints or bool(validation_messages)
+            if not has_constraints:
+                continue
+
+            has_guidance = bool(
+                _stringify(field.get("help")).strip()
+                or _stringify(field.get("hint")).strip()
+                or _stringify(field.get("note")).strip()
+                or validation_messages
+            )
+            if has_guidance:
+                continue
+
+            findings.append(
+                LintIssue(
+                    rule_id="validation-without-guidance",
+                    severity="yellow",
+                    message=(
+                        "Field has validation constraints but no hint/help or validation message."
+                    ),
+                    url="https://www.w3.org/WAI/WCAG21/Understanding/error-identification.html",
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(
+                        _extract_field_label(field) or _extract_field_variable(field)
+                    ),
+                )
+            )
+    return findings
+
+
+def _check_generic_validation_messages(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    generic_messages = {
+        "error",
+        "invalid",
+        "invalid input",
+        "invalid value",
+        "not valid",
+    }
+    for idx, doc in enumerate(docs):
+        for field in _coerce_fields(doc):
+            for message in _collect_validation_messages(field):
+                normalized = _normalize_human_text(message)
+                if normalized not in generic_messages:
+                    continue
+                findings.append(
+                    LintIssue(
+                        rule_id="generic-validation-message",
+                        severity="yellow",
+                        message="Validation message may be too generic to help users recover.",
+                        url="https://www.w3.org/WAI/WCAG21/Understanding/error-suggestion.html",
+                        screen_id=_block_label(doc, f"block-{idx}"),
+                        problematic_text=_shorten(message),
+                    )
+                )
+    return findings
+
+
+def _check_ambiguous_button_text(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    for idx, doc in enumerate(docs):
+        labels = _iter_choice_labels(doc.get("buttons"))
+        labels.append(_stringify(doc.get("continue button label")))
+        for field in _coerce_fields(doc):
+            datatype = _stringify(field.get("datatype")).strip().lower()
+            if datatype in {"button", "buttons"}:
+                labels.extend(_iter_choice_labels(field.get("choices")))
+
+        for label in labels:
+            normalized = _normalize_human_text(label)
+            if normalized not in AMBIGUOUS_BUTTON_TEXT:
+                continue
+            findings.append(
+                LintIssue(
+                    rule_id="ambiguous-button-text",
+                    severity="yellow",
+                    message="Button text may be too vague out of context.",
+                    url=WCAG_LINK_PURPOSE_URL,
+                    screen_id=_block_label(doc, f"block-{idx}"),
+                    problematic_text=_shorten(label),
+                )
+            )
+    return findings
+
+
 def _check_metadata_fields(
     docs: Sequence[dict], _: Sequence[str], __: str
 ) -> List[LintIssue]:
@@ -1617,6 +2479,12 @@ def _check_variable_conventions(
     return findings
 
 
+def _check_plain_language_replacements(
+    docs: Sequence[dict], interview_texts: Sequence[str], raw_content: str
+) -> List[LintIssue]:
+    return _check_plain_language_replacements_impl(docs, interview_texts, raw_content)
+
+
 RULES: List[LintRule] = [
     LintRule(
         "missing-metadata-fields",
@@ -1682,10 +2550,130 @@ RULES: List[LintRule] = [
         _check_image_alt_text,
     ),
     LintRule(
+        "field-missing-label",
+        "red",
+        WCAG_LABELS_INSTRUCTIONS_URL,
+        _check_missing_field_labels,
+    ),
+    LintRule(
+        "non-descriptive-field-label",
+        "yellow",
+        WCAG_LABELS_INSTRUCTIONS_URL,
+        _check_non_descriptive_field_labels,
+    ),
+    LintRule(
+        "blank-choice-label",
+        "red",
+        WCAG_LABELS_INSTRUCTIONS_URL,
+        _check_choice_label_quality,
+    ),
+    LintRule(
+        "duplicate-field-label",
+        "yellow",
+        WCAG_LABELS_INSTRUCTIONS_URL,
+        _check_duplicate_field_labels,
+    ),
+    LintRule(
+        "missing-screen-title",
+        "yellow",
+        f"{STYLE_GUIDE_URL}/question_overview/",
+        _check_empty_screen_title,
+    ),
+    LintRule(
+        "color-only-instructions",
+        "yellow",
+        "https://www.w3.org/WAI/WCAG21/Understanding/use-of-color.html",
+        _check_color_only_instructions,
+    ),
+    LintRule(
+        "inline-color-styling",
+        "yellow",
+        "https://www.w3.org/WAI/WCAG21/Understanding/non-text-contrast.html",
+        _check_inline_color_styling,
+    ),
+    LintRule(
+        "non-descriptive-link-text",
+        "yellow",
+        WCAG_LINK_PURPOSE_URL,
+        _check_generic_link_text,
+    ),
+    LintRule(
+        "empty-link-text",
+        "red",
+        WCAG_LINK_PURPOSE_URL,
+        _check_empty_link_text,
+    ),
+    LintRule(
+        "ambiguous-link-destinations",
+        "yellow",
+        WCAG_LINK_PURPOSE_URL,
+        _check_ambiguous_link_destinations,
+    ),
+    LintRule(
+        "opens-new-tab-without-warning",
+        "yellow",
+        WCAG_LINK_PURPOSE_URL,
+        _check_new_tab_links_without_warning,
+    ),
+    LintRule(
+        "svg-missing-accessible-name",
+        "yellow",
+        "https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
+        _check_svg_accessible_names,
+    ),
+    LintRule(
+        "table-missing-headers",
+        "red",
+        "https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+        _check_tables_accessibility,
+    ),
+    LintRule(
+        "positive-tabindex",
+        "red",
+        "https://www.w3.org/WAI/WCAG21/Understanding/focus-order.html",
+        _check_positive_tabindex,
+    ),
+    LintRule(
+        "clickable-non-control-html",
+        "yellow",
+        "https://www.w3.org/WAI/WCAG21/Understanding/keyboard.html",
+        _check_clickable_non_controls,
+    ),
+    LintRule(
+        "required-field-not-indicated",
+        "yellow",
+        WCAG_LABELS_INSTRUCTIONS_URL,
+        _check_required_fields_indicated,
+    ),
+    LintRule(
+        "validation-without-guidance",
+        "yellow",
+        "https://www.w3.org/WAI/WCAG21/Understanding/error-identification.html",
+        _check_validation_guidance,
+    ),
+    LintRule(
+        "generic-validation-message",
+        "yellow",
+        "https://www.w3.org/WAI/WCAG21/Understanding/error-suggestion.html",
+        _check_generic_validation_messages,
+    ),
+    LintRule(
+        "ambiguous-button-text",
+        "yellow",
+        WCAG_LINK_PURPOSE_URL,
+        _check_ambiguous_button_text,
+    ),
+    LintRule(
         "placeholder-language",
         "yellow",
         f"{STYLE_GUIDE_URL}/question_overview/",
         _check_placeholder_language,
+    ),
+    LintRule(
+        "plain-language-replacements",
+        "yellow",
+        PLAIN_LANGUAGE_GUIDE_URL,
+        _check_plain_language_replacements,
     ),
     LintRule(
         "missing-custom-theme",
@@ -1747,11 +2735,89 @@ RULES: List[LintRule] = [
 ]
 
 
+RULE_IDS_BY_MODE: Dict[str, List[str]] = {
+    "full": [rule.rule_id for rule in RULES],
+    "wcag-basic": [
+        "avoid-yesno-shortcuts",
+        "avoid-combobox",
+        "subquestion-h1",
+        "skipped-heading-level",
+        "image-missing-alt-text",
+        "field-missing-label",
+        "non-descriptive-field-label",
+        "blank-choice-label",
+        "duplicate-field-label",
+        "missing-screen-title",
+        "color-only-instructions",
+        "inline-color-styling",
+        "non-descriptive-link-text",
+        "empty-link-text",
+        "ambiguous-link-destinations",
+        "opens-new-tab-without-warning",
+        "svg-missing-accessible-name",
+        "table-missing-headers",
+        "positive-tabindex",
+        "clickable-non-control-html",
+        "required-field-not-indicated",
+        "validation-without-guidance",
+        "generic-validation-message",
+        "ambiguous-button-text",
+    ],
+}
+
+LINT_MODE_ALIASES: Dict[str, str] = {
+    "all": "full",
+    "default": "full",
+    "full": "full",
+    "accessibility": "wcag-basic",
+    "wcag": "wcag-basic",
+    "wcag-basic": "wcag-basic",
+}
+
+
+def list_lint_modes() -> List[str]:
+    return sorted(RULE_IDS_BY_MODE.keys())
+
+
+def normalize_lint_mode(
+    lint_mode: str = DEFAULT_LINT_MODE, strict: bool = False
+) -> str:
+    normalized = _stringify(lint_mode).strip().lower().replace("_", "-")
+    if not normalized:
+        return DEFAULT_LINT_MODE
+    mode = LINT_MODE_ALIASES.get(normalized)
+    if mode:
+        return mode
+    if strict:
+        raise ValueError(
+            "Unsupported lint_mode "
+            f"`{lint_mode}`. Valid options: {', '.join(list_lint_modes())}."
+        )
+    return DEFAULT_LINT_MODE
+
+
+def _rules_for_mode(lint_mode: str) -> List[LintRule]:
+    mode = normalize_lint_mode(lint_mode)
+    enabled_rule_ids = set(
+        RULE_IDS_BY_MODE.get(mode, RULE_IDS_BY_MODE[DEFAULT_LINT_MODE])
+    )
+    return [rule for rule in RULES if rule.rule_id in enabled_rule_ids]
+
+
+def _finding_confidence(rule_id: str, source: str = "deterministic") -> str:
+    if source == "llm":
+        return "needs-review"
+    return "definite" if rule_id in DEFINITE_RULE_IDS else "needs-review"
+
+
 def run_deterministic_rules(
-    docs: Sequence[dict], interview_texts: Sequence[str], raw_content: str
+    docs: Sequence[dict],
+    interview_texts: Sequence[str],
+    raw_content: str,
+    lint_mode: str = DEFAULT_LINT_MODE,
 ) -> List[Dict[str, Any]]:
     findings: List[LintIssue] = []
-    for rule in RULES:
+    for rule in _rules_for_mode(lint_mode):
         findings.extend(rule.check(docs, interview_texts, raw_content))
 
     unique: Set[Tuple[str, str, str, str, Optional[str], Optional[str]]] = set()
@@ -1777,6 +2843,7 @@ def run_deterministic_rules(
                 "screen_id": finding.screen_id,
                 "problematic_text": finding.problematic_text,
                 "source": "deterministic",
+                "confidence": _finding_confidence(finding.rule_id),
             }
         )
     return deduped
@@ -1825,6 +2892,141 @@ def load_llm_prompt_templates() -> Dict[str, Any]:
             f"interview_linter: could not load prompt templates from package {package_name}: {err}"
         )
         return {}
+
+
+@lru_cache(maxsize=1)
+def load_plain_language_replacements() -> Dict[str, str]:
+    yaml = ruamel.yaml.YAML(typ="safe")
+    package_name = _stringify(__package__) or "docassemble.ALDashboard"
+    rel_path = "data/sources/plain_language_replacements.yml"
+    file_ref = f"{package_name}:{rel_path}"
+
+    loaded: Any = None
+    if path_and_mimetype is not None:
+        try:
+            terms_path, _ = path_and_mimetype(file_ref)
+            if terms_path and os.path.exists(terms_path):
+                with open(terms_path, "r", encoding="utf-8") as fp:
+                    loaded = yaml.load(fp.read()) or {}
+        except Exception as err:
+            log(
+                f"interview_linter: failed resolving {file_ref} with path_and_mimetype: {err}"
+            )
+
+    if loaded is None:
+        try:
+            terms_path = importlib.resources.files(package_name).joinpath(
+                "data", "sources", "plain_language_replacements.yml"
+            )
+            loaded = yaml.load(terms_path.read_text(encoding="utf-8")) or {}
+        except Exception as err:
+            log(
+                "interview_linter: could not load plain-language replacement list "
+                f"from package {package_name}: {err}"
+            )
+            loaded = {}
+
+    if not isinstance(loaded, dict):
+        return {}
+
+    normalized: Dict[str, str] = {}
+    for key, value in loaded.items():
+        term = _stringify(key).strip().lower().replace("’", "'")
+        replacement = _stringify(value).strip()
+        if term and replacement:
+            normalized[term] = replacement
+    return normalized
+
+
+@lru_cache(maxsize=1)
+def _compiled_plain_language_patterns() -> List[Tuple[str, str, Any]]:
+    compiled: List[Tuple[str, str, Any]] = []
+    replacements = load_plain_language_replacements()
+    sorted_terms = sorted(
+        replacements.items(), key=lambda item: len(item[0]), reverse=True
+    )
+    for term, replacement in sorted_terms:
+        if not re.search(r"[a-z0-9]", term):
+            continue
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+            re.IGNORECASE,
+        )
+        compiled.append((term, replacement, pattern))
+    return compiled
+
+
+def _find_plain_language_suggestions(
+    text: str, max_matches: int = 8
+) -> List[Tuple[str, str]]:
+    plain = remove_mako(text)
+    if not plain:
+        return []
+
+    occupied: List[Tuple[int, int]] = []
+    seen_terms: Set[str] = set()
+    matches: List[Tuple[int, str, str]] = []
+    for _, replacement, pattern in _compiled_plain_language_patterns():
+        if len(matches) >= max_matches:
+            break
+        for found in pattern.finditer(plain):
+            span = (found.start(), found.end())
+            overlaps = any(
+                not (span[1] <= used_start or span[0] >= used_end)
+                for used_start, used_end in occupied
+            )
+            if overlaps:
+                continue
+            seen_key = found.group(0).strip().lower()
+            if seen_key in seen_terms:
+                continue
+            seen_terms.add(seen_key)
+            occupied.append(span)
+            matches.append((found.start(), found.group(0), replacement))
+            break
+    matches.sort(key=lambda item: item[0])
+    return [(match_text, replacement) for _, match_text, replacement in matches]
+
+
+def _format_plain_language_replacement(value: str) -> str:
+    formatted = _stringify(value).strip()
+    if formatted.startswith("[") and formatted.endswith("]"):
+        formatted = formatted[1:-1].strip()
+    return formatted
+
+
+def _check_plain_language_replacements_impl(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    seen: Set[Tuple[str, str, str]] = set()
+
+    for idx, doc in enumerate(docs):
+        screen_id = _block_label(doc, f"block-{idx}")
+        for location, text in _iter_doc_texts(doc):
+            suggestions = _find_plain_language_suggestions(text)
+            for matched_text, replacement in suggestions:
+                formatted_replacement = _format_plain_language_replacement(replacement)
+                key = (screen_id, location, matched_text.strip().lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                findings.append(
+                    LintIssue(
+                        rule_id="plain-language-replacements",
+                        severity="yellow",
+                        message=(
+                            "Complex wording found; consider a simpler phrase "
+                            f"(`{matched_text}` -> `{formatted_replacement}`)."
+                        ),
+                        url=PLAIN_LANGUAGE_GUIDE_URL,
+                        screen_id=screen_id,
+                        problematic_text=_shorten(
+                            f"{location}: {matched_text} -> {formatted_replacement}"
+                        ),
+                    )
+                )
+    return findings
 
 
 def _safe_parse_llm_json(raw: Any) -> List[Dict[str, Any]]:
@@ -1903,14 +3105,23 @@ def run_llm_rules(
                     "problematic_text": _stringify(item.get("problematic_text"))
                     or None,
                     "source": "llm",
+                    "confidence": _finding_confidence(
+                        _stringify(item.get("rule_id"))
+                        or _stringify(rule.get("rule_id")),
+                        source="llm",
+                    ),
                 }
             )
     return findings
 
 
 def lint_interview_content(
-    content: str, language: str = "en", include_llm: bool = False
+    content: str,
+    language: str = "en",
+    include_llm: bool = False,
+    lint_mode: str = DEFAULT_LINT_MODE,
 ) -> Dict[str, Any]:
+    resolved_lint_mode = normalize_lint_mode(lint_mode)
     yaml_errors = _run_dayamlchecker(content)
     if yaml_errors:
         findings = [
@@ -1922,6 +3133,7 @@ def lint_interview_content(
                 "screen_id": None,
                 "problematic_text": _shorten(error, limit=400),
                 "source": "yaml",
+                "confidence": "definite",
             }
             for error in yaml_errors
         ]
@@ -1937,6 +3149,7 @@ def lint_interview_content(
             "misspelled": [],
             "headings_warnings": [],
             "style_warnings": [],
+            "lint_mode": resolved_lint_mode,
             "interview_texts": [],
             "screen_catalog": [],
             "findings": findings,
@@ -1957,7 +3170,9 @@ def lint_interview_content(
         for message, url in text_violations(interview_texts_no_mako)
     ]
 
-    findings = run_deterministic_rules(yaml_parsed, interview_texts, content)
+    findings = run_deterministic_rules(
+        yaml_parsed, interview_texts, content, lint_mode=resolved_lint_mode
+    )
     if include_llm:
         findings.extend(
             run_llm_rules(yaml_parsed, interview_texts, screen_catalog=screen_catalog)
@@ -1973,6 +3188,7 @@ def lint_interview_content(
         "misspelled": sorted(get_misspelled_words(paragraph, language=language)),
         "headings_warnings": headings_violations(headings),
         "style_warnings": style_warnings,
+        "lint_mode": resolved_lint_mode,
         "interview_texts": interview_texts,
         "screen_catalog": screen_catalog,
         "findings": findings,
@@ -1981,7 +3197,10 @@ def lint_interview_content(
 
 
 def lint_multiple_sources(
-    sources: Sequence[Dict[str, str]], language: str = "en", include_llm: bool = False
+    sources: Sequence[Dict[str, str]],
+    language: str = "en",
+    include_llm: bool = False,
+    lint_mode: str = DEFAULT_LINT_MODE,
 ) -> List[Dict[str, Any]]:
     """
     Lint multiple source files. Each source item should contain:
@@ -1989,6 +3208,7 @@ def lint_multiple_sources(
     - token: either absolute path or "ref:<package>:data/questions/file.yml"
     """
     reports: List[Dict[str, Any]] = []
+    resolved_lint_mode = normalize_lint_mode(lint_mode)
     for source in sources:
         name = (
             _stringify(source.get("name"))
@@ -2010,7 +3230,10 @@ def lint_multiple_sources(
         try:
             with open(path, "r", encoding="utf-8") as fp:
                 result = lint_interview_content(
-                    fp.read(), language=language, include_llm=include_llm
+                    fp.read(),
+                    language=language,
+                    include_llm=include_llm,
+                    lint_mode=resolved_lint_mode,
                 )
             reports.append(
                 {"name": name, "token": token, "error": None, "result": result}
@@ -2023,9 +3246,15 @@ def lint_multiple_sources(
 
 
 def lint_uploaded_interview(
-    path: str, language: str = "en", include_llm: bool = False
+    path: str,
+    language: str = "en",
+    include_llm: bool = False,
+    lint_mode: str = DEFAULT_LINT_MODE,
 ) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as yaml_file:
         return lint_interview_content(
-            yaml_file.read(), language=language, include_llm=include_llm
+            yaml_file.read(),
+            language=language,
+            include_llm=include_llm,
+            lint_mode=lint_mode,
         )

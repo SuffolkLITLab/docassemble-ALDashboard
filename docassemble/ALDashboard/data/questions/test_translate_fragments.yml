@@ -12,13 +12,16 @@ code: |
     (0, "The quick brown fox jumps over the lazy dog."),
     (20, "Your name"),
     (22, "${ users[0] }'s birthdate is"),
-    (55, """% if user_is_cool_status == "cool":
+    (
+      55,
+      """% if user_is_cool_status == "cool":
   You are cool!
   ${ "and it's a cool day!" if the_date < today() else "" }
   % else:
   You are not cool!
   % endif
-  """),
+  """,
+    ),
   )
 ---
 question: |

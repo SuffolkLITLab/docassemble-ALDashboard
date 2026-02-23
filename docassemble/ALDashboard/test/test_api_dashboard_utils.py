@@ -181,6 +181,7 @@ class TestDashboardAPIUtils(unittest.TestCase):
             {
                 "include_llm": "true",
                 "language": "en",
+                "lint_mode": "wcag",
                 "sources": [
                     {
                         "name": "x.yml",
@@ -192,7 +193,25 @@ class TestDashboardAPIUtils(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertTrue(payload["include_llm"])
         self.assertEqual(payload["language"], "en")
-        self.assertTrue(mock_lint.called)
+        self.assertEqual(payload["lint_mode"], "wcag-basic")
+        self.assertIn("wcag-basic", payload["available_lint_modes"])
+        mock_lint.assert_called_once()
+        call_kwargs = mock_lint.call_args.kwargs
+        self.assertEqual(call_kwargs.get("lint_mode"), "wcag-basic")
+
+    def test_interview_lint_payload_rejects_unknown_lint_mode(self):
+        with self.assertRaises(DashboardAPIValidationError):
+            interview_lint_payload_from_options(
+                {
+                    "lint_mode": "unknown-mode",
+                    "sources": [
+                        {
+                            "name": "x.yml",
+                            "token": "ref:docassemble.Example:data/questions/test.yml",
+                        }
+                    ],
+                }
+            )
 
     def test_interview_lint_payload_requires_any_source(self):
         with self.assertRaises(DashboardAPIValidationError):

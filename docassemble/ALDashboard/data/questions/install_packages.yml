@@ -42,13 +42,15 @@ fields:
     show if: packages[i].add_alias
 ---
 code: |
-  install_packages_task = background_action('install_packages_event')
+  install_packages_task = background_action("install_packages_event")
 ---
 event: install_packages_event
 code: |
   background_error_action("bg_failure")
   for package in packages:
-    pkgname = install_from_github_url(package.github_url, pat=package.github_token if package.is_private else None)
+    pkgname = install_from_github_url(
+      package.github_url, pat=package.github_token if package.is_private else None
+    )
     reset(pkgname)
 
   if any((package.add_alias for package in packages)):

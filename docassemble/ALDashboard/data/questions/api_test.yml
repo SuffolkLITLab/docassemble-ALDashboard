@@ -23,9 +23,16 @@ code: |
   if my_person.address.address:
     my_person.address.geocode()
   if my_person.email:
-    email_success = send_email(to=my_person, subject="Test message from Docassemble", body="Test message body. Thanks for testing with ALDashboard.")
+    email_success = send_email(
+      to=my_person,
+      subject="Test message from Docassemble",
+      body="Test message body. Thanks for testing with ALDashboard.",
+    )
   if my_person.phone_number:
-    sms_success = send_sms(to=my_person, body="Test message from Docassemble. Thanks for testing with ALDashboard.")
+    sms_success = send_sms(
+      to=my_person,
+      body="Test message from Docassemble. Thanks for testing with ALDashboard.",
+    )
   if test_chat_message:
     chat_response = chat_completion("you are a helpful assistant", test_chat_message)
   api_results

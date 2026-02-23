@@ -41,12 +41,19 @@ fields:
         if (
           package.package.name.startswith("docassemble")
           and package.can_update
-          and package.package.name not in ["docassemble", "docassemble-backports", "docassemble.webapp", "docassemble-textstat", "docassemblekvsession"]
+          and package.package.name
+          not in [
+            "docassemble",
+            "docassemble-backports",
+            "docassemble.webapp",
+            "docassemble-textstat",
+            "docassemblekvsession",
+          ]
         )
       ]
 ---
 code: |
-  install_packages_task = background_action('install_packages_event')
+  install_packages_task = background_action("install_packages_event")
 ---
 event: install_packages_event
 code: |

@@ -17,12 +17,12 @@ code: |
   # Show any errors first
   if len(installer.errors) > 0:
     installer.show_errors
-  
+
   backup_file
   welcome
   basic_server_config
   recommended_api_config
-  
+
   if configure_api_github:
     # -- GitHub --
     # Token with repo permission scope
@@ -31,7 +31,7 @@ code: |
     # Other config questions
     github_owners_list
     save_repo_owners
-    if len(the_config['github issues']['allowed repository owners']) == 1:
+    if len(the_config["github issues"]["allowed repository owners"]) == 1:
       set_default_owner_from_list
     else:
       github_owners_default
@@ -103,58 +103,95 @@ fields:
 ---
 code: |
   if not "assembly line" in the_config:
-    the_config["assembly line"] = {}    
-  the_config["assembly line"]["enable answer sets"] = enable_answer_sets      
+    the_config["assembly line"] = {}
+  the_config["assembly line"]["enable answer sets"] = enable_answer_sets
   the_config["assembly line"]["enable answer set imports"] = enable_answer_set_imports
   set_answer_set_config = True
 ---
 code: |
   if not "assembly line" in the_config:
-    the_config["assembly line"] = {}    
+    the_config["assembly line"] = {}
   if enable_custom_interview_list:
-    the_config["assembly line"]["update session metadata"] = enable_session_metadata_update
+    the_config["assembly line"][
+      "update session metadata"
+    ] = enable_session_metadata_update
     the_config["assembly line"]["new form url"] = custom_interview_list_start_page
-    the_config["session list interview"] = "docassemble.AssemblyLine:data/questions/interview_list.yml"
+    the_config["session list interview"] = (
+      "docassemble.AssemblyLine:data/questions/interview_list.yml"
+    )
   set_custom_interview_list = True
 ---
 depends on:
   - allowed_github_repo_owners
 code: |
-  the_config['github issues']['allowed repository owners'] = allowed_github_repo_owners.splitlines()
+  the_config["github issues"][
+    "allowed repository owners"
+  ] = allowed_github_repo_owners.splitlines()
   save_repo_owners = True
 ---
 code: |
-  github_result = installer.get_validated_github_username( the_config['github issues']['token'] )
-  if type( github_result ) is str:
-    the_config['github issues']['username'] = github_result
+  github_result = installer.get_validated_github_username(
+    the_config["github issues"]["token"]
+  )
+  if type(github_result) is str:
+    the_config["github issues"]["username"] = github_result
   complete_github_auth = True
 ---
 code: |
-  the_config['github issues']['default repository owner'] = the_config['github issues']['allowed repository owners'][0]
+  the_config["github issues"]["default repository owner"] = the_config["github issues"][
+    "allowed repository owners"
+  ][0]
   set_default_owner_from_list = True
 ---
 code: |
-  if add_weaver_shortcut and not 'docassemble.ALWeaver:data/questions/assembly_line.yml' in the_config.get('administrative interviews',[]):
-    if not isinstance(the_config.get('administrative interviews'), list):
-      the_config['administrative interviews'] = []
-    the_config['administrative interviews'].append('docassemble.ALWeaver:data/questions/assembly_line.yml')
-  if add_dashboard_shortcut and not 'docassemble.ALDashboard:data/questions/menu.yml' in the_config.get('administrative interviews',[]):
-    if not isinstance(the_config.get('administrative interviews'), list):
-      the_config['administrative interviews'] = []
-    the_config['administrative interviews'].append('docassemble.ALDashboard:data/questions/menu.yml')
-       
-  if add_playground_examples and not 'docassemble.ALRecipes:data/questions/examples.yml' in the_config.get('playground examples', []):
-    if not isinstance(the_config.get('playground examples'), list):
-      the_config['playground examples'] = []
-    the_config['playground examples'].insert(0, 'docassemble.ALRecipes:data/questions/examples.yml')
+  if (
+    add_weaver_shortcut
+    and not "docassemble.ALWeaver:data/questions/assembly_line.yml"
+    in the_config.get("administrative interviews", [])
+  ):
+    if not isinstance(the_config.get("administrative interviews"), list):
+      the_config["administrative interviews"] = []
+    the_config["administrative interviews"].append(
+      "docassemble.ALWeaver:data/questions/assembly_line.yml"
+    )
+  if (
+    add_dashboard_shortcut
+    and not "docassemble.ALDashboard:data/questions/menu.yml"
+    in the_config.get("administrative interviews", [])
+  ):
+    if not isinstance(the_config.get("administrative interviews"), list):
+      the_config["administrative interviews"] = []
+    the_config["administrative interviews"].append(
+      "docassemble.ALDashboard:data/questions/menu.yml"
+    )
+
+  if (
+    add_playground_examples
+    and not "docassemble.ALRecipes:data/questions/examples.yml"
+    in the_config.get("playground examples", [])
+  ):
+    if not isinstance(the_config.get("playground examples"), list):
+      the_config["playground examples"] = []
+    the_config["playground examples"].insert(
+      0, "docassemble.ALRecipes:data/questions/examples.yml"
+    )
     # Add the default playground examples explicitly
-    if not 'docassemble.base:data/questions/example-list.yml' in the_config['playground examples']:
-      the_config['playground examples'].append('docassemble.base:data/questions/example-list.yml')
-  if add_word_translations and not "docassemble.AssemblyLine:data/sources/es-words.yml" in the_config.get('words'):
-    if not isinstance(the_config.get('words'), list):
-      the_config['words'] = []
-    the_config['words'].append('docassemble.AssemblyLine:data/sources/es-words.yml')
-  
+    if (
+      not "docassemble.base:data/questions/example-list.yml"
+      in the_config["playground examples"]
+    ):
+      the_config["playground examples"].append(
+        "docassemble.base:data/questions/example-list.yml"
+      )
+  if (
+    add_word_translations
+    and not "docassemble.AssemblyLine:data/sources/es-words.yml"
+    in the_config.get("words")
+  ):
+    if not isinstance(the_config.get("words"), list):
+      the_config["words"] = []
+    the_config["words"].append("docassemble.AssemblyLine:data/sources/es-words.yml")
+
   results = da_write_config(the_config)
   save_config = True
 ---
@@ -180,16 +217,16 @@ subquestion: |
 ---
 code: |
   the_config = da_get_config()
-  
+
   # Create some empty structures in config for new settings
-  if not the_config.get('efile proxy'):
-    the_config['efile proxy'] = {}
-  if not the_config.get('google'):
-    the_config['google'] = {}
-  if not the_config.get('voicerss'):
-    the_config['voicerss'] = {}
-  if not the_config.get('github issues'):
-    the_config['github issues'] = {} 
+  if not the_config.get("efile proxy"):
+    the_config["efile proxy"] = {}
+  if not the_config.get("google"):
+    the_config["google"] = {}
+  if not the_config.get("voicerss"):
+    the_config["voicerss"] = {}
+  if not the_config.get("github issues"):
+    the_config["github issues"] = {}
 ---
 id: configuration questions
 continue button field: basic_server_config
@@ -214,24 +251,24 @@ fields:
       6 seconds (6000 microseconds).
     show if:
       code: |
-        the_config.get('checkin interval') != 6000
+        the_config.get("checkin interval") != 6000
   - Check-in interval: the_config['checkin interval']
     default: 6000
     show if:
       code: |
-        the_config.get('checkin interval') != 6000
+        the_config.get("checkin interval") != 6000
   - note: |
       ---
       The Assembly Line makes extensive use of Font Awesome. Some icons
       may not work if you do not use font awesome as your icon set.
     show if:
       code: |
-        the_config.get('default icons') != 'font awesome'
+        the_config.get("default icons") != "font awesome"
   - Default icon set: the_config['default icons']
     default: font awesome
     show if:
       code: |
-        the_config.get('default icons') != 'font awesome'
+        the_config.get("default icons") != "font awesome"
 ---
 id: api configuration
 continue button field: recommended_api_config
@@ -428,7 +465,7 @@ fields:
   - Default account name: the_config['github issues']['default repository owner']
     input type: radio
     code: |
-      the_config['github issues'].get('allowed repository owners', [])
+      the_config["github issues"].get("allowed repository owners", [])
 ---
 id: shortcuts
 continue button field: menu_shortcut_config
@@ -512,7 +549,9 @@ modules:
   - .aldashboard
 ---
 code: |
-  for pkg_url in selected_mandatory_packages.true_values() + selected_optional_packages.true_values():
+  for pkg_url in (
+    selected_mandatory_packages.true_values() + selected_optional_packages.true_values()
+  ):
     pkgname = install_from_github_url(pkg_url)
   reset(pkgname)
   al_install_done = True
@@ -524,7 +563,13 @@ fields:
   - Core packages: selected_mandatory_packages
     datatype: checkboxes
     code: |
-      [{key: mandatory_packages[key].get('label'), "help": mandatory_packages[key].get('help')} for key in mandatory_packages]
+      [
+        {
+          key: mandatory_packages[key].get("label"),
+          "help": mandatory_packages[key].get("help"),
+        }
+        for key in mandatory_packages
+      ]
     default:
       - https://github.com/SuffolkLITLab/docassemble-ALToolbox
       - https://github.com/SuffolkLITLab/docassemble-AssemblyLine
@@ -533,7 +578,13 @@ fields:
   - Optional packages: selected_optional_packages
     datatype: checkboxes
     code: |
-      [{key: optional_packages[key].get('label'), "help": optional_packages[key].get('help')} for key in optional_packages]  
+      [
+        {
+          key: optional_packages[key].get("label"),
+          "help": optional_packages[key].get("help"),
+        }
+        for key in optional_packages
+      ]
     none of the above: False      
 ---
 event: end_screen

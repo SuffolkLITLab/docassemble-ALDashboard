@@ -1,0 +1,594 @@
+# Plain-language replacements used by the interview linter.
+# Sources reviewed on 2026-02-22:
+# - RateMyPDF/FormFyxer wordlist: formfyxer/data/simplified_words.yml
+# - https://github.com/GSA/plainlanguage.gov/blob/main/_pages/guidelines/words/use-simple-words-phrases.md
+#
+# Notes:
+# - Values are suggestions only and should be applied in context.
+# - A few high-noise terms (e.g., "address", "type") are intentionally excluded.
+
+a and/or b: a or b or both
+a number of: some
+absence of: '[no, none]'
+abundance: '[enough, plenty, a lot, say how many]'
+accede to: '[allow, agree to]'
+accelerate: speed up
+accentuate: stress
+accommodation: '[where you live, home]'
+accompany: go with
+accompanying: with
+accomplish: '[do, finish, carry out]'
+accorded: given
+according to our records: our records show
+accordingly: '[so, in line with this]'
+accrue: '[add, gain]'
+accurate: '[exact, right]'
+acknowledge: thank you for
+acquaint yourself with: '[find out about, read]'
+acquiesce: agree
+acquire: '[buy, get]'
+added: '[more, other]'
+additional: '[extra, more, other]'
+addressees: you
+addressees are requested: (omit)
+adequate: '[enough, sufficient]'
+adjacent: next to
+adjacent to: next to
+adjustment: '[change, alteration]'
+admissible: '[allowed, acceptable]'
+advantageous: '[useful, helpful]'
+adversely impact: '[hurt, set back]'
+adversely impact on: '[hurt, set back]'
+advise: '[recommend, tell, say]'
+affix: '[add, write, fasten, stick on, fix to]'
+afford an opportunity: '[allow, let]'
+afforded: given
+aforesaid: '[this, earlier in this document]'
+aggregate: total
+aircraft: plane
+aligned: '[lined up, in line]'
+alleviate: '[ease, reduce]'
+allocate: '[divide, share, give]'
+along the lines of: '[like, as in]'
+alternative: '[a choice, the other]'
+alternatively: '[or, on the other hand]'
+ameliorate: '[improve, help]'
+amendment: change
+and/or: a or b or both
+anticipate: expect
+apparent: '[clear, plain, obvious, seeming]'
+applicant: you
+application: use
+appoint: '[choose, name]'
+appointed: '[chose, named]'
+appreciable: '[many, large, great]'
+apprise: '[inform, tell]'
+appropriate: '[(omit), proper, right, suitable]'
+appropriate to: suitable for
+approximate: about
+approximately: '[about, roughly]'
+arrive onboard: arrive
+as a consequence of: because
+as a means of: to
+as of the date of: from
+as prescribed by: '[in, under]'
+as regards: '[about, on the subject of]'
+ascertain: '[find out, learn]'
+assemble: '[build, gather, put together]'
+assist: '[aid, help]'
+assist, assistance: aid, help
+assistance: '[aid, help]'
+at an early date: '[soon, say when]'
+at issue: being questioned or challenged
+at its discretion: '[can, may, (omit)]'
+at present: now
+at the moment: '[now, (omit)]'
+at the present time: '[now, (omit)]'
+attain: meet
+attempt: try
+attend: '[come to, go to, be at]'
+attributable to: '[due to, because of]'
+authority: '[right, power]'
+authorize: '[allow, let]'
+axiomatic: '[obvious, goes without saying]'
+be advised: (omit)
+belated: late
+believe: '[consider, think]'
+beneficial: '[helpful, useful]'
+benefit: help
+bestow: '[give, award]'
+breach: break
+by means of: '[by, with]'
+calculate: '[work out, decide]'
+capability: ability
+caveat: warning
+cease: '[finish, stop, end]'
+circumvent: '[get round, avoid, skirt, circle]'
+clarification: '[explanation, help]'
+close proximity: near
+combat environment: combat
+combine: '[mix, join, merge]'
+combined: '[together, joint]'
+commence: '[start, begin]'
+communicate: '[talk, write, telephone, be specific]'
+competent: '[able, can]'
+compile: '[make, collect]'
+complete: '[fill in, finish]'
+completion: end
+comply with: '[follow, keep to, meet]'
+component: part
+comprehend: '[understand, grasp]'
+comprise: form, include, make up
+comprise form: '[include, make up]'
+comprises: '[is made up of, includes]'
+compulsory: you must
+conceal: hide
+concerning: '[about, on]'
+conclusion: end
+concur: agree
+condition: rule
+consequently: so
+considerable: '[great, important]'
+consolidate: '[join, merge]'
+constitutes: '[makes up, forms, is]'
+constitutes is: '[forms, makes up]'
+construe: interpret
+consult: '[talk to, meet, ask]'
+consumption: amount used
+contains: has
+contemplate: think about
+contrary to: '[against, despite]'
+convene: meet
+correct: '[exact, right, put right]'
+correspond: write
+costs the sum of: costs
+counter: against
+courteous: polite
+cumulative: '[added up, added together]'
+currently: '[(omit), now]'
+customary: '[usual, normal]'
+decide: '[figure, find]'
+deduct: '[take off, take away]'
+deem: '[consider, think]'
+deem to be: treat as
+defer: '[put off, delay]'
+deficiency: lack of
+delete: '[cut, drop, cross out]'
+demonstrate: '[show, prove]'
+denote: show
+depart: leave
+depict: show
+designate: '[choose, point out, show, name]'
+designated: '[chose, named]'
+desire: '[want, wish]'
+despatch or dispatch: '[send, post]'
+despite the fact that: '[though, although]'
+determine: '[decide, work out, set, end, figure, find]'
+detrimental: '[harmful, damaging]'
+difficulties: problems
+diminish: '[lessen, reduce]'
+disburse: '[pay, pay out]'
+discharge: carry out
+disclose: '[tell, show]'
+disconnect: '[cut off, unplug]'
+discontinue: '[stop, end, drop]'
+discrete: separate
+discuss: talk about
+disseminate: '[spread, give]'
+documentation: '[papers, documents]'
+domiciled in: living in
+dominant: main
+due to the fact that: '[due to, since, because, as]'
+duration: '[time, life]'
+during the period: during
+during which time: while
+dwelling: home
+economical: '[cheap, good value]'
+effect modifications: '[make changes]'
+elaborate: '[explain, describe, develop]'
+elect: '[choose, pick]'
+eligible: '[allowed, qualified]'
+eliminate: '[cut, drop, end]'
+elucidate: '[explain, make clear]'
+emphasise: stress
+emphasize: stress
+employ: use
+empower: '[allow, let]'
+enable: allow
+enclosed: '[inside, with, I enclose]'
+encounter: meet
+endeavor: try
+endeavour: try
+enquire: ask
+enquiry: question
+ensure: make sure
+entitlement: right
+enumerate: count
+envisage: '[expect, imagine]'
+equipments: equipment
+equitable: fair
+equivalent: '[equal, the same]'
+erroneous: wrong
+establish: '[show, find out, set up, prove]'
+evaluate: '[test, check]'
+evidenced: showed
+evident: clear
+evince: '[show, prove]'
+ex officio: because of his or her position
+exceptionally: '[only when, in this case]'
+excessive: '[too many, too much]'
+exclude: leave out
+excluding: '[apart from, except]'
+exclusively: only
+exemplify: '[show, demonstrate, represent]'
+exempt from: free from
+exhibit: '[show, exhibit]'
+expedite: '[hurry, speed up, hasten]'
+expeditious: '[fast, quick]'
+expeditiously: '[as soon as possible, quickly]'
+expend: spend
+expenditure: spending
+expertise: ability
+expiration: end
+expire: run out
+extant: '[current, in force]'
+extremity: limit
+fabricate: '[make, make up]'
+facilitate: '[help, make possible, ease]'
+factor: reason
+failed to: '[didn''t]'
+failure to: if you do not
+feasible: '[can be done, workable]'
+females: women
+finalise: '[end, finish]'
+finalize: '[complete, finish]'
+find: '[name, show]'
+find enclosed: I enclose
+following: '[after, per, under]'
+for a period of: for
+for example,______etc.: for example, such as
+for the duration of: '[during, while]'
+for the purpose of: '[to, for]'
+for the reason that: because
+forfeit: '[give up, lose]'
+formulate: '[plan, devise]'
+forthwith: '[now, at once]'
+forward: '[send, forward]'
+frequently: often
+function: act, role, work
+function act: '[role, work]'
+furnish: '[give, send]'
+further to: '[after, following]'
+furthermore: '[then, also, and]'
+generate: '[produce, give, make]'
+give consideration to: '[consider, think about]'
+grant: give
+greatest: '[largest, most]'
+has a requirement for: needs
+has regard to: takes into account
+have regard to: take into account
+have the authority to: may
+hence: '[so, therefore, as a result]'
+henceforth: '[from now on, from today]'
+hereby: '[now, by this, (omit)]'
+herein: '[here, (omit)]'
+hereinafter: '[after this, (omit)]'
+hereof: of this
+hereto: to this
+heretofore: '[until now, previously]'
+hereunder: below
+herewith: '[with this, below, here, (omit)]'
+hitherto: until now
+hold in abeyance: '[wait, postpone]'
+hope and trust: '[hope, trust]'
+however: but
+i, the undersigned: I
+identical: same
+identify: '[name, show]'
+if and when: '[if, when]'
+illustrate: '[show, explain]'
+immediately: '[at once, now]'
+impacted: '[affected, changed]'
+implement: '[carry out, do, start]'
+imply: '[suggest, hint at]'
+in a number of cases: '[some, say how many]'
+in a timely manner: '[on time, promptly]'
+in accordance with: '[as under, in line with, because of, by]'
+in addition: '[and, as well as, also, besides, too]'
+in advance: before
+in an effort to: to
+in case of: if
+in conjunction with: '[and, with]'
+in connection with: '[for, about]'
+in consequence: '[because, as a result]'
+in excess of: more than
+in lieu of: instead of
+in order that: '[for, so, so that]'
+in order to: to
+in receipt of: '[get, have, receive]'
+in regard to: '[concerning, on]'
+in relation to: '[about, with, to]'
+in respect of: '[about, for]'
+in the absence of: without
+in the amount of: for
+in the course of: '[while, during]'
+in the event of: if
+in the event of/that: if
+in the majority of instances: '[most, mostly]'
+in the near future: soon
+in the neighborhood of: '[about, around]'
+in the neighbourhood of: '[about, around]'
+in the process of: (omit)
+in view of: since
+in view of the above: so
+in view of the fact that: '[as, because]'
+inappropriate: '[wrong, unsuitable]'
+inasmuch as: since
+inception: '[start, beginning]'
+incorporating: which includes
+incumbent upon: must
+incur: '[have to pay, owe]'
+indicate: '[show, suggest, write down]'
+indication: sign
+inform: tell
+initial: first
+initially: at first
+initiate: '[begin, start]'
+inquire: '[ask, question, investigate]'
+insert: put in
+instances: cases
+intend to: will
+inter alia: (omit)
+interface: '[meet, work with]'
+interpose no objection: don't object
+intimate: '[say, hint]'
+irrespective of: '[despite, even if]'
+is applicable to: applies to
+is authorized to: may
+is compulsory: you must
+is in consonance with: '[agrees with, follows]'
+is of the opinion: thinks
+is responsible for: '[(omit), handles]'
+issue: '[give, send, problem]'
+it appears: seems
+it is: (omit)
+it is compulsory: you must
+it is essential: '[must, need to]'
+it is known that: I/we know that
+it is mandatory: you must
+it is requested: '[please, we request, I request]'
+jeopardize: '[risk, threaten]'
+large number of: '[many, most, say how many]'
+liaison: discussion
+limited number: limits
+locality: '[place, area]'
+locate: '[find, put]'
+magnitude: size
+maintain: '[keep, support]'
+mandatory: you must
+manner: way
+manufacture: make
+marginal: '[small, slight]'
+material: relevant
+materialise: '[happen, occur]'
+materialize: '[happen, occur]'
+maximum: '[largest, most]'
+may in the future: '[may, might, could]'
+merchandise: goods
+methodology: method
+middle initial: middle initial
+minimize: decrease
+minimum: '[least, smallest]'
+mislay: lose
+modification: change
+modify: change
+monitor: '[check, watch]'
+moreover: '[and, also, as well]'
+must issue: '[will pass, will send]'
+necessitate: '[cause, need]'
+negligible: very small
+nevertheless: '[but, however, even so]'
+not later than: '[before, by]'
+not later than 10 may: by 10 May, before 11 May
+not later than 1600: by 1600
+notify: '[tell, let you know, let us know]'
+notwithstanding: '[even if, despite, still, yet]'
+numerous: '[many, say how many]'
+objective: '[aim, goal]'
+obligate: '[bind, compel]'
+obligatory: you must
+observe: see
+obtain: '[get, receive]'
+occasioned by: '[caused by, because of]'
+on a regular basis: (omit)
+on behalf of: for
+on numerous occasions: often
+on request: if you ask
+on the grounds that: because
+on the occasion that: '[when, if]'
+operate: '[use, work, run]'
+optimum: '[best, ideal, greatest, most]'
+option: '[choice, way]'
+ordinarily: '[normally, usually]'
+otherwise: or
+outstanding: unpaid
+owing to: because of
+parameters: limits
+partially: partly
+participate: '[join in, take part]'
+particulars: '[details, facts]'
+per annum: a year
+perceive: '[see, notice, understand]'
+perform: do
+permissible: allowed
+permit: '[let, allow]'
+personnel: '[people, staff]'
+persons: '[people, anyone]'
+pertaining to: about, of, on
+pertaining to about: '[of, on]'
+peruse: '[read, read carefully, look at]'
+place: put
+please: (omit)
+please find enclosed: I enclose
+portion: part
+possess: '[have, own]'
+possessions: belongings
+practicable: practical
+practically: '[almost, nearly]'
+preclude: prevent
+predominant: main
+prescribe: '[set, fix]'
+preserve: '[keep, protect]'
+previous: '[earlier, before, last]'
+previously: before
+principal: main
+prior to: before
+prioritize: rank
+proceed: go ahead
+proceed do: '[go ahead, try]'
+procure: '[get, obtain, arrange, (omit)]'
+proficiency: skill
+profusion of: '[plenty, too many, say how many]'
+prohibit: '[ban, stop]'
+projected: estimated
+prolonged: long
+promptly: '[quickly, at once]'
+promulgate: '[advertise, announce, issue, publish]'
+proportion: part
+provide: give
+provide give: '[offer, say]'
+provided that: '[if, as long as]'
+provides guidance for: guides
+provisions: '[rules, terms]'
+proximity: '[closeness, nearness]'
+purchase: buy
+pursuant to: '[under, because of, in line with]'
+pursuant to by: '[following, per, under]'
+reconsider: '[think again about, look again at]'
+reduce: cut
+reduction: cut
+referred to as: called
+refers to: '[talks about, mentions]'
+reflect: '[say, show]'
+regarding: '[about, on, of]'
+regulation: rule
+reimburse: '[repay, pay back]'
+reiterate: '[repeat, restate]'
+relating to: about
+relative to: '[about, on]'
+relocate: move
+remain: stay
+remainder: '[the rest, what is left]'
+remittance: payment
+remuneration: '[pay, payment, wages, salary]'
+render: '[make, give, send]'
+report: tell
+represents: '[shows, stands for, is]'
+request: '[ask, question, document asking for]'
+require: '[need, want, force, must]'
+requirement: need
+requirements: '[needs, rules]'
+reside: live
+residence: '[home, where you live]'
+restriction: limit
+retain: keep
+review: '[look at, look at again]'
+revised: '[new, changed]'
+said, some, such: the, this, that
+said/such/same: '[the, this, that]'
+scrutinize: '[read carefully, look at carefully]'
+select: choose
+selection: choice
+set forth in: in
+set up: '[prove, show]'
+settle: pay
+shall be issued: (organization) will send
+shall issue: '[will pass, will send]'
+similar to: like
+similarly: '[also, in the same way]'
+solely: only
+solicit: '[ask for, request]'
+specified: '[given, written, set]'
+state of the art: latest
+state-of-the-art: latest
+statutory: '[legal, by law]'
+subject: '[the, this, your]'
+subject to: '[depending on, under, keeping to]'
+submit: '[send, give]'
+subsequent: '[later, next]'
+subsequent to/upon: after
+subsequently: '[after, later, then]'
+substantial: '[large, great, a lot of, much]'
+substantially: more or less
+successfully complete: '[complete, pass]'
+sufficient: enough
+supplement: '[go with, add to]'
+supplementary: '[extra, more]'
+supply: '[give, sell, deliver]'
+take action to: (omit)
+terminate: '[stop, end]'
+that being the case: if so
+the month of: (omit)
+the question as to whether: whether
+the tenant: you
+the undersigned: I
+the use of: (omit)
+there are: (omit)
+there is: (omit)
+thereafter: '[then, afterwards]'
+thereby: '[by that, because of that]'
+therefore: so
+therein: '[in that, there]'
+thereof: '[its, their, of that]'
+thereto: to that
+this activity, command: us, we
+thus: so
+time period: time
+timely: prompt
+to date: '[so far, up to now]'
+to the extent that: '[if, when]'
+transfer: '[change, move]'
+transmit: send
+ultimately: '[in the end, finally]'
+unavailability: lack of
+under the provisions of: under
+undernoted: the following
+undersigned: '[I, we]'
+undertake: '[agree, promise, do]'
+uniform: '[same, similar]'
+unilateral: '[one-sided, one-way]'
+unoccupied: empty
+until such time: until
+until such time as: until
+utilisation: use
+utilise: use
+utilization: use
+utilize: use
+utilize, utilization: use
+validate: confirm
+variation: change
+verify: '[check, confirm, make sure]'
+viable: '[practical, workable]'
+vice: '[instead of, versus]'
+virtually: '[almost, (omit)]'
+visualize: '[see, predict]'
+warrant: '[call for, permit]'
+ways and means: ways
+we have pleasure in: we are glad to
+whatsoever: '[whatever, what, any]'
+whensoever: when
+whereas: '[but, because, since]'
+whether or not: whether
+will issue: '[will pass, will send]'
+with a view to: '[to, so that]'
+with effect from: from
+with reference to: about
+with regard to: '[about, for]'
+with respect to: '[about, for]'
+with the exception of: except for
+with the minimum of delay: '[quickly, say when]'
+witnessed: saw
+you are requested: please
+your attention is drawn to: '[please see, please note]'
+your office: you
+zone: '[area, region]'

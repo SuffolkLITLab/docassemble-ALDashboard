@@ -1053,7 +1053,7 @@ def validate_docx_payload_from_request() -> Dict[str, Any]:
 def validate_docx_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    from .validate_docx import get_jinja_errors
+    from .validate_docx import detect_docx_automation_features, get_jinja_errors
 
     raw = merge_raw_options(raw_options)
     files_option = raw.get("files")
@@ -1076,7 +1076,15 @@ def validate_docx_payload_from_options(
 
         temp_path = _write_temp_file(filename, content)
         try:
-            files.append({"file": filename, "errors": get_jinja_errors(temp_path)})
+            findings = detect_docx_automation_features(temp_path)
+            files.append(
+                {
+                    "file": filename,
+                    "errors": get_jinja_errors(temp_path),
+                    "warnings": findings.get("warnings", []),
+                    "warning_details": findings.get("warning_details", []),
+                }
+            )
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)

@@ -17,7 +17,13 @@ code: |
 code: |
   all_files = []
   for file in get_upload:
-    all_files.append({"file": file.filename, "errors": get_jinja_errors(file.path())})
+    findings = detect_docx_automation_features(file.path())
+    all_files.append({
+      "file": file.filename,
+      "errors": get_jinja_errors(file.path()),
+      "warnings": findings.get("warnings", []),
+      "warning_details": findings.get("warning_details", []),
+    })
 ---
 question: |
   Upload your DOCX template(s)
@@ -29,8 +35,10 @@ event: show_results
 question: |
   % if any(f for f in all_files if f["errors"]):
   Errors found
+  % elif any(f for f in all_files if f["warnings"]):
+  Warnings found
   % else:
-  No errors found
+  No issues found
   % endif
 subquestion: |
   % if any(f for f in all_files if f["errors"]):
@@ -45,5 +53,16 @@ subquestion: |
   #### ${ f["file"] }
   ${ indent(f["errors"]) }
   % endif
+  % endfor
+  % endif
+
+  % if any(f for f in all_files if f["warnings"]):
+  ### Files with automation warnings
+
+  % for f in (f for f in all_files if f["warnings"]):
+  #### ${ f["file"] }
+  % for warning in f["warnings"]:
+  * ${ warning }
+  % endfor
   % endfor
   % endif

@@ -198,6 +198,49 @@ question: |
 """
         self.assertIn("compound-questions", self._rule_ids(yaml_content))
 
+    def test_plain_language_replacements_single_word(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  We will commence the review now.
+"""
+        findings = self._findings(yaml_content)
+        matching = [
+            finding
+            for finding in findings
+            if finding["rule_id"] == "plain-language-replacements"
+        ]
+        self.assertTrue(matching)
+        self.assertTrue(
+            any(
+                "commence" in finding.get("problematic_text", "").lower()
+                for finding in matching
+            )
+        )
+        self.assertTrue(all(finding["severity"] == "yellow" for finding in matching))
+
+    def test_plain_language_replacements_phrase(self):
+        yaml_content = """
+---
+id: q1
+question: |
+  This step is in accordance with the court order.
+"""
+        findings = self._findings(yaml_content)
+        matching = [
+            finding
+            for finding in findings
+            if finding["rule_id"] == "plain-language-replacements"
+        ]
+        self.assertTrue(matching)
+        self.assertTrue(
+            any(
+                "in accordance with" in finding.get("problematic_text", "").lower()
+                for finding in matching
+            )
+        )
+
     def test_overlong_labels(self):
         yaml_content = """
 ---

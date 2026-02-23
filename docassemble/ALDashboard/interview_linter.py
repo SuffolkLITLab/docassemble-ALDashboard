@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import (
     Any,
     Callable,
@@ -113,6 +114,9 @@ STYLE_GUIDE_URL = "https://assemblyline.suffolklitlab.org/docs/style_guide"
 CODING_STYLE_URL = "https://assemblyline.suffolklitlab.org/docs/coding_style"
 AUTHORING_GUIDE_URL = (
     "https://assemblyline.suffolklitlab.org/docs/authoring/generated_yaml/"
+)
+PLAIN_LANGUAGE_GUIDE_URL = (
+    "https://www.plainlanguage.gov/guidelines/words/use-simple-words-phrases/"
 )
 METADATA_GUIDE_URL = f"{AUTHORING_GUIDE_URL}#interview-metadata-and-metadata-for-publishing-on-courtformsonline"
 
@@ -1617,6 +1621,14 @@ def _check_variable_conventions(
     return findings
 
 
+def _check_plain_language_replacements(
+    docs: Sequence[dict], interview_texts: Sequence[str], raw_content: str
+) -> List[LintIssue]:
+    return _check_plain_language_replacements_impl(
+        docs, interview_texts, raw_content
+    )
+
+
 RULES: List[LintRule] = [
     LintRule(
         "missing-metadata-fields",
@@ -1686,6 +1698,12 @@ RULES: List[LintRule] = [
         "yellow",
         f"{STYLE_GUIDE_URL}/question_overview/",
         _check_placeholder_language,
+    ),
+    LintRule(
+        "plain-language-replacements",
+        "yellow",
+        PLAIN_LANGUAGE_GUIDE_URL,
+        _check_plain_language_replacements,
     ),
     LintRule(
         "missing-custom-theme",
@@ -1825,6 +1843,139 @@ def load_llm_prompt_templates() -> Dict[str, Any]:
             f"interview_linter: could not load prompt templates from package {package_name}: {err}"
         )
         return {}
+
+
+@lru_cache(maxsize=1)
+def load_plain_language_replacements() -> Dict[str, str]:
+    yaml = ruamel.yaml.YAML(typ="safe")
+    package_name = _stringify(__package__) or "docassemble.ALDashboard"
+    rel_path = "data/sources/plain_language_replacements.yml"
+    file_ref = f"{package_name}:{rel_path}"
+
+    loaded: Any = None
+    if path_and_mimetype is not None:
+        try:
+            terms_path, _ = path_and_mimetype(file_ref)
+            if terms_path and os.path.exists(terms_path):
+                with open(terms_path, "r", encoding="utf-8") as fp:
+                    loaded = yaml.load(fp.read()) or {}
+        except Exception as err:
+            log(
+                f"interview_linter: failed resolving {file_ref} with path_and_mimetype: {err}"
+            )
+
+    if loaded is None:
+        try:
+            terms_path = importlib.resources.files(package_name).joinpath(
+                "data", "sources", "plain_language_replacements.yml"
+            )
+            loaded = yaml.load(terms_path.read_text(encoding="utf-8")) or {}
+        except Exception as err:
+            log(
+                "interview_linter: could not load plain-language replacement list "
+                f"from package {package_name}: {err}"
+            )
+            loaded = {}
+
+    if not isinstance(loaded, dict):
+        return {}
+
+    normalized: Dict[str, str] = {}
+    for key, value in loaded.items():
+        term = _stringify(key).strip().lower().replace("’", "'")
+        replacement = _stringify(value).strip()
+        if term and replacement:
+            normalized[term] = replacement
+    return normalized
+
+
+@lru_cache(maxsize=1)
+def _compiled_plain_language_patterns() -> List[Tuple[str, str, Any]]:
+    compiled: List[Tuple[str, str, Any]] = []
+    replacements = load_plain_language_replacements()
+    sorted_terms = sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True)
+    for term, replacement in sorted_terms:
+        if not re.search(r"[a-z0-9]", term):
+            continue
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+            re.IGNORECASE,
+        )
+        compiled.append((term, replacement, pattern))
+    return compiled
+
+
+def _find_plain_language_suggestions(
+    text: str, max_matches: int = 8
+) -> List[Tuple[str, str]]:
+    plain = remove_mako(text)
+    if not plain:
+        return []
+
+    occupied: List[Tuple[int, int]] = []
+    seen_terms: Set[str] = set()
+    matches: List[Tuple[int, str, str]] = []
+    for _, replacement, pattern in _compiled_plain_language_patterns():
+        if len(matches) >= max_matches:
+            break
+        for found in pattern.finditer(plain):
+            span = (found.start(), found.end())
+            overlaps = any(
+                not (span[1] <= used_start or span[0] >= used_end)
+                for used_start, used_end in occupied
+            )
+            if overlaps:
+                continue
+            seen_key = found.group(0).strip().lower()
+            if seen_key in seen_terms:
+                continue
+            seen_terms.add(seen_key)
+            occupied.append(span)
+            matches.append((found.start(), found.group(0), replacement))
+            break
+    matches.sort(key=lambda item: item[0])
+    return [(match_text, replacement) for _, match_text, replacement in matches]
+
+
+def _format_plain_language_replacement(value: str) -> str:
+    formatted = _stringify(value).strip()
+    if formatted.startswith("[") and formatted.endswith("]"):
+        formatted = formatted[1:-1].strip()
+    return formatted
+
+
+def _check_plain_language_replacements_impl(
+    docs: Sequence[dict], _: Sequence[str], __: str
+) -> List[LintIssue]:
+    findings: List[LintIssue] = []
+    seen: Set[Tuple[str, str, str]] = set()
+
+    for idx, doc in enumerate(docs):
+        screen_id = _block_label(doc, f"block-{idx}")
+        for location, text in _iter_doc_texts(doc):
+            suggestions = _find_plain_language_suggestions(text)
+            for matched_text, replacement in suggestions:
+                formatted_replacement = _format_plain_language_replacement(replacement)
+                key = (screen_id, location, matched_text.strip().lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                findings.append(
+                    LintIssue(
+                        rule_id="plain-language-replacements",
+                        severity="yellow",
+                        message=(
+                            "Complex wording found; consider a simpler phrase "
+                            f"(`{matched_text}` -> `{formatted_replacement}`)."
+                        ),
+                        url=PLAIN_LANGUAGE_GUIDE_URL,
+                        screen_id=screen_id,
+                        problematic_text=_shorten(
+                            f"{location}: {matched_text} -> {formatted_replacement}"
+                        ),
+                    )
+                )
+    return findings
 
 
 def _safe_parse_llm_json(raw: Any) -> List[Dict[str, Any]]:

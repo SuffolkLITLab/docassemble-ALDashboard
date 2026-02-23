@@ -157,6 +157,14 @@ code: |
       ),
     )
 
+  def _display_text(value):
+    text = str(value or "")
+    return (
+      text.replace("\\r\\n", "\n")
+      .replace("\\n", "\n")
+      .replace("\\t", "  ")
+    )
+
   lint_reports_ui = []
   for report_idx, report in enumerate(lint_reports):
     name = str(report.get("name") or "unknown")
@@ -292,7 +300,7 @@ subquestion: |
               % for finding in screen['findings']:
               <div class="al-lint-finding ${ str(finding.get('severity') or 'yellow') }">
                 <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
-                ${ "✨ " if finding.get("source") == "llm" else "" }${ html.escape(str(finding.get('message') or '')) }
+                ${ "✨ " if finding.get("source") == "llm" else "" }${ html.escape(_display_text(finding.get('message'))) }
                 % if finding.get("confidence"):
                 <em>(confidence: ${ html.escape(str(finding.get("confidence"))) })</em>
                 % endif
@@ -300,7 +308,7 @@ subquestion: |
                 <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference</a>
                 % endif
                 % if finding.get("problematic_text"):
-                <div class="al-lint-problem">${ html.escape(str(finding.get("problematic_text"))) }</div>
+                <div class="al-lint-problem">${ html.escape(_display_text(finding.get("problematic_text"))) }</div>
                 % endif
               </div>
               % endfor
@@ -323,12 +331,12 @@ subquestion: |
               % for finding in report['orphan_findings']:
               <div class="al-lint-finding ${ str(finding.get('severity') or 'yellow') }">
                 <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
-                ${ html.escape(str(finding.get('message') or '')) }
+                ${ html.escape(_display_text(finding.get('message'))) }
                 % if finding.get("url"):
                 <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference</a>
                 % endif
                 % if finding.get("problematic_text"):
-                <div class="al-lint-problem">${ html.escape(str(finding.get("problematic_text"))) }</div>
+                <div class="al-lint-problem">${ html.escape(_display_text(finding.get("problematic_text"))) }</div>
                 % endif
               </div>
               % endfor
@@ -339,10 +347,10 @@ subquestion: |
             <article class="al-lint-screen">
               <div class="al-lint-screen-header"><strong>Additional warnings</strong></div>
               % for warning in report['headings_warnings']:
-              <div class="al-lint-finding yellow">${ html.escape(str(warning)) }</div>
+              <div class="al-lint-finding yellow">${ html.escape(_display_text(warning)) }</div>
               % endfor
               % for warning in report['style_warnings']:
-              <div class="al-lint-finding yellow">${ html.escape(str(warning.get("message") or "")) } <a href="${ html.escape(str(warning.get('url') or '')) }" target="_blank" rel="noopener noreferrer">Read more</a></div>
+              <div class="al-lint-finding yellow">${ html.escape(_display_text(warning.get("message") or "")) } <a href="${ html.escape(str(warning.get('url') or '')) }" target="_blank" rel="noopener noreferrer">Read more</a></div>
               % endfor
             </article>
             % endif

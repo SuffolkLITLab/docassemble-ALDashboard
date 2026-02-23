@@ -17,9 +17,7 @@ code: |
 code: |
   all_files = []
   for file in get_upload:
-    all_files.append({"file": file.filename,
-      "errors": get_jinja_errors(file.path())
-    })    
+    all_files.append({"file": file.filename, "errors": get_jinja_errors(file.path())})
 ---
 question: |
   Upload your DOCX template(s)

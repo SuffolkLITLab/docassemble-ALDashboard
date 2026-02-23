@@ -70,20 +70,24 @@ fields:
       in the DOCX file.
 ---
 code: |
-  started_task = background_action('task_draft_labels')      
+  started_task = background_action("task_draft_labels")
 ---
 event: task_draft_labels
 code: |
   if include_custom_people_names:
-    custom_people_names = [tuple(line.split(':')) for line in custom_people_names_text.split('\n')]
+    custom_people_names = [
+      tuple(line.split(":")) for line in custom_people_names_text.split("\n")
+    ]
   else:
     custom_people_names = None
-  draft_labels = get_labeled_docx_runs(docx_file[0].path(), custom_people_names = custom_people_names)
-  background_response_action('save_draft_labels', draft_labels=draft_labels)
+  draft_labels = get_labeled_docx_runs(
+    docx_file[0].path(), custom_people_names=custom_people_names
+  )
+  background_response_action("save_draft_labels", draft_labels=draft_labels)
 ---
 event: save_draft_labels
 code: |
-  draft_labels = action_argument('draft_labels')
+  draft_labels = action_argument("draft_labels")
   background_response()
 ---
 objects:
@@ -91,6 +95,7 @@ objects:
 ---
 code: |
   import docx
+
   original_doc = docx.Document(docx_file[0].path())
 
   label_question = []
@@ -101,37 +106,40 @@ code: |
     new_obj.draft_label_text = item[2]
 
     # Results will be a tuple of paragraph number, run, modified text with label
-    label_question.append({
-      'label': get_docx_run_text(original_doc, item[0], item[1]),
-      'field': f'final_labels[{idx}].label',
-      'default': item[2],
-      'label above field': True,
-      'grid': 8,
-      'hide if': f'final_labels[{idx}].leave_unchanged'
-    })
-    label_question.append({
-      'label': 'Leave unchanged',
-      'field': f'final_labels[{idx}].leave_unchanged',
-      'datatype': 'yesno',
-      'grid': {
-        'width': 4,
-        'end': True,
-      },
-      'label above field': True,
-    })
+    label_question.append(
+      {
+        "label": get_docx_run_text(original_doc, item[0], item[1]),
+        "field": f"final_labels[{idx}].label",
+        "default": item[2],
+        "label above field": True,
+        "grid": 8,
+        "hide if": f"final_labels[{idx}].leave_unchanged",
+      }
+    )
+    label_question.append(
+      {
+        "label": "Leave unchanged",
+        "field": f"final_labels[{idx}].leave_unchanged",
+        "datatype": "yesno",
+        "grid": {
+          "width": 4,
+          "end": True,
+        },
+        "label above field": True,
+      }
+    )
 
   del docx
   del original_doc
 ---
 code: |
-
   new_doc_obj = update_docx(
-    docx_file[0].path(), 
+    docx_file[0].path(),
     [
-      (item.paragraph, item.run, item.label, 0) 
-      for item in final_labels 
+      (item.paragraph, item.run, item.label, 0)
+      for item in final_labels
       if not item.leave_unchanged
-    ]
+    ],
   )
 
   new_docx.initialize(filename=docx_file[0].filename)

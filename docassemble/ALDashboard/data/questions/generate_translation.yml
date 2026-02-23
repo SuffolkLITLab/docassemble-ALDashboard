@@ -26,7 +26,7 @@ code: |
 #   ]
 ---
 code: |
-  the_task = background_action('translate_file')
+  the_task = background_action("translate_file")
 ---
 event: waiting_screen
 question: |
@@ -39,26 +39,29 @@ reload: True
 ---
 event: translate_file
 code: |
-  background_error_action('bg_fail', stage='calculation')
+  background_error_action("bg_fail", stage="calculation")
   translations = [
     translation_file(
-        the_yaml_path, 
-        tr_lang, 
-        use_gpt=use_gpt, 
-        openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
-        interview_context=showifdef("interview_context") if use_gpt and showifdef("use_context") else None,
-        model=showifdef("model") if use_gpt else None,
-        validate_mako=showifdef("validate_mako", True),
-      )
-    for tr_lang
-    in tr_langs.split()
+      the_yaml_path,
+      tr_lang,
+      use_gpt=use_gpt,
+      openai_api=get_config("openai api key", get_config("open ai", {}).get("key")),
+      interview_context=(
+        showifdef("interview_context")
+        if use_gpt and showifdef("use_context")
+        else None
+      ),
+      model=showifdef("model") if use_gpt else None,
+      validate_mako=showifdef("validate_mako", True),
+    )
+    for tr_lang in tr_langs.split()
   ]
-  background_response_action('save_translations', translations=translations)
+  background_response_action("save_translations", translations=translations)
 ---
 event: save_translations
 code: |
-  background_error_action('bg_fail', stage='saving')
-  translations = action_argument('translations')
+  background_error_action("bg_fail", stage="saving")
+  translations = action_argument("translations")
   background_response()
 ---
 question: |
@@ -67,17 +70,14 @@ fields:
   - "YAML file path (like: docassemble.AssemblyLine:assembly_line.yml)": the_yaml_path
     datatype: combobox
     code: |
-      [
-        {form["filename"]: form["title"] }
-        for form in interview_menu()
-      ]
+      [{form["filename"]: form["title"]} for form in interview_menu()]
   - "Language codes (like: es, one per line)": tr_langs
     datatype: area
   - Include a draft translation with GPT or Google Translate: use_gpt
     datatype: yesno
     show if:
       code: |
-        gpt_is_available() # or google_translate_is_available()
+        gpt_is_available()  # or google_translate_is_available()
   - Model to use (nano is normally smart enough): model
     input type: radio
     choices:
@@ -109,7 +109,6 @@ fields:
     show if:
       code: |
         not gpt_is_available()
-
 ---
 event: show_translation_results
 question: |
@@ -128,12 +127,14 @@ subquestion: |
 ---
 event: bg_fail
 code: |
-  errmess = "Failure at the " \
-            + action_argument('stage') \
-            + " stage due to a " \
-            + action_argument('error_type') \
-            + " error"
-  background_response('handled_error')
+  errmess = (
+    "Failure at the "
+    + action_argument("stage")
+    + " stage due to a "
+    + action_argument("error_type")
+    + " error"
+  )
+  background_response("handled_error")
 ---
 event: error_screen
 question: |

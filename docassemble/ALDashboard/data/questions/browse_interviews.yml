@@ -18,18 +18,17 @@ modules:
 ---
 initial: True
 code: |
-  if (
-        user_logged_in()
-        and (
-          user_has_privilege(["admin", "developer"])
-          or (
-              get_config("debug")
-              and not (
-                  get_config("assembly line", {}).get("require login to browse interviews on development servers", False)
-                )
-              )
-          )
-      ):
+  if user_logged_in() and (
+    user_has_privilege(["admin", "developer"])
+    or (
+      get_config("debug")
+      and not (
+        get_config("assembly line", {}).get(
+          "require login to browse interviews on development servers", False
+        )
+      )
+    )
+  ):
     pass
   else:
     exit_need_logged_in

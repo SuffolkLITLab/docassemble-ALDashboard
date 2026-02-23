@@ -176,51 +176,66 @@ attachments:
 mandatory: True
 code: |
   intro
-  search_type  
-  if github_select_type == 'created':    
-    end_date # Github input with the end_date question
+  search_type
+  if github_select_type == "created":
+    end_date  # Github input with the end_date question
   else:
-    github_user # Github input w/t the end_date question
-  if search_type == 'compare_version':    
+    github_user  # Github input w/t the end_date question
+  if search_type == "compare_version":
     github_repos_dict
-  show_results  
+  show_results
   download_report
 ---
 # Set defaults related to search type
 code: |
-  if search_type == 'compare_version':
-    github_select_type = 'pushed'    
+  if search_type == "compare_version":
+    github_select_type = "pushed"
   else:
-    pkg_type == 'both'
+    pkg_type == "both"
 ---
 # Set defaults related to 'pushed' type
 code: |  
-  if github_select_type == 'pushed':
+  if github_select_type == "pushed":
     end_date = today()
 ---
 code: |
-  key_pkg_names = ['docassemble.ALWeaver', 'docassemble.AssemblyLine', 'docassemble.ALMassachusetts', 'docassemble.massaccess', 'docassemble.ALToolbox', 'docassemble.ALDashboard',]
+  key_pkg_names = [
+    "docassemble.ALWeaver",
+    "docassemble.AssemblyLine",
+    "docassemble.ALMassachusetts",
+    "docassemble.massaccess",
+    "docassemble.ALToolbox",
+    "docassemble.ALDashboard",
+  ]
   server_name = get_server_name(interview_url())
 ---
 # Fetch github repos
 code: |
   # Limit query output by subquery (dates)
   github_begin_date = format_date(begin_date, format="yyyy-MM-dd")
-  github_end_date = format_date(end_date, format="yyyy-MM-dd")  
-  sub_qry_str = ['+' + github_select_type + '%3A' + github_begin_date + '..' + github_end_date]
-  display_github_str = github_select_type + ' between ' + github_begin_date + ' and ' + github_end_date 
-  
-  # Fetch repo info (nested dicts)   
-  github_repos = fetch_github_repos ("user:" + github_user, sub_qry_str)  
+  github_end_date = format_date(end_date, format="yyyy-MM-dd")
+  sub_qry_str = [
+    "+" + github_select_type + "%3A" + github_begin_date + ".." + github_end_date
+  ]
+  display_github_str = (
+    github_select_type + " between " + github_begin_date + " and " + github_end_date
+  )
+
+  # Fetch repo info (nested dicts)
+  github_repos = fetch_github_repos("user:" + github_user, sub_qry_str)
 ---
 # For version comparison
 code: |
-  # Add repo verstion to github_repos and create a new nested dict to be used in version comparison.  
-  github_repos_dict = fetch_github_repo_version(github_repos, key_pkg_names, github_user) 
+  # Add repo verstion to github_repos and create a new nested dict to be used in version comparison.
+  github_repos_dict = fetch_github_repo_version(github_repos, key_pkg_names, github_user)
 
-  # Fetch the installed packages, save results in a nested dict          
+  # Fetch the installed packages, save results in a nested dict
   server_pkg_dict = installed_pkg_list(key_pkg_names)
 
   # Fetch version comparison tables for screen display
-  key_table_dict = compare_repo_version(server_pkg_dict['key_pkgs'], github_repos_dict['key_repos'])
-  non_key_table_dict = compare_repo_version(server_pkg_dict['non_key_pkgs'], github_repos_dict['non_key_repos'])
+  key_table_dict = compare_repo_version(
+    server_pkg_dict["key_pkgs"], github_repos_dict["key_repos"]
+  )
+  non_key_table_dict = compare_repo_version(
+    server_pkg_dict["non_key_pkgs"], github_repos_dict["non_key_repos"]
+  )

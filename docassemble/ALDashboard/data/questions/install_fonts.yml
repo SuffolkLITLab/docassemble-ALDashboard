@@ -72,18 +72,20 @@ fields:
 validation code: |
   for f in the_font_files:
     if not (".ttf" in f.filename.lower() or ".otf" in f.filename.lower()):
-      validation_error("You need to upload a TrueType or OpenType font", field="the_font_files")
+      validation_error(
+        "You need to upload a TrueType or OpenType font", field="the_font_files"
+      )
 ---
 code: |
-  list_fonts_task = background_action("display_fonts", 'backgroundresponse')
+  list_fonts_task = background_action("display_fonts", "backgroundresponse")
 ---
 event: display_fonts
 code: |
   installed_fonts = f"""
     <div class="alert alert-info">
-      <h4>Installed fonts</h4>
+    <h4>Installed fonts</h4>
         { list_installed_fonts() }
     </div>
   """
 
-  background_response(target='displayed_fonts', content=installed_fonts)
+  background_response(target="displayed_fonts", content=installed_fonts)

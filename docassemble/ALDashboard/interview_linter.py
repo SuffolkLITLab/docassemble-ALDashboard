@@ -1590,7 +1590,9 @@ def _check_color_only_instructions(
 ) -> List[LintIssue]:
     findings: List[LintIssue] = []
     color_pattern = "|".join(sorted(COLOR_WORDS))
-    semantic_pattern = r"required|important|correct|wrong|invalid|valid|error|highlighted"
+    semantic_pattern = (
+        r"required|important|correct|wrong|invalid|valid|error|highlighted"
+    )
     nearby_pattern = re.compile(
         rf"\b(?:{color_pattern})\b[^.?!\n]{{0,40}}\b(?:{semantic_pattern})\b"
         rf"|\b(?:{semantic_pattern})\b[^.?!\n]{{0,40}}\b(?:{color_pattern})\b",
@@ -1780,7 +1782,9 @@ def _check_ambiguous_link_destinations(
                 # Skip template-evaluated links where static destination is unknown.
                 if "${" in target or "% if" in target or "% for" in target:
                     continue
-                canonical_target = re.sub(r"^https?://", "", target, flags=re.IGNORECASE)
+                canonical_target = re.sub(
+                    r"^https?://", "", target, flags=re.IGNORECASE
+                )
                 canonical_target = canonical_target.rstrip("/")
                 destinations_by_text.setdefault(normalized, set()).add(canonical_target)
                 display_by_text.setdefault(normalized, link_text)
@@ -1852,10 +1856,14 @@ def _check_svg_accessible_names(
         for location, text in _iter_doc_texts(doc):
             for attrs, body in svg_re.findall(text):
                 has_aria = bool(
-                    re.search(r"\baria-label\b|\baria-labelledby\b", attrs, re.IGNORECASE)
+                    re.search(
+                        r"\baria-label\b|\baria-labelledby\b", attrs, re.IGNORECASE
+                    )
                 )
                 has_title = bool(
-                    re.search(r"<title\b[^>]*>.*?</title>", body, re.IGNORECASE | re.DOTALL)
+                    re.search(
+                        r"<title\b[^>]*>.*?</title>", body, re.IGNORECASE | re.DOTALL
+                    )
                 )
                 if has_aria or has_title:
                     continue
@@ -1950,7 +1958,9 @@ def _check_clickable_non_controls(
                 attrs_lower = _stringify(attrs).lower()
                 if "onclick" not in attrs_lower:
                     continue
-                has_role = bool(re.search(r"\brole\s*=\s*['\"](button|link)['\"]", attrs_lower))
+                has_role = bool(
+                    re.search(r"\brole\s*=\s*['\"](button|link)['\"]", attrs_lower)
+                )
                 has_keyboard = any(
                     key in attrs_lower
                     for key in ["onkeydown", "onkeypress", "onkeyup", "tabindex"]
@@ -2003,7 +2013,9 @@ def _check_required_fields_indicated(
                     ),
                     url=WCAG_LABELS_INSTRUCTIONS_URL,
                     screen_id=_block_label(doc, f"block-{idx}"),
-                    problematic_text=_shorten(label_text or _extract_field_variable(field)),
+                    problematic_text=_shorten(
+                        label_text or _extract_field_variable(field)
+                    ),
                 )
             )
     return findings
@@ -2470,9 +2482,7 @@ def _check_variable_conventions(
 def _check_plain_language_replacements(
     docs: Sequence[dict], interview_texts: Sequence[str], raw_content: str
 ) -> List[LintIssue]:
-    return _check_plain_language_replacements_impl(
-        docs, interview_texts, raw_content
-    )
+    return _check_plain_language_replacements_impl(docs, interview_texts, raw_content)
 
 
 RULES: List[LintRule] = [
@@ -2932,7 +2942,9 @@ def load_plain_language_replacements() -> Dict[str, str]:
 def _compiled_plain_language_patterns() -> List[Tuple[str, str, Any]]:
     compiled: List[Tuple[str, str, Any]] = []
     replacements = load_plain_language_replacements()
-    sorted_terms = sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True)
+    sorted_terms = sorted(
+        replacements.items(), key=lambda item: len(item[0]), reverse=True
+    )
     for term, replacement in sorted_terms:
         if not re.search(r"[a-z0-9]", term):
             continue
@@ -3080,26 +3092,26 @@ def run_llm_rules(
 
         parsed = _safe_parse_llm_json(response)
         for item in parsed:
-                findings.append(
-                    {
-                        "rule_id": _stringify(item.get("rule_id"))
-                        or _stringify(rule.get("rule_id")),
+            findings.append(
+                {
+                    "rule_id": _stringify(item.get("rule_id"))
+                    or _stringify(rule.get("rule_id")),
                     "severity": _stringify(item.get("severity")).lower()
                     or _stringify(rule.get("default_severity", "yellow")),
                     "message": _stringify(item.get("message"))
                     or "LLM identified a potential issue.",
                     "url": _stringify(rule.get("url")),
-                        "screen_id": _stringify(item.get("screen_id")) or None,
-                        "problematic_text": _stringify(item.get("problematic_text"))
-                        or None,
-                        "source": "llm",
-                        "confidence": _finding_confidence(
-                            _stringify(item.get("rule_id"))
-                            or _stringify(rule.get("rule_id")),
-                            source="llm",
-                        ),
-                    }
-                )
+                    "screen_id": _stringify(item.get("screen_id")) or None,
+                    "problematic_text": _stringify(item.get("problematic_text"))
+                    or None,
+                    "source": "llm",
+                    "confidence": _finding_confidence(
+                        _stringify(item.get("rule_id"))
+                        or _stringify(rule.get("rule_id")),
+                        source="llm",
+                    ),
+                }
+            )
     return findings
 
 

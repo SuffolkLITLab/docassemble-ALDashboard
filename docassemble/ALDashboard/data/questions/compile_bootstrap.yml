@@ -35,15 +35,16 @@ code: |
   import requests, zipfile, io
   import subprocess
   from pathlib import Path
+
   # https://stackoverflow.com/a/14260592
   p = Path(bootstrap_dir)
   if not p.is_dir():
-      r = requests.get("https://github.com/twbs/bootstrap/archive/refs/tags/v5.3.0.zip")
-      z = zipfile.ZipFile(io.BytesIO(r.content))
-      z.extractall("/tmp/")
-      z.close()
-      del z
-      subprocess.run(["npm", "install", "--prefix", bootstrap_dir])
+    r = requests.get("https://github.com/twbs/bootstrap/archive/refs/tags/v5.3.0.zip")
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    z.extractall("/tmp/")
+    z.close()
+    del z
+    subprocess.run(["npm", "install", "--prefix", bootstrap_dir])
   installed = True
 ---
 need:
@@ -53,15 +54,20 @@ need:
 code: |
   import shutil, uuid, os, subprocess
   from pathlib import Path
+
   file_name = uuid.uuid4()
   full_path = os.path.join(bootstrap_dir, "scss", f"{file_name}.scss")
   if upload_choice == "type_out":
     with open(full_path, "w") as text_to_file:
       text_to_file.write(file_text)
     output_scss.copy_into(full_path)
-  else: # upload_file
-    shutil.copy(uploaded_file.path(), os.path.join(bootstrap_dir, "scss", f"{file_name}.scss"))
-  compile_output = subprocess.run(["npm", "run", "css-compile", "--prefix", bootstrap_dir], capture_output=True)
+  else:  # upload_file
+    shutil.copy(
+      uploaded_file.path(), os.path.join(bootstrap_dir, "scss", f"{file_name}.scss")
+    )
+  compile_output = subprocess.run(
+    ["npm", "run", "css-compile", "--prefix", bootstrap_dir], capture_output=True
+  )
   os.remove(full_path)
   out_path = Path(bootstrap_dir + f"dist/css/{file_name}.css")
   if not out_path.is_file():
@@ -135,7 +141,10 @@ fields:
         @import "bootstrap";
 validation code: |
   if upload_choice == "type_out" and not '@import "bootstrap";' in file_text:
-    validation_error('You need to include the exact text \'@import "bootstrap";\' at the end of your SCSS block', field="file_text")
+    validation_error(
+      "You need to include the exact text '@import \"bootstrap\";' at the end of your SCSS block",
+      field="file_text",
+    )
 ---
 template: output_template
 subject: Bootstrap CSS Contents

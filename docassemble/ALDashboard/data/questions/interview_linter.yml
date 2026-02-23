@@ -17,12 +17,12 @@ mandatory: True
 code: |
   source_mode
   run_ai_checks
-  if source_mode == 'upload':
+  if source_mode == "upload":
     uploaded_yaml_files
-  elif source_mode == 'installed':
+  elif source_mode == "installed":
     selected_installed_package
     selected_installed_files
-  elif source_mode == 'playground':
+  elif source_mode == "playground":
     selected_playground_project
     selected_playground_files
   lint_reports
@@ -87,7 +87,7 @@ fields:
       [
         {f"ref:{selected_installed_package}:data/questions/{filename}": filename}
         for filename in sorted(installed_package_map.get(selected_installed_package, []))
-        if filename.lower().endswith(('.yml', '.yaml'))
+        if filename.lower().endswith((".yml", ".yaml"))
       ]
 ---
 question: |
@@ -104,19 +104,22 @@ fields:
     datatype: checkboxes
     required: False
     code: |
-      [{item['token']: item['label']} for item in list_playground_yaml_files(selected_playground_project)]
+      [
+        {item["token"]: item["label"]}
+        for item in list_playground_yaml_files(selected_playground_project)
+      ]
 ---
 code: |
   lint_sources = []
-  if source_mode == 'upload':
+  if source_mode == "upload":
     for yaml_file in uploaded_yaml_files:
       lint_sources.append({"name": yaml_file.filename, "token": yaml_file.path()})
-  elif source_mode == 'installed':
+  elif source_mode == "installed":
     for token in selected_installed_files.true_values():
-      lint_sources.append({"name": token.replace('ref:', ''), "token": token})
-  elif source_mode == 'playground':
+      lint_sources.append({"name": token.replace("ref:", ""), "token": token})
+  elif source_mode == "playground":
     for token in selected_playground_files.true_values():
-      lint_sources.append({"name": token.split('/')[-1], "token": token})
+      lint_sources.append({"name": token.split("/")[-1], "token": token})
 
   lint_reports = lint_multiple_sources(
     lint_sources,

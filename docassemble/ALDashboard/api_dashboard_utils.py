@@ -1097,11 +1097,22 @@ def interview_lint_payload_from_request() -> Dict[str, Any]:
 def interview_lint_payload_from_options(
     raw_options: Mapping[str, Any], *, uploads: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
-    from .interview_linter import lint_multiple_sources
+    from .interview_linter import (
+        lint_multiple_sources,
+        list_lint_modes,
+        normalize_lint_mode,
+    )
 
     raw = merge_raw_options(raw_options)
     include_llm = parse_bool(raw.get("include_llm"), default=False)
     language = str(raw.get("language") or "en")
+    lint_mode_raw = str(raw.get("lint_mode") or "")
+    try:
+        lint_mode = normalize_lint_mode(lint_mode_raw or "full", strict=True)
+    except ValueError as exc:
+        raise DashboardAPIValidationError(
+            f"{exc} Received lint_mode={lint_mode_raw!r}."
+        ) from exc
 
     temp_paths: List[str] = []
     lint_sources: List[Dict[str, str]] = []
@@ -1153,7 +1164,10 @@ def interview_lint_payload_from_options(
 
     try:
         reports = lint_multiple_sources(
-            lint_sources, language=language, include_llm=include_llm
+            lint_sources,
+            language=language,
+            include_llm=include_llm,
+            lint_mode=lint_mode,
         )
     finally:
         for temp_path in temp_paths:
@@ -1163,6 +1177,8 @@ def interview_lint_payload_from_options(
     return {
         "include_llm": include_llm,
         "language": language,
+        "lint_mode": lint_mode,
+        "available_lint_modes": list_lint_modes(),
         "count": len(reports),
         "reports": reports,
     }
@@ -1606,7 +1622,8 @@ def build_openapi_spec() -> Dict[str, Any]:
                     "summary": "Lint interview YAML text",
                     "description": (
                         "Run deterministic (and optional LLM) lint checks on one or more interview YAML files. "
-                        "Accepts multipart uploads (files[]) and/or JSON source tokens."
+                        "Accepts multipart uploads (files[]) and/or JSON source tokens. "
+                        "Optional `lint_mode`: `full` (default) or `wcag-basic`."
                     ),
                 }
             },

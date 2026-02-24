@@ -1091,7 +1091,9 @@ def validate_docx_payload_from_options(
                 "warning_details": findings.get("warning_details", []),
             }
             if include_stripped_docx_base64 and result["warnings"]:
-                with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as out_file:
+                with tempfile.NamedTemporaryFile(
+                    suffix=".docx", delete=False
+                ) as out_file:
                     stripped_path = out_file.name
                 try:
                     strip_stats = strip_docx_problem_controls(temp_path, stripped_path)

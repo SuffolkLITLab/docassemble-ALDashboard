@@ -419,9 +419,15 @@ def detect_docx_automation_features(the_file: str) -> Dict[str, Any]:
             _note_hit(hits, "embedded_ole_payloads", "word/embeddings/")
         if "word/comments.xml" in lower_names:
             _note_hit(hits, "comments_or_annotations", "word/comments.xml")
-        if any(name.startswith("word/header") and name.endswith(".xml") for name in lower_names):
+        if any(
+            name.startswith("word/header") and name.endswith(".xml")
+            for name in lower_names
+        ):
             _note_hit(hits, "header_footer_content", "word/header*.xml")
-        if any(name.startswith("word/footer") and name.endswith(".xml") for name in lower_names):
+        if any(
+            name.startswith("word/footer") and name.endswith(".xml")
+            for name in lower_names
+        ):
             _note_hit(hits, "header_footer_content", "word/footer*.xml")
         if "word/attachedtemplate.xml" in lower_names:
             _note_hit(hits, "attached_template", "word/attachedTemplate.xml")
@@ -448,7 +454,10 @@ def detect_docx_automation_features(the_file: str) -> Dict[str, Any]:
                     "word/_rels/document.xml.rels",
                     "references customXml",
                 )
-            if "attachedtemplate" in rels_text.lower() or "template" in rels_text.lower():
+            if (
+                "attachedtemplate" in rels_text.lower()
+                or "template" in rels_text.lower()
+            ):
                 _note_hit(
                     hits,
                     "attached_template",
@@ -624,7 +633,9 @@ def detect_docx_automation_features(the_file: str) -> Dict[str, Any]:
         benign_evidence = hits["benign_page_number_sdt"]
         if sdt_evidence.issubset(benign_evidence):
             details = [
-                item for item in details if item.get("code") != "structured_document_tags"
+                item
+                for item in details
+                if item.get("code") != "structured_document_tags"
             ]
 
     # Keep only actionable warnings for Jinja/docxtpl workflows.
@@ -704,6 +715,14 @@ def _replace_element_with_children(
         parent.insert(index + offset, child)
 
 
+def _replace_element_with_children_lxml(
+    parent: LET._Element, index: int, element: LET._Element, children: List[LET._Element]
+) -> None:
+    parent.remove(element)
+    for offset, child in enumerate(children):
+        parent.insert(index + offset, child)
+
+
 def _strip_controls_from_parent(parent: ET.Element, counts: Dict[str, int]) -> bool:
     changed = False
     i = 0
@@ -748,6 +767,52 @@ def _strip_controls_from_parent(parent: ET.Element, counts: Dict[str, int]) -> b
     return changed
 
 
+def _strip_controls_from_parent_lxml(
+    parent: LET._Element, counts: Dict[str, int]
+) -> bool:
+    changed = False
+    i = 0
+    while i < len(parent):
+        child = parent[i]
+        name = _local_name(str(child.tag))
+
+        if name == "sdt":
+            if _is_page_number_docpart_sdt(child):  # type: ignore[arg-type]
+                if _strip_controls_from_parent_lxml(child, counts):
+                    changed = True
+                i += 1
+                continue
+            sdt_content = None
+            for sub in child:
+                if _local_name(str(sub.tag)) == "sdtContent":
+                    sdt_content = sub
+                    break
+            if sdt_content is not None:
+                _replace_element_with_children_lxml(parent, i, child, list(sdt_content))
+            else:
+                parent.remove(child)
+            counts["removed_sdt"] += 1
+            changed = True
+            continue
+
+        if name == "fldSimple":
+            instr = _get_attr(child, "instr") or ""  # type: ignore[arg-type]
+            if _is_allowed_simple_field(instr):
+                if _strip_controls_from_parent_lxml(child, counts):
+                    changed = True
+                i += 1
+                continue
+            _replace_element_with_children_lxml(parent, i, child, list(child))
+            counts["removed_fldSimple"] += 1
+            changed = True
+            continue
+
+        if _strip_controls_from_parent_lxml(child, counts):
+            changed = True
+        i += 1
+    return changed
+
+
 def strip_docx_problem_controls(input_file: str, output_file: str) -> Dict[str, Any]:
     """Create a cleaned DOCX with risky SDTs and non-whitelisted simple fields removed.
 
@@ -773,14 +838,12 @@ def strip_docx_problem_controls(input_file: str, output_file: str) -> Dict[str, 
                 root = LET.fromstring(original_bytes, parser=parser)
             except LET.XMLSyntaxError:
                 continue
-            if _strip_controls_from_parent(root, counts):
+            if _strip_controls_from_parent_lxml(root, counts):
                 modified_parts[part_name] = LET.tostring(
                     root, encoding="utf-8", xml_declaration=True
                 )
 
-        with zipfile.ZipFile(
-            output_file, "w"
-        ) as out_zip:
+        with zipfile.ZipFile(output_file, "w") as out_zip:
             for info in part_infos:
                 part_name = info.filename
                 if part_name in modified_parts:

@@ -115,7 +115,9 @@ class TestGetJinjaErrors(unittest.TestCase):
             if os.path.exists(docx_path):
                 os.remove(docx_path)
 
-    def test_strip_docx_problem_controls_removes_sdt_and_non_whitelisted_simple_fields(self):
+    def test_strip_docx_problem_controls_removes_sdt_and_non_whitelisted_simple_fields(
+        self,
+    ):
         input_path = self._build_docx(
             {
                 "word/document.xml": """<?xml version="1.0" encoding="UTF-8"?>

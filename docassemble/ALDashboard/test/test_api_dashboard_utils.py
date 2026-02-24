@@ -247,7 +247,9 @@ class TestDashboardAPIUtils(unittest.TestCase):
     @patch(
         "docassemble.ALDashboard.validate_docx.detect_docx_automation_features",
         return_value={
-            "warnings": ["Structured Document Tags (content controls, w:sdt) detected."],
+            "warnings": [
+                "Structured Document Tags (content controls, w:sdt) detected."
+            ],
             "warning_details": [
                 {
                     "code": "structured_document_tags",
@@ -286,7 +288,9 @@ class TestDashboardAPIUtils(unittest.TestCase):
     @patch(
         "docassemble.ALDashboard.validate_docx.detect_docx_automation_features",
         return_value={
-            "warnings": ["Heavily fragmented runs detected in visible text paragraphs."],
+            "warnings": [
+                "Heavily fragmented runs detected in visible text paragraphs."
+            ],
             "warning_details": [
                 {
                     "code": "fragmented_runs",
@@ -306,7 +310,12 @@ class TestDashboardAPIUtils(unittest.TestCase):
         def _fake_strip(_input_path, output_path):
             with open(output_path, "wb") as handle:
                 handle.write(b"cleaned-docx-bytes")
-            return {"modified": True, "parts_modified": 1, "removed_sdt": 2, "removed_fldSimple": 1}
+            return {
+                "modified": True,
+                "parts_modified": 1,
+                "removed_sdt": 2,
+                "removed_fldSimple": 1,
+            }
 
         mock_strip.side_effect = _fake_strip
 

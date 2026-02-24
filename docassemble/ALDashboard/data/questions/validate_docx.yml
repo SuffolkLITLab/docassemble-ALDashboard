@@ -21,12 +21,14 @@ code: |
   all_files = []
   for file in get_upload:
     findings = detect_docx_automation_features(file.path())
-    all_files.append({
-      "file": file.filename,
-      "errors": get_jinja_errors(file.path()),
-      "warnings": findings.get("warnings", []),
-      "warning_details": findings.get("warning_details", []),
-    })
+    all_files.append(
+      {
+        "file": file.filename,
+        "errors": get_jinja_errors(file.path()),
+        "warnings": findings.get("warnings", []),
+        "warning_details": findings.get("warning_details", []),
+      }
+    )
 ---
 code: |
   from docassemble.base.util import DAFile
@@ -40,11 +42,13 @@ code: |
       cleaned_file.initialize(filename=f"stripped_{file.filename}")
       cleaned_stats = strip_docx_problem_controls(file.path(), cleaned_file.path())
       cleaned_file.commit()
-      stripped_files.append({
-        "source": file.filename,
-        "cleaned_file": cleaned_file,
-        "stats": cleaned_stats,
-      })
+      stripped_files.append(
+        {
+          "source": file.filename,
+          "cleaned_file": cleaned_file,
+          "stats": cleaned_stats,
+        }
+      )
 ---
 question: |
   Upload your DOCX template(s)

@@ -141,10 +141,12 @@ code: |
   severity_rank = {"red": 0, "yellow": 1, "green": 2}
   severity_label = {"red": "Fix required", "yellow": "Warning", "green": "Advisory"}
 
+
   def _safe_id(value, prefix="id"):
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip().lower())
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
     return slug or prefix
+
 
   def _sort_findings(findings):
     return sorted(
@@ -157,13 +159,11 @@ code: |
       ),
     )
 
+
   def _display_text(value):
     text = str(value or "")
-    return (
-      text.replace("\\r\\n", "\n")
-      .replace("\\n", "\n")
-      .replace("\\t", "  ")
-    )
+    return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "  ")
+
 
   lint_reports_ui = []
   for report_idx, report in enumerate(lint_reports):

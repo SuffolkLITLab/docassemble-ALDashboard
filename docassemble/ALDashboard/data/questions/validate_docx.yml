@@ -12,12 +12,43 @@ modules:
 mandatory: True
 code: |
   get_upload
-  show_results
+  create_stripped_copies
+  if create_stripped_copies:
+    stripped_files
+    show_stripped_results
 ---
 code: |
   all_files = []
   for file in get_upload:
-    all_files.append({"file": file.filename, "errors": get_jinja_errors(file.path())})
+    findings = detect_docx_automation_features(file.path())
+    all_files.append(
+      {
+        "file": file.filename,
+        "errors": get_jinja_errors(file.path()),
+        "warnings": findings.get("warnings", []),
+        "warning_details": findings.get("warning_details", []),
+      }
+    )
+---
+code: |
+  from docassemble.base.util import DAFile
+
+  stripped_files = []
+  if create_stripped_copies:
+    for i, file in enumerate(get_upload):
+      if not all_files[i]["warnings"]:
+        continue
+      cleaned_file = DAFile()
+      cleaned_file.initialize(filename=f"stripped_{file.filename}")
+      cleaned_stats = strip_docx_problem_controls(file.path(), cleaned_file.path())
+      cleaned_file.commit()
+      stripped_files.append(
+        {
+          "source": file.filename,
+          "cleaned_file": cleaned_file,
+          "stats": cleaned_stats,
+        }
+      )
 ---
 question: |
   Upload your DOCX template(s)
@@ -25,13 +56,19 @@ fields:
   - no label: get_upload
     datatype: files
 ---
-event: show_results
+id: show_results
 question: |
   % if any(f for f in all_files if f["errors"]):
   Errors found
+  % elif any(f for f in all_files if f["warnings"]):
+  Warnings found
   % else:
-  No errors found
+  No issues found
   % endif
+fields:
+  - Generate cleaned copies (strip risky content controls/simple fields): create_stripped_copies
+    datatype: yesno
+    default: False
 subquestion: |
   % if any(f for f in all_files if f["errors"]):
   ### Files with errors
@@ -46,4 +83,30 @@ subquestion: |
   ${ indent(f["errors"]) }
   % endif
   % endfor
+  % endif
+
+  % if any(f for f in all_files if f["warnings"]):
+  ### Files with automation warnings
+
+  % for f in (f for f in all_files if f["warnings"]):
+  #### ${ f["file"] }
+  % for warning in f["warnings"]:
+  * ${ warning }
+  % endfor
+  % endfor
+  % endif
+---
+event: show_stripped_results
+question: |
+  Cleaned DOCX copies
+subquestion: |
+  % if stripped_files:
+  The following files had risky controls removed:
+
+  % for item in stripped_files:
+  * ${ item["source"] }: ${ item["cleaned_file"] }
+    (${ item["stats"]["removed_sdt"] } SDT removed, ${ item["stats"]["removed_fldSimple"] } simple field removed)
+  % endfor
+  % else:
+  No files needed cleaning.
   % endif

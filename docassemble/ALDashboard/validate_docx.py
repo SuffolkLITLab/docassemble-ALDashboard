@@ -1,5 +1,5 @@
 # mypy: disable-error-code="override, assignment"
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 from jinja2 import Undefined, DebugUndefined, ChainableUndefined
 from jinja2.utils import missing
 from docxtpl import DocxTemplate
@@ -8,8 +8,18 @@ from jinja2.ext import Extension
 from jinja2.lexer import Token
 import jinja2.exceptions
 import re
+import xml.etree.ElementTree as ET
+import zipfile
+from lxml import etree as LET
 
-__all__ = ["CallAndDebugUndefined", "get_jinja_errors", "Environment", "BaseLoader"]
+__all__ = [
+    "CallAndDebugUndefined",
+    "get_jinja_errors",
+    "detect_docx_automation_features",
+    "strip_docx_problem_controls",
+    "Environment",
+    "BaseLoader",
+]
 
 
 class DAIndexError(IndexError):
@@ -186,3 +196,663 @@ def get_jinja_errors(the_file: str) -> Optional[str]:
                 map(lambda x: "  " + x, extra_context)
             )
         return errmess
+    except jinja2.exceptions.TemplateError as the_error:
+        return str(the_error)
+
+
+def _local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
+
+
+def _get_attr(element: ET.Element, attr_name: str) -> Optional[str]:
+    for key, value in element.attrib.items():
+        if key == attr_name or key.endswith("}" + attr_name):
+            return str(value)
+    return None
+
+
+def _note_hit(
+    hits: Dict[str, Set[str]], code: str, part_name: str, evidence: Optional[str] = None
+) -> None:
+    if code not in hits:
+        hits[code] = set()
+    if evidence:
+        hits[code].add(f"{part_name}: {evidence}")
+    else:
+        hits[code].add(part_name)
+
+
+def _scan_xml_part(part_name: str, content: bytes, hits: Dict[str, Set[str]]) -> None:
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return
+
+    for element in root.iter():
+        if _local_name(element.tag) != "sdt":
+            continue
+        is_docpart = False
+        page_number_docpart = False
+        docpart_gallery_values: Set[str] = set()
+        for desc in element.iter():
+            desc_name = _local_name(desc.tag)
+            if desc_name == "docPartObj":
+                is_docpart = True
+            if desc_name == "docPartGallery":
+                gallery = (_get_attr(desc, "val") or "").lower()
+                if gallery:
+                    docpart_gallery_values.add(gallery)
+                if "page numbers" in gallery:
+                    page_number_docpart = True
+        if is_docpart and page_number_docpart:
+            _note_hit(hits, "benign_page_number_sdt", part_name)
+        else:
+            _note_hit(hits, "structured_document_tags", part_name)
+        if is_docpart and not page_number_docpart:
+            gallery_text = ", ".join(sorted(docpart_gallery_values))
+            _note_hit(
+                hits,
+                "sdt_docpart_non_page_numbers",
+                part_name,
+                gallery_text or "docPartObj",
+            )
+
+    for element in root.iter():
+        name = _local_name(element.tag)
+
+        if name == "sdtPr":
+            for child in element:
+                child_name = _local_name(child.tag)
+                if child_name in {
+                    "comboBox",
+                    "dropDownList",
+                    "date",
+                    "checkBox",
+                    "text",
+                    "group",
+                    "richText",
+                    "picture",
+                    "repeatingSection",
+                    "repeatingSectionItem",
+                }:
+                    _note_hit(
+                        hits,
+                        "sdt_specialized_controls",
+                        part_name,
+                        f"<{child_name}>",
+                    )
+                if child_name == "text":
+                    _note_hit(hits, "sdt_plain_text_control", part_name, "<text>")
+                if child_name == "group":
+                    _note_hit(hits, "sdt_group_control", part_name, "<group>")
+                if child_name in {"tag", "alias"}:
+                    tag_value = _get_attr(child, "val")
+                    _note_hit(
+                        hits,
+                        "sdt_metadata",
+                        part_name,
+                        f"{child_name}={tag_value}" if tag_value else child_name,
+                    )
+                if child_name in {"dataBinding", "placeholder", "lock"}:
+                    value = _get_attr(child, "val")
+                    _note_hit(
+                        hits,
+                        "sdt_bound_or_locked",
+                        part_name,
+                        f"{child_name}={value}" if value else child_name,
+                    )
+        if name == "dataBinding":
+            _note_hit(hits, "data_binding", part_name)
+        if name == "fldSimple":
+            _note_hit(hits, "classic_fields", part_name, "fldSimple")
+        if name == "fldChar":
+            field_type = _get_attr(element, "fldCharType")
+            _note_hit(
+                hits,
+                "classic_fields",
+                part_name,
+                f"fldCharType={field_type}" if field_type else "fldChar",
+            )
+        if name == "instrText":
+            instr = (element.text or "").strip()
+            if instr:
+                _note_hit(hits, "classic_fields", part_name, "instrText")
+            upper_instr = instr.upper()
+            for keyword in (
+                "MERGEFIELD",
+                "DOCPROPERTY",
+                "REF",
+                "PAGEREF",
+                "IF",
+                "SET",
+                "ASK",
+                "FILLIN",
+                "FORMTEXT",
+                "HYPERLINK",
+            ):
+                if keyword in upper_instr:
+                    _note_hit(
+                        hits,
+                        "field_instructions",
+                        part_name,
+                        f"instrText contains {keyword}",
+                    )
+            if "REF" in upper_instr or "PAGEREF" in upper_instr:
+                _note_hit(
+                    hits,
+                    "bookmark_ref_fields",
+                    part_name,
+                    "instrText contains REF/PAGEREF",
+                )
+        if name == "ffData":
+            _note_hit(hits, "legacy_form_fields", part_name)
+        if name in {"object", "OLEObject"}:
+            _note_hit(hits, "ole_or_object_controls", part_name, f"<{name}>")
+        if name in {"shape", "textbox", "pict"}:
+            _note_hit(hits, "textboxes_or_vml_shapes", part_name, f"<{name}>")
+        if name in {"ins", "del", "moveFrom", "moveTo"}:
+            _note_hit(hits, "track_changes", part_name, f"<{name}>")
+        if name in {"commentRangeStart", "commentRangeEnd", "commentReference"}:
+            _note_hit(hits, "comments_or_annotations", part_name, f"<{name}>")
+        if name in {"bookmarkStart", "bookmarkEnd"}:
+            _note_hit(hits, "bookmarks", part_name, f"<{name}>")
+        if name == "hyperlink":
+            _note_hit(hits, "hyperlinks", part_name)
+        if name in {"vanish", "webHidden"}:
+            _note_hit(hits, "generated_run_properties", part_name, f"<{name}>")
+        if name == "AlternateContent":
+            _note_hit(hits, "drawing_or_compat_content", part_name, f"<{name}>")
+        if name == "customXml":
+            _note_hit(hits, "custom_xml_wrappers", part_name)
+
+    for paragraph in root.iter():
+        if _local_name(paragraph.tag) != "p":
+            continue
+        run_count = 0
+        text_chars = 0
+        for child in paragraph.iter():
+            child_name = _local_name(child.tag)
+            if child_name == "r":
+                run_count += 1
+            elif child_name == "t":
+                text_chars += len((child.text or "").strip())
+        if text_chars >= 40 and run_count >= 12:
+            _note_hit(
+                hits,
+                "fragmented_runs",
+                part_name,
+                f"paragraph has {run_count} runs over {text_chars} visible chars",
+            )
+
+
+def detect_docx_automation_features(the_file: str) -> Dict[str, Any]:
+    """Detect non-plain-text DOCX constructs that often come from Word-centric automation systems."""
+    hits: Dict[str, Set[str]] = {}
+
+    with zipfile.ZipFile(the_file, "r") as archive:
+        part_names = archive.namelist()
+        xml_parts = [
+            name
+            for name in part_names
+            if name.endswith(".xml")
+            and (
+                name.startswith("word/")
+                or name.startswith("customXml/")
+                or name.endswith(".rels")
+            )
+        ]
+
+        for part_name in xml_parts:
+            try:
+                _scan_xml_part(part_name, archive.read(part_name), hits)
+            except KeyError:
+                continue
+
+        lower_names = {name.lower() for name in part_names}
+        if any(name.startswith("customxml/") for name in lower_names):
+            _note_hit(hits, "custom_xml_parts", "customXml/")
+        if any(name.startswith("word/activex/") for name in lower_names):
+            _note_hit(hits, "activex_controls", "word/activeX/")
+        if any(name.startswith("word/embeddings/") for name in lower_names):
+            _note_hit(hits, "embedded_ole_payloads", "word/embeddings/")
+        if "word/comments.xml" in lower_names:
+            _note_hit(hits, "comments_or_annotations", "word/comments.xml")
+        if any(
+            name.startswith("word/header") and name.endswith(".xml")
+            for name in lower_names
+        ):
+            _note_hit(hits, "header_footer_content", "word/header*.xml")
+        if any(
+            name.startswith("word/footer") and name.endswith(".xml")
+            for name in lower_names
+        ):
+            _note_hit(hits, "header_footer_content", "word/footer*.xml")
+        if "word/attachedtemplate.xml" in lower_names:
+            _note_hit(hits, "attached_template", "word/attachedTemplate.xml")
+        if "word/vbaproject.bin" in lower_names:
+            _note_hit(hits, "macro_project", "word/vbaProject.bin")
+        if any(name.startswith("word/diagrams/") for name in lower_names):
+            _note_hit(hits, "diagram_content", "word/diagrams/")
+        if any(name.startswith("word/charts/") for name in lower_names):
+            _note_hit(hits, "chart_content", "word/charts/")
+        if any(name.startswith("word/drawings/") for name in lower_names):
+            _note_hit(hits, "drawing_parts", "word/drawings/")
+
+        if "word/_rels/document.xml.rels" in lower_names:
+            try:
+                rels_text = archive.read("word/_rels/document.xml.rels").decode(
+                    "utf-8", errors="ignore"
+                )
+            except KeyError:
+                rels_text = ""
+            if "customxml" in rels_text.lower():
+                _note_hit(
+                    hits,
+                    "custom_xml_relationships",
+                    "word/_rels/document.xml.rels",
+                    "references customXml",
+                )
+            if (
+                "attachedtemplate" in rels_text.lower()
+                or "template" in rels_text.lower()
+            ):
+                _note_hit(
+                    hits,
+                    "attached_template",
+                    "word/_rels/document.xml.rels",
+                    "template relationship present",
+                )
+
+    rulebook: Dict[str, Dict[str, str]] = {
+        "data_binding": {
+            "severity": "high",
+            "message": "Data-bound content controls (w:dataBinding) detected.",
+        },
+        "custom_xml_parts": {
+            "severity": "high",
+            "message": "customXml parts detected in the DOCX package.",
+        },
+        "custom_xml_relationships": {
+            "severity": "high",
+            "message": "Document relationships reference customXml parts.",
+        },
+        "classic_fields": {
+            "severity": "high",
+            "message": "Classic Word fields (w:fldSimple / w:fldChar / w:instrText) detected.",
+        },
+        "field_instructions": {
+            "severity": "high",
+            "message": "Field instructions like MERGEFIELD/DOCPROPERTY/IF/REF detected.",
+        },
+        "legacy_form_fields": {
+            "severity": "high",
+            "message": "Legacy form field data (w:ffData) detected.",
+        },
+        "activex_controls": {
+            "severity": "high",
+            "message": "ActiveX controls present (word/activeX/).",
+        },
+        "embedded_ole_payloads": {
+            "severity": "high",
+            "message": "Embedded OLE payloads present (word/embeddings/).",
+        },
+        "ole_or_object_controls": {
+            "severity": "high",
+            "message": "OLE/object elements detected in document XML.",
+        },
+        "structured_document_tags": {
+            "severity": "medium",
+            "message": "Structured Document Tags (content controls, w:sdt) detected.",
+        },
+        "sdt_specialized_controls": {
+            "severity": "medium",
+            "message": "Specialized SDT controls (dropdown/date/checkbox/etc.) detected.",
+        },
+        "sdt_plain_text_control": {
+            "severity": "medium",
+            "message": "Plain-text SDT controls (w:text) detected.",
+        },
+        "sdt_group_control": {
+            "severity": "medium",
+            "message": "Grouped SDT controls (w:group) detected.",
+        },
+        "sdt_docpart_non_page_numbers": {
+            "severity": "medium",
+            "message": "Non-page-number SDT docPart controls detected.",
+        },
+        "sdt_metadata": {
+            "severity": "medium",
+            "message": "SDT metadata tags/aliases detected.",
+        },
+        "sdt_bound_or_locked": {
+            "severity": "medium",
+            "message": "SDTs include dataBinding/placeholder/lock settings.",
+        },
+        "track_changes": {
+            "severity": "medium",
+            "message": "Track changes elements (w:ins/w:del/move*) detected.",
+        },
+        "comments_or_annotations": {
+            "severity": "medium",
+            "message": "Comments/annotation markers detected.",
+        },
+        "header_footer_content": {
+            "severity": "medium",
+            "message": "Document contains header/footer XML parts that may hold template content.",
+        },
+        "textboxes_or_vml_shapes": {
+            "severity": "medium",
+            "message": "Textbox/shape content detected (pict/shape/textbox).",
+        },
+        "drawing_or_compat_content": {
+            "severity": "medium",
+            "message": "Compatibility fallback content blocks (mc:AlternateContent) detected.",
+        },
+        "attached_template": {
+            "severity": "medium",
+            "message": "Attached template metadata/relationship detected.",
+        },
+        "macro_project": {
+            "severity": "high",
+            "message": "Macro project payload detected (vbaProject.bin).",
+        },
+        "bookmark_ref_fields": {
+            "severity": "low",
+            "message": "REF/PAGEREF field instructions detected (often paired with bookmarks in Word templates).",
+        },
+        "hyperlinks": {
+            "severity": "low",
+            "message": "Hyperlink elements detected.",
+        },
+        "diagram_content": {
+            "severity": "low",
+            "message": "SmartArt/diagram parts detected (word/diagrams/).",
+        },
+        "chart_content": {
+            "severity": "low",
+            "message": "Chart parts detected (word/charts/).",
+        },
+        "drawing_parts": {
+            "severity": "low",
+            "message": "Drawing parts detected (word/drawings/).",
+        },
+        "custom_xml_wrappers": {
+            "severity": "low",
+            "message": "customXml wrappers detected in XML content.",
+        },
+        "generated_run_properties": {
+            "severity": "low",
+            "message": "Hidden run properties (vanish/webHidden) detected.",
+        },
+        "fragmented_runs": {
+            "severity": "low",
+            "message": "Heavily fragmented runs detected in visible text paragraphs.",
+        },
+    }
+
+    details: List[Dict[str, Any]] = []
+    for code, meta in rulebook.items():
+        if code not in hits:
+            continue
+        evidence = sorted(hits[code])
+        details.append(
+            {
+                "code": code,
+                "severity": meta["severity"],
+                "message": meta["message"],
+                "count": len(evidence),
+                "evidence": evidence[:8],
+            }
+        )
+
+    details.sort(
+        key=lambda item: (
+            {"high": 0, "medium": 1, "low": 2}.get(str(item.get("severity")), 3),
+            str(item.get("code")),
+        )
+    )
+
+    # Suppress benign page-number fields in headers/footers.
+    if "classic_fields" in hits:
+        classic_evidence = hits["classic_fields"]
+        only_header_footer = all(
+            evidence.startswith("word/header") or evidence.startswith("word/footer")
+            for evidence in classic_evidence
+        )
+        has_risky_field_instructions = (
+            "field_instructions" in hits or "bookmark_ref_fields" in hits
+        )
+        if only_header_footer and not has_risky_field_instructions:
+            details = [item for item in details if item.get("code") != "classic_fields"]
+
+    # Suppress benign page-number SDT wrappers.
+    if "structured_document_tags" in hits and "benign_page_number_sdt" in hits:
+        sdt_evidence = hits["structured_document_tags"]
+        benign_evidence = hits["benign_page_number_sdt"]
+        if sdt_evidence.issubset(benign_evidence):
+            details = [
+                item
+                for item in details
+                if item.get("code") != "structured_document_tags"
+            ]
+
+    # Keep only actionable warnings for Jinja/docxtpl workflows.
+    keep_codes = {
+        "fragmented_runs",
+        "classic_fields",
+        "field_instructions",
+        "bookmark_ref_fields",
+        "structured_document_tags",
+        "sdt_specialized_controls",
+        "sdt_metadata",
+        "sdt_bound_or_locked",
+        "sdt_plain_text_control",
+        "sdt_group_control",
+        "sdt_docpart_non_page_numbers",
+        "data_binding",
+        "custom_xml_parts",
+        "custom_xml_relationships",
+        "legacy_form_fields",
+        "activex_controls",
+        "embedded_ole_payloads",
+        "ole_or_object_controls",
+    }
+    details = [item for item in details if str(item.get("code")) in keep_codes]
+
+    # customXml without any paired automation markers (SDT/dataBinding/field controls)
+    # is often package residue and too noisy to warn on by itself.
+    if any(
+        str(item.get("code")) in {"custom_xml_parts", "custom_xml_relationships"}
+        for item in details
+    ):
+        non_custom_codes = {
+            str(item.get("code"))
+            for item in details
+            if str(item.get("code"))
+            not in {"custom_xml_parts", "custom_xml_relationships", "fragmented_runs"}
+        }
+        if not non_custom_codes:
+            details = [
+                item
+                for item in details
+                if str(item.get("code"))
+                not in {"custom_xml_parts", "custom_xml_relationships"}
+            ]
+
+    return {
+        "has_warnings": bool(details),
+        "warnings": [str(item["message"]) for item in details],
+        "warning_details": details,
+    }
+
+
+def _is_page_number_docpart_sdt(sdt_element: ET.Element) -> bool:
+    is_docpart = False
+    for desc in sdt_element.iter():
+        desc_name = _local_name(desc.tag)
+        if desc_name == "docPartObj":
+            is_docpart = True
+        if desc_name == "docPartGallery":
+            gallery = (_get_attr(desc, "val") or "").lower()
+            if "page numbers" in gallery:
+                return True
+    return False if is_docpart else False
+
+
+def _is_allowed_simple_field(instr: str) -> bool:
+    upper_instr = instr.upper()
+    allowed_keywords = ("PAGE", "NUMPAGES", "SECTIONPAGES", "REF", "PAGEREF")
+    return any(keyword in upper_instr for keyword in allowed_keywords)
+
+
+def _replace_element_with_children(
+    parent: ET.Element, index: int, element: ET.Element, children: List[ET.Element]
+) -> None:
+    parent.remove(element)
+    for offset, child in enumerate(children):
+        parent.insert(index + offset, child)
+
+
+def _replace_element_with_children_lxml(
+    parent: LET._Element, index: int, element: LET._Element, children: List[LET._Element]
+) -> None:
+    parent.remove(element)
+    for offset, child in enumerate(children):
+        parent.insert(index + offset, child)
+
+
+def _strip_controls_from_parent(parent: ET.Element, counts: Dict[str, int]) -> bool:
+    changed = False
+    i = 0
+    while i < len(parent):
+        child = parent[i]
+        name = _local_name(child.tag)
+
+        if name == "sdt":
+            if _is_page_number_docpart_sdt(child):
+                if _strip_controls_from_parent(child, counts):
+                    changed = True
+                i += 1
+                continue
+            sdt_content = None
+            for sub in child:
+                if _local_name(sub.tag) == "sdtContent":
+                    sdt_content = sub
+                    break
+            if sdt_content is not None:
+                _replace_element_with_children(parent, i, child, list(sdt_content))
+            else:
+                parent.remove(child)
+            counts["removed_sdt"] += 1
+            changed = True
+            continue
+
+        if name == "fldSimple":
+            instr = _get_attr(child, "instr") or ""
+            if _is_allowed_simple_field(instr):
+                if _strip_controls_from_parent(child, counts):
+                    changed = True
+                i += 1
+                continue
+            _replace_element_with_children(parent, i, child, list(child))
+            counts["removed_fldSimple"] += 1
+            changed = True
+            continue
+
+        if _strip_controls_from_parent(child, counts):
+            changed = True
+        i += 1
+    return changed
+
+
+def _strip_controls_from_parent_lxml(
+    parent: LET._Element, counts: Dict[str, int]
+) -> bool:
+    changed = False
+    i = 0
+    while i < len(parent):
+        child = parent[i]
+        name = _local_name(str(child.tag))
+
+        if name == "sdt":
+            if _is_page_number_docpart_sdt(child):  # type: ignore[arg-type]
+                if _strip_controls_from_parent_lxml(child, counts):
+                    changed = True
+                i += 1
+                continue
+            sdt_content = None
+            for sub in child:
+                if _local_name(str(sub.tag)) == "sdtContent":
+                    sdt_content = sub
+                    break
+            if sdt_content is not None:
+                _replace_element_with_children_lxml(parent, i, child, list(sdt_content))
+            else:
+                parent.remove(child)
+            counts["removed_sdt"] += 1
+            changed = True
+            continue
+
+        if name == "fldSimple":
+            instr = _get_attr(child, "instr") or ""  # type: ignore[arg-type]
+            if _is_allowed_simple_field(instr):
+                if _strip_controls_from_parent_lxml(child, counts):
+                    changed = True
+                i += 1
+                continue
+            _replace_element_with_children_lxml(parent, i, child, list(child))
+            counts["removed_fldSimple"] += 1
+            changed = True
+            continue
+
+        if _strip_controls_from_parent_lxml(child, counts):
+            changed = True
+        i += 1
+    return changed
+
+
+def strip_docx_problem_controls(input_file: str, output_file: str) -> Dict[str, Any]:
+    """Create a cleaned DOCX with risky SDTs and non-whitelisted simple fields removed.
+
+    Keeps page-number docpart SDTs and simple fields for page numbers/cross-references.
+    """
+    counts: Dict[str, int] = {"removed_sdt": 0, "removed_fldSimple": 0}
+    modified_parts: Dict[str, bytes] = {}
+
+    with zipfile.ZipFile(input_file, "r") as archive:
+        part_infos = archive.infolist()
+        parser = LET.XMLParser(remove_blank_text=False, recover=True)
+        for info in part_infos:
+            part_name = info.filename
+            is_target_part = (
+                part_name == "word/document.xml"
+                or (part_name.startswith("word/header") and part_name.endswith(".xml"))
+                or (part_name.startswith("word/footer") and part_name.endswith(".xml"))
+            )
+            if not is_target_part:
+                continue
+            try:
+                original_bytes = archive.read(part_name)
+                root = LET.fromstring(original_bytes, parser=parser)
+            except LET.XMLSyntaxError:
+                continue
+            if _strip_controls_from_parent_lxml(root, counts):
+                modified_parts[part_name] = LET.tostring(
+                    root, encoding="utf-8", xml_declaration=True
+                )
+
+        with zipfile.ZipFile(output_file, "w") as out_zip:
+            for info in part_infos:
+                part_name = info.filename
+                if part_name in modified_parts:
+                    out_zip.writestr(info, modified_parts[part_name])
+                else:
+                    out_zip.writestr(info, archive.read(part_name))
+
+    return {
+        "modified": bool(modified_parts),
+        "parts_modified": len(modified_parts),
+        **counts,
+    }

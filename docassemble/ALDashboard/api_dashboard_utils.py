@@ -1053,7 +1053,11 @@ def validate_docx_payload_from_request() -> Dict[str, Any]:
 def validate_docx_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    from .validate_docx import get_jinja_errors
+    from .validate_docx import (
+        detect_docx_automation_features,
+        get_jinja_errors,
+        strip_docx_problem_controls,
+    )
 
     raw = merge_raw_options(raw_options)
     files_option = raw.get("files")
@@ -1061,6 +1065,9 @@ def validate_docx_payload_from_options(
         raise DashboardAPIValidationError(
             "Expected files[] payload for DOCX validation."
         )
+    include_stripped_docx_base64 = parse_bool(
+        raw.get("include_stripped_docx_base64"), default=False
+    )
 
     files = []
     for upload in files_option:
@@ -1076,7 +1083,30 @@ def validate_docx_payload_from_options(
 
         temp_path = _write_temp_file(filename, content)
         try:
-            files.append({"file": filename, "errors": get_jinja_errors(temp_path)})
+            findings = detect_docx_automation_features(temp_path)
+            result: Dict[str, Any] = {
+                "file": filename,
+                "errors": get_jinja_errors(temp_path),
+                "warnings": findings.get("warnings", []),
+                "warning_details": findings.get("warning_details", []),
+            }
+            if include_stripped_docx_base64 and result["warnings"]:
+                with tempfile.NamedTemporaryFile(
+                    suffix=".docx", delete=False
+                ) as out_file:
+                    stripped_path = out_file.name
+                try:
+                    strip_stats = strip_docx_problem_controls(temp_path, stripped_path)
+                    with open(stripped_path, "rb") as stripped_handle:
+                        result["stripped_docx_base64"] = base64.b64encode(
+                            stripped_handle.read()
+                        ).decode("ascii")
+                    result["stripped_output_filename"] = f"stripped_{filename}"
+                    result["strip_stats"] = strip_stats
+                finally:
+                    if os.path.exists(stripped_path):
+                        os.remove(stripped_path)
+            files.append(result)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)

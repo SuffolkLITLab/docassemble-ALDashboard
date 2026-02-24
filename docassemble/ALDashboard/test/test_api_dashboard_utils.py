@@ -14,6 +14,7 @@ from docassemble.ALDashboard.api_dashboard_utils import (
     interview_lint_payload_from_options,
     parse_bool,
     relabel_payload_from_options,
+    validate_docx_payload_from_options,
     yaml_check_payload_from_options,
     yaml_reformat_payload_from_options,
 )
@@ -242,6 +243,103 @@ class TestDashboardAPIUtils(unittest.TestCase):
         self.assertEqual(payload["error_count"], 1)
         self.assertEqual(len(payload["warnings"]), 1)
         self.assertEqual(len(payload["errors"]), 1)
+
+    @patch(
+        "docassemble.ALDashboard.validate_docx.detect_docx_automation_features",
+        return_value={
+            "warnings": [
+                "Structured Document Tags (content controls, w:sdt) detected."
+            ],
+            "warning_details": [
+                {
+                    "code": "structured_document_tags",
+                    "severity": "medium",
+                    "message": "Structured Document Tags (content controls, w:sdt) detected.",
+                    "count": 1,
+                    "evidence": ["word/document.xml"],
+                }
+            ],
+        },
+    )
+    @patch("docassemble.ALDashboard.validate_docx.get_jinja_errors", return_value=None)
+    def test_validate_docx_payload_returns_warnings(
+        self, _mock_jinja_errors, _mock_findings
+    ):
+        payload = validate_docx_payload_from_options(
+            {
+                "files": [
+                    {
+                        "filename": "sample.docx",
+                        "file_content_base64": base64.b64encode(b"fake-docx").decode(
+                            "ascii"
+                        ),
+                    }
+                ]
+            }
+        )
+        self.assertEqual(payload["files"][0]["file"], "sample.docx")
+        self.assertEqual(payload["files"][0]["errors"], None)
+        self.assertEqual(len(payload["files"][0]["warnings"]), 1)
+        self.assertEqual(
+            payload["files"][0]["warning_details"][0]["code"],
+            "structured_document_tags",
+        )
+
+    @patch(
+        "docassemble.ALDashboard.validate_docx.detect_docx_automation_features",
+        return_value={
+            "warnings": [
+                "Heavily fragmented runs detected in visible text paragraphs."
+            ],
+            "warning_details": [
+                {
+                    "code": "fragmented_runs",
+                    "severity": "low",
+                    "message": "Heavily fragmented runs detected in visible text paragraphs.",
+                    "count": 1,
+                    "evidence": ["word/document.xml"],
+                }
+            ],
+        },
+    )
+    @patch("docassemble.ALDashboard.validate_docx.get_jinja_errors", return_value=None)
+    @patch("docassemble.ALDashboard.validate_docx.strip_docx_problem_controls")
+    def test_validate_docx_payload_can_include_stripped_docx(
+        self, mock_strip, _mock_jinja_errors, _mock_findings
+    ):
+        def _fake_strip(_input_path, output_path):
+            with open(output_path, "wb") as handle:
+                handle.write(b"cleaned-docx-bytes")
+            return {
+                "modified": True,
+                "parts_modified": 1,
+                "removed_sdt": 2,
+                "removed_fldSimple": 1,
+            }
+
+        mock_strip.side_effect = _fake_strip
+
+        payload = validate_docx_payload_from_options(
+            {
+                "include_stripped_docx_base64": True,
+                "files": [
+                    {
+                        "filename": "sample.docx",
+                        "file_content_base64": base64.b64encode(b"fake-docx").decode(
+                            "ascii"
+                        ),
+                    }
+                ],
+            }
+        )
+        item = payload["files"][0]
+        self.assertEqual(item["stripped_output_filename"], "stripped_sample.docx")
+        self.assertEqual(
+            item["stripped_docx_base64"],
+            base64.b64encode(b"cleaned-docx-bytes").decode("ascii"),
+        )
+        self.assertEqual(item["strip_stats"]["removed_sdt"], 2)
+        self.assertEqual(item["strip_stats"]["removed_fldSimple"], 1)
 
     @patch("docassemble.ALDashboard.api_dashboard_utils._run_dayaml_reformat")
     def test_yaml_reformat_payload_returns_formatted_yaml(self, mock_reformat):

@@ -10,11 +10,13 @@ import jinja2.exceptions
 import re
 import xml.etree.ElementTree as ET
 import zipfile
+from lxml import etree as LET
 
 __all__ = [
     "CallAndDebugUndefined",
     "get_jinja_errors",
     "detect_docx_automation_features",
+    "strip_docx_problem_controls",
     "Environment",
     "BaseLoader",
 ]
@@ -672,4 +674,122 @@ def detect_docx_automation_features(the_file: str) -> Dict[str, Any]:
         "has_warnings": bool(details),
         "warnings": [str(item["message"]) for item in details],
         "warning_details": details,
+    }
+
+
+def _is_page_number_docpart_sdt(sdt_element: ET.Element) -> bool:
+    is_docpart = False
+    for desc in sdt_element.iter():
+        desc_name = _local_name(desc.tag)
+        if desc_name == "docPartObj":
+            is_docpart = True
+        if desc_name == "docPartGallery":
+            gallery = (_get_attr(desc, "val") or "").lower()
+            if "page numbers" in gallery:
+                return True
+    return False if is_docpart else False
+
+
+def _is_allowed_simple_field(instr: str) -> bool:
+    upper_instr = instr.upper()
+    allowed_keywords = ("PAGE", "NUMPAGES", "SECTIONPAGES", "REF", "PAGEREF")
+    return any(keyword in upper_instr for keyword in allowed_keywords)
+
+
+def _replace_element_with_children(
+    parent: ET.Element, index: int, element: ET.Element, children: List[ET.Element]
+) -> None:
+    parent.remove(element)
+    for offset, child in enumerate(children):
+        parent.insert(index + offset, child)
+
+
+def _strip_controls_from_parent(parent: ET.Element, counts: Dict[str, int]) -> bool:
+    changed = False
+    i = 0
+    while i < len(parent):
+        child = parent[i]
+        name = _local_name(child.tag)
+
+        if name == "sdt":
+            if _is_page_number_docpart_sdt(child):
+                if _strip_controls_from_parent(child, counts):
+                    changed = True
+                i += 1
+                continue
+            sdt_content = None
+            for sub in child:
+                if _local_name(sub.tag) == "sdtContent":
+                    sdt_content = sub
+                    break
+            if sdt_content is not None:
+                _replace_element_with_children(parent, i, child, list(sdt_content))
+            else:
+                parent.remove(child)
+            counts["removed_sdt"] += 1
+            changed = True
+            continue
+
+        if name == "fldSimple":
+            instr = _get_attr(child, "instr") or ""
+            if _is_allowed_simple_field(instr):
+                if _strip_controls_from_parent(child, counts):
+                    changed = True
+                i += 1
+                continue
+            _replace_element_with_children(parent, i, child, list(child))
+            counts["removed_fldSimple"] += 1
+            changed = True
+            continue
+
+        if _strip_controls_from_parent(child, counts):
+            changed = True
+        i += 1
+    return changed
+
+
+def strip_docx_problem_controls(input_file: str, output_file: str) -> Dict[str, Any]:
+    """Create a cleaned DOCX with risky SDTs and non-whitelisted simple fields removed.
+
+    Keeps page-number docpart SDTs and simple fields for page numbers/cross-references.
+    """
+    counts: Dict[str, int] = {"removed_sdt": 0, "removed_fldSimple": 0}
+    modified_parts: Dict[str, bytes] = {}
+
+    with zipfile.ZipFile(input_file, "r") as archive:
+        part_infos = archive.infolist()
+        parser = LET.XMLParser(remove_blank_text=False, recover=True)
+        for info in part_infos:
+            part_name = info.filename
+            is_target_part = (
+                part_name == "word/document.xml"
+                or (part_name.startswith("word/header") and part_name.endswith(".xml"))
+                or (part_name.startswith("word/footer") and part_name.endswith(".xml"))
+            )
+            if not is_target_part:
+                continue
+            try:
+                original_bytes = archive.read(part_name)
+                root = LET.fromstring(original_bytes, parser=parser)
+            except LET.XMLSyntaxError:
+                continue
+            if _strip_controls_from_parent(root, counts):
+                modified_parts[part_name] = LET.tostring(
+                    root, encoding="utf-8", xml_declaration=True
+                )
+
+        with zipfile.ZipFile(
+            output_file, "w"
+        ) as out_zip:
+            for info in part_infos:
+                part_name = info.filename
+                if part_name in modified_parts:
+                    out_zip.writestr(info, modified_parts[part_name])
+                else:
+                    out_zip.writestr(info, archive.read(part_name))
+
+    return {
+        "modified": bool(modified_parts),
+        "parts_modified": len(modified_parts),
+        **counts,
     }

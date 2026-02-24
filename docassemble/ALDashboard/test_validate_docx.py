@@ -2,11 +2,16 @@
 
 import unittest
 from typing import Optional
-from .validate_docx import detect_docx_automation_features, get_jinja_errors
+from .validate_docx import (
+    detect_docx_automation_features,
+    get_jinja_errors,
+    strip_docx_problem_controls,
+)
 from pathlib import Path
 import tempfile
 import zipfile
 import os
+import xml.etree.ElementTree as ET
 
 
 class TestGetJinjaErrors(unittest.TestCase):
@@ -17,6 +22,10 @@ class TestGetJinjaErrors(unittest.TestCase):
             for name, content in parts.items():
                 archive.writestr(name, content)
         return docx_path
+
+    def _read_part(self, docx_path: str, part_name: str) -> str:
+        with zipfile.ZipFile(docx_path, "r") as archive:
+            return archive.read(part_name).decode("utf-8", errors="ignore")
 
     def test_working_template(self):
         working_template = Path(__file__).parent / "test/made_up_variables.docx"
@@ -105,6 +114,44 @@ class TestGetJinjaErrors(unittest.TestCase):
         finally:
             if os.path.exists(docx_path):
                 os.remove(docx_path)
+
+    def test_strip_docx_problem_controls_removes_sdt_and_non_whitelisted_simple_fields(self):
+        input_path = self._build_docx(
+            {
+                "word/document.xml": """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:sdt><w:sdtPr><w:text/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>inside sdt</w:t></w:r></w:p></w:sdtContent></w:sdt>
+    <w:p><w:fldSimple w:instr=" MERGEFIELD ClientName "><w:r><w:t>Client Name</w:t></w:r></w:fldSimple></w:p>
+    <w:p><w:fldSimple w:instr=" PAGE "><w:r><w:t>2</w:t></w:r></w:fldSimple></w:p>
+  </w:body>
+</w:document>""",
+                "[Content_Types].xml": "<Types/>",
+                "_rels/.rels": "<Relationships/>",
+                "word/_rels/document.xml.rels": "<Relationships/>",
+            }
+        )
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp_out:
+            output_path = temp_out.name
+
+        try:
+            stats = strip_docx_problem_controls(input_path, output_path)
+            self.assertTrue(stats["modified"])
+            self.assertEqual(stats["removed_sdt"], 1)
+            self.assertEqual(stats["removed_fldSimple"], 1)
+
+            xml = self._read_part(output_path, "word/document.xml")
+            root = ET.fromstring(xml)
+            local_names = {el.tag.rsplit("}", 1)[-1] for el in root.iter()}
+            self.assertNotIn("sdt", local_names)
+            self.assertNotIn("MERGEFIELD ClientName", xml)
+            self.assertIn("fldSimple", xml)
+            self.assertIn('instr=" PAGE "', xml)
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
 
 if __name__ == "__main__":

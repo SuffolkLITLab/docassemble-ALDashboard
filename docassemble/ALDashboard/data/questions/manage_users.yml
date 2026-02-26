@@ -178,11 +178,11 @@ subquestion: |
   % endif
 field: confirm_disable_mfa
 buttons:
-  - Disable 2FA: True
+  - ${ "Disable 2FA" if user_details and user_details["mfa_enabled"] else "OK" }: True
   - Cancel: False
 ---
 code: |
-  if confirm_disable_mfa:
+  if confirm_disable_mfa and user_details and user_details["mfa_enabled"]:
     mfa_was_disabled = disable_user_mfa(chosen_user)
   else:
     mfa_was_disabled = False

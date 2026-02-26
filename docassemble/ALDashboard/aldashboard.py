@@ -238,7 +238,7 @@ def disable_user_mfa(user_id: int) -> bool:
     if user.otp_secret is None:
         return False
     user.otp_secret = None
-    db.session.commit()
+    UserModel.query.session.commit()
     return True
 
 

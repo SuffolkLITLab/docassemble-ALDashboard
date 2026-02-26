@@ -24,12 +24,20 @@ code: |
     do_update_privileges
   elif user_task == "download_playground":
     do_download_playground
+  elif user_task == "view_user_info":
+    view_user_info_screen
+  elif user_task == "disable_mfa":
+    confirm_disable_mfa
+    do_disable_mfa
   ending_screen
 ---
 code: |
   user_lookup = {}
   for user in get_users_and_name():
     user_lookup[user[0]] = user[3]
+---
+code: |
+  user_details = get_user_details(chosen_user)
 ---
 id: select user
 question: |
@@ -64,9 +72,11 @@ fields:
   - What do you want to do?: user_task
     datatype: radio
     choices:
+      - View user information: view_user_info
       - Reset password: reset_password
       - Download playground files: download_playground
-      - Change user permissions: elevate_permissions      
+      - Change user permissions: elevate_permissions
+      - Disable two-factor authentication: disable_mfa
   - New password: new_user_password
     datatype: password
     show if:
@@ -127,12 +137,71 @@ code: |
       )
     return True
 ---
+id: view user info
+event: view_user_info_screen
+question: |
+  % if user_details:
+  User information for ${ user_details["first_name"] } ${ user_details["last_name"] }
+  % else:
+  User not found
+  % endif
+subquestion: |
+  % if user_details:
+  Field | Value
+  ------|------
+  **Email** | ${ user_details["email"] }
+  **Active** | ${ "Yes" if user_details["active"] else "No" }
+  **Account type** | ${ user_details["account_type"] }
+  **Privileges** | ${ ", ".join(user_details["privileges"]) if user_details["privileges"] else "user" }
+  **2FA enabled** | ${ "Yes" if user_details["mfa_enabled"] else "No" }
+  % if user_details["mfa_enabled"]:
+  **2FA type** | ${ "Authenticator app" if user_details["mfa_type"] == "app" else "SMS" }
+  % endif
+  % else:
+  The selected user could not be found in the database.
+  % endif
+buttons:
+  - Restart: restart
+---
+id: confirm disable mfa
+question: |
+  Disable two-factor authentication?
+subquestion: |
+  % if user_details and user_details["mfa_enabled"]:
+  You are about to disable **${ "authenticator app" if user_details["mfa_type"] == "app" else "SMS" }**
+  two-factor authentication for **${ user_details["first_name"] } ${ user_details["last_name"] }**
+  (${ user_details["email"] }).
+
+  The user will need to set up 2FA again if required by the server configuration.
+  % else:
+  This user does not currently have two-factor authentication enabled. There is nothing to disable.
+  % endif
+field: confirm_disable_mfa
+buttons:
+  - Disable 2FA: True
+  - Cancel: False
+---
+code: |
+  if confirm_disable_mfa:
+    mfa_was_disabled = disable_user_mfa(chosen_user)
+  else:
+    mfa_was_disabled = False
+  do_disable_mfa = True
+---
 event: ending_screen
 question: |
   Task is done
 subquestion: |
   % if user_task == 'elevate_permissions':
-  `${ new_permission_level.true_values().elements }`
+  Updated permissions: `${ new_permission_level.true_values().elements }`
+  % elif user_task == 'disable_mfa':
+  % if mfa_was_disabled:
+  Two-factor authentication has been disabled for this user.
+  % else:
+  No changes were made. Two-factor authentication was not enabled for this user, or you cancelled the action.
+  % endif
+  % elif user_task == 'reset_password':
+  The password has been reset.
   % endif
 buttons:
   - Restart: restart

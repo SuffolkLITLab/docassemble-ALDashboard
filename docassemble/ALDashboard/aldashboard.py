@@ -7,6 +7,7 @@ from github import Github  # PyGithub
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
+from sqlalchemy.orm import joinedload
 from typing import List, Tuple, Dict, Optional, Callable
 import math
 
@@ -73,6 +74,8 @@ __all__ = [
     "increment_index_value",
     "get_current_index_value",
     "get_latest_s3_folder",
+    "get_user_details",
+    "disable_user_mfa",
 ]
 
 
@@ -174,6 +177,69 @@ def get_users_and_name() -> List[Tuple[int, str, str, str]]:
     )
 
     return users
+
+
+def get_user_details(user_id: int) -> Optional[Dict]:
+    """Return a dictionary with details about a user, including privileges and MFA status.
+
+    Args:
+        user_id: The database ID of the user.
+
+    Returns:
+        A dictionary with user details, or None if the user is not found. Keys include:
+        id, email, first_name, last_name, active, account_type, privileges (list of str),
+        mfa_enabled (bool), and mfa_type (str or None: "app", "sms", or None).
+    """
+    user = (
+        UserModel.query.options(joinedload(UserModel.roles))
+        .filter(UserModel.id == user_id)
+        .first()
+    )
+    if user is None:
+        return None
+
+    privileges = [role.name for role in user.roles]
+
+    mfa_enabled = user.otp_secret is not None
+    mfa_type: Optional[str] = None
+    if mfa_enabled:
+        if user.otp_secret and user.otp_secret.startswith(":phone:"):
+            mfa_type = "sms"
+        else:
+            mfa_type = "app"
+
+    account_type = re.sub(r"\$.*", "", user.social_id) if user.social_id else "unknown"
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "active": user.active,
+        "account_type": account_type,
+        "privileges": privileges,
+        "mfa_enabled": mfa_enabled,
+        "mfa_type": mfa_type,
+    }
+
+
+def disable_user_mfa(user_id: int) -> bool:
+    """Disable two-factor authentication for a user by clearing their OTP secret.
+
+    Args:
+        user_id: The database ID of the user.
+
+    Returns:
+        True if MFA was disabled, False if the user was not found or MFA was already disabled.
+    """
+    user = UserModel.query.filter(UserModel.id == user_id).first()
+    if user is None:
+        return False
+    if user.otp_secret is None:
+        return False
+    user.otp_secret = None
+    UserModel.query.session.commit()
+    return True
 
 
 def speedy_get_sessions(

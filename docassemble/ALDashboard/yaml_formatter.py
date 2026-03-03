@@ -81,6 +81,8 @@ def format_uploaded_yaml_file(
         "formatted_yaml": "",
     }
     try:
+        if not is_supported_yaml_filename(original_filename):
+            raise ValueError("Please upload a .yml or .yaml file.")
         with open(upload_path, "r", encoding="utf-8") as infile:
             source_text = infile.read()
         format_result = format_yaml_text(

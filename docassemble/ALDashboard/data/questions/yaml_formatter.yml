@@ -57,9 +57,6 @@ question: |
 fields:
   - YAML file: uploaded_yaml_file
     datatype: file
-validation code: |
-  if not is_supported_yaml_filename(uploaded_yaml_file.filename):
-    validation_error("Please upload a .yml or .yaml file.", field="uploaded_yaml_file")
 ---
 question: |
   Select playground project
@@ -83,12 +80,16 @@ fields:
       ]
 ---
 code: |
+  uploaded_yaml_path = uploaded_yaml_file.path()
+  uploaded_yaml_name = str(getattr(uploaded_yaml_file, "filename", "") or "uploaded.yml")
   upload_result = format_uploaded_yaml_file(
-    uploaded_yaml_file.path(),
-    uploaded_yaml_file.filename,
+    uploaded_yaml_path,
+    uploaded_yaml_name,
     line_length=line_length,
     convert_indent_4_to_2=convert_indent_4_to_2,
   )
+  del uploaded_yaml_path
+  del uploaded_yaml_name
   if not upload_result.get("error"):
     formatted_yaml_download.initialize(
       filename=str(upload_result.get("output_filename") or "formatted.yml")

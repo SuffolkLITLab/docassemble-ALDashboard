@@ -716,7 +716,10 @@ def _replace_element_with_children(
 
 
 def _replace_element_with_children_lxml(
-    parent: LET._Element, index: int, element: LET._Element, children: List[LET._Element]
+    parent: LET._Element,
+    index: int,
+    element: LET._Element,
+    children: List[LET._Element],
 ) -> None:
     parent.remove(element)
     for offset, child in enumerate(children):

@@ -3,14 +3,64 @@ include:
   - nav.yml
 ---
 metadata:
+  title: |
+    Assembly Line Installer
   required privileges:
     - admin
 ---
 imports:
   - requests
+  - html
+---
+features:
+  bootstrap theme: al_installer_bootstrap_theme.css
+  css:
+    - al_installer_theme.css
 ---
 objects:
   - installer: ALPackageInstaller
+  - al_logo: DAStaticFile.using(filename="dal-favicon.png")
+---
+code: |
+  assembly_line_config = get_config("assembly line", {})
+  if isinstance(assembly_line_config.get("interview list"), dict):
+    interview_list_config = assembly_line_config.get("interview list", {})
+  else:
+    interview_list_config = {}
+
+  installer_logo_url = interview_list_config.get("logo url") or get_config(
+    "app homepage", "https://courtformsonline.org"
+  )
+  installer_logo_image_url = (
+    interview_list_config.get("logo image url") or al_logo.url_for()
+  )
+  installer_logo_image_alt = interview_list_config.get("logo image alt") or ""
+---
+default screen parts:
+  title url: |
+    ${ installer_logo_url }
+  exit url: |
+    ${ installer_logo_url }
+  logo: |
+    <span class="title-container">
+      <span class="al-logo">
+        <img src="${ installer_logo_image_url }" alt="${ installer_logo_image_alt }"/>
+      </span>
+      <span class="al-title">
+        <span>AssemblyLine Installer</span>
+      </span>
+    </span>
+  short logo: |
+    <span class="title-container">
+      <span class="al-logo">
+        <img src="${ installer_logo_image_url }" alt="${ installer_logo_image_alt }"/>
+      </span>
+      <span class="al-title">
+        <span>AssemblyLine Installer</span>
+      </span>
+    </span>
+  right: |
+    ${ action_button_html(interview_url(i=f"{user_info().package}:menu.yml"), label="Back to Dashboard") }
 ---
 mandatory: True
 code: |
@@ -20,25 +70,28 @@ code: |
 
   backup_file
   welcome
-  basic_server_config
-  recommended_api_config
+  if not update_installed_packages_only:
+    basic_server_config
+    recommended_api_config
+    api_config_cleanup
 
-  if configure_api_github:
-    # -- GitHub --
-    # Token with repo permission scope
-    feedback_form_config
-    complete_github_auth
-    # Other config questions
-    github_owners_list
-    save_repo_owners
-    if len(the_config["github issues"]["allowed repository owners"]) == 1:
-      set_default_owner_from_list
-    else:
-      github_owners_default
-  set_answer_set_config
-  set_custom_interview_list
-  menu_shortcut_config
-  save_config
+    if configure_api_github:
+      # -- GitHub --
+      # Token with repo permission scope
+      feedback_form_config
+      complete_github_auth
+      # Other config questions
+      github_owners_list
+      save_repo_owners
+      if len(the_config["github issues"]["allowed repository owners"]) == 1:
+        set_default_owner_from_list
+      else:
+        github_owners_default
+    set_answer_set_config
+    set_custom_interview_list
+    assembly_line_global_config
+    menu_shortcut_config
+    save_config
   selected_mandatory_packages
   al_install_done
   end_screen
@@ -84,11 +137,62 @@ subquestion: |
 fields:
   - Use custom interview list page: enable_custom_interview_list
     datatype: yesnoradio
+  - App homepage URL: the_config['app homepage']
+    default: ${ the_config.get("app homepage", "https://courtformsonline.org") }
+    required: False
+    show if: enable_custom_interview_list
   - What URL should the "Start a new form" link point to?: custom_interview_list_start_page
-    default: https://courtformsonline.org
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("new form url", the_config.get("assembly line", {}).get("new form url", "https://courtformsonline.org")) }
     help: |
       Add a link to a page that lists all of the interviews that you have available.
       If you do not have a custom landing page, you might want to just use "/list".
+    show if: enable_custom_interview_list
+  - New form button label: custom_interview_list_new_form_label
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("new form label", "Start a new form") }
+    required: False
+    show if: enable_custom_interview_list
+  - Browser page title: custom_interview_list_page_title
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("page title", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Page heading: custom_interview_list_page_question
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("page question", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Intro text under page heading: custom_interview_list_page_subquestion
+    datatype: area
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("page subquestion", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Header logo URL (click target): custom_interview_list_logo_url
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("logo url", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Header logo image URL: custom_interview_list_logo_image_url
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("logo image url", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Header logo image alt text: custom_interview_list_logo_image_alt
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("logo image alt", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Header title row 1: custom_interview_list_logo_title_row_1
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("logo title row 1", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Header title row 2: custom_interview_list_logo_title_row_2
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("logo title row 2", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Answer sets tab label: custom_interview_list_answer_sets_title
+    default: ${ the_config.get("assembly line", {}).get("interview list", {}).get("answer sets title", "") }
+    required: False
+    show if: enable_custom_interview_list
+  - Interviews to exclude from the custom list (one per line): custom_interview_list_exclude
+    datatype: area
+    default: |
+      ${ "\n".join(the_config.get("assembly line", {}).get("interview list", {}).get("exclude from interview list", the_config.get("assembly line", {}).get("exclude from interview list", []))) }
+    required: False
     show if: enable_custom_interview_list
   - Update session to include progress and user name automatically: enable_session_metadata_update
     datatype: yesnoradio
@@ -112,14 +216,102 @@ code: |
   if not "assembly line" in the_config:
     the_config["assembly line"] = {}
   if enable_custom_interview_list:
+    if not isinstance(the_config["assembly line"].get("interview list"), dict):
+      the_config["assembly line"]["interview list"] = {}
+    interview_list_config = the_config["assembly line"]["interview list"]
+
+    def set_list_option(key, value):
+      if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned:
+          interview_list_config[key] = cleaned
+        elif key in interview_list_config:
+          del interview_list_config[key]
+      elif value is not None:
+        interview_list_config[key] = value
+
+    set_list_option("new form url", custom_interview_list_start_page)
+    set_list_option("new form label", custom_interview_list_new_form_label)
+    set_list_option("page title", custom_interview_list_page_title)
+    set_list_option("page question", custom_interview_list_page_question)
+    set_list_option("page subquestion", custom_interview_list_page_subquestion)
+    set_list_option("logo url", custom_interview_list_logo_url)
+    set_list_option("logo image url", custom_interview_list_logo_image_url)
+    set_list_option("logo image alt", custom_interview_list_logo_image_alt)
+    set_list_option("logo title row 1", custom_interview_list_logo_title_row_1)
+    set_list_option("logo title row 2", custom_interview_list_logo_title_row_2)
+    set_list_option("answer sets title", custom_interview_list_answer_sets_title)
+    exclude_items = [
+      line.strip()
+      for line in custom_interview_list_exclude.splitlines()
+      if line.strip()
+    ]
+    if exclude_items:
+      interview_list_config["exclude from interview list"] = exclude_items
+    elif "exclude from interview list" in interview_list_config:
+      del interview_list_config["exclude from interview list"]
+
     the_config["assembly line"][
       "update session metadata"
     ] = enable_session_metadata_update
-    the_config["assembly line"]["new form url"] = custom_interview_list_start_page
     the_config["session list interview"] = (
       "docassemble.AssemblyLine:data/questions/interview_list.yml"
     )
   set_custom_interview_list = True
+---
+id: assembly line global config
+continue button field: assembly_line_global_config
+question: |
+  Assembly Line Global Configuration
+subquestion: |
+  These settings map directly to current `assembly line` global config keys.
+fields:
+  - OCR engine for PDF processing: assembly_line_ocr_engine
+    datatype: radio
+    choices:
+      - Use default engine: ""
+      - Use ocrmypdf (faster, requires server dependency): "ocrmypdf"
+    default: ${ the_config.get("assembly line", {}).get("ocr engine", "") }
+  - Show support email option on Assembly Line error screens: assembly_line_show_email_to_user_on_errors
+    datatype: yesno
+    default: ${ bool(the_config.get("assembly line", {}).get("show email to user on errors", False)) }
+  - Allow users to download incomplete documents from error screens: assembly_line_enable_incomplete_downloads
+    datatype: yesno
+    default: ${ bool(the_config.get("assembly line", {}).get("enable incomplete downloads", False)) }
+  - Show feedback link on Assembly Line error screens: assembly_line_enable_error_action_feedback_link
+    datatype: yesno
+    default: ${ bool(the_config.get("assembly line", {}).get("enable error action feedback link", False)) }
+  - Extra custom error actions (markdown bullet lines, one per line): assembly_line_custom_error_actions
+    datatype: area
+    required: False
+    default: |
+      ${ "\n".join(the_config.get("assembly line", {}).get("custom error actions", [])) }
+---
+code: |
+  if not "assembly line" in the_config:
+    the_config["assembly line"] = {}
+  if isinstance(assembly_line_ocr_engine, str) and assembly_line_ocr_engine.strip():
+    the_config["assembly line"]["ocr engine"] = assembly_line_ocr_engine.strip()
+  elif "ocr engine" in the_config["assembly line"]:
+    del the_config["assembly line"]["ocr engine"]
+  the_config["assembly line"][
+    "show email to user on errors"
+  ] = assembly_line_show_email_to_user_on_errors
+  the_config["assembly line"][
+    "enable incomplete downloads"
+  ] = assembly_line_enable_incomplete_downloads
+  the_config["assembly line"][
+    "enable error action feedback link"
+  ] = assembly_line_enable_error_action_feedback_link
+  custom_actions = [
+    line.strip()
+    for line in assembly_line_custom_error_actions.splitlines()
+    if line.strip()
+  ]
+  if custom_actions:
+    the_config["assembly line"]["custom error actions"] = custom_actions
+  elif "custom error actions" in the_config["assembly line"]:
+    del the_config["assembly line"]["custom error actions"]
 ---
 depends on:
   - allowed_github_repo_owners
@@ -214,6 +406,18 @@ subquestion: |
   
   You may want to pause and download a copy of your
   [:file-download: configuration file](${ backup_file.url_for(attachment=True) }) before you continue.
+fields:
+  - note: |
+      ${ installed_package_status_summary }
+    show if:
+      code: |
+        has_installed_assemblyline_packages
+  - Update only currently installed Assembly Line packages (skip configuration questions): update_installed_packages_only
+    datatype: yesnoradio
+    default: True
+    show if:
+      code: |
+        has_installed_assemblyline_packages
 ---
 code: |
   the_config = da_get_config()
@@ -227,6 +431,30 @@ code: |
     the_config["voicerss"] = {}
   if not the_config.get("github issues"):
     the_config["github issues"] = {}
+  if not the_config.get("mail"):
+    the_config["mail"] = {}
+  if not the_config.get("twilio"):
+    the_config["twilio"] = {}
+  if not the_config.get("open ai"):
+    the_config["open ai"] = {}
+  if not the_config.get("assembly line"):
+    the_config["assembly line"] = {}
+  if not isinstance(the_config.get("assembly line", {}).get("interview list"), dict):
+    the_config["assembly line"]["interview list"] = {}
+  if not "openai api key" in the_config and the_config.get("open ai", {}).get("key"):
+    the_config["openai api key"] = the_config.get("open ai", {}).get("key")
+  if not "openai base url" in the_config and the_config.get("open ai", {}).get(
+    "base url"
+  ):
+    the_config["openai base url"] = the_config.get("open ai", {}).get("base url")
+---
+code: |
+  if the_config.get("sendgrid api key"):
+    default_email_provider = "sendgrid"
+  elif the_config.get("mailgun api key"):
+    default_email_provider = "mailgun"
+  else:
+    default_email_provider = "smtp"
 ---
 id: configuration questions
 continue button field: basic_server_config
@@ -321,6 +549,74 @@ fields:
   - VoiceRSS API Key: the_config['voicerss']['key']
     default: ${ the_config['voicerss'].get('key') }    
     show if: configure_api_voicerss
+  - Configure [Email](https://docassemble.org/docs/config.html#mail) sending credentials: configure_api_email
+    datatype: yesno
+    default: False
+  - Email provider: email_provider
+    datatype: radio
+    code: |
+      [
+        {"SMTP server": "smtp"},
+        {"SendGrid API": "sendgrid"},
+        {"Mailgun API": "mailgun"},
+      ]
+    default: ${ default_email_provider }
+    show if: configure_api_email
+  - Email default sender address: the_config['mail']['default sender']
+    required: False
+    default: ${ the_config.get("mail", {}).get("default sender", "") }
+    show if: configure_api_email
+  - Error notification email address: the_config['error notification email']
+    required: False
+    default: ${ the_config.get("error notification email", "") }
+    show if: configure_api_email
+  - SMTP server hostname: the_config['mail']['server']
+    required: False
+    default: ${ the_config.get("mail", {}).get("server", "") }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "smtp"
+  - SMTP server port: the_config['mail']['port']
+    datatype: integer
+    required: False
+    default: ${ the_config.get("mail", {}).get("port", 587) }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "smtp"
+  - SMTP username: the_config['mail']['username']
+    required: False
+    default: ${ the_config.get("mail", {}).get("username", "") }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "smtp"
+  - SMTP password: the_config['mail']['password']
+    required: False
+    input type: password
+    default: ${ the_config.get("mail", {}).get("password", "") }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "smtp"
+  - Use SSL for SMTP: the_config['mail']['use ssl']
+    datatype: yesno
+    default: ${ bool(the_config.get("mail", {}).get("use ssl", False)) }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "smtp"
+  - Use TLS for SMTP: the_config['mail']['use tls']
+    datatype: yesno
+    default: ${ bool(the_config.get("mail", {}).get("use tls", True)) }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "smtp"
+  - SendGrid API key: the_config['sendgrid api key']
+    required: False
+    default: ${ the_config.get("sendgrid api key", "") }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "sendgrid"
+  - Mailgun API key: the_config['mailgun api key']
+    required: False
+    default: ${ the_config.get("mailgun api key", "") }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "mailgun"
+  - Mailgun domain: the_config['mailgun domain']
+    required: False
+    default: ${ the_config.get("mailgun domain", "") }
+    js show if: |
+      val("configure_api_email") && val("email_provider") == "mailgun"
   - note: |
       % if not the_config.get('mail'):
       ** You do not appear to have a valid mail configuration.**
@@ -330,6 +626,49 @@ fields:
       
       We recommend using SendGrid, not an SMTP server.
       % endif
+  - Configure [Twilio](https://docassemble.org/docs/config.html#twilio) SMS credentials: configure_api_twilio
+    datatype: yesno
+  - Twilio account SID: the_config['twilio']['account sid']
+    required: False
+    default: ${ the_config.get("twilio", {}).get("account sid", "") }
+    show if: configure_api_twilio
+  - Twilio auth token: the_config['twilio']['auth token']
+    required: False
+    input type: password
+    default: ${ the_config.get("twilio", {}).get("auth token", "") }
+    show if: configure_api_twilio
+  - Twilio sending number: the_config['twilio']['number']
+    required: False
+    default: ${ the_config.get("twilio", {}).get("number", "") }
+    show if: configure_api_twilio
+  - Configure LLM defaults ([ALToolbox](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/components/ALToolbox/llms)): configure_api_llm
+    datatype: yesno
+    help: |
+      Supports default OpenAI-compatible endpoint and model settings, including custom providers.
+  - "LLM API key (`open ai` -> `key`)": the_config['open ai']['key']
+    required: False
+    input type: password
+    default: ${ the_config.get("open ai", {}).get("key", the_config.get("openai api key", "")) }
+    show if: configure_api_llm
+  - "LLM API base URL (`open ai` -> `base url`)": the_config['open ai']['base url']
+    required: False
+    default: ${ the_config.get("open ai", {}).get("base url", the_config.get("openai base url", "https://api.openai.com/v1/")) }
+    show if: configure_api_llm
+  - "Default LLM model (`open ai` -> `default model`)": the_config['open ai']['default model']
+    required: False
+    default: ${ the_config.get("open ai", {}).get("default model", "gpt-5-nano") }
+    show if: configure_api_llm
+  - "Reasoning effort (`open ai` -> `reasoning effort`)": the_config['open ai']['reasoning effort']
+    datatype: radio
+    choices:
+      - low
+      - medium
+      - high
+    default: |
+      ${ the_config.get("open ai", {}).get("reasoning effort")
+         if the_config.get("open ai", {}).get("reasoning effort") in ["low", "medium", "high"]
+         else "low" }
+    show if: configure_api_llm
   - Configure [e-filing](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/efiling/overview): configure_api_efile
     datatype: yesno
     help: |
@@ -358,11 +697,34 @@ fields:
   - note: |
       **OK, you will setup GitHub on the next page.**
     show if: configure_api_github
-  - note: |
-      **We cannot yet help you configure**:
-      
-      - [Twilio](https://docassemble.org/docs/config.html#twilio)
-      - [EMail](https://docassemble.org/docs/config.html#mail)
+---
+code: |
+  if configure_api_email:
+    if email_provider != "smtp":
+      for key_name in [
+        "server",
+        "port",
+        "username",
+        "password",
+        "use ssl",
+        "use tls",
+      ]:
+        if key_name in the_config.get("mail", {}):
+          del the_config["mail"][key_name]
+    if email_provider != "sendgrid" and "sendgrid api key" in the_config:
+      del the_config["sendgrid api key"]
+    if email_provider != "mailgun":
+      if "mailgun api key" in the_config:
+        del the_config["mailgun api key"]
+      if "mailgun domain" in the_config:
+        del the_config["mailgun domain"]
+
+  if configure_api_llm:
+    if the_config.get("open ai", {}).get("key"):
+      the_config["openai api key"] = the_config["open ai"]["key"]
+    if the_config.get("open ai", {}).get("base url"):
+      the_config["openai base url"] = the_config["open ai"]["base url"]
+  api_config_cleanup = True
 ---
 template: about_api_template
 subject: |
@@ -489,16 +851,19 @@ variable name: mandatory_packages
 data:
   "https://github.com/SuffolkLITLab/docassemble-AssemblyLine":
     label: Assembly Line (Core)
+    package_name: docassemble.AssemblyLine
     help: |
       The core Assembly Line runtime code, with default styling.
   "https://github.com/SuffolkLITLab/docassemble-ALToolbox":
     label: ALToolbox
+    package_name: docassemble.ALToolbox
     help: |
       Utility functions and web components that may help with or without the
-      Assembly Line framework. This will be installed regardles if you select
+      Assembly Line framework. This will be installed regardless if you select
       "Core" above, but you can force an independent update here.
   "https://github.com/SuffolkLITLab/docassemble-GithubFeedbackForm":
     label: Feedback Form
+    package_name: docassemble.GithubFeedbackForm
     help: |
       Feedback form used in the footer by default. This is a dependency of
       the "Core" package above that will always be installed, but you can
@@ -508,40 +873,56 @@ variable name: optional_packages
 data:
   "https://github.com/SuffolkLITLab/docassemble-ALWeaver":
     label: ALWeaver
+    package_name: docassemble.ALWeaver
+    optional: True
     help: |
       A tool to help turn templates into draft interviews quickly.
   "https://github.com/SuffolkLITLab/docassemble-ALRecipes":
     label: "Playground examples"
+    package_name: docassemble.ALRecipes
+    optional: True
     help: |
       Model questions for composite fields, such as name, address,
       and more that you can insert directly into interviews.
-  "https://github.com/SuffolkLITLab/docassemble-InterviewStats/":
+  "https://github.com/SuffolkLITLab/docassemble-InterviewStats":
     label: InterviewStats
+    package_name: docassemble.InterviewStats
+    optional: True
     help: |
       A package to help view detailed statistics generated by 
       store_interview_snapshot() (created by default just before
       download for all Assembly Line packages)
   "https://github.com/SuffolkLITLab/docassemble-ALMassachusetts":
     label: Massachusetts-specific questions
+    package_name: docassemble.ALMassachusetts
+    optional: True
   "https://github.com/GBLS/docassemble-MACourts":
     label: Massachusetts-specific list of courts
+    package_name: docassemble.MACourts
+    optional: True
     help: |
       This is installed automatically if you select "Massachusetts-
       specific questions".
   "https://github.com/SuffolkLITLab/docassemble-MassAccess":
     label: |
       Mass Access / Court Forms Online branding
+    package_name: docassemble.MassAccess
+    optional: True
     help: |
       Logo and branding for Court Forms Online / Suffolk LIT Lab. Selecting
       this will also automatically install the list of courts and Massachusetts-
       specific questions.
   "https://github.com/SuffolkLITLab/docassemble-ALDashboard":
     label: ALDashboard
+    package_name: docassemble.ALDashboard
+    optional: True
     help: |
       A menu and dashboard for small administrative tasks, which includes
       the installation script you are running now.
-  "https://github.com/SuffolkLITLab/docassemble-EFSPIntegration/":
+  "https://github.com/SuffolkLITLab/docassemble-EFSPIntegration":
     label: E-filing client
+    package_name: docassemble.EFSPIntegration
+    optional: True
     help: |
       E-filing client for Tyler EFM
 ---
@@ -549,43 +930,176 @@ modules:
   - .aldashboard
 ---
 code: |
-  for pkg_url in (
+  package_catalog = {
+    **mandatory_packages,
+    **optional_packages,
+  }
+  package_status_rows = get_assemblyline_package_status(package_catalog)
+  package_status_by_url = {row["url"]: row for row in package_status_rows}
+  installed_package_status_rows = [
+    row for row in package_status_rows if row.get("installed")
+  ]
+  has_installed_assemblyline_packages = len(installed_package_status_rows) > 0
+
+
+  def format_status_row(row):
+    version = str(row.get("version") or "unknown")
+    latest_version = str(row.get("latest_version") or version)
+    latest_source = str(row.get("latest_source") or "unknown")
+    has_update = version != latest_version
+    label = html.escape(str(row.get("label") or ""))
+    package_name = html.escape(str(row.get("package_name") or ""))
+    version = html.escape(version)
+
+    # Format latest version info
+    if has_update:
+      latest_info = html.escape(f"{ latest_version } ({ latest_source })")
+      update_state = "yes"
+    else:
+      latest_info = "(up to date)"
+      update_state = "no"
+
+    return (
+      f"<tr><td>{ label }</td>"
+      f"<td><code>{ package_name }</code></td>"
+      f"<td>{ version }</td>"
+      f"<td>{ latest_info }</td>"
+      f"<td>{ update_state }</td></tr>"
+    )
+
+
+  if has_installed_assemblyline_packages:
+    installed_rows = "\n".join(
+      format_status_row(row) for row in installed_package_status_rows
+    )
+    installed_package_status_summary = (
+      "### Installed Assembly Line packages detected\n\n"
+      "You can skip directly to package updates if you only want to refresh installed packages.\n\n"
+      "<table class='table table-sm table-striped'>"
+      "<thead><tr><th>Package</th><th>Python package</th><th>Installed version</th><th>Latest available</th><th>Updatable now</th></tr></thead>"
+      f"<tbody>{ installed_rows }</tbody></table>"
+    )
+  else:
+    installed_package_status_summary = (
+      "No Assembly Line packages were detected as installed."
+    )
+    update_installed_packages_only = False
+
+  installed_mandatory_urls = [
+    row["url"]
+    for row in package_status_rows
+    if row.get("installed") and not row.get("optional")
+  ]
+  installed_optional_urls = [
+    row["url"]
+    for row in package_status_rows
+    if row.get("installed") and row.get("optional")
+  ]
+  default_mandatory_urls = (
+    installed_mandatory_urls
+    if installed_mandatory_urls
+    else [
+      "https://github.com/SuffolkLITLab/docassemble-ALToolbox",
+      "https://github.com/SuffolkLITLab/docassemble-AssemblyLine",
+      "https://github.com/SuffolkLITLab/docassemble-GithubFeedbackForm",
+    ]
+  )
+  default_optional_urls = installed_optional_urls
+---
+code: |
+  selected_package_urls = (
     selected_mandatory_packages.true_values() + selected_optional_packages.true_values()
-  ):
+  )
+  for pkg_url in selected_package_urls:
     pkgname = install_from_github_url(pkg_url)
-  reset(pkgname)
+  if len(selected_package_urls):
+    reset(pkgname)
   al_install_done = True
 ---
 question: |
   What packages do you want to install or update?
 continue button label: Install Assembly Line
+subquestion: |
+  % if has_installed_assemblyline_packages:
+  Packages marked "Installed" are already on this server and are preselected so you can update them quickly.
+  % endif
 fields:
   - Core packages: selected_mandatory_packages
     datatype: checkboxes
     code: |
       [
         {
-          key: mandatory_packages[key].get("label"),
-          "help": mandatory_packages[key].get("help"),
+          "value": key,
+          "label": (
+            mandatory_packages[key].get("label", "")
+            + (
+              " (Installed: "
+              + package_status_by_url.get(key, {}).get("version", "unknown")
+              + "; Latest: "
+              + package_status_by_url.get(key, {}).get("latest_version", "unknown")
+              + " from "
+              + package_status_by_url.get(key, {}).get("latest_source", "unknown")
+              + ")"
+              if package_status_by_url.get(key, {}).get("installed")
+              else " (Not installed; Latest: "
+              + package_status_by_url.get(key, {}).get("latest_version", "unknown")
+              + " from "
+              + package_status_by_url.get(key, {}).get("latest_source", "unknown")
+              + ")"
+            )
+          ),
+          "help": (
+            mandatory_packages[key].get("help", "")
+            + (
+              " Updatable now."
+              if package_status_by_url.get(key, {}).get("can_update")
+              else ""
+            )
+          ),
         }
         for key in mandatory_packages
       ]
-    default:
-      - https://github.com/SuffolkLITLab/docassemble-ALToolbox
-      - https://github.com/SuffolkLITLab/docassemble-AssemblyLine
-      - https://github.com/SuffolkLITLab/docassemble-GithubFeedbackForm
-    none of the above: False      
+    default: ${ default_mandatory_urls }
+    none of the above: False
+    all of the above: True
   - Optional packages: selected_optional_packages
     datatype: checkboxes
     code: |
       [
         {
-          key: optional_packages[key].get("label"),
-          "help": optional_packages[key].get("help"),
+          "value": key,
+          "label": (
+            optional_packages[key].get("label", "")
+            + (
+              " (Installed: "
+              + package_status_by_url.get(key, {}).get("version", "unknown")
+              + "; Latest: "
+              + package_status_by_url.get(key, {}).get("latest_version", "unknown")
+              + " from "
+              + package_status_by_url.get(key, {}).get("latest_source", "unknown")
+              + ")"
+              if package_status_by_url.get(key, {}).get("installed")
+              else " (Not installed; Latest: "
+              + package_status_by_url.get(key, {}).get("latest_version", "unknown")
+              + " from "
+              + package_status_by_url.get(key, {}).get("latest_source", "unknown")
+              + ")"
+            )
+          ),
+          "help": (
+            optional_packages[key].get("help", "")
+            + (
+              " Updatable now."
+              if package_status_by_url.get(key, {}).get("can_update")
+              else ""
+            )
+          ),
         }
         for key in optional_packages
       ]
-    none of the above: False      
+    default: ${ default_optional_urls }
+    none of the above: False
+    all of the above: True
 ---
 event: end_screen
 question: |

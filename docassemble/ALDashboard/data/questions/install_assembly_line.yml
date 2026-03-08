@@ -865,7 +865,7 @@ data:
     package_name: docassemble.ALToolbox
     help: |
       Utility functions and web components that may help with or without the
-      Assembly Line framework. This will be installed regardles if you select
+      Assembly Line framework. This will be installed regardless if you select
       "Core" above, but you can force an independent update here.
   "https://github.com/SuffolkLITLab/docassemble-GithubFeedbackForm":
     label: Feedback Form

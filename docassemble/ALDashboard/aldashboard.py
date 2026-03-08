@@ -1,6 +1,9 @@
 import os
 import shutil
 import subprocess
+import re
+import requests
+from importlib.metadata import distributions
 from docassemble.webapp.users.models import UserModel
 from docassemble.webapp.db_object import init_sqlalchemy
 from github import Github  # PyGithub
@@ -8,7 +11,7 @@ from github import Github  # PyGithub
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
 from sqlalchemy.orm import joinedload
-from typing import List, Tuple, Dict, Optional, Callable
+from typing import Any, List, Tuple, Dict, Optional, Callable
 import math
 
 import docassemble.webapp.worker
@@ -39,11 +42,9 @@ from docassemble.base.util import (
     user_has_privilege,
     DACloudStorage,
 )
-from docassemble.webapp.server import get_package_info
 
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
-import re
 import werkzeug
 import importlib.resources
 from datetime import datetime, timedelta
@@ -61,6 +62,8 @@ __all__ = [
     "da_write_config",
     "ALPackageInstaller",
     "get_package_info",
+    "github_url_to_package_name",
+    "get_assemblyline_package_status",
     "install_from_pypi",
     "install_fonts",
     "list_installed_fonts",
@@ -104,6 +107,250 @@ def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = Non
 
 def install_from_pypi(packagename: str):
     return install_pip_package(packagename)
+
+
+def github_url_to_package_name(url: str) -> str:
+    """Normalize a GitHub package URL to a python package name."""
+    package_name = re.sub(r"/*$", "", str(url or "").strip())
+    package_name = re.sub(r"^git+", "", package_name)
+    package_name = re.sub(r"#.*", "", package_name)
+    package_name = re.sub(r"\.git$", "", package_name)
+    package_name = re.sub(r".*/", "", package_name)
+    return re.sub(r"^docassemble-", "docassemble.", package_name)
+
+
+def _get_github_version(giturl: str) -> Optional[str]:
+    """
+    Fetch the version from a GitHub repository's setup.py file.
+
+    Args:
+        giturl: Git repository URL (e.g., https://github.com/owner/repo)
+
+    Returns:
+        Version string if found, None otherwise.
+    """
+    if not giturl:
+        return None
+
+    try:
+        # Extract owner and repo from URL
+        # Handle various formats: https://github.com/owner/repo, https://github.com/owner/repo.git, etc.
+        giturl = giturl.strip().rstrip("/")
+        match = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", giturl)
+        if not match:
+            return None
+
+        owner, repo = match.groups()
+
+        # Fetch setup.py from default branch
+        setup_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/setup.py"
+        response = requests.get(setup_url, timeout=5)
+        if response.status_code != 200:
+            return None
+
+        # Extract version from setup.py
+        # Look for patterns like: version="1.2.3" or version='1.2.3'
+        version_match = re.search(r'version\s*=\s*["\']([^"\']+)["\']', response.text)
+        if version_match:
+            return version_match.group(1)
+    except Exception:
+        # Non-fatal: if we can't fetch version, just return None
+        pass
+
+    return None
+
+
+def _parse_version_tuple(version_str: str) -> Tuple:
+    """Convert version string to tuple of integers for comparison."""
+    if not version_str:
+        return ()
+    try:
+        return tuple(int(x) for x in version_str.split(".") if x.isdigit())
+    except Exception:
+        return ()
+
+
+def _compare_versions(v1: str, v2: str) -> int:
+    """
+    Compare two version strings.
+
+    Args:
+        v1: First version
+        v2: Second version
+
+    Returns:
+        -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+    """
+    v1_tuple = _parse_version_tuple(v1)
+    v2_tuple = _parse_version_tuple(v2)
+
+    if not v1_tuple and not v2_tuple:
+        return 0
+    if not v1_tuple:
+        return -1
+    if not v2_tuple:
+        return 1
+
+    # Pad to same length with zeros
+    max_len = max(len(v1_tuple), len(v2_tuple))
+    v1_tuple = v1_tuple + (0,) * (max_len - len(v1_tuple))
+    v2_tuple = v2_tuple + (0,) * (max_len - len(v2_tuple))
+
+    if v1_tuple < v2_tuple:
+        return -1
+    elif v1_tuple > v2_tuple:
+        return 1
+    else:
+        return 0
+
+
+def _get_latest_version(
+    installed: str, pypi: Optional[str], github: Optional[str]
+) -> Tuple[str, str]:
+    """
+    Determine the latest available version among installed, pypi, and github versions.
+
+    Args:
+        installed: Installed version
+        pypi: PyPI version (if available)
+        github: GitHub version (if available)
+
+    Returns:
+        Tuple of (latest_version, source) where source is 'github', 'pypi', or 'installed'
+    """
+    candidates = []
+    if installed:
+        candidates.append((installed, "installed"))
+    if pypi:
+        candidates.append((pypi, "pypi"))
+    if github:
+        candidates.append((github, "github"))
+
+    if not candidates:
+        return (installed or "", "installed")
+
+    # Find the maximum version
+    latest = candidates[0]
+    for version, source in candidates[1:]:
+        if _compare_versions(version, latest[0]) > 0:
+            latest = (version, source)
+
+    return latest
+
+
+def _installed_distribution_versions() -> Dict[str, str]:
+    """Return installed distribution versions keyed by casefolded package name."""
+    installed_versions: Dict[str, str] = {}
+    for dist in distributions():
+        dist_name = getattr(dist, "name", None)
+        dist_version = getattr(dist, "version", None)
+        if not dist_name:
+            continue
+        installed_versions[str(dist_name).casefold()] = str(dist_version or "")
+    return installed_versions
+
+
+def _package_info_by_name() -> Dict[str, Dict[str, Any]]:
+    """Return package metadata from docassemble package manager keyed by package name.
+
+    NOTE: We get the actual installed version from importlib.metadata (pkg_versions)
+    rather than from the docassemble Package object, since the Package object's
+    version attribute may be unreliable or represent a different value.
+    """
+    pkg_versions = _installed_distribution_versions()
+    rows_by_name: Dict[str, Dict[str, Any]] = {}
+    try:
+        package_info = get_package_info()
+        package_rows = (
+            package_info[0] if isinstance(package_info, (list, tuple)) else []
+        )
+        for row in package_rows:
+            package = getattr(row, "package", None)
+            package_name = getattr(package, "name", None)
+            if not package_name:
+                continue
+
+            pkg_type = str(getattr(package, "type", "") or "")
+            pkg_giturl = str(getattr(package, "giturl", "") or "")
+
+            # Get the actual installed version from package metadata
+            package_key = str(package_name).casefold()
+            pkg_version = pkg_versions.get(package_key, "")
+
+            # Get latest available version on GitHub if this is a git package
+            github_version = None
+            if pkg_giturl and pkg_type.lower() in ("git", ""):
+                github_version = _get_github_version(pkg_giturl)
+
+            # Determine the latest available version and where it comes from
+            latest_version, latest_source = _get_latest_version(
+                pkg_version, None, github_version
+            )
+
+            # Determine if package can be updated:
+            # - Check docassemble's built-in flag, OR
+            # - Any remote version (GitHub) is newer than installed
+            can_update = bool(
+                getattr(row, "can_update", False)
+                or _compare_versions(latest_version, pkg_version) > 0
+            )
+
+            rows_by_name[str(package_name).casefold()] = {
+                "name": str(package_name),
+                "version": pkg_version,
+                "can_update": can_update,
+                "type": pkg_type,
+                "giturl": pkg_giturl,
+                "latest_version": latest_version,
+                "latest_source": latest_source,
+            }
+    except Exception:
+        return {}
+    return rows_by_name
+
+
+def get_assemblyline_package_status(
+    package_catalog: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return package status for AssemblyLine package installer choices.
+
+    Args:
+        package_catalog: mapping of github URL -> metadata (label/help/package_name/etc).
+    Returns:
+        List of dicts with fields including url, package_name, label, installed,
+        version, can_update, latest_version, latest_source, and optional.
+    """
+    installed_versions = _installed_distribution_versions()
+    package_info = _package_info_by_name()
+    rows: List[Dict[str, Any]] = []
+
+    for pkg_url, meta in package_catalog.items():
+        metadata = meta if isinstance(meta, dict) else {}
+        package_name = metadata.get("package_name") or github_url_to_package_name(
+            pkg_url
+        )
+        package_key = str(package_name).casefold()
+        package_row = package_info.get(package_key, {})
+        installed = package_key in installed_versions or bool(package_row)
+        version = installed_versions.get(package_key) or package_row.get("version", "")
+        latest_version = package_row.get("latest_version", version)
+        latest_source = package_row.get("latest_source", "installed")
+
+        rows.append(
+            {
+                "url": pkg_url,
+                "package_name": package_name,
+                "label": metadata.get("label", package_name),
+                "help": metadata.get("help", ""),
+                "optional": bool(metadata.get("optional", False)),
+                "installed": installed,
+                "version": version,
+                "latest_version": latest_version,
+                "latest_source": latest_source,
+                "can_update": bool(package_row.get("can_update", False)),
+            }
+        )
+    return sorted(rows, key=lambda row: str(row.get("label", "")).casefold())
 
 
 def reset(packagename=""):

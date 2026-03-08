@@ -667,11 +667,13 @@ fields:
   - "Reasoning effort (`open ai` -> `reasoning effort`)": the_config['open ai']['reasoning effort']
     datatype: radio
     choices:
-      - minimal
       - low
       - medium
       - high
-    default: ${ the_config.get("open ai", {}).get("reasoning effort", "low") }
+    default: |
+      ${ the_config.get("open ai", {}).get("reasoning effort")
+         if the_config.get("open ai", {}).get("reasoning effort") in ["low", "medium", "high"]
+         else "low" }
     show if: configure_api_llm
   - Configure [e-filing](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/efiling/overview): configure_api_efile
     datatype: yesno

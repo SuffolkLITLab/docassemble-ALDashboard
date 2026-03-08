@@ -11,7 +11,7 @@ from github import Github  # PyGithub
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
 from sqlalchemy.orm import joinedload
-from typing import Any, List, Tuple, Dict, Optional, Callable
+from typing import Any, List, Tuple, Dict, Optional, Callable, Set
 import math
 
 import docassemble.webapp.worker
@@ -250,14 +250,25 @@ def _installed_distribution_versions() -> Dict[str, str]:
     return installed_versions
 
 
-def _package_info_by_name() -> Dict[str, Dict[str, Any]]:
+def _package_info_by_name(
+    pkg_versions: Optional[Dict[str, str]] = None,
+    package_names: Optional[Set[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
     """Return package metadata from docassemble package manager keyed by package name.
 
     NOTE: We get the actual installed version from importlib.metadata (pkg_versions)
     rather than from the docassemble Package object, since the Package object's
     version attribute may be unreliable or represent a different value.
     """
-    pkg_versions = _installed_distribution_versions()
+    if pkg_versions is None:
+        pkg_versions = _installed_distribution_versions()
+    package_keys = (
+        {name.casefold() for name in package_names}
+        if package_names is not None
+        else None
+    )
+    if package_keys == set():
+        return {}
     rows_by_name: Dict[str, Dict[str, Any]] = {}
     try:
         package_info = get_package_info()
@@ -275,6 +286,8 @@ def _package_info_by_name() -> Dict[str, Dict[str, Any]]:
 
             # Get the actual installed version from package metadata
             package_key = str(package_name).casefold()
+            if package_keys is not None and package_key not in package_keys:
+                continue
             pkg_version = pkg_versions.get(package_key, "")
 
             # Get latest available version on GitHub if this is a git package
@@ -304,7 +317,8 @@ def _package_info_by_name() -> Dict[str, Dict[str, Any]]:
                 "latest_version": latest_version,
                 "latest_source": latest_source,
             }
-    except Exception:
+    except Exception as ex:
+        log(f"Error loading package info: {ex}")
         return {}
     return rows_by_name
 
@@ -321,7 +335,16 @@ def get_assemblyline_package_status(
         version, can_update, latest_version, latest_source, and optional.
     """
     installed_versions = _installed_distribution_versions()
-    package_info = _package_info_by_name()
+    package_names = {
+        str(
+            (meta if isinstance(meta, dict) else {}).get("package_name")
+            or github_url_to_package_name(url)
+        ).casefold()
+        for url, meta in package_catalog.items()
+    }
+    package_info = _package_info_by_name(
+        pkg_versions=installed_versions, package_names=package_names
+    )
     rows: List[Dict[str, Any]] = []
 
     for pkg_url, meta in package_catalog.items():

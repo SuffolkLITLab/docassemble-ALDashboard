@@ -10,6 +10,7 @@ metadata:
 ---
 imports:
   - requests
+  - html
 ---
 features:
   bootstrap theme: al_installer_bootstrap_theme.css
@@ -34,13 +35,6 @@ code: |
     interview_list_config.get("logo image url") or al_logo.url_for()
   )
   installer_logo_image_alt = interview_list_config.get("logo image alt") or ""
-  installer_logo_title_row_1 = interview_list_config.get(
-    "logo title row 1"
-  ) or get_config("app name", "CourtFormsOnline")
-  installer_logo_title_row_2 = (
-    interview_list_config.get("logo title row 2")
-    or all_variables(special="metadata").get("title", "").rstrip()
-  )
 ---
 default screen parts:
   title url: |
@@ -949,22 +943,25 @@ code: |
 
 
   def format_status_row(row):
-    version = row.get("version") or "unknown"
-    latest_version = row.get("latest_version") or version
-    latest_source = row.get("latest_source") or "unknown"
+    version = str(row.get("version") or "unknown")
+    latest_version = str(row.get("latest_version") or version)
+    latest_source = str(row.get("latest_source") or "unknown")
     has_update = version != latest_version
+    label = html.escape(str(row.get("label") or ""))
+    package_name = html.escape(str(row.get("package_name") or ""))
+    version = html.escape(version)
 
     # Format latest version info
     if has_update:
-      latest_info = f"{ latest_version } ({ latest_source })"
+      latest_info = html.escape(f"{ latest_version } ({ latest_source })")
       update_state = "yes"
     else:
       latest_info = "(up to date)"
       update_state = "no"
 
     return (
-      f"<tr><td>{ row.get('label') }</td>"
-      f"<td><code>{ row.get('package_name') }</code></td>"
+      f"<tr><td>{ label }</td>"
+      f"<td><code>{ package_name }</code></td>"
       f"<td>{ version }</td>"
       f"<td>{ latest_info }</td>"
       f"<td>{ update_state }</td></tr>"

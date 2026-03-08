@@ -238,30 +238,6 @@ def _get_latest_version(
     return latest
 
 
-def _is_package_outdated(installed_version: str, giturl: str) -> bool:
-    """
-    Check if an installed package version is outdated.
-    Returns True if a newer version is available on GitHub or PyPI.
-
-    Args:
-        installed_version: Current installed version string
-        giturl: Git repository URL
-
-    Returns:
-        True if a newer version is available, False otherwise.
-    """
-    if not installed_version:
-        return False
-
-    github_version = _get_github_version(giturl) if giturl else None
-
-    # Compare installed with available versions
-    if github_version and _compare_versions(github_version, installed_version) > 0:
-        return True
-
-    return False
-
-
 def _installed_distribution_versions() -> Dict[str, str]:
     """Return installed distribution versions keyed by casefolded package name."""
     installed_versions: Dict[str, str] = {}

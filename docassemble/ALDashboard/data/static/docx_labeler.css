@@ -1,0 +1,485 @@
+/*  docx_labeler.css
+ *  Custom styles for the AssemblyLine DOCX Labeler tool.
+ *  Designed to work alongside Bootstrap 5 (bundled with docassemble).
+ */
+
+/* ============================================================
+   Utility helpers (replacing Tailwind utilities not in BS5)
+   ============================================================ */
+.hidden {
+  display: none !important;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.break-all {
+  word-break: break-all;
+}
+
+/* ============================================================
+   App shell / Layout
+   ============================================================ */
+.dl-app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.dl-header {
+  background: #fff;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.dl-main {
+  flex: 1 1 0%;
+  display: flex;
+  min-height: 0;
+}
+
+.dl-sidebar {
+  width: 420px;
+  min-width: 420px;
+  background: #fff;
+  border-right: 1px solid var(--bs-border-color);
+  display: flex;
+  flex-direction: column;
+}
+
+.dl-preview-area {
+  flex: 1 1 0%;
+  background-color: var(--bs-light);
+  padding: 2rem;
+  overflow: auto;
+}
+
+.dl-preview-card {
+  max-width: 56rem;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 2rem;
+}
+
+/* ============================================================
+   Document preview
+   ============================================================ */
+.document-preview {
+  font-family: "Times New Roman", serif;
+  line-height: 1.6;
+}
+
+.document-preview p {
+  margin-bottom: 1em;
+}
+
+/* ============================================================
+   Sidebar sections
+   ============================================================ */
+.dl-upload-section {
+  padding: 1rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+/* File input with styled button */
+.dl-file-input {
+  display: block;
+  width: 100%;
+  font-size: 0.875rem;
+  color: var(--bs-secondary);
+}
+
+.dl-file-input::file-selector-button {
+  margin-right: 1rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
+.dl-file-input::file-selector-button:hover {
+  background-color: #dbeafe;
+}
+
+/* ============================================================
+   Tab navigation
+   ============================================================ */
+.dl-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.dl-tab {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--bs-secondary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.dl-tab:hover {
+  color: var(--bs-body-color);
+}
+
+.dl-tab.tab-active {
+  border-bottom-color: var(--bs-primary);
+  color: var(--bs-primary);
+}
+
+/* Small badge-like count next to tab labels */
+.dl-count-badge {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.75rem;
+  border-radius: 0.25rem;
+}
+
+.dl-count-badge-primary {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.dl-count-badge-warning {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+/* ============================================================
+   Label & suggestion state classes
+   ============================================================ */
+.suggestion-pending {
+  background-color: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.suggestion-accepted {
+  background-color: #d1fae5;
+  border-color: #10b981;
+}
+
+.suggestion-rejected {
+  background-color: #fee2e2;
+  border-color: #ef4444;
+  text-decoration: line-through;
+}
+
+.highlight-pending {
+  background-color: #fef3c7;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.highlight-accepted {
+  background-color: #d1fae5;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.highlight-existing {
+  background-color: #dbeafe;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+/* ============================================================
+   Tree widget (variable picker + existing-labels tree)
+   ============================================================ */
+.tree-item {
+  cursor: pointer;
+  user-select: none;
+}
+
+.tree-item:hover {
+  background-color: #f1f5f9;
+}
+
+.tree-children {
+  border-left: 2px solid #e2e8f0;
+  margin-left: 12px;
+  padding-left: 8px;
+}
+
+.tree-toggle {
+  width: 16px;
+  text-align: center;
+  display: inline-block;
+}
+
+/* ============================================================
+   Existing-label cards
+   ============================================================ */
+.existing-label {
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  cursor: pointer;
+}
+
+.existing-label:hover {
+  background: #bfdbfe;
+}
+
+/* ============================================================
+   Extra small action buttons (toolbar)
+   ============================================================ */
+.dl-btn-xs {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.dl-btn-purple {
+  background-color: #f3e8ff;
+  color: #7e22ce;
+}
+
+.dl-btn-purple:hover {
+  background-color: #e9d5ff;
+}
+
+.dl-btn-emerald {
+  background-color: #d1fae5;
+  color: #047857;
+}
+
+.dl-btn-emerald:hover {
+  background-color: #a7f3d0;
+}
+
+.dl-btn-green {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.dl-btn-green:hover {
+  background-color: #bbf7d0;
+}
+
+.dl-btn-slate {
+  background-color: #f1f5f9;
+  color: #334155;
+}
+
+.dl-btn-slate:hover {
+  background-color: #e2e8f0;
+}
+
+/* ============================================================
+   Loading spinner
+   ============================================================ */
+.loading-spinner {
+  animation: dl-spin 1s linear infinite;
+}
+
+@keyframes dl-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ============================================================
+   Modal overlay (custom, does not depend on Bootstrap JS)
+   ============================================================ */
+.dl-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1050;
+}
+
+.dl-modal-overlay.hidden {
+  display: none !important;
+}
+
+.dl-modal {
+  background: #fff;
+  border-radius: 0.75rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  width: 100%;
+  overflow: hidden;
+}
+
+.dl-modal-sm { max-width: 36rem; }
+.dl-modal-md { max-width: 42rem; }
+.dl-modal-lg {
+  max-width: 56rem;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.dl-modal-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dl-modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.dl-modal-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--bs-border-color);
+  background-color: var(--bs-light);
+}
+
+/* ============================================================
+   Empty / loading / error state icons
+   ============================================================ */
+.dl-state-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.dl-state-icon-lg {
+  width: 4rem;
+  height: 4rem;
+  color: var(--bs-secondary-bg);
+}
+
+.dl-state-icon-xl {
+  width: 6rem;
+  height: 6rem;
+  color: #e2e8f0;
+}
+
+/* ============================================================
+   Panel toolbar (button row inside sidebar panels)
+   ============================================================ */
+.dl-panel-toolbar {
+  padding: 1rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+/* ============================================================
+   Drag-and-drop feedback
+   ============================================================ */
+.dl-sidebar.drag-over {
+  background-color: #eff6ff;
+}
+
+/* ============================================================
+   Download bar (sticky at bottom of sidebar)
+   ============================================================ */
+.dl-download-bar {
+  padding: 1rem;
+  border-top: 1px solid var(--bs-border-color);
+  background-color: var(--bs-light);
+}
+
+/* ============================================================
+   Selection popover (inline label creation)
+   ============================================================ */
+.dl-sel-popover {
+  position: fixed;
+  z-index: 1060;
+  width: 380px;
+  background: #fff;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+}
+
+.dl-sel-popover.hidden {
+  display: none !important;
+}
+
+.dl-sel-popover-header {
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bs-light);
+  border-radius: 0.5rem 0.5rem 0 0;
+}
+
+.dl-sel-popover-body {
+  padding: 0.75rem;
+}
+
+.dl-sel-popover-footer {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--bs-border-color);
+  background: var(--bs-light);
+  border-radius: 0 0 0.5rem 0.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.375rem;
+}
+
+.dl-sel-selected-text {
+  background: #fef3c7;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.8125rem;
+  max-height: 3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-sel-var-tree-toggle {
+  font-size: 0.75rem;
+  cursor: pointer;
+  color: var(--bs-primary);
+  border: none;
+  background: none;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.dl-sel-var-tree-toggle:hover {
+  color: #1d4ed8;
+}
+
+.dl-sel-var-panel {
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.25rem;
+  margin-top: 0.5rem;
+  padding: 0.375rem;
+  background: var(--bs-light);
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 768px) {
+  .dl-main {
+    flex-direction: column;
+  }
+  .dl-sidebar {
+    width: 100%;
+    min-width: 100%;
+    max-height: 50vh;
+  }
+  .dl-sel-popover {
+    width: calc(100vw - 2rem);
+    left: 1rem !important;
+  }
+}

@@ -21,6 +21,7 @@ from flask_cors import cross_origin
 from flask_login import current_user
 
 from docassemble.base.config import daconfig
+from docassemble.base.util import log
 from docassemble.webapp.app_object import app, csrf
 from docassemble.webapp.server import api_verify, jsonify_with_status
 
@@ -99,9 +100,10 @@ def _auth_fail(request_id: str):
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
 def docx_labeler_page():
     """Serve the DOCX labeler interactive UI."""
+    log("ALDashboard: Serving DOCX labeler page", "info")
     html_content = _get_template_content("docx_labeler.html")
     if not html_content:
-        # Inline fallback if template not found
+        log("ALDashboard: DOCX labeler template not found, using inline fallback", "warning")
         html_content = _generate_docx_labeler_html()
     return Response(html_content, mimetype="text/html")
 
@@ -112,7 +114,9 @@ def docx_labeler_page():
 def docx_labeler_extract_runs():
     """Extract paragraph runs from a DOCX file for labeling."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: extract-runs request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: extract-runs auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -146,6 +150,7 @@ def docx_labeler_extract_runs():
             if runs:
                 paragraph_count = max(int(item[0]) for item in runs) + 1
 
+            log(f"ALDashboard: extract-runs {request_id} extracted {len(runs)} runs from {paragraph_count} paragraphs in '{filename}'", "info")
             return jsonify({
                 "success": True,
                 "request_id": request_id,
@@ -161,11 +166,13 @@ def docx_labeler_extract_runs():
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
+        log(f"ALDashboard: extract-runs {request_id} validation error: {exc.message}", "warning")
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
             exc.status_code,
         )
     except Exception as exc:
+        log(f"ALDashboard: extract-runs {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
             500,
@@ -178,7 +185,9 @@ def docx_labeler_extract_runs():
 def docx_labeler_suggest_labels():
     """Use AI to suggest Jinja2 labels for a DOCX file."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: suggest-labels request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: suggest-labels auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -248,6 +257,7 @@ def docx_labeler_suggest_labels():
                     "id": str(uuid.uuid4()),
                 })
 
+            log(f"ALDashboard: suggest-labels {request_id} generated {len(formatted_suggestions)} suggestions for '{filename}'", "info")
             return jsonify({
                 "success": True,
                 "request_id": request_id,
@@ -261,11 +271,13 @@ def docx_labeler_suggest_labels():
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
+        log(f"ALDashboard: suggest-labels {request_id} validation error: {exc.message}", "warning")
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
             exc.status_code,
         )
     except Exception as exc:
+        log(f"ALDashboard: suggest-labels {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
             500,
@@ -283,7 +295,9 @@ def docx_labeler_apply_labels():
     - renames: Find/replace operations on existing labels (original, replacement)
     """
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: apply-labels request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: apply-labels auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -331,6 +345,8 @@ def docx_labeler_apply_labels():
 
         if not labels and not renames:
             raise DashboardAPIValidationError("Either labels or renames must be provided.")
+
+        log(f"ALDashboard: apply-labels {request_id} processing {len(labels)} label insertions and {len(renames)} renames for '{filename}'", "info")
 
         # Convert labels to the format expected by update_docx
         modified_runs = []
@@ -384,6 +400,7 @@ def docx_labeler_apply_labels():
 
             output_filename = filename.replace(".docx", "-labeled.docx")
 
+            log(f"ALDashboard: apply-labels {request_id} successfully produced '{output_filename}'", "info")
             return jsonify({
                 "success": True,
                 "request_id": request_id,
@@ -397,11 +414,13 @@ def docx_labeler_apply_labels():
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
+        log(f"ALDashboard: apply-labels {request_id} validation error: {exc.message}", "warning")
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
             exc.status_code,
         )
     except Exception as exc:
+        log(f"ALDashboard: apply-labels {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
             500,
@@ -418,9 +437,10 @@ def docx_labeler_apply_labels():
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
 def pdf_labeler_page():
     """Serve the PDF labeler interactive UI."""
+    log("ALDashboard: Serving PDF labeler page", "info")
     html_content = _get_template_content("pdf_labeler.html")
     if not html_content:
-        # Inline fallback if template not found
+        log("ALDashboard: PDF labeler template not found, using inline fallback", "warning")
         html_content = _generate_pdf_labeler_html()
     return Response(html_content, mimetype="text/html")
 
@@ -431,7 +451,9 @@ def pdf_labeler_page():
 def pdf_labeler_detect_fields():
     """Detect existing form fields in a PDF."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: detect-fields request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: detect-fields auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -512,7 +534,9 @@ def pdf_labeler_detect_fields():
 def pdf_labeler_auto_detect():
     """Use AI to automatically detect and add fields to a PDF."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: auto-detect request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: auto-detect auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -622,7 +646,9 @@ def pdf_labeler_auto_detect():
 def pdf_labeler_relabel():
     """Relabel PDF fields using AI suggestions."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: pdf-relabel request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: pdf-relabel auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -703,7 +729,9 @@ def pdf_labeler_relabel():
 def pdf_labeler_apply_fields():
     """Apply field definitions to a PDF and return the modified file."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: apply-fields request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: apply-fields auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:
@@ -829,7 +857,9 @@ def pdf_labeler_apply_fields():
 def pdf_labeler_rename_fields():
     """Rename fields in an existing PDF."""
     request_id = str(uuid.uuid4())
+    log(f"ALDashboard: rename-fields request {request_id}", "info")
     if not _labeler_auth_check():
+        log(f"ALDashboard: rename-fields auth failed for request {request_id}", "warning")
         return _auth_fail(request_id)
 
     try:

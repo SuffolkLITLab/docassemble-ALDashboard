@@ -4,40 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AssemblyLine DOCX Labeler</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/docx_labeler.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-    <style>
-        .suggestion-pending { background-color: #fef3c7; border-color: #f59e0b; }
-        .suggestion-accepted { background-color: #d1fae5; border-color: #10b981; }
-        .suggestion-rejected { background-color: #fee2e2; border-color: #ef4444; text-decoration: line-through; }
-        .highlight-pending { background-color: #fef3c7; padding: 2px 4px; border-radius: 4px; }
-        .highlight-accepted { background-color: #d1fae5; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
-        .highlight-existing { background-color: #dbeafe; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
-        .document-preview { font-family: 'Times New Roman', serif; line-height: 1.6; }
-        .document-preview p { margin-bottom: 1em; }
-        .loading-spinner { animation: spin 1s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .tree-item { cursor: pointer; user-select: none; }
-        .tree-item:hover { background-color: #f1f5f9; }
-        .tree-children { border-left: 2px solid #e2e8f0; margin-left: 12px; padding-left: 8px; }
-        .tree-toggle { width: 16px; text-align: center; display: inline-block; }
-        .existing-label { background: #dbeafe; border: 1px solid #93c5fd; }
-        .existing-label:hover { background: #bfdbfe; }
-        .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; }
-    </style>
 </head>
-<body class="bg-slate-100 min-h-screen">
-    <div id="app" class="min-h-screen flex flex-col">
+<body>
+    <div id="app" class="dl-app">
         <!-- Header -->
-        <header class="bg-white border-b border-slate-200 px-6 py-4">
-            <div class="max-w-7xl mx-auto flex items-center justify-between">
+        <header class="dl-header px-4 py-3">
+            <div class="container-fluid d-flex align-items-center justify-content-between">
                 <div>
-                    <h1 class="text-2xl font-bold text-slate-800">AssemblyLine DOCX Labeler</h1>
-                    <p class="text-slate-500 text-sm mt-1">Add or edit Jinja2 template variables</p>
+                    <h1 class="h4 fw-bold mb-0">AssemblyLine DOCX Labeler</h1>
+                    <p class="text-muted small mt-1 mb-0">Add or edit Jinja2 template variables</p>
                 </div>
-                <div class="flex items-center gap-4">
-                    <button id="settings-btn" class="px-3 py-2 text-sm text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition">
-                        <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="d-flex align-items-center gap-3">
+                    <button id="settings-btn" class="btn btn-outline-secondary btn-sm">
+                        <svg class="me-1" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                         </svg>
@@ -48,219 +30,236 @@
         </header>
 
         <!-- Main Content -->
-        <main class="flex-1 flex">
+        <main class="dl-main">
             <!-- Sidebar -->
-            <aside id="sidebar-panel" class="w-[420px] bg-white border-r border-slate-200 flex flex-col">
+            <aside id="sidebar-panel" class="dl-sidebar">
                 <!-- Upload Section -->
-                <div class="p-4 border-b border-slate-200">
-                    <label class="block">
-                        <span class="sr-only">Choose DOCX file</span>
-                        <input type="file" id="file-input" accept=".docx" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+                <div class="dl-upload-section">
+                    <label class="d-block">
+                        <span class="visually-hidden">Choose DOCX file</span>
+                        <input type="file" id="file-input" accept=".docx" class="dl-file-input">
                     </label>
-                    <p id="file-name" class="mt-2 text-sm text-slate-500 hidden"></p>
+                    <p id="file-name" class="mt-2 small text-muted hidden"></p>
                 </div>
 
                 <!-- Loading State -->
-                <div id="loading-state" class="hidden p-8 text-center">
-                    <svg class="loading-spinner w-10 h-10 mx-auto text-blue-600" fill="none" viewBox="0 0 24 24">
+                <div id="loading-state" class="hidden p-5 text-center">
+                    <svg class="loading-spinner dl-state-icon mx-auto text-primary" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    <p id="loading-message" class="mt-4 text-slate-600">Processing document...</p>
+                    <p id="loading-message" class="mt-3 text-muted">Processing document...</p>
                 </div>
 
                 <!-- Error State -->
-                <div id="error-state" class="hidden p-4 m-4 bg-red-50 border border-red-200 rounded-lg">
-                    <p id="error-message" class="text-red-700 text-sm"></p>
+                <div id="error-state" class="hidden alert alert-danger m-3">
+                    <p id="error-message" class="mb-0 small"></p>
                 </div>
 
                 <!-- Empty State -->
-                <div id="empty-state" class="flex-1 flex items-center justify-center p-8 text-center">
+                <div id="empty-state" class="flex-fill d-flex align-items-center justify-content-center p-4 text-center">
                     <div>
-                        <svg class="w-16 h-16 mx-auto text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="dl-state-icon-lg mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                         </svg>
-                        <p class="mt-4 text-slate-500">Upload a DOCX file to get started</p>
+                        <p class="mt-3 text-muted">Upload a DOCX file to get started</p>
                     </div>
                 </div>
 
                 <!-- Main Panel (tabs for existing labels vs suggestions) -->
-                <div id="main-panel" class="hidden flex-1 flex flex-col overflow-hidden">
+                <div id="main-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
                     <!-- Tabs -->
-                    <div class="flex border-b border-slate-200">
-                        <button id="tab-existing" class="flex-1 px-4 py-3 text-sm font-medium text-slate-600 hover:text-slate-800 tab-active">
-                            Existing Labels <span id="existing-count" class="ml-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">0</span>
+                    <div class="dl-tabs">
+                        <button id="tab-existing" class="dl-tab tab-active">
+                            Existing Labels <span id="existing-count" class="dl-count-badge dl-count-badge-primary">0</span>
                         </button>
-                        <button id="tab-suggestions" class="flex-1 px-4 py-3 text-sm font-medium text-slate-600 hover:text-slate-800">
-                            AI Suggestions <span id="suggestions-count" class="ml-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">0</span>
+                        <button id="tab-suggestions" class="dl-tab">
+                            AI Suggestions <span id="suggestions-count" class="dl-count-badge dl-count-badge-warning">0</span>
                         </button>
                     </div>
 
                     <!-- Existing Labels Panel -->
-                    <div id="existing-panel" class="flex-1 flex flex-col overflow-hidden">
-                        <div class="p-4 border-b border-slate-200 space-y-3">
-                            <div class="flex items-center gap-2">
-                                <button id="bulk-replace-btn" class="px-3 py-1.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition">
-                                    Bulk Replace
-                                </button>
-                                <button id="ai-relabel-btn" class="px-3 py-1.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition">
-                                    AI Relabel All
-                                </button>
-                            </div>
+                    <div id="existing-panel" class="flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center gap-2">
+                            <button id="bulk-replace-btn" class="dl-btn-xs dl-btn-purple">Bulk Replace</button>
+                            <button id="ai-relabel-btn" class="dl-btn-xs dl-btn-emerald">AI Relabel All</button>
                         </div>
-                        <div id="existing-labels-tree" class="flex-1 overflow-y-auto p-4"></div>
+                        <div id="existing-labels-tree" class="flex-fill overflow-auto p-3"></div>
                     </div>
 
                     <!-- Suggestions Panel -->
-                    <div id="suggestions-panel" class="hidden flex-1 flex flex-col overflow-hidden">
-                        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
-                            <div class="flex gap-2">
-                                <button id="accept-all-btn" class="px-3 py-1.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition">Accept All</button>
-                                <button id="regenerate-btn" class="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition">Regenerate</button>
+                    <div id="suggestions-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center justify-content-between">
+                            <div class="d-flex gap-2">
+                                <button id="accept-all-btn" class="dl-btn-xs dl-btn-green">Accept All</button>
+                                <button id="regenerate-btn" class="dl-btn-xs dl-btn-slate">Regenerate</button>
                             </div>
                         </div>
-                        <div id="suggestions-list" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+                        <div id="suggestions-list" class="flex-fill overflow-auto p-3"></div>
                     </div>
 
                     <!-- Download Button -->
-                    <div class="p-4 border-t border-slate-200 bg-slate-50">
-                        <button id="download-btn" class="w-full px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition disabled:bg-slate-300 disabled:cursor-not-allowed" disabled>
+                    <div class="dl-download-bar">
+                        <button id="download-btn" class="btn btn-primary w-100 py-2 fw-semibold" disabled>
                             Download Updated DOCX
                         </button>
-                        <p id="download-status" class="mt-2 text-sm text-slate-500 text-center hidden"></p>
+                        <p id="download-status" class="mt-2 small text-muted text-center hidden"></p>
                     </div>
                 </div>
             </aside>
 
             <!-- Document Preview -->
-            <div class="flex-1 bg-slate-50 p-8 overflow-auto">
-                <div id="preview-empty" class="h-full flex items-center justify-center text-center">
+            <div class="dl-preview-area">
+                <div id="preview-empty" class="h-100 d-flex align-items-center justify-content-center text-center">
                     <div>
-                        <svg class="w-24 h-24 mx-auto text-slate-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="dl-state-icon-xl mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
-                        <h3 class="mt-4 text-lg font-medium text-slate-400">Document Preview</h3>
-                        <p class="mt-2 text-slate-400">Your document will appear here</p>
+                        <h3 class="mt-3 h5 text-muted">Document Preview</h3>
+                        <p class="mt-2 text-muted">Your document will appear here</p>
                     </div>
                 </div>
-                <div id="preview-content" class="hidden max-w-4xl mx-auto bg-white rounded-lg shadow-sm p-8 document-preview"></div>
+                <div id="preview-content" class="hidden dl-preview-card document-preview"></div>
             </div>
-
         </main>
 
         <!-- Settings Modal -->
-        <div id="settings-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
-                <div class="p-6 border-b border-slate-200 flex items-center justify-between">
-                    <h2 class="text-xl font-semibold text-slate-800">AI Prompt Settings</h2>
-                    <button id="close-settings" class="p-2 hover:bg-slate-100 rounded-lg transition">
-                        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div id="settings-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-md">
+                <div class="dl-modal-header">
+                    <h2 class="h5 fw-semibold mb-0">AI Prompt Settings</h2>
+                    <button id="close-settings" class="btn btn-sm btn-light rounded">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
                 </div>
-                <div class="p-6 overflow-y-auto max-h-[60vh]">
-                    <div class="space-y-6">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Additional Instructions</label>
-                            <textarea id="additional-instructions" rows="4" placeholder="Add any specific instructions for the AI labeling process..." class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition resize-none"></textarea>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Custom People Names</label>
-                            <textarea id="custom-people" rows="3" placeholder='[["clients", "the people benefiting from the form"]]' class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition font-mono text-sm resize-none"></textarea>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">AI Model</label>
-                            <select id="ai-model" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
-                                <option value="gpt-4.1-mini">GPT-4.1 Mini (faster)</option>
-                                <option value="gpt-5-nano">GPT-5 Nano (fast, thinking)</option>
-                                <option value="gpt-5-mini">GPT-5-mini (balanced)</option>
-                                <option value="gpt-5.2">GPT-5.2 (Slow, most accurate)</option>
-                            </select>
-                        </div>
+                <div class="dl-modal-body" style="max-height:60vh;overflow-y:auto">
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="additional-instructions">Additional Instructions</label>
+                        <textarea id="additional-instructions" rows="4" placeholder="Add any specific instructions for the AI labeling process..." class="form-control"></textarea>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="custom-people">Custom People Names</label>
+                        <textarea id="custom-people" rows="3" placeholder='[["clients", "the people benefiting from the form"]]' class="form-control font-monospace small"></textarea>
+                    </div>
+                    <div>
+                        <label class="form-label fw-medium" for="ai-model">AI Model</label>
+                        <select id="ai-model" class="form-select">
+                            <option value="gpt-4.1-mini">GPT-4.1 Mini (faster)</option>
+                            <option value="gpt-5-nano">GPT-5 Nano (fast, thinking)</option>
+                            <option value="gpt-5-mini">GPT-5-mini (balanced)</option>
+                            <option value="gpt-5.2">GPT-5.2 (Slow, most accurate)</option>
+                        </select>
                     </div>
                 </div>
-                <div class="p-6 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
-                    <button id="reset-settings" class="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition">Reset to Default</button>
-                    <button id="save-settings" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">Save Settings</button>
+                <div class="dl-modal-footer d-flex justify-content-end gap-2">
+                    <button id="reset-settings" class="btn btn-outline-secondary">Reset to Default</button>
+                    <button id="save-settings" class="btn btn-primary">Save Settings</button>
                 </div>
             </div>
         </div>
 
         <!-- Bulk Replace Modal -->
-        <div id="bulk-replace-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-xl">
-                <div class="p-6 border-b border-slate-200">
-                    <h2 class="text-xl font-semibold text-slate-800">Bulk Find & Replace</h2>
-                    <p class="text-slate-500 text-sm mt-1">Replace variable names across all labels</p>
-                </div>
-                <div class="p-6 space-y-4">
+        <div id="bulk-replace-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-sm">
+                <div class="dl-modal-header">
                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">Find (regex supported)</label>
-                        <input type="text" id="bulk-find" placeholder="client|plaintiff" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">Replace with</label>
-                        <input type="text" id="bulk-replace" placeholder="users[0]" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono">
-                    </div>
-                    <div id="bulk-preview" class="hidden p-4 bg-slate-50 rounded-lg max-h-48 overflow-y-auto">
-                        <p class="text-xs font-medium text-slate-500 mb-2">Preview</p>
-                        <div id="bulk-preview-list" class="space-y-1 text-sm"></div>
+                        <h2 class="h5 fw-semibold mb-1">Bulk Find &amp; Replace</h2>
+                        <p class="text-muted small mb-0">Replace variable names across all labels</p>
                     </div>
                 </div>
-                <div class="p-6 border-t border-slate-200 bg-slate-50 flex justify-between">
-                    <button id="bulk-preview-btn" class="px-4 py-2 text-blue-700 hover:bg-blue-50 rounded-lg transition">Preview Changes</button>
-                    <div class="flex gap-3">
-                        <button id="bulk-cancel" class="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition">Cancel</button>
-                        <button id="bulk-apply" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition">Apply</button>
+                <div class="dl-modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-medium small">Find (regex supported)</label>
+                        <input type="text" id="bulk-find" placeholder="client|plaintiff" class="form-control font-monospace">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-medium small">Replace with</label>
+                        <input type="text" id="bulk-replace" placeholder="users[0]" class="form-control font-monospace">
+                    </div>
+                    <div id="bulk-preview" class="hidden p-3 bg-light rounded" style="max-height:12rem;overflow-y:auto">
+                        <p class="fw-medium small text-muted mb-2">Preview</p>
+                        <div id="bulk-preview-list" class="small"></div>
+                    </div>
+                </div>
+                <div class="dl-modal-footer d-flex justify-content-between">
+                    <button id="bulk-preview-btn" class="btn btn-outline-primary btn-sm">Preview Changes</button>
+                    <div class="d-flex gap-2">
+                        <button id="bulk-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                        <button id="bulk-apply" class="btn btn-primary btn-sm">Apply</button>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- Create/Edit Label Modal -->
-        <div id="edit-label-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-                <div class="p-4 border-b border-slate-200 flex items-center justify-between">
-                    <h2 id="edit-label-title" class="text-xl font-semibold text-slate-800">Edit Label</h2>
-                    <button id="edit-close" class="p-2 hover:bg-slate-100 rounded-lg transition">
-                        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div id="edit-label-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-lg">
+                <div class="dl-modal-header">
+                    <h2 id="edit-label-title" class="h5 fw-semibold mb-0">Edit Label</h2>
+                    <button id="edit-close" class="btn btn-sm btn-light rounded">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
                 </div>
-                <div class="flex-1 flex overflow-hidden">
+                <div class="flex-fill d-flex overflow-hidden">
                     <!-- Left: Input area -->
-                    <div class="w-1/2 p-4 border-r border-slate-200 flex flex-col">
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-slate-700 mb-1">Current Value</label>
-                            <p id="edit-label-original" class="px-3 py-2 bg-slate-100 rounded-lg text-slate-600 text-sm font-mono break-all"></p>
+                    <div class="w-50 p-3 border-end d-flex flex-column">
+                        <div class="mb-3">
+                            <label class="form-label fw-medium small">Current Value</label>
+                            <p id="edit-label-original" class="px-3 py-2 bg-light rounded font-monospace small break-all mb-0"></p>
                         </div>
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-slate-700 mb-1">New Variable Name</label>
-                            <input type="text" id="edit-label-input" placeholder="{{ users[0].name.first }}" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono">
-                            <p class="text-xs text-slate-500 mt-1">Click a variable on the right to insert it</p>
+                        <div class="mb-3">
+                            <label class="form-label fw-medium small">New Variable Name</label>
+                            <input type="text" id="edit-label-input" placeholder="{{ users[0].name.first }}" class="form-control font-monospace">
+                            <p class="form-text small">Click a variable on the right to insert it</p>
                         </div>
                     </div>
                     <!-- Right: Variable picker tree -->
-                    <div class="w-1/2 flex flex-col bg-slate-50">
-                        <div class="p-3 border-b border-slate-200">
-                            <input type="text" id="variable-search" placeholder="Search variables..." class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">
+                    <div class="w-50 d-flex flex-column bg-light">
+                        <div class="p-2 border-bottom">
+                            <input type="text" id="variable-search" placeholder="Search variables..." class="form-control form-control-sm">
                         </div>
-                        <div id="variable-tree" class="flex-1 overflow-y-auto p-3 text-sm"></div>
+                        <div id="variable-tree" class="flex-fill overflow-auto p-2 small"></div>
                     </div>
                 </div>
-                <div class="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
-                    <button id="edit-cancel" class="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition">Cancel</button>
-                    <button id="edit-save" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">Save</button>
+                <div class="dl-modal-footer d-flex justify-content-end gap-2">
+                    <button id="edit-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button id="edit-save" class="btn btn-primary">Save</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Selection Popover (appears when text is highlighted in preview) -->
+        <div id="sel-popover" class="dl-sel-popover hidden">
+            <div class="dl-sel-popover-header">
+                <span class="fw-semibold small">Replace with Label</span>
+                <button id="sel-close" class="btn btn-sm btn-light p-0 px-1 lh-1" aria-label="Close">&times;</button>
+            </div>
+            <div class="dl-sel-popover-body">
+                <div class="dl-sel-selected-text font-monospace mb-2" id="sel-original-text"></div>
+                <label class="form-label small fw-medium mb-1" for="sel-var-input">Jinja2 replacement</label>
+                <input type="text" id="sel-var-input" class="form-control form-control-sm font-monospace" placeholder="{{ users[0].name.first }}">
+                <button id="sel-tree-toggle" class="dl-sel-var-tree-toggle mt-1" type="button">Browse variables…</button>
+                <div id="sel-var-panel" class="dl-sel-var-panel hidden">
+                    <input type="text" id="sel-var-search" class="form-control form-control-sm mb-1" placeholder="Search…">
+                    <div id="sel-var-tree" class="small"></div>
+                </div>
+            </div>
+            <div class="dl-sel-popover-footer">
+                <button id="sel-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                <button id="sel-save" class="btn btn-primary btn-sm">Add Label</button>
             </div>
         </div>
     </div>
 
     <script>
     (function() {
-        // AssemblyLine Variable Tree Structure - Full list matching WorkflowDocs
+        // ================================================================
+        // AssemblyLine Variable Tree Structure
+        // ================================================================
         const PERSON_ATTRIBUTES = {
             'name': {
                 _description: 'Name components',
@@ -306,7 +305,6 @@
         };
 
         const AL_VARIABLE_TREE = {
-            // People Lists
             'users': { _description: 'People benefiting from the form (pro se filers)', '[0]': PERSON_ATTRIBUTES },
             'other_parties': { _description: 'Opposing/transactional parties', '[0]': PERSON_ATTRIBUTES },
             'plaintiffs': { _description: 'Plaintiffs in lawsuit', '[0]': PERSON_ATTRIBUTES },
@@ -326,8 +324,6 @@
             'debt_collectors': { _description: 'Debt collectors', '[0]': PERSON_ATTRIBUTES },
             'decedents': { _description: 'Deceased persons', '[0]': PERSON_ATTRIBUTES },
             'interested_parties': { _description: 'Other interested parties', '[0]': PERSON_ATTRIBUTES },
-
-            // Court Information
             'trial_court': {
                 _description: 'Court information',
                 'name': 'Court name',
@@ -340,25 +336,22 @@
                 'division': 'Division',
                 'department': 'Department'
             },
-
-            // Case Information
             'docket_number': 'Case/Docket number',
             'docket_numbers': 'Multiple docket numbers (comma-separated)',
             'case_name': 'Case name/caption',
-
-            // Form Completion
             'signature_date': 'Date form is signed',
-
-            // User Preferences
             'user_needs_interpreter': 'User needs interpreter (checkbox)',
             'user_preferred_language': 'User\'s preferred language'
         };
 
+        // ================================================================
         // State
+        // ================================================================
         let state = {
             file: null,
             fileContent: null,
             originalHtml: '',
+            runs: [],          // original runs from extract-runs endpoint
             existingLabels: [],
             suggestions: [],
             labelRenames: {},
@@ -371,7 +364,9 @@
             editingLabelId: null
         };
 
+        // ================================================================
         // DOM Elements
+        // ================================================================
         const fileInput = document.getElementById('file-input');
         const fileName = document.getElementById('file-name');
         const loadingState = document.getElementById('loading-state');
@@ -397,7 +392,29 @@
         const settingsModal = document.getElementById('settings-modal');
         const bulkReplaceModal = document.getElementById('bulk-replace-modal');
         const editLabelModal = document.getElementById('edit-label-modal');
+        const selPopover = document.getElementById('sel-popover');
+        const selOriginalText = document.getElementById('sel-original-text');
+        const selVarInput = document.getElementById('sel-var-input');
+        const selVarPanel = document.getElementById('sel-var-panel');
+        const selVarTree = document.getElementById('sel-var-tree');
+        const selVarSearch = document.getElementById('sel-var-search');
 
+        // ================================================================
+        // Helpers
+        // ================================================================
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function generateId() {
+            return 'id-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // ================================================================
+        // UI state transitions
+        // ================================================================
         function showLoading(message) {
             loadingMessage.textContent = message;
             loadingState.classList.remove('hidden');
@@ -423,10 +440,9 @@
             errorState.classList.add('hidden');
         }
 
-        function generateId() {
-            return 'id-' + Math.random().toString(36).substr(2, 9);
-        }
-
+        // ================================================================
+        // Label extraction from mammoth HTML
+        // ================================================================
         function extractExistingLabels(html) {
             const labels = [];
             const seen = new Map();
@@ -456,39 +472,290 @@
             return labels;
         }
 
+        // ================================================================
+        // Paragraph / run index for mapping selections to runs
+        // ================================================================
+        function buildParagraphIndex() {
+            var index = {};
+            state.runs.forEach(function(r) {
+                var para = r[0], run = r[1], text = r[2];
+                if (!index[para]) index[para] = { runs: [], fullText: '' };
+                index[para].runs.push({ runIdx: run, text: text, start: index[para].fullText.length, end: 0 });
+                index[para].fullText += text;
+            });
+            Object.keys(index).forEach(function(p) {
+                index[p].runs.forEach(function(r) { r.end = r.start + r.text.length; });
+            });
+            return index;
+        }
+
+        /**
+         * Given a user-selected text string, find the paragraph and set of
+         * consecutive runs whose concatenated text contains the selection.
+         * Returns null when no match is found.
+         */
+        function findRunsForSelection(selectedText) {
+            if (!selectedText || !selectedText.trim()) return null;
+            var paraIndex = buildParagraphIndex();
+            var trimmed = selectedText.trim();
+
+            for (var paraNum in paraIndex) {
+                var para = paraIndex[paraNum];
+                // Direct substring lookup in this paragraph’s concatenated text
+                var pos = para.fullText.indexOf(trimmed);
+                if (pos === -1) {
+                    // Normalised whitespace fallback
+                    var normFull = para.fullText.replace(/\s+/g, ' ');
+                    var normSel  = trimmed.replace(/\s+/g, ' ');
+                    pos = normFull.indexOf(normSel);
+                    if (pos === -1) continue;
+                }
+                var end = pos + trimmed.length;
+
+                var matchedRuns = [];
+                para.runs.forEach(function(r) {
+                    if (r.end > pos && r.start < end) {
+                        matchedRuns.push({
+                            paragraph: parseInt(paraNum),
+                            run: r.runIdx,
+                            originalText: r.text,
+                            selStart: Math.max(0, pos - r.start),
+                            selEnd:   Math.min(r.text.length, end - r.start),
+                            isFullySelected: pos <= r.start && end >= r.end
+                        });
+                    }
+                });
+                if (matchedRuns.length > 0) {
+                    return { paraNum: parseInt(paraNum), runs: matchedRuns, selectedText: trimmed };
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Build suggestion entries that replace the matched runs with a Jinja2
+         * variable.  The first run keeps any unselected prefix and gets the
+         * label; the last run keeps any unselected suffix; middle runs are
+         * blanked.  All entries share a `group` id so the UI and preview can
+         * treat them as one logical operation.
+         */
+        function createLabelFromSelection(variableName, match) {
+            var groupId = generateId();
+            var labels = [];
+            match.runs.forEach(function(r, i) {
+                var newText;
+                if (match.runs.length === 1) {
+                    // Only run: prefix + label + suffix
+                    var prefix = r.originalText.substring(0, r.selStart);
+                    var suffix = r.originalText.substring(r.selEnd);
+                    newText = prefix + variableName + suffix;
+                } else if (i === 0) {
+                    newText = r.originalText.substring(0, r.selStart) + variableName;
+                } else if (i === match.runs.length - 1) {
+                    newText = r.originalText.substring(r.selEnd);
+                } else {
+                    newText = '';
+                }
+                labels.push({
+                    paragraph: r.paragraph,
+                    run: r.run,
+                    text: newText,
+                    new_paragraph: 0,
+                    id: generateId(),
+                    status: 'accepted',
+                    group: groupId,
+                    _isCompanion: i > 0,
+                    _selectedText: match.selectedText,
+                    _displayLabel: variableName
+                });
+            });
+            return labels;
+        }
+
+        // ================================================================
+        // Selection popover logic
+        // ================================================================
+        var _selMatch = null;   // stashed findRunsForSelection() result
+
+        function showSelectionPopover(match, mouseX, mouseY) {
+            _selMatch = match;
+            selOriginalText.textContent = match.selectedText;
+            selVarInput.value = '';
+            selVarPanel.classList.add('hidden');
+            selVarSearch.value = '';
+
+            // Position near the cursor, clamped to viewport
+            var pw = 380, ph = 260;
+            var vw = window.innerWidth, vh = window.innerHeight;
+            var left = Math.min(mouseX + 4, vw - pw - 12);
+            var top  = mouseY + 12;
+            if (top + ph > vh) top = Math.max(8, mouseY - ph - 8);
+            selPopover.style.left = Math.max(4, left) + 'px';
+            selPopover.style.top  = top + 'px';
+            selPopover.classList.remove('hidden');
+            selVarInput.focus();
+        }
+
+        function hideSelectionPopover() {
+            selPopover.classList.add('hidden');
+            _selMatch = null;
+        }
+
+        function saveSelectionLabel() {
+            var raw = selVarInput.value.trim();
+            if (!raw || !_selMatch) return;
+            // Wrap in {{ }} if the user didn’t
+            var varName = raw;
+            if (!/^\{[{%]/.test(varName)) {
+                varName = '{{ ' + varName + ' }}';
+            }
+            var newLabels = createLabelFromSelection(varName, _selMatch);
+            state.suggestions = state.suggestions.concat(newLabels);
+            hideSelectionPopover();
+            renderSuggestions();
+            updatePreview();
+            updateDownloadButton();
+            // Switch to the suggestions tab so the user sees what they added
+            switchTab('suggestions');
+        }
+
+        function onPreviewMouseUp(e) {
+            // Ignore if popover is already open or no document loaded
+            if (!selPopover.classList.contains('hidden')) return;
+            if (!state.file || state.runs.length === 0) return;
+
+            var sel = window.getSelection();
+            if (!sel || sel.isCollapsed) return;
+            var text = sel.toString();
+            if (!text || !text.trim()) return;
+
+            // Make sure the selection is inside the preview area
+            var anchor = sel.anchorNode, focus = sel.focusNode;
+            if (!previewContent.contains(anchor) || !previewContent.contains(focus)) return;
+
+            var match = findRunsForSelection(text);
+            if (!match) return;
+
+            showSelectionPopover(match, e.clientX, e.clientY);
+        }
+
+        // Render the variable tree inside the popover (reuses the same builder)
+        function renderSelPopoverTree(filter) {
+            selVarTree.innerHTML = '';
+            renderVariableTree(AL_VARIABLE_TREE, '', selVarTree, filter || '');
+            // Re-wire clicks so they target the popover input
+            selVarTree.querySelectorAll('[data-var]').forEach(function(el) {
+                el.addEventListener('click', function() {
+                    selVarInput.value = '{{ ' + el.dataset.var + ' }}';
+                    selVarInput.focus();
+                });
+            });
+        }
+
+        // ================================================================
+        // Preview rendering with highlights
+        // ================================================================
+        function updatePreview() {
+            let html = state.originalHtml;
+
+            // --- Grouped selection labels (multi-run) ---
+            // Replace the full selected text span with the display label for
+            // each unique group, before handling single-run suggestions.
+            var processedGroups = {};
+            state.suggestions.forEach(function(s) {
+                if (s.status === 'accepted' && s.group && !processedGroups[s.group]) {
+                    processedGroups[s.group] = true;
+                    var displayLabel = s._displayLabel || s.text;
+                    var selectedText = s._selectedText;
+                    if (selectedText) {
+                        var encoded = escapeHtml(selectedText);
+                        var pos = html.indexOf(encoded);
+                        if (pos !== -1) {
+                            html = html.substring(0, pos)
+                                + '<span class="highlight-accepted">' + escapeHtml(displayLabel) + '</span>'
+                                + html.substring(pos + encoded.length);
+                        }
+                    }
+                }
+            });
+
+            // --- Single-run AI suggestions (no group) ---
+            const acceptedByKey = {};
+            state.suggestions.forEach(function(s) {
+                if (s.status === 'accepted' && s.new_paragraph === 0 && !s.group) {
+                    acceptedByKey[s.paragraph + ',' + s.run] = s;
+                }
+            });
+
+            const replacements = [];
+            for (const key of Object.keys(acceptedByKey)) {
+                const s = acceptedByKey[key];
+                const run = state.runs.find(function(r) {
+                    return r[0] === s.paragraph && r[1] === s.run;
+                });
+                if (run && run[2] && run[2].trim()) {
+                    replacements.push({ original: run[2], replacement: s.text });
+                }
+            }
+            replacements.sort(function(a, b) { return b.original.length - a.original.length; });
+
+            for (const r of replacements) {
+                const encoded = escapeHtml(r.original);
+                const pos = html.indexOf(encoded);
+                if (pos !== -1) {
+                    html = html.substring(0, pos)
+                        + '<span class="highlight-accepted">' + escapeHtml(r.replacement) + '</span>'
+                        + html.substring(pos + encoded.length);
+                }
+            }
+
+            // Highlight existing labels (with any renames applied)
+            state.existingLabels.forEach(function(label) {
+                const cls = label.original !== label.current ? 'highlight-accepted' : 'highlight-existing';
+                html = html.split(escapeHtml(label.original)).join(
+                    '<span class="' + cls + '">' + escapeHtml(label.current) + '</span>'
+                );
+            });
+
+            previewContent.innerHTML = html;
+        }
+
+        // ================================================================
+        // Existing-labels tree
+        // ================================================================
         function renderExistingLabelsTree() {
             existingLabelsTree.innerHTML = '';
             existingCount.textContent = state.existingLabels.length;
             if (state.existingLabels.length === 0) {
-                existingLabelsTree.innerHTML = '<div class="text-center py-8 text-slate-500"><p>No existing labels found.</p><p class="text-sm mt-2">Use the AI Suggestions tab to add labels.</p></div>';
+                existingLabelsTree.innerHTML = '<div class="text-center py-5 text-muted"><p>No existing labels found.</p><p class="small mt-1">Use the AI Suggestions tab to add labels.</p></div>';
                 return;
             }
             const groups = {};
-            state.existingLabels.forEach(label => {
+            state.existingLabels.forEach(function(label) {
                 const inner = label.current.replace(/^\{\{\s*|\s*\}\}$/g, '').replace(/^\{%\s*|\s*%\}$/g, '').trim();
                 const base = inner.split('.')[0].split('[')[0];
                 if (!groups[base]) groups[base] = [];
                 groups[base].push(label);
             });
-            Object.keys(groups).sort().forEach(groupName => {
+            Object.keys(groups).sort().forEach(function(groupName) {
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'mb-3';
                 const header = document.createElement('div');
-                header.className = 'tree-item flex items-center gap-2 px-2 py-1.5 rounded font-medium text-slate-700';
-                header.innerHTML = `<span class="tree-toggle">▼</span><span>${escapeHtml(groupName)}</span><span class="text-xs bg-slate-200 px-1.5 rounded">${groups[groupName].length}</span>`;
+                header.className = 'tree-item d-flex align-items-center gap-2 px-2 py-1 rounded fw-medium';
+                header.innerHTML = '<span class="tree-toggle">\u25BC</span><span>' + escapeHtml(groupName) + '</span><span class="badge bg-secondary">' + groups[groupName].length + '</span>';
                 const children = document.createElement('div');
                 children.className = 'tree-children mt-1';
-                groups[groupName].forEach(label => {
+                groups[groupName].forEach(function(label) {
                     const item = document.createElement('div');
-                    item.className = 'existing-label p-2 rounded mb-1.5 cursor-pointer';
-                    item.innerHTML = `<div class="font-mono text-xs break-all ${label.original !== label.current ? 'text-purple-700' : 'text-slate-700'}">${escapeHtml(label.current)}</div>${label.original !== label.current ? `<div class="text-xs text-slate-400 mt-1 line-through">${escapeHtml(label.original)}</div>` : ''}<div class="text-xs text-slate-400 mt-1">${label.occurrences} occurrence${label.occurrences > 1 ? 's' : ''}</div>`;
-                    item.addEventListener('click', () => openEditLabelModal(label));
+                    item.className = 'existing-label p-2 rounded mb-1 cursor-pointer';
+                    item.innerHTML = '<div class="font-monospace small break-all' + (label.original !== label.current ? ' text-primary' : '') + '">' + escapeHtml(label.current) + '</div>' + (label.original !== label.current ? '<div class="small text-muted mt-1 text-decoration-line-through">' + escapeHtml(label.original) + '</div>' : '') + '<div class="small text-muted mt-1">' + label.occurrences + ' occurrence' + (label.occurrences > 1 ? 's' : '') + '</div>';
+                    item.addEventListener('click', function() { openEditLabelModal(label); });
                     children.appendChild(item);
                 });
-                header.addEventListener('click', () => {
-                    const toggle = header.querySelector('.tree-toggle');
-                    if (children.style.display === 'none') { children.style.display = 'block'; toggle.textContent = '▼'; }
-                    else { children.style.display = 'none'; toggle.textContent = '▶'; }
+                header.addEventListener('click', function() {
+                    var toggle = header.querySelector('.tree-toggle');
+                    if (children.style.display === 'none') { children.style.display = 'block'; toggle.textContent = '\u25BC'; }
+                    else { children.style.display = 'none'; toggle.textContent = '\u25B6'; }
                 });
                 groupDiv.appendChild(header);
                 groupDiv.appendChild(children);
@@ -497,41 +764,48 @@
             updateDownloadButton();
         }
 
-        function renderVariableTree(tree = AL_VARIABLE_TREE, prefix = '', container = variableTree, filter = '') {
+        // ================================================================
+        // Variable-picker tree
+        // ================================================================
+        function renderVariableTree(tree, prefix, container, filter) {
+            tree = tree || AL_VARIABLE_TREE;
+            prefix = prefix || '';
+            container = container || variableTree;
+            filter = filter || '';
             if (container === variableTree) container.innerHTML = '';
-            Object.keys(tree).forEach(key => {
+            Object.keys(tree).forEach(function(key) {
                 if (key.startsWith('_')) return;
-                const value = tree[key];
-                const fullPath = prefix ? `${prefix}.${key}` : key;
-                const displayPath = fullPath.replace(/\.\[/g, '[');
+                var value = tree[key];
+                var fullPath = prefix ? prefix + '.' + key : key;
+                var displayPath = fullPath.replace(/\.\[/g, '[');
                 if (filter && !displayPath.toLowerCase().includes(filter.toLowerCase())) {
                     if (typeof value !== 'object') return;
-                    const hasMatch = JSON.stringify(value).toLowerCase().includes(filter.toLowerCase());
+                    var hasMatch = JSON.stringify(value).toLowerCase().includes(filter.toLowerCase());
                     if (!hasMatch) return;
                 }
-                const item = document.createElement('div');
+                var item = document.createElement('div');
                 item.className = 'mb-1';
-                const isLeaf = typeof value === 'string';
-                const hasChildren = typeof value === 'object' && Object.keys(value).filter(k => !k.startsWith('_')).length > 0;
-                const header = document.createElement('div');
-                header.className = 'tree-item flex items-center gap-1 px-2 py-1 rounded text-sm';
+                var isLeaf = typeof value === 'string';
+                var hasChildren = typeof value === 'object' && Object.keys(value).filter(function(k) { return !k.startsWith('_'); }).length > 0;
+                var header = document.createElement('div');
+                header.className = 'tree-item d-flex align-items-center gap-1 px-2 py-1 rounded small';
                 if (isLeaf) {
-                    header.innerHTML = `<span class="tree-toggle text-slate-300">·</span><span class="font-mono text-blue-600 cursor-pointer hover:underline" data-var="${displayPath}">${key}</span><span class="text-slate-400 text-xs ml-1 truncate">${value}</span>`;
-                    header.querySelector('[data-var]').addEventListener('click', () => insertVariable(displayPath));
+                    header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + displayPath + '">' + key + '</span><span class="text-muted small ms-1 text-truncate">' + value + '</span>';
+                    header.querySelector('[data-var]').addEventListener('click', function() { insertVariable(displayPath); });
                 } else {
-                    header.innerHTML = `<span class="tree-toggle cursor-pointer">▶</span><span class="font-medium text-slate-700">${key}</span>${value._description ? `<span class="text-slate-400 text-xs ml-1">${value._description}</span>` : ''}`;
+                    header.innerHTML = '<span class="tree-toggle cursor-pointer">\u25B6</span><span class="fw-medium">' + key + '</span>' + (value._description ? '<span class="text-muted small ms-1">' + value._description + '</span>' : '');
                 }
                 item.appendChild(header);
                 if (hasChildren) {
-                    const children = document.createElement('div');
+                    var children = document.createElement('div');
                     children.className = 'tree-children hidden';
                     renderVariableTree(value, fullPath, children, filter);
                     item.appendChild(children);
-                    header.addEventListener('click', (e) => {
-                        if (e.target.dataset.var) return;
-                        const toggle = header.querySelector('.tree-toggle');
-                        if (children.classList.contains('hidden')) { children.classList.remove('hidden'); toggle.textContent = '▼'; }
-                        else { children.classList.add('hidden'); toggle.textContent = '▶'; }
+                    header.addEventListener('click', function(e) {
+                        if (e.target.dataset && e.target.dataset.var) return;
+                        var toggle = header.querySelector('.tree-toggle');
+                        if (children.classList.contains('hidden')) { children.classList.remove('hidden'); toggle.textContent = '\u25BC'; }
+                        else { children.classList.add('hidden'); toggle.textContent = '\u25B6'; }
                     });
                 }
                 container.appendChild(item);
@@ -539,10 +813,13 @@
         }
 
         function insertVariable(varPath) {
-            const input = document.getElementById('edit-label-input');
-            if (input) { input.value = `{{ ${varPath} }}`; input.focus(); }
+            var input = document.getElementById('edit-label-input');
+            if (input) { input.value = '{{ ' + varPath + ' }}'; input.focus(); }
         }
 
+        // ================================================================
+        // File processing
+        // ================================================================
         async function processFile(file) {
             if (!file) return;
             state.file = file;
@@ -550,42 +827,60 @@
             fileName.classList.remove('hidden');
             showLoading('Reading document...');
             try {
-                const arrayBuffer = await file.arrayBuffer();
+                var arrayBuffer = await file.arrayBuffer();
                 state.fileContent = new Uint8Array(arrayBuffer);
+
+                // Step 1: mammoth HTML preview
                 showLoading('Converting document to HTML...');
-                const result = await mammoth.convertToHtml({ arrayBuffer });
+                var result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
                 state.originalHtml = result.value;
                 previewContent.innerHTML = state.originalHtml;
                 previewContent.classList.remove('hidden');
                 previewEmpty.classList.add('hidden');
+
+                // Step 2: extract runs via API (for preview mapping)
+                showLoading('Extracting document structure...');
+                var runsFormData = new FormData();
+                runsFormData.append('file', file);
+                try {
+                    var runsResp = await fetch('/al/docx-labeler/api/extract-runs', { method: 'POST', body: runsFormData });
+                    var runsData = await runsResp.json();
+                    if (runsData.success) {
+                        state.runs = runsData.data.runs;
+                    }
+                } catch (runErr) {
+                    console.warn('Could not extract runs for preview mapping:', runErr);
+                }
+
                 state.existingLabels = extractExistingLabels(state.originalHtml);
                 state.labelRenames = {};
+                state.suggestions = [];
+
                 hideLoading();
                 showMainPanel();
+
                 if (state.existingLabels.length > 0) {
                     switchTab('existing');
                     renderExistingLabelsTree();
-                    highlightExistingLabels();
+                    updatePreview();
                 } else {
                     switchTab('suggestions');
                     showLoading('Generating AI suggestions...');
                     await fetchSuggestions();
                     hideLoading();
+                    showMainPanel();    // <-- was missing; caused the "spin forever" bug
                 }
             } catch (error) {
                 console.error('Error processing file:', error);
                 showError('Failed to process document: ' + error.message);
-            } finally { hideLoading(); }
+            } finally {
+                hideLoading();
+            }
         }
 
-        function highlightExistingLabels() {
-            let html = state.originalHtml;
-            state.existingLabels.forEach(label => {
-                html = html.split(label.original).join(`<span class="highlight-existing">${escapeHtml(label.current)}</span>`);
-            });
-            previewContent.innerHTML = html;
-        }
-
+        // ================================================================
+        // Tab switching
+        // ================================================================
         function switchTab(tab) {
             state.activeTab = tab;
             if (tab === 'existing') {
@@ -601,6 +896,9 @@
             }
         }
 
+        // ================================================================
+        // Edit label modal
+        // ================================================================
         function openEditLabelModal(label) {
             state.editingLabelId = label.id;
             document.getElementById('edit-label-original').textContent = label.original;
@@ -613,130 +911,223 @@
         }
 
         function saveEditLabel() {
-            const input = document.getElementById('edit-label-input').value.trim();
+            var input = document.getElementById('edit-label-input').value.trim();
             if (!input || !state.editingLabelId) return;
-            const label = state.existingLabels.find(l => l.id === state.editingLabelId);
+            var label = state.existingLabels.find(function(l) { return l.id === state.editingLabelId; });
             if (label) { label.current = input; state.labelRenames[label.original] = input; }
             editLabelModal.classList.add('hidden');
             state.editingLabelId = null;
             renderExistingLabelsTree();
-            highlightExistingLabels();
+            updatePreview();
         }
 
+        // ================================================================
+        // Bulk find & replace
+        // ================================================================
         function previewBulkReplace() {
-            const find = document.getElementById('bulk-find').value;
-            const replace = document.getElementById('bulk-replace').value;
+            var find = document.getElementById('bulk-find').value;
+            var replace = document.getElementById('bulk-replace').value;
             if (!find) { document.getElementById('bulk-preview').classList.add('hidden'); return; }
             try {
-                const regex = new RegExp(find, 'g');
-                const previewList = document.getElementById('bulk-preview-list');
+                var regex = new RegExp(find, 'g');
+                var previewList = document.getElementById('bulk-preview-list');
                 previewList.innerHTML = '';
-                let matchCount = 0;
-                state.existingLabels.forEach(label => {
-                    const inner = label.current.replace(/^\{\{\s*|\s*\}\}$/g, '');
+                var matchCount = 0;
+                state.existingLabels.forEach(function(label) {
+                    var inner = label.current.replace(/^\{\{\s*|\s*\}\}$/g, '');
                     if (regex.test(inner)) {
                         regex.lastIndex = 0;
-                        const newInner = inner.replace(regex, replace);
-                        const newLabel = `{{ ${newInner} }}`;
-                        const div = document.createElement('div');
-                        div.className = 'font-mono';
-                        div.innerHTML = `<span class="text-red-500 line-through">${escapeHtml(label.current)}</span><span class="text-slate-400 mx-1">→</span><span class="text-green-600">${escapeHtml(newLabel)}</span>`;
+                        var newInner = inner.replace(regex, replace);
+                        var newLabel = '{{ ' + newInner + ' }}';
+                        var div = document.createElement('div');
+                        div.className = 'font-monospace';
+                        div.innerHTML = '<span class="text-danger text-decoration-line-through">' + escapeHtml(label.current) + '</span><span class="text-muted mx-1">\u2192</span><span class="text-success">' + escapeHtml(newLabel) + '</span>';
                         previewList.appendChild(div);
                         matchCount++;
                     }
                 });
                 if (matchCount > 0) { document.getElementById('bulk-preview').classList.remove('hidden'); }
-                else { previewList.innerHTML = '<span class="text-slate-500">No matches found</span>'; document.getElementById('bulk-preview').classList.remove('hidden'); }
+                else { previewList.innerHTML = '<span class="text-muted">No matches found</span>'; document.getElementById('bulk-preview').classList.remove('hidden'); }
             } catch (e) {
-                document.getElementById('bulk-preview-list').innerHTML = `<span class="text-red-500">Invalid regex: ${e.message}</span>`;
+                document.getElementById('bulk-preview-list').innerHTML = '<span class="text-danger">Invalid regex: ' + e.message + '</span>';
                 document.getElementById('bulk-preview').classList.remove('hidden');
             }
         }
 
         function applyBulkReplace() {
-            const find = document.getElementById('bulk-find').value;
-            const replace = document.getElementById('bulk-replace').value;
+            var find = document.getElementById('bulk-find').value;
+            var replace = document.getElementById('bulk-replace').value;
             if (!find) return;
             try {
-                const regex = new RegExp(find, 'g');
-                state.existingLabels.forEach(label => {
-                    const inner = label.current.replace(/^\{\{\s*|\s*\}\}$/g, '');
+                var regex = new RegExp(find, 'g');
+                state.existingLabels.forEach(function(label) {
+                    var inner = label.current.replace(/^\{\{\s*|\s*\}\}$/g, '');
                     if (regex.test(inner)) {
                         regex.lastIndex = 0;
-                        const newInner = inner.replace(regex, replace);
-                        label.current = `{{ ${newInner} }}`;
+                        var newInner = inner.replace(regex, replace);
+                        label.current = '{{ ' + newInner + ' }}';
                         state.labelRenames[label.original] = label.current;
                     }
                 });
                 bulkReplaceModal.classList.add('hidden');
                 renderExistingLabelsTree();
-                highlightExistingLabels();
+                updatePreview();
             } catch (e) { alert('Invalid regex: ' + e.message); }
         }
 
+        // ================================================================
+        // AI suggestions
+        // ================================================================
         async function fetchSuggestions() {
-            const formData = new FormData();
+            var formData = new FormData();
             formData.append('file', state.file);
             if (state.settings.additionalInstructions) formData.append('additional_instructions', state.settings.additionalInstructions);
             if (state.settings.customPeople) formData.append('custom_people_names', state.settings.customPeople);
             formData.append('model', state.settings.model);
             try {
-                const response = await fetch('/al/docx-labeler/api/suggest-labels', { method: 'POST', body: formData });
-                const data = await response.json();
+                var response = await fetch('/al/docx-labeler/api/suggest-labels', { method: 'POST', body: formData });
+                var data = await response.json();
                 if (!data.success) throw new Error(data.error?.message || 'Failed to get suggestions');
-                state.suggestions = data.data.suggestions.map(s => ({ ...s, id: s.id || generateId(), status: 'pending' }));
+                state.suggestions = data.data.suggestions.map(function(s) {
+                    return Object.assign({}, s, { id: s.id || generateId(), status: 'pending' });
+                });
                 suggestionsCount.textContent = state.suggestions.length;
                 renderSuggestions();
             } catch (error) {
                 console.error('Error fetching suggestions:', error);
-                suggestionsList.innerHTML = `<div class="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">${escapeHtml(error.message)}</div>`;
+                suggestionsList.innerHTML = '<div class="alert alert-danger">' + escapeHtml(error.message) + '</div>';
             }
         }
 
         function renderSuggestions() {
             suggestionsList.innerHTML = '';
-            suggestionsCount.textContent = state.suggestions.length;
-            if (state.suggestions.length === 0) { suggestionsList.innerHTML = '<p class="text-slate-500 text-center py-8">No suggestions available.</p>'; return; }
-            state.suggestions.forEach((suggestion, index) => {
-                const div = document.createElement('div');
-                div.className = `p-3 rounded-lg border-2 transition-all ${suggestion.status === 'accepted' ? 'suggestion-accepted' : suggestion.status === 'rejected' ? 'suggestion-rejected' : 'suggestion-pending'}`;
-                div.innerHTML = `<div class="flex items-start justify-between gap-2 mb-2"><span class="text-xs text-slate-500">Para ${suggestion.paragraph}, Run ${suggestion.run}</span><div class="flex gap-1"><button class="accept-btn px-2 py-1 text-xs font-medium rounded ${suggestion.status === 'accepted' ? 'bg-green-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-green-100'}" data-index="${index}">✓</button><button class="reject-btn px-2 py-1 text-xs font-medium rounded ${suggestion.status === 'rejected' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-red-100'}" data-index="${index}">✕</button></div></div><div class="font-mono text-sm break-all">${escapeHtml(suggestion.text)}</div><input type="text" class="edit-input mt-2 w-full px-2 py-1 text-sm border border-slate-300 rounded font-mono ${suggestion.status === 'rejected' ? 'hidden' : ''}" value="${escapeHtml(suggestion.text)}" data-index="${index}">`;
+            // Count only visible (non-companion) suggestions
+            var visibleCount = state.suggestions.filter(function(s) { return !s._isCompanion; }).length;
+            suggestionsCount.textContent = visibleCount;
+            if (visibleCount === 0) {
+                suggestionsList.innerHTML = '<p class="text-muted text-center py-5">No suggestions available.</p>';
+                return;
+            }
+            state.suggestions.forEach(function(suggestion, index) {
+                // Skip companion entries – they’re part of a multi-run group
+                if (suggestion._isCompanion) return;
+
+                var div = document.createElement('div');
+                var stateClass = suggestion.status === 'accepted' ? 'suggestion-accepted' : suggestion.status === 'rejected' ? 'suggestion-rejected' : 'suggestion-pending';
+                div.className = 'p-3 rounded border border-2 mb-2 ' + stateClass;
+
+                var locationLabel = suggestion.group
+                    ? '<span class="small text-muted">Selection \u2192 ' + escapeHtml(suggestion._displayLabel || suggestion.text) + '</span>'
+                    : '<span class="small text-muted">Para ' + suggestion.paragraph + ', Run ' + suggestion.run + '</span>';
+
+                div.innerHTML =
+                    '<div class="d-flex align-items-start justify-content-between gap-2 mb-2">' +
+                        locationLabel +
+                        '<div class="d-flex gap-1">' +
+                            '<button class="accept-btn btn btn-sm ' + (suggestion.status === 'accepted' ? 'btn-success' : 'btn-outline-secondary') + '" data-index="' + index + '">\u2713</button>' +
+                            '<button class="reject-btn btn btn-sm ' + (suggestion.status === 'rejected' ? 'btn-danger' : 'btn-outline-secondary') + '" data-index="' + index + '">\u2717</button>' +
+                            (suggestion.group ? '<button class="remove-btn btn btn-sm btn-outline-danger" data-index="' + index + '" title="Remove">\u2716</button>' : '') +
+                        '</div>' +
+                    '</div>' +
+                    (suggestion._selectedText ? '<div class="small text-muted mb-1">\u201C' + escapeHtml(suggestion._selectedText) + '\u201D</div>' : '') +
+                    '<div class="font-monospace small break-all">' + escapeHtml(suggestion._displayLabel || suggestion.text) + '</div>' +
+                    (suggestion.group ? '' : '<input type="text" class="edit-input form-control form-control-sm font-monospace mt-2' + (suggestion.status === 'rejected' ? ' hidden' : '') + '" value="' + escapeHtml(suggestion.text) + '" data-index="' + index + '">');
                 suggestionsList.appendChild(div);
             });
-            suggestionsList.querySelectorAll('.accept-btn').forEach(btn => { btn.addEventListener('click', () => { const index = parseInt(btn.dataset.index); state.suggestions[index].status = state.suggestions[index].status === 'accepted' ? 'pending' : 'accepted'; renderSuggestions(); updateDownloadButton(); }); });
-            suggestionsList.querySelectorAll('.reject-btn').forEach(btn => { btn.addEventListener('click', () => { const index = parseInt(btn.dataset.index); state.suggestions[index].status = state.suggestions[index].status === 'rejected' ? 'pending' : 'rejected'; renderSuggestions(); updateDownloadButton(); }); });
-            suggestionsList.querySelectorAll('.edit-input').forEach(input => { input.addEventListener('change', () => { const index = parseInt(input.dataset.index); state.suggestions[index].text = input.value; }); });
+            suggestionsList.querySelectorAll('.accept-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var index = parseInt(btn.dataset.index);
+                    var s = state.suggestions[index];
+                    var newStatus = s.status === 'accepted' ? 'pending' : 'accepted';
+                    s.status = newStatus;
+                    // Propagate to companions in same group
+                    if (s.group) {
+                        state.suggestions.forEach(function(c) {
+                            if (c.group === s.group) c.status = newStatus;
+                        });
+                    }
+                    renderSuggestions();
+                    updatePreview();
+                    updateDownloadButton();
+                });
+            });
+            suggestionsList.querySelectorAll('.reject-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var index = parseInt(btn.dataset.index);
+                    var s = state.suggestions[index];
+                    var newStatus = s.status === 'rejected' ? 'pending' : 'rejected';
+                    s.status = newStatus;
+                    if (s.group) {
+                        state.suggestions.forEach(function(c) {
+                            if (c.group === s.group) c.status = newStatus;
+                        });
+                    }
+                    renderSuggestions();
+                    updatePreview();
+                    updateDownloadButton();
+                });
+            });
+            // Remove button deletes grouped selection labels entirely
+            suggestionsList.querySelectorAll('.remove-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var index = parseInt(btn.dataset.index);
+                    var grp = state.suggestions[index].group;
+                    if (grp) {
+                        state.suggestions = state.suggestions.filter(function(c) { return c.group !== grp; });
+                    } else {
+                        state.suggestions.splice(index, 1);
+                    }
+                    renderSuggestions();
+                    updatePreview();
+                    updateDownloadButton();
+                });
+            });
+            suggestionsList.querySelectorAll('.edit-input').forEach(function(input) {
+                input.addEventListener('change', function() {
+                    var index = parseInt(input.dataset.index);
+                    state.suggestions[index].text = input.value;
+                    updatePreview();
+                });
+            });
             updateDownloadButton();
         }
 
+        // ================================================================
+        // Download
+        // ================================================================
         function updateDownloadButton() {
-            const hasChanges = Object.keys(state.labelRenames).length > 0 || state.suggestions.some(s => s.status === 'accepted');
+            var hasChanges = Object.keys(state.labelRenames).length > 0 || state.suggestions.some(function(s) { return s.status === 'accepted'; });
             downloadBtn.disabled = !hasChanges;
         }
 
         async function downloadDocument() {
             if (!state.file) return;
-            const renames = [];
-            Object.entries(state.labelRenames).forEach(([original, newValue]) => { if (original !== newValue) renames.push({ original, replacement: newValue }); });
-            const acceptedLabels = state.suggestions.filter(s => s.status === 'accepted').map(s => ({ paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph }));
+            var renames = [];
+            Object.entries(state.labelRenames).forEach(function(entry) {
+                var original = entry[0], newValue = entry[1];
+                if (original !== newValue) renames.push({ original: original, replacement: newValue });
+            });
+            var acceptedLabels = state.suggestions.filter(function(s) { return s.status === 'accepted'; }).map(function(s) {
+                return { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
+            });
             if (renames.length === 0 && acceptedLabels.length === 0) { alert('No changes to apply.'); return; }
             downloadStatus.textContent = 'Processing...';
             downloadStatus.classList.remove('hidden');
             downloadBtn.disabled = true;
             try {
-                const formData = new FormData();
+                var formData = new FormData();
                 formData.append('file', state.file);
                 if (renames.length > 0) formData.append('renames', JSON.stringify(renames));
                 if (acceptedLabels.length > 0) formData.append('labels', JSON.stringify(acceptedLabels));
-                const response = await fetch('/al/docx-labeler/api/apply-labels', { method: 'POST', body: formData });
-                const data = await response.json();
+                var response = await fetch('/al/docx-labeler/api/apply-labels', { method: 'POST', body: formData });
+                var data = await response.json();
                 if (!data.success) throw new Error(data.error?.message || 'Failed to apply changes');
-                const binaryString = atob(data.data.docx_base64);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-                const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
+                var binaryString = atob(data.data.docx_base64);
+                var bytes = new Uint8Array(binaryString.length);
+                for (var i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
                 a.href = url;
                 a.download = data.data.filename;
                 document.body.appendChild(a);
@@ -744,39 +1135,98 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
                 downloadStatus.textContent = 'Download complete!';
-                setTimeout(() => downloadStatus.classList.add('hidden'), 2000);
+                setTimeout(function() { downloadStatus.classList.add('hidden'); }, 2000);
             } catch (error) {
                 console.error('Error downloading:', error);
                 downloadStatus.textContent = 'Error: ' + error.message;
             } finally { updateDownloadButton(); }
         }
 
-        function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
-
-        fileInput.addEventListener('change', (e) => { const file = e.target.files[0]; if (file) processFile(file); });
-        tabExisting.addEventListener('click', () => switchTab('existing'));
-        tabSuggestions.addEventListener('click', () => switchTab('suggestions'));
-        document.getElementById('accept-all-btn').addEventListener('click', () => { state.suggestions.forEach(s => { if (s.status === 'pending') s.status = 'accepted'; }); renderSuggestions(); });
-        document.getElementById('regenerate-btn').addEventListener('click', async () => { if (state.file) { showLoading('Regenerating suggestions...'); await fetchSuggestions(); hideLoading(); showMainPanel(); } });
-        document.getElementById('bulk-replace-btn').addEventListener('click', () => { document.getElementById('bulk-find').value = ''; document.getElementById('bulk-replace').value = ''; document.getElementById('bulk-preview').classList.add('hidden'); bulkReplaceModal.classList.remove('hidden'); });
-        document.getElementById('ai-relabel-btn').addEventListener('click', async () => { alert('AI Relabeling coming soon! This will use AI to suggest better AssemblyLine-compatible names for your existing labels.'); });
+        // ================================================================
+        // Event listeners
+        // ================================================================
+        fileInput.addEventListener('change', function(e) { var file = e.target.files[0]; if (file) processFile(file); });
+        tabExisting.addEventListener('click', function() { switchTab('existing'); });
+        tabSuggestions.addEventListener('click', function() { switchTab('suggestions'); });
+        document.getElementById('accept-all-btn').addEventListener('click', function() {
+            state.suggestions.forEach(function(s) { if (s.status === 'pending') s.status = 'accepted'; });
+            renderSuggestions();
+            updatePreview();
+        });
+        document.getElementById('regenerate-btn').addEventListener('click', async function() {
+            if (state.file) { showLoading('Regenerating suggestions...'); await fetchSuggestions(); hideLoading(); showMainPanel(); }
+        });
+        document.getElementById('bulk-replace-btn').addEventListener('click', function() {
+            document.getElementById('bulk-find').value = '';
+            document.getElementById('bulk-replace').value = '';
+            document.getElementById('bulk-preview').classList.add('hidden');
+            bulkReplaceModal.classList.remove('hidden');
+        });
+        document.getElementById('ai-relabel-btn').addEventListener('click', function() {
+            alert('AI Relabeling coming soon! This will use AI to suggest better AssemblyLine-compatible names for your existing labels.');
+        });
         document.getElementById('bulk-preview-btn').addEventListener('click', previewBulkReplace);
         document.getElementById('bulk-apply').addEventListener('click', applyBulkReplace);
-        document.getElementById('bulk-cancel').addEventListener('click', () => bulkReplaceModal.classList.add('hidden'));
+        document.getElementById('bulk-cancel').addEventListener('click', function() { bulkReplaceModal.classList.add('hidden'); });
         document.getElementById('edit-save').addEventListener('click', saveEditLabel);
-        document.getElementById('edit-cancel').addEventListener('click', () => { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
-        document.getElementById('edit-close').addEventListener('click', () => { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
-        variableSearch.addEventListener('input', (e) => { renderVariableTree(AL_VARIABLE_TREE, '', variableTree, e.target.value); });
+        document.getElementById('edit-cancel').addEventListener('click', function() { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
+        document.getElementById('edit-close').addEventListener('click', function() { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
+        variableSearch.addEventListener('input', function(e) { renderVariableTree(AL_VARIABLE_TREE, '', variableTree, e.target.value); });
         downloadBtn.addEventListener('click', downloadDocument);
-        document.getElementById('settings-btn').addEventListener('click', () => { document.getElementById('additional-instructions').value = state.settings.additionalInstructions; document.getElementById('custom-people').value = state.settings.customPeople; document.getElementById('ai-model').value = state.settings.model; settingsModal.classList.remove('hidden'); });
-        document.getElementById('close-settings').addEventListener('click', () => settingsModal.classList.add('hidden'));
-        document.getElementById('save-settings').addEventListener('click', () => { state.settings.additionalInstructions = document.getElementById('additional-instructions').value; state.settings.customPeople = document.getElementById('custom-people').value; state.settings.model = document.getElementById('ai-model').value; settingsModal.classList.add('hidden'); });
-        document.getElementById('reset-settings').addEventListener('click', () => { document.getElementById('additional-instructions').value = ''; document.getElementById('custom-people').value = ''; document.getElementById('ai-model').value = 'gpt-5-nano'; });
-        [settingsModal, bulkReplaceModal, editLabelModal].forEach(modal => { modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); }); });
-        const dropZone = document.querySelector('aside');
-        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('bg-blue-50'); });
-        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('bg-blue-50'));
-        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('bg-blue-50'); const file = e.dataTransfer.files[0]; if (file && file.name.endsWith('.docx')) processFile(file); });
+        document.getElementById('settings-btn').addEventListener('click', function() {
+            document.getElementById('additional-instructions').value = state.settings.additionalInstructions;
+            document.getElementById('custom-people').value = state.settings.customPeople;
+            document.getElementById('ai-model').value = state.settings.model;
+            settingsModal.classList.remove('hidden');
+        });
+        document.getElementById('close-settings').addEventListener('click', function() { settingsModal.classList.add('hidden'); });
+        document.getElementById('save-settings').addEventListener('click', function() {
+            state.settings.additionalInstructions = document.getElementById('additional-instructions').value;
+            state.settings.customPeople = document.getElementById('custom-people').value;
+            state.settings.model = document.getElementById('ai-model').value;
+            settingsModal.classList.add('hidden');
+        });
+        document.getElementById('reset-settings').addEventListener('click', function() {
+            document.getElementById('additional-instructions').value = '';
+            document.getElementById('custom-people').value = '';
+            document.getElementById('ai-model').value = 'gpt-5-nano';
+        });
+        [settingsModal, bulkReplaceModal, editLabelModal].forEach(function(modal) {
+            modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
+        });
+
+        // Selection popover events
+        previewContent.addEventListener('mouseup', onPreviewMouseUp);
+        document.getElementById('sel-close').addEventListener('click', hideSelectionPopover);
+        document.getElementById('sel-cancel').addEventListener('click', hideSelectionPopover);
+        document.getElementById('sel-save').addEventListener('click', saveSelectionLabel);
+        selVarInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); saveSelectionLabel(); } });
+        document.getElementById('sel-tree-toggle').addEventListener('click', function() {
+            if (selVarPanel.classList.contains('hidden')) {
+                selVarPanel.classList.remove('hidden');
+                renderSelPopoverTree();
+            } else {
+                selVarPanel.classList.add('hidden');
+            }
+        });
+        selVarSearch.addEventListener('input', function(e) { renderSelPopoverTree(e.target.value); });
+        // Close popover on outside click
+        document.addEventListener('mousedown', function(e) {
+            if (!selPopover.classList.contains('hidden') && !selPopover.contains(e.target) && !previewContent.contains(e.target)) {
+                hideSelectionPopover();
+            }
+        });
+
+        // Drag & drop
+        var dropZone = document.querySelector('aside');
+        dropZone.addEventListener('dragover', function(e) { e.preventDefault(); dropZone.classList.add('drag-over'); });
+        dropZone.addEventListener('dragleave', function() { dropZone.classList.remove('drag-over'); });
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            var file = e.dataTransfer.files[0];
+            if (file && file.name.endsWith('.docx')) processFile(file);
+        });
     })();
     </script>
 </body>

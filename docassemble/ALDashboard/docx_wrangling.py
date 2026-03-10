@@ -295,7 +295,7 @@ def get_labeled_docx_runs(
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
-    model: str = "gpt-5-nano",
+    model: str = "gpt-5-mini",
     custom_prompt: Optional[str] = None,
     additional_instructions: Optional[str] = None,
     max_output_tokens: Optional[int] = None,

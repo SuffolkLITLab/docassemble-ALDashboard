@@ -145,12 +145,9 @@
                     </div>
                     <div>
                         <label class="form-label fw-medium" for="ai-model">AI Model</label>
-                        <select id="ai-model" class="form-select">
-                            <option value="gpt-4.1-mini">GPT-4.1 Mini (faster)</option>
-                            <option value="gpt-5-nano">GPT-5 Nano (fast, thinking)</option>
-                            <option value="gpt-5-mini">GPT-5-mini (balanced)</option>
-                            <option value="gpt-5.2">GPT-5.2 (Slow, most accurate)</option>
-                        </select>
+                        <input id="ai-model" type="text" class="form-control font-monospace small" placeholder="Type to find a model">
+                        <p class="form-text mb-1">Starts with a curated set for your configured provider. Type to filter the full list.</p>
+                        <div id="ai-model-suggestions" class="d-flex flex-wrap gap-1"></div>
                     </div>
                 </div>
                 <div class="dl-modal-footer d-flex justify-content-end gap-2">
@@ -355,10 +352,13 @@
             existingLabels: [],
             suggestions: [],
             labelRenames: {},
+            defaultModel: 'gpt-5-mini',
+            recommendedModels: ['gpt-5-mini'],
+            availableModels: [],
             settings: {
                 additionalInstructions: '',
                 customPeople: '',
-                model: 'gpt-5-nano'
+                model: 'gpt-5-mini'
             },
             activeTab: 'existing',
             editingLabelId: null
@@ -398,6 +398,8 @@
         const selVarPanel = document.getElementById('sel-var-panel');
         const selVarTree = document.getElementById('sel-var-tree');
         const selVarSearch = document.getElementById('sel-var-search');
+        const aiModelInput = document.getElementById('ai-model');
+        const aiModelSuggestions = document.getElementById('ai-model-suggestions');
 
         // ================================================================
         // Helpers
@@ -410,6 +412,49 @@
 
         function generateId() {
             return 'id-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        async function fetchModelCatalog() {
+            try {
+                var response = await fetch('/al/labeler/api/models', { method: 'GET' });
+                var data = await response.json();
+                if (!data.success || !data.data) return;
+                state.defaultModel = data.data.default_model || state.defaultModel;
+                state.recommendedModels = Array.isArray(data.data.recommended_models) && data.data.recommended_models.length
+                    ? data.data.recommended_models
+                    : [state.defaultModel];
+                state.availableModels = Array.isArray(data.data.available_models) ? data.data.available_models : [];
+                state.settings.model = state.defaultModel;
+                renderModelSuggestions('');
+            } catch (_error) {
+                renderModelSuggestions('');
+            }
+        }
+
+        function renderModelSuggestions(filterText) {
+            var filter = (filterText || '').trim().toLowerCase();
+            var modelChoices = [];
+            if (filter) {
+                var source = state.availableModels.length ? state.availableModels : state.recommendedModels;
+                modelChoices = source.filter(function(model) {
+                    return model.toLowerCase().includes(filter);
+                }).slice(0, 20);
+            } else {
+                modelChoices = state.recommendedModels.slice(0, 8);
+            }
+            aiModelSuggestions.innerHTML = '';
+            modelChoices.forEach(function(modelName) {
+                var button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'btn btn-sm btn-outline-secondary font-monospace';
+                button.textContent = modelName;
+                button.addEventListener('click', function() {
+                    aiModelInput.value = modelName;
+                    state.settings.model = modelName;
+                    renderModelSuggestions(modelName);
+                });
+                aiModelSuggestions.appendChild(button);
+            });
         }
 
         // ================================================================
@@ -1176,20 +1221,26 @@
         document.getElementById('settings-btn').addEventListener('click', function() {
             document.getElementById('additional-instructions').value = state.settings.additionalInstructions;
             document.getElementById('custom-people').value = state.settings.customPeople;
-            document.getElementById('ai-model').value = state.settings.model;
+            aiModelInput.value = state.settings.model;
+            renderModelSuggestions('');
             settingsModal.classList.remove('hidden');
         });
         document.getElementById('close-settings').addEventListener('click', function() { settingsModal.classList.add('hidden'); });
         document.getElementById('save-settings').addEventListener('click', function() {
             state.settings.additionalInstructions = document.getElementById('additional-instructions').value;
             state.settings.customPeople = document.getElementById('custom-people').value;
-            state.settings.model = document.getElementById('ai-model').value;
+            state.settings.model = aiModelInput.value.trim() || state.defaultModel;
             settingsModal.classList.add('hidden');
         });
         document.getElementById('reset-settings').addEventListener('click', function() {
             document.getElementById('additional-instructions').value = '';
             document.getElementById('custom-people').value = '';
-            document.getElementById('ai-model').value = 'gpt-5-nano';
+            aiModelInput.value = state.defaultModel;
+            renderModelSuggestions('');
+        });
+        aiModelInput.addEventListener('input', function() { renderModelSuggestions(aiModelInput.value); });
+        aiModelInput.addEventListener('change', function() {
+            state.settings.model = aiModelInput.value.trim() || state.defaultModel;
         });
         [settingsModal, bulkReplaceModal, editLabelModal].forEach(function(modal) {
             modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
@@ -1227,6 +1278,8 @@
             var file = e.dataTransfer.files[0];
             if (file && file.name.endsWith('.docx')) processFile(file);
         });
+
+        fetchModelCatalog();
     })();
     </script>
 </body>

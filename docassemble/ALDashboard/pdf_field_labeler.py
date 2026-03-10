@@ -1,10 +1,39 @@
 import shutil
+import inspect
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 
 class PDFLabelingError(RuntimeError):
     pass
+
+
+def _parse_form_with_optional_model(
+    formfyxer_module: Any,
+    *,
+    in_file: str,
+    title: str,
+    jur: str,
+    tools_token: Optional[str],
+    openai_api: Optional[str],
+    model: Optional[str],
+) -> Any:
+    parse_kwargs: Dict[str, Any] = {
+        "title": title,
+        "jur": jur,
+        "normalize": True,
+        "rewrite": True,
+        "tools_token": tools_token,
+        "openai_api_key": openai_api,
+    }
+    if model:
+        try:
+            signature = inspect.signature(formfyxer_module.parse_form)
+            if "model" in signature.parameters:
+                parse_kwargs["model"] = model
+        except Exception:
+            pass
+    return formfyxer_module.parse_form(in_file, **parse_kwargs)
 
 
 def _flatten_field_names(fields_per_page: List[List[Any]]) -> List[str]:
@@ -44,6 +73,7 @@ def relabel_existing_pdf_fields(
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     import formfyxer  # type: ignore[import-not-found]
 
@@ -67,14 +97,14 @@ def relabel_existing_pdf_fields(
         formfyxer.rename_pdf_fields(input_pdf_path, output_pdf_path, mapping)
     elif relabel_with_ai:
         shutil.copyfile(input_pdf_path, output_pdf_path)
-        parsed = formfyxer.parse_form(
-            output_pdf_path,
+        parsed = _parse_form_with_optional_model(
+            formfyxer,
+            in_file=output_pdf_path,
             title=Path(output_pdf_path).stem,
             jur=jur,
-            normalize=True,
-            rewrite=True,
             tools_token=tools_token,
-            openai_api_key=openai_api,
+            openai_api=openai_api,
+            model=model,
         )
         if isinstance(parsed, dict):
             stats = parsed
@@ -108,6 +138,7 @@ def apply_formfyxer_pdf_labeling(
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     import formfyxer  # type: ignore[import-not-found]
 
@@ -123,14 +154,14 @@ def apply_formfyxer_pdf_labeling(
     if not normalize_fields:
         return {}
 
-    stats = formfyxer.parse_form(
-        str(output_path),
+    stats = _parse_form_with_optional_model(
+        formfyxer,
+        in_file=str(output_path),
         title=output_path.stem,
         jur=jur,
-        normalize=True,
-        rewrite=True,
         tools_token=tools_token,
-        openai_api_key=openai_api,
+        openai_api=openai_api,
+        model=model,
     )
     if isinstance(stats, dict):
         return stats
@@ -146,6 +177,7 @@ def detect_pdf_fields_and_optionally_relabel(
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     stats = apply_formfyxer_pdf_labeling(
         input_pdf_path=input_pdf_path,
@@ -155,6 +187,7 @@ def detect_pdf_fields_and_optionally_relabel(
         jur=jur,
         tools_token=tools_token,
         openai_api=openai_api,
+        model=model,
     )
     if target_field_names is not None:
         renamed_stats = relabel_existing_pdf_fields(
@@ -164,6 +197,7 @@ def detect_pdf_fields_and_optionally_relabel(
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
+            model=model,
         )
         if isinstance(stats, dict):
             stats.update({"post_relabel": renamed_stats})

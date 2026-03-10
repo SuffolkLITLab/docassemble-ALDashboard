@@ -9,6 +9,7 @@ Both tools use AI to suggest labels and follow AssemblyLine conventions.
 """
 
 import base64
+import inspect
 import io
 import json
 import os
@@ -36,6 +37,103 @@ from .api_dashboard_utils import (
 __all__ = []
 
 LABELER_BASE_PATH = "/al"
+
+OPENAI_LABELER_MODELS = [
+    "gpt-5-mini",
+    "gpt-5",
+    "gpt-4.1-mini",
+    "gpt-4.1",
+    "gpt-5-nano",
+]
+GEMINI_LABELER_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5",
+    "gemini-3-pro",
+]
+CLAUDE_LABELER_MODELS = [
+    "claude-4.5-sonnet",
+    "claude-4.6-sonnet",
+    "claude-4.6-opus",
+]
+LABELER_PROVIDER_MODEL_SETS = {
+    "openai": OPENAI_LABELER_MODELS,
+    "gemini": GEMINI_LABELER_MODELS,
+    "claude": CLAUDE_LABELER_MODELS,
+}
+LABELER_MODEL_SET_PRIORITY = [
+    OPENAI_LABELER_MODELS,
+    GEMINI_LABELER_MODELS,
+    CLAUDE_LABELER_MODELS,
+]
+LABELER_DEFAULT_MODEL = "gpt-5-mini"
+
+
+def _normalize_provider_family(family_name: Optional[str]) -> str:
+    family = str(family_name or "").strip().lower()
+    if family in {"google", "gemini"}:
+        return "gemini"
+    if family in {"anthropic", "claude"}:
+        return "claude"
+    return "openai"
+
+
+def _build_labeler_model_catalog() -> Dict[str, Any]:
+    """Build model metadata for labeler UIs using ALToolbox llms helpers."""
+    default_model = LABELER_DEFAULT_MODEL
+    provider_family = "openai"
+    recommended_models = list(OPENAI_LABELER_MODELS)
+    available_models: List[str] = []
+
+    try:
+        from docassemble.ALToolbox.llms import (  # type: ignore[import-untyped]
+            detect_model_family,
+            get_default_model,
+            get_first_available_model_set,
+            list_available_models,
+        )
+
+        available_models = list_available_models()
+        selected_set = get_first_available_model_set(
+            LABELER_MODEL_SET_PRIORITY,
+            require_full_set=False,
+            return_partial_if_needed=True,
+            fallback_to_first_small_model=True,
+        )
+        if selected_set:
+            recommended_models = selected_set
+            provider_family = _normalize_provider_family(
+                detect_model_family(selected_set[0])
+            )
+        else:
+            medium_default = get_default_model("medium")
+            provider_family = _normalize_provider_family(
+                detect_model_family(medium_default)
+            )
+            recommended_models = list(
+                LABELER_PROVIDER_MODEL_SETS.get(provider_family, OPENAI_LABELER_MODELS)
+            )
+
+        if provider_family == "openai":
+            default_model = "gpt-5-mini"
+        elif recommended_models:
+            default_model = recommended_models[0]
+        else:
+            default_model = get_default_model("medium")
+
+        if default_model not in recommended_models and default_model:
+            recommended_models = [default_model] + recommended_models
+    except Exception as exc:
+        log(
+            f"ALDashboard: failed to build model catalog from ALToolbox.llms; using fallback list ({exc!r})",
+            "warning",
+        )
+
+    return {
+        "default_model": default_model or LABELER_DEFAULT_MODEL,
+        "recommended_models": recommended_models,
+        "available_models": available_models,
+        "provider_family": provider_family,
+    }
 
 
 def _labeler_auth_check() -> bool:
@@ -106,6 +204,23 @@ def docx_labeler_page():
         log("ALDashboard: DOCX labeler template not found, using inline fallback", "warning")
         html_content = _generate_docx_labeler_html()
     return Response(html_content, mimetype="text/html")
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/models", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def labeler_models():
+    """Return AI model metadata for DOCX/PDF labeler settings UIs."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_auth_check():
+        return _auth_fail(request_id)
+    return jsonify(
+        {
+            "success": True,
+            "request_id": request_id,
+            "data": _build_labeler_model_catalog(),
+        }
+    )
 
 
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/extract-runs", methods=["POST"])
@@ -214,7 +329,10 @@ def docx_labeler_suggest_labels():
         # Extract options
         custom_prompt = post_data.get("custom_prompt")
         additional_instructions = post_data.get("additional_instructions")
-        model = post_data.get("model", "gpt-4.1-mini")
+        model = post_data.get("model")
+        if model is None or str(model).strip() == "":
+            model = _build_labeler_model_catalog()["default_model"]
+        model = str(model)
         openai_api = post_data.get("openai_api")
         openai_base_url = post_data.get("openai_base_url")
 
@@ -563,6 +681,10 @@ def pdf_labeler_auto_detect():
         # Options
         normalize_fields = parse_bool(post_data.get("normalize_fields"), default=True)
         jur = str(post_data.get("jur", "MA"))
+        model = post_data.get("model")
+        if model is None or str(model).strip() == "":
+            model = _build_labeler_model_catalog()["default_model"]
+        model = str(model)
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -579,13 +701,19 @@ def pdf_labeler_auto_detect():
             # Optionally normalize with AI
             stats = {}
             if normalize_fields:
-                stats = formfyxer.parse_form(
-                    output_path,
-                    title=os.path.splitext(filename)[0],
-                    jur=jur,
-                    normalize=True,
-                    rewrite=True,
-                )
+                parse_form_kwargs: Dict[str, Any] = {
+                    "title": os.path.splitext(filename)[0],
+                    "jur": jur,
+                    "normalize": True,
+                    "rewrite": True,
+                }
+                try:
+                    parse_signature = inspect.signature(formfyxer.parse_form)
+                    if "model" in parse_signature.parameters:
+                        parse_form_kwargs["model"] = model
+                except Exception:
+                    pass
+                stats = formfyxer.parse_form(output_path, **parse_form_kwargs)
 
             # Get the resulting fields
             fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
@@ -673,6 +801,10 @@ def pdf_labeler_relabel():
             )
 
         jur = str(post_data.get("jur", "MA"))
+        model = post_data.get("model")
+        if model is None or str(model).strip() == "":
+            model = _build_labeler_model_catalog()["default_model"]
+        model = str(model)
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -688,6 +820,7 @@ def pdf_labeler_relabel():
                 output_pdf_path=output_path,
                 relabel_with_ai=True,
                 jur=jur,
+                model=model,
             )
 
             # Read the output file

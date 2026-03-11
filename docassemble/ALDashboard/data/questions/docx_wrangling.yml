@@ -55,6 +55,12 @@ fields:
   - Include custom people names: include_custom_people_names
     datatype: yesno
     default: False
+  - Automatically consolidate fragmented runs before labeling: defragment_runs
+    datatype: yesno
+    default: True
+    help: |
+      Recommended. This merges text-only DOCX runs before generating labels so
+      placeholders split across Word runs can be labeled reliably.
   - Custom people names: custom_people_names_text
     datatype: area
     show if: include_custom_people_names
@@ -81,7 +87,9 @@ code: |
   else:
     custom_people_names = None
   draft_labels = get_labeled_docx_runs(
-    docx_file[0].path(), custom_people_names=custom_people_names
+    docx_file[0].path(),
+    custom_people_names=custom_people_names,
+    defragment_runs=defragment_runs,
   )
   background_response_action("save_draft_labels", draft_labels=draft_labels)
 ---
@@ -97,6 +105,8 @@ code: |
   import docx
 
   original_doc = docx.Document(docx_file[0].path())
+  if defragment_runs:
+    original_doc, _ = defragment_docx_runs(original_doc)
 
   label_question = []
   for idx, item in enumerate(draft_labels):
@@ -133,13 +143,28 @@ code: |
   del original_doc
 ---
 code: |
+  import docx
+
+  modified_runs = [
+    (item.paragraph, item.run, item.label, 0)
+    for item in final_labels
+    if not item.leave_unchanged
+  ]
+  new_doc_obj = docx.Document(docx_file[0].path())
+  defragmentation_info = {"paragraphs_defragmented": 0, "runs_removed": 0}
+  if defragment_runs and modified_runs:
+    target_paragraphs = sorted(
+      {
+        item[0]
+        for item in modified_runs
+      }
+    )
+    new_doc_obj, defragmentation_info = defragment_docx_runs(
+      new_doc_obj, paragraph_numbers=target_paragraphs
+    )
   new_doc_obj = update_docx(
-    docx_file[0].path(),
-    [
-      (item.paragraph, item.run, item.label, 0)
-      for item in final_labels
-      if not item.leave_unchanged
-    ],
+    new_doc_obj,
+    modified_runs,
   )
 
   new_docx.initialize(filename=docx_file[0].filename)
@@ -163,4 +188,9 @@ event: show_final_docx
 question: |
   Here is your new DOCX file
 subquestion: |
+  % if defragment_runs and (defragmentation_info["paragraphs_defragmented"] or defragmentation_info["runs_removed"]):
+  <div class="alert alert-info" role="alert">
+    Consolidated fragmented DOCX runs in ${ defragmentation_info["paragraphs_defragmented"] } paragraph${ '' if defragmentation_info["paragraphs_defragmented"] == 1 else 's' } before applying labels.
+  </div>
+  % endif
   ${ new_docx }

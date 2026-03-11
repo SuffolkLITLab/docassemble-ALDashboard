@@ -28,8 +28,34 @@
 }
 
 .dl-header {
-  background: #fff;
+  background: var(--suffolk-blue);
+  color: var(--bs-white);
   border-bottom: 1px solid var(--bs-border-color);
+}
+
+.dl-header,
+.dl-header * {
+  color: #f8fbff !important;
+}
+
+.dl-header .text-muted {
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+
+.dl-header .al-title h1 {
+  color: #f8fbff !important;
+}
+
+.dl-header .al-title p {
+  color: rgba(248, 251, 255, 0.95) !important;
+}
+
+.dl-header .btn {
+  color: #f8fbff;
+}
+
+.dl-header .dropdown-menu {
+  min-width: 12rem;
 }
 
 .dl-main {
@@ -98,13 +124,18 @@
   border: 0;
   font-size: 0.875rem;
   font-weight: 600;
-  background-color: #eff6ff;
-  color: #1d4ed8;
+  background-color: var(--suffolk-blue);
+  color: #f8fbff !important;
   cursor: pointer;
 }
 
+.dl-file-input::-webkit-file-upload-button {
+  color: #f8fbff !important;
+  background-color: var(--suffolk-blue);
+}
+
 .dl-file-input::file-selector-button:hover {
-  background-color: #dbeafe;
+  background-color: #1f3764;
 }
 
 /* ============================================================

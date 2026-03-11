@@ -4,10 +4,77 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AssemblyLine PDF Labeler</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" type="image/png" href="/packagestatic/docassemble.LITLabTheme/dal-favicon.png">
+    <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/bootstrap-theme.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/variables.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/custom.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
     <style>
+        .hidden { display: none !important; }
+        .pdf-labeler-body { background: #e9edf3; min-height: 100vh; }
+        .pdf-labeler-app { min-height: 100vh; }
+        .pdf-main { min-height: 0; }
+        .pdf-container { background: #dfe5ef; }
+        .pdf-fields-panel { width: 20rem; min-width: 20rem; border-color: var(--bs-border-color) !important; }
+        .toolbar-divider { width: 1px; height: 1.5rem; background: rgba(255, 255, 255, 0.25); margin: 0 0.5rem; }
+        .icon-16 { width: 1rem; height: 1rem; }
+        .icon-48 { width: 3rem; height: 3rem; color: #a0aec0; }
+        .icon-96 { width: 6rem; height: 6rem; color: #cbd5e1; }
+        .pdf-pages-wrap { max-width: 56rem; }
+        .model-input { width: 100%; }
+        .model-suggestions {
+            position: relative;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            max-height: 10rem;
+            width: 100%;
+            overflow-y: auto;
+            border: 1px solid var(--bs-border-color);
+            background: #fff;
+            padding: 0.25rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+        .model-suggestion-btn {
+            border: none;
+            background: transparent;
+            border-radius: 0;
+            text-align: left;
+            width: 100%;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+        .model-suggestion-btn:hover { background: var(--bs-light); }
+        .page-overlay { position: absolute; inset: 0; }
+        .draft-rect {
+            position: absolute;
+            border: 2px dashed #f59e0b;
+            background: rgba(251, 191, 36, 0.3);
+            pointer-events: none;
+        }
+        .field-list-item {
+            border: 1px solid var(--bs-border-color);
+            background: #fff;
+            padding: 0.75rem;
+            cursor: pointer;
+            margin-bottom: 0.75rem;
+        }
+        .field-list-item:hover { border-color: #8fa2c0; }
+        .field-list-item.selected {
+            border-color: var(--bs-primary);
+            background: rgba(var(--bs-primary-rgb), 0.08);
+        }
+        .field-list-name { max-width: 11rem; }
+        .labeler-toast {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 1080;
+            max-width: 24rem;
+            margin-bottom: 0;
+        }
+        .drag-over { background: #cfdcf4 !important; }
         .field-box { position: absolute; border: 2px solid #0ea5e9; background: rgba(14, 165, 233, 0.1); cursor: move; }
         .field-box:hover { background: rgba(14, 165, 233, 0.2); }
         .field-box.selected { border-color: #2563eb; background: rgba(37, 99, 235, 0.2); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3); }
@@ -22,66 +89,67 @@
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .pdf-page { position: relative; margin-bottom: 16px; background: white; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
         .field-label { position: absolute; top: 2px; left: 4px; font-size: 10px; background: rgba(0,0,0,0.7); color: white; padding: 1px 4px; border-radius: 2px; max-width: calc(100% - 8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tool-btn.active { background-color: #2563eb !important; color: white !important; }
+        .tool-btn.active { background-color: var(--bs-primary) !important; border-color: var(--bs-primary) !important; color: var(--bs-white) !important; }
+        .header-auth-menu { min-width: 12rem; }
     </style>
 </head>
-<body class="bg-slate-100 min-h-screen">
-    <div id="app" class="min-h-screen flex flex-col">
+<body class="pdf-labeler-body">
+    <div id="app" class="pdf-labeler-app d-flex flex-column">
         <!-- Header -->
-        <header class="bg-white border-b border-slate-200 px-6 py-4">
-            <div class="max-w-full mx-auto flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                    <h1 class="text-2xl font-bold text-slate-800">AssemblyLine PDF Labeler</h1>
-                    <p class="text-slate-500 text-sm mt-1">Add and edit PDF form fields using AI detection</p>
+        <header class="navbar bg-dark px-4 py-3">
+            <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap gap-3">
+                <div class="d-flex align-items-center gap-3">
+                    <img src="/packagestatic/docassemble.LITLabTheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
+                    <div class="al-title">
+                        <h1 class="h4 fw-bold mb-0 text-white">AssemblyLine PDF Labeler</h1>
+                        <p class="small mt-1 mb-0 text-light">Add and edit PDF form fields using AI detection</p>
+                    </div>
                 </div>
                 
                 <!-- Tool Buttons -->
-                <div id="tools-container" class="flex items-center gap-2 flex-wrap">
-                    <label class="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg cursor-pointer hover:bg-blue-100 transition text-sm font-medium">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                <div id="tools-container" class="d-flex align-items-center gap-2 flex-wrap">
+                    <div id="auth-controls" class="position-relative"></div>
+                    <button id="settings-btn" class="btn btn-outline-light btn-sm">
+                        <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        Settings
+                    </button>
+                    <label class="btn btn-outline-light btn-sm d-inline-flex align-items-center gap-2 rounded-pill">
+                        <svg class="icon-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
                         Upload PDF
-                        <input type="file" id="file-input" accept=".pdf" class="hidden">
+                        <input type="file" id="file-input" accept=".pdf" class="d-none">
                     </label>
                     
-                    <div class="h-6 w-px bg-slate-300 mx-2"></div>
+                    <div class="toolbar-divider"></div>
                     
-                    <button id="tool-text" class="tool-btn px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm font-medium" title="Text Field">
-                        <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                    <button id="tool-text" class="tool-btn btn btn-outline-light btn-sm" title="Text Field">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
                         Text
                     </button>
-                    <button id="tool-multiline" class="tool-btn px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm font-medium" title="Multi-line Text">
-                        <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 10h18M3 14h18M3 18h10"/></svg>
+                    <button id="tool-multiline" class="tool-btn btn btn-outline-light btn-sm" title="Multi-line Text">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 10h18M3 14h18M3 18h10"/></svg>
                         Multiline
                     </button>
-                    <button id="tool-checkbox" class="tool-btn px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm font-medium" title="Checkbox">
-                        <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="m9 12 2 2 4-4"/></svg>
+                    <button id="tool-checkbox" class="tool-btn btn btn-outline-light btn-sm" title="Checkbox">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="m9 12 2 2 4-4"/></svg>
                         Checkbox
                     </button>
-                    <button id="tool-signature" class="tool-btn px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm font-medium" title="Signature">
-                        <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.5 3.5 6 6-11 11H3v-6.5l11-11Z"/></svg>
+                    <button id="tool-signature" class="tool-btn btn btn-outline-light btn-sm" title="Signature">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.5 3.5 6 6-11 11H3v-6.5l11-11Z"/></svg>
                         Signature
                     </button>
                     
-                    <div class="h-6 w-px bg-slate-300 mx-2"></div>
+                    <div class="toolbar-divider"></div>
                     
-                    <button id="auto-detect-btn" class="px-3 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                         Auto-Detect
                     </button>
-                    <button id="relabel-btn" class="px-3 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    <button id="relabel-btn" class="btn btn-outline-light btn-sm" disabled>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         AI Relabel
                     </button>
 
-                    <div class="relative flex items-center gap-2">
-                        <label for="ai-model" class="text-xs font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">AI model</label>
-                        <input id="ai-model" type="text" class="w-44 px-2 py-1 border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Type model name">
-                        <div id="ai-model-suggestions" class="absolute top-7 left-16 z-10 hidden max-h-40 w-72 overflow-y-auto rounded-md border border-slate-200 bg-white p-1 shadow-lg"></div>
-                    </div>
-                    
-                    <div class="h-6 w-px bg-slate-300 mx-2"></div>
-                    
-                    <button id="export-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-semibold disabled:bg-slate-300 disabled:cursor-not-allowed" disabled>
+                    <button id="export-btn" class="btn btn-primary btn-sm" disabled>
                         Export PDF
                     </button>
                 </div>
@@ -89,54 +157,55 @@
         </header>
 
         <!-- Main Content -->
-        <main class="flex-1 flex overflow-hidden">
+        <main class="pdf-main d-flex flex-grow-1 overflow-hidden">
             <!-- PDF Preview -->
-            <div id="pdf-container" class="flex-1 overflow-auto bg-slate-200 p-6">
-                <div id="pdf-empty" class="h-full flex items-center justify-center text-center">
+            <div id="pdf-container" class="pdf-container flex-grow-1 overflow-auto p-4">
+                <div id="pdf-empty" class="h-100 d-flex align-items-center justify-content-center text-center">
                     <div>
-                        <svg class="w-24 h-24 mx-auto text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="icon-96 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                         </svg>
-                        <h3 class="mt-4 text-lg font-medium text-slate-400">Upload a PDF to get started</h3>
-                        <p class="mt-2 text-slate-400">Drag and drop or click "Upload PDF" above</p>
+                        <h3 class="mt-4 h5 text-muted">Upload a PDF to get started</h3>
+                        <p class="mt-2 text-muted">Drag and drop or click "Upload PDF" above</p>
                     </div>
                 </div>
-                <div id="pdf-loading" class="hidden h-full flex items-center justify-center">
+                <div id="pdf-loading" class="hidden h-100 d-flex align-items-center justify-content-center">
                     <div class="text-center">
-                        <svg class="loading-spinner w-12 h-12 mx-auto text-blue-600" fill="none" viewBox="0 0 24 24">
+                        <svg class="loading-spinner icon-48 mx-auto text-primary" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
-                        <p id="loading-message" class="mt-4 text-slate-600">Loading PDF...</p>
+                        <p id="loading-message" class="mt-4 text-muted">Loading PDF...</p>
                     </div>
                 </div>
-                <div id="pdf-pages" class="hidden max-w-4xl mx-auto"></div>
+                <div id="pdf-pages" class="hidden pdf-pages-wrap mx-auto"></div>
             </div>
 
             <!-- Fields Panel -->
-            <aside id="fields-panel" class="w-80 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
-                <div class="p-4 border-b border-slate-200">
-                    <h2 class="font-semibold text-slate-800">Fields</h2>
-                    <p id="field-count" class="text-sm text-slate-500 mt-1">No fields</p>
+            <aside id="fields-panel" class="pdf-fields-panel bg-white border-start d-flex flex-column overflow-hidden">
+                <div class="p-3 border-bottom">
+                    <h2 class="h5 fw-semibold mb-0">Fields</h2>
+                    <p id="field-count" class="small text-muted mt-1 mb-0">No fields</p>
+                    <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
                 </div>
                 
-                <div id="fields-empty" class="flex-1 flex items-center justify-center p-6 text-center">
+                <div id="fields-empty" class="flex-grow-1 d-flex align-items-center justify-content-center p-4 text-center">
                     <div>
-                        <p class="text-slate-500 text-sm">Use the tools above to draw fields on the PDF, or use Auto-Detect.</p>
+                        <p class="text-muted small mb-0">Use the tools above to draw fields on the PDF, or use Auto-Detect.</p>
                     </div>
                 </div>
                 
-                <div id="fields-list" class="hidden flex-1 overflow-y-auto p-4 space-y-3"></div>
+                <div id="fields-list" class="hidden flex-grow-1 overflow-auto p-3"></div>
                 
                 <!-- Selected Field Editor -->
-                <div id="field-editor" class="hidden border-t border-slate-200 bg-slate-50 p-4 space-y-4">
-                    <div>
-                        <label class="block text-xs font-medium text-slate-500 uppercase mb-1">Field Name</label>
-                        <input type="text" id="field-name-input" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <div id="field-editor" class="hidden border-top bg-light p-3">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted fw-semibold mb-1">Field name</label>
+                        <input type="text" id="field-name-input" class="form-control form-control-sm">
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-slate-500 uppercase mb-1">Field Type</label>
-                        <select id="field-type-select" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted fw-semibold mb-1">Field type</label>
+                        <select id="field-type-select" class="form-select form-select-sm">
                             <option value="text">Single-line Text</option>
                             <option value="multiline">Multi-line Text</option>
                             <option value="checkbox">Checkbox</option>
@@ -145,11 +214,11 @@
                             <option value="listbox">List Box</option>
                         </select>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-slate-500 uppercase mb-1">Page</label>
-                        <span id="field-page-display" class="text-sm text-slate-700">1</span>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted fw-semibold mb-1">Page</label>
+                        <div><span id="field-page-display" class="small">1</span></div>
                     </div>
-                    <button id="delete-field-btn" class="w-full px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition text-sm font-medium">
+                    <button id="delete-field-btn" class="btn btn-outline-danger btn-sm w-100">
                         Delete Field
                     </button>
                 </div>
@@ -157,13 +226,32 @@
         </main>
 
         <!-- Error Toast -->
-        <div id="error-toast" class="hidden fixed bottom-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md">
+        <div id="error-toast" class="hidden alert alert-danger labeler-toast">
             <p id="error-toast-message"></p>
         </div>
         
         <!-- Success Toast -->
-        <div id="success-toast" class="hidden fixed bottom-4 right-4 bg-green-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md">
+        <div id="success-toast" class="hidden alert alert-success labeler-toast">
             <p id="success-toast-message"></p>
+        </div>
+
+        <div id="settings-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 32rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">AI Settings</h2>
+                    <button id="close-settings" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-3">
+                    <label for="ai-model" class="form-label fw-medium">AI model</label>
+                    <input id="ai-model" type="text" class="model-input form-control form-control-sm font-monospace" placeholder="Type model name">
+                    <p class="form-text mb-1">Starts with a curated set for your configured provider. Type to filter the full list.</p>
+                    <div id="ai-model-suggestions" class="model-suggestions hidden"></div>
+                </div>
+                <div class="d-flex justify-content-end gap-2 border-top pt-2">
+                    <button id="reset-settings" class="btn btn-outline-secondary btn-sm">Reset</button>
+                    <button id="save-settings" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -189,7 +277,14 @@
         defaultModel: 'gpt-5-mini',
         recommendedModels: ['gpt-5-mini'],
         availableModels: [],
-        model: 'gpt-5-mini'
+        model: 'gpt-5-mini',
+        auth: {
+            isAuthenticated: false,
+            email: '',
+            loginUrl: '/user/sign-in',
+            logoutUrl: '/user/sign-out',
+            aiEnabled: false
+        }
     };
 
     // DOM Elements
@@ -213,6 +308,13 @@
     const errorToastMessage = document.getElementById('error-toast-message');
     const successToast = document.getElementById('success-toast');
     const successToastMessage = document.getElementById('success-toast-message');
+    const authControls = document.getElementById('auth-controls');
+    const aiAuthNotice = document.getElementById('ai-auth-notice');
+    const settingsModal = document.getElementById('settings-modal');
+    const settingsBtn = document.getElementById('settings-btn');
+    const closeSettingsBtn = document.getElementById('close-settings');
+    const saveSettingsBtn = document.getElementById('save-settings');
+    const resetSettingsBtn = document.getElementById('reset-settings');
     const aiModelInput = document.getElementById('ai-model');
     const aiModelSuggestions = document.getElementById('ai-model-suggestions');
 
@@ -255,6 +357,64 @@
         }
     }
 
+    function renderAuthControls() {
+        if (!authControls) return;
+        if (state.auth.isAuthenticated) {
+            const emailText = state.auth.email || 'Account';
+            authControls.innerHTML =
+                '<button id="auth-menu-btn" class="btn btn-outline-light btn-sm dropdown-toggle" type="button" aria-expanded="false">' + escapeHtml(emailText) + '</button>' +
+                '<div id="auth-menu" class="dropdown-menu dropdown-menu-end header-auth-menu">' +
+                    '<a class="dropdown-item" href="' + escapeHtml(state.auth.logoutUrl || '/user/sign-out') + '">Log out</a>' +
+                '</div>';
+            const menuBtn = document.getElementById('auth-menu-btn');
+            const menu = document.getElementById('auth-menu');
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.classList.toggle('show');
+            });
+        } else {
+            authControls.innerHTML =
+                '<a class="btn btn-outline-light btn-sm" href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a>';
+        }
+    }
+
+    function updateAiUiState() {
+        const aiEnabled = !!state.auth.aiEnabled;
+        autoDetectBtn.disabled = !state.pdfFile || !aiEnabled;
+        relabelBtn.disabled = !state.pdfFile || state.fields.length === 0 || !aiEnabled;
+        if (!aiEnabled) {
+            aiAuthNotice.classList.remove('hidden');
+            aiAuthNotice.innerHTML = 'AI features require login. <a href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a> to enable auto-detect and relabel.';
+        } else {
+            aiAuthNotice.classList.add('hidden');
+        }
+    }
+
+    async function fetchAuthStatus() {
+        try {
+            const nextTarget = window.location.pathname + window.location.search;
+            const response = await fetch('/al/labeler/api/auth-status?next=' + encodeURIComponent(nextTarget), { method: 'GET' });
+            const data = await response.json();
+            if (data.success && data.data) {
+                state.auth.isAuthenticated = !!data.data.is_authenticated;
+                state.auth.email = data.data.email || '';
+                state.auth.loginUrl = data.data.login_url || '/user/sign-in';
+                state.auth.logoutUrl = data.data.logout_url || '/user/sign-out';
+                state.auth.aiEnabled = !!data.data.ai_enabled;
+            }
+        } catch (_error) {
+            state.auth = {
+                isAuthenticated: false,
+                email: '',
+                loginUrl: '/user/sign-in',
+                logoutUrl: '/user/sign-out',
+                aiEnabled: false
+            };
+        }
+        renderAuthControls();
+        updateAiUiState();
+    }
+
     function renderModelSuggestions(filterText) {
         const filter = (filterText || '').trim().toLowerCase();
         const source = filter
@@ -269,7 +429,7 @@
         models.forEach((name) => {
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'block w-full rounded px-2 py-1 text-left font-mono text-xs hover:bg-slate-100';
+            button.className = 'model-suggestion-btn font-monospace';
             button.textContent = name;
             button.addEventListener('click', () => {
                 aiModelInput.value = name;
@@ -345,12 +505,11 @@
             pdfPages.classList.remove('hidden');
             
             // Enable buttons
-            autoDetectBtn.disabled = false;
-            relabelBtn.disabled = state.fields.length === 0;
             exportBtn.disabled = false;
 
             updateFieldCount();
             renderFieldsList();
+            updateAiUiState();
 
         } catch (error) {
             console.error('Error loading PDF:', error);
@@ -389,7 +548,7 @@
 
             // Create field overlay
             const overlay = document.createElement('div');
-            overlay.className = 'absolute inset-0';
+            overlay.className = 'page-overlay';
             overlay.dataset.pageIndex = pageNum - 1;
             pageDiv.appendChild(overlay);
 
@@ -485,7 +644,7 @@
 
         if (!draftRectEl) {
             draftRectEl = document.createElement('div');
-            draftRectEl.className = 'absolute border-2 border-dashed border-amber-500 bg-amber-100/30 pointer-events-none';
+            draftRectEl.className = 'draft-rect';
             pageDiv.appendChild(draftRectEl);
         }
 
@@ -700,17 +859,13 @@
 
         state.fields.forEach(field => {
             const item = document.createElement('div');
-            item.className = `p-3 rounded-lg border cursor-pointer transition ${
-                state.selectedFieldId === field.id 
-                    ? 'border-blue-500 bg-blue-50' 
-                    : 'border-slate-200 hover:border-slate-300'
-            }`;
+            item.className = `field-list-item ${state.selectedFieldId === field.id ? 'selected' : ''}`;
             item.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <span class="font-medium text-sm text-slate-800 truncate">${escapeHtml(field.name)}</span>
-                    <span class="text-xs text-slate-500 ml-2">Page ${field.pageIndex + 1}</span>
+                <div class="d-flex align-items-center justify-content-between">
+                    <span class="fw-medium small text-truncate field-list-name">${escapeHtml(field.name)}</span>
+                    <span class="small text-muted ms-2">Page ${field.pageIndex + 1}</span>
                 </div>
-                <div class="text-xs text-slate-500 mt-1 capitalize">${field.type}</div>
+                <div class="small text-muted mt-1 text-capitalize">${field.type}</div>
             `;
             item.addEventListener('click', () => {
                 selectField(field.id);
@@ -778,7 +933,7 @@
                 renderFieldsOnPages();
                 renderFieldsList();
                 updateFieldCount();
-                relabelBtn.disabled = state.fields.length === 0;
+                updateAiUiState();
             }
         } catch (error) {
             console.error('Error detecting fields:', error);
@@ -788,6 +943,10 @@
     // Auto-detect fields with AI
     async function autoDetectFields() {
         if (!state.pdfFile) return;
+        if (!state.auth.aiEnabled) {
+            showError('AI auto-detect requires login.');
+            return;
+        }
 
         showLoading('Auto-detecting fields with AI...');
 
@@ -803,6 +962,9 @@
             });
 
             const data = await response.json();
+            if (response.status === 401) {
+                throw new Error('AI auto-detect requires login.');
+            }
 
             if (!data.success) {
                 throw new Error(data.error?.message || 'Auto-detection failed');
@@ -859,6 +1021,10 @@
     // AI Relabel
     async function relabelFields() {
         if (!state.pdfFile || state.fields.length === 0) return;
+        if (!state.auth.aiEnabled) {
+            showError('AI relabel requires login.');
+            return;
+        }
 
         showLoading('Relabeling fields with AI...');
 
@@ -873,6 +1039,9 @@
             });
 
             const data = await response.json();
+            if (response.status === 401) {
+                throw new Error('AI relabel requires login.');
+            }
 
             if (!data.success) {
                 throw new Error(data.error?.message || 'Relabeling failed');
@@ -981,6 +1150,26 @@
         if (file) loadPdf(file);
     });
 
+    settingsBtn.addEventListener('click', () => {
+        aiModelInput.value = state.model || state.defaultModel;
+        renderModelSuggestions('');
+        settingsModal.classList.remove('hidden');
+    });
+    closeSettingsBtn.addEventListener('click', () => {
+        settingsModal.classList.add('hidden');
+        aiModelSuggestions.classList.add('hidden');
+    });
+    saveSettingsBtn.addEventListener('click', () => {
+        state.model = aiModelInput.value.trim() || state.defaultModel;
+        settingsModal.classList.add('hidden');
+        aiModelSuggestions.classList.add('hidden');
+    });
+    resetSettingsBtn.addEventListener('click', () => {
+        aiModelInput.value = state.defaultModel;
+        state.model = state.defaultModel;
+        renderModelSuggestions('');
+    });
+
     aiModelInput.addEventListener('input', () => {
         state.model = aiModelInput.value.trim() || state.defaultModel;
         renderModelSuggestions(aiModelInput.value);
@@ -990,6 +1179,14 @@
     });
     document.addEventListener('mousedown', (e) => {
         if (!aiModelSuggestions.contains(e.target) && e.target !== aiModelInput) {
+            aiModelSuggestions.classList.add('hidden');
+        }
+        const authMenu = document.getElementById('auth-menu');
+        if (authMenu && !authControls.contains(e.target)) {
+            authMenu.classList.remove('show');
+        }
+        if (!settingsModal.classList.contains('hidden') && e.target === settingsModal) {
+            settingsModal.classList.add('hidden');
             aiModelSuggestions.classList.add('hidden');
         }
     });
@@ -1034,7 +1231,7 @@
             renderFieldsOnPages();
             renderFieldsList();
             updateFieldCount();
-            relabelBtn.disabled = state.fields.length === 0;
+            updateAiUiState();
         }
     });
 
@@ -1042,14 +1239,14 @@
     const pdfContainer = document.getElementById('pdf-container');
     pdfContainer.addEventListener('dragover', (e) => {
         e.preventDefault();
-        pdfContainer.classList.add('bg-blue-100');
+        pdfContainer.classList.add('drag-over');
     });
     pdfContainer.addEventListener('dragleave', () => {
-        pdfContainer.classList.remove('bg-blue-100');
+        pdfContainer.classList.remove('drag-over');
     });
     pdfContainer.addEventListener('drop', (e) => {
         e.preventDefault();
-        pdfContainer.classList.remove('bg-blue-100');
+        pdfContainer.classList.remove('drag-over');
         const file = e.dataTransfer.files[0];
         if (file && file.type === 'application/pdf') {
             loadPdf(file);
@@ -1068,10 +1265,12 @@
             setSelectedTool(null);
             selectField(null);
             aiModelSuggestions.classList.add('hidden');
+            settingsModal.classList.add('hidden');
         }
     });
 
     fetchModelCatalog();
+    fetchAuthStatus();
 
     </script>
 </body>

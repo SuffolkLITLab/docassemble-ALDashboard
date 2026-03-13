@@ -9,4 +9,4 @@ jobs:
     runs-on: ubuntu-latest
     name: Run python only mypy and unit tests
     steps:
-      - uses: SuffolkLITLab/ALActions/pythontests@main
+      - uses: SuffolkLITLab/ALActions/pythontests@add_bandid_13

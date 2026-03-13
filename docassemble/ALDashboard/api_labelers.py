@@ -9,13 +9,11 @@ Both tools use AI to suggest labels and follow AssemblyLine conventions.
 """
 
 import base64
-import inspect
 import io
 import json
 import os
 import tempfile
 import uuid
-from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional
 
 from flask import Response, jsonify, request, send_file
@@ -39,158 +37,18 @@ __all__ = []
 
 LABELER_BASE_PATH = "/al"
 
-OPENAI_LABELER_MODELS = [
-    "gpt-5-mini",
-    "gpt-5",
-    "gpt-4.1-mini",
-    "gpt-4.1",
-    "gpt-5-nano",
-]
-GEMINI_LABELER_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5",
-    "gemini-3-pro",
-]
-CLAUDE_LABELER_MODELS = [
-    "claude-4.5-sonnet",
-    "claude-4.6-sonnet",
-    "claude-4.6-opus",
-]
-LABELER_PROVIDER_MODEL_SETS = {
-    "openai": OPENAI_LABELER_MODELS,
-    "gemini": GEMINI_LABELER_MODELS,
-    "claude": CLAUDE_LABELER_MODELS,
-}
-LABELER_MODEL_SET_PRIORITY = [
-    OPENAI_LABELER_MODELS,
-    GEMINI_LABELER_MODELS,
-    CLAUDE_LABELER_MODELS,
-]
-LABELER_DEFAULT_MODEL = "gpt-5-mini"
 
-
-def _normalize_provider_family(family_name: Optional[str]) -> str:
-    family = str(family_name or "").strip().lower()
-    if family in {"google", "gemini"}:
-        return "gemini"
-    if family in {"anthropic", "claude"}:
-        return "claude"
-    return "openai"
-
-
-def _build_labeler_model_catalog() -> Dict[str, Any]:
-    """Build model metadata for labeler UIs using ALToolbox llms helpers."""
-    default_model = LABELER_DEFAULT_MODEL
-    provider_family = "openai"
-    recommended_models = list(OPENAI_LABELER_MODELS)
-    available_models: List[str] = []
-
-    try:
-        from docassemble.ALToolbox.llms import (  # type: ignore[import-untyped]
-            detect_model_family,
-            get_default_model,
-            get_first_available_model_set,
-            list_available_models,
-        )
-
-        available_models = list_available_models()
-        selected_set = get_first_available_model_set(
-            LABELER_MODEL_SET_PRIORITY,
-            require_full_set=False,
-            return_partial_if_needed=True,
-            fallback_to_first_small_model=True,
-        )
-        if selected_set:
-            recommended_models = selected_set
-            provider_family = _normalize_provider_family(
-                detect_model_family(selected_set[0])
-            )
-        else:
-            medium_default = get_default_model("medium")
-            provider_family = _normalize_provider_family(
-                detect_model_family(medium_default)
-            )
-            recommended_models = list(
-                LABELER_PROVIDER_MODEL_SETS.get(provider_family, OPENAI_LABELER_MODELS)
-            )
-
-        if provider_family == "openai":
-            default_model = "gpt-5-mini"
-        elif recommended_models:
-            default_model = recommended_models[0]
-        else:
-            default_model = get_default_model("medium")
-
-        if default_model not in recommended_models and default_model:
-            recommended_models = [default_model] + recommended_models
-    except Exception as exc:
-        log(
-            f"ALDashboard: failed to build model catalog from ALToolbox.llms; using fallback list ({exc!r})",
-            "warning",
-        )
-
-    return {
-        "default_model": default_model or LABELER_DEFAULT_MODEL,
-        "recommended_models": recommended_models,
-        "available_models": available_models,
-        "provider_family": provider_family,
-    }
-
-
-def _labeler_session_identity() -> Dict[str, Optional[str]]:
-    """Return session identity details for browser users."""
-    try:
-        if current_user.is_authenticated:
-            email_value = getattr(current_user, "email", None)
-            if email_value is not None:
-                email_value = str(email_value)
-            return {"is_authenticated": True, "email": email_value}
-    except Exception:
-        pass
-    return {"is_authenticated": False, "email": None}
-
-
-def _labeler_ai_auth_check() -> bool:
-    """AI features require API key auth or a logged-in browser user."""
+def _labeler_auth_check() -> bool:
+    """Check if user is authorized via API key OR browser session with admin/developer privileges."""
     if api_verify():
         return True
-    identity = _labeler_session_identity()
-    return bool(identity.get("is_authenticated"))
-
-
-def _safe_labeler_return_target(raw_target: Optional[str]) -> Optional[str]:
-    """Allow only same-origin or relative return targets for auth redirects."""
-    target = str(raw_target or "").strip()
-    if not target:
-        return None
-
-    parsed = urlsplit(target)
-    if parsed.scheme or parsed.netloc:
-        if parsed.netloc != request.host:
-            return None
-        path = parsed.path or "/"
-    else:
-        path = parsed.path or target
-
-    if not path.startswith("/") or path.startswith("//"):
-        return None
-
-    if parsed.query:
-        return f"{path}?{parsed.query}"
-    return path
-
-
-def _labeler_auth_return_target() -> str:
-    """Resolve the page the labeler should return to after auth."""
-    explicit_target = _safe_labeler_return_target(request.args.get("next"))
-    if explicit_target:
-        return explicit_target
-
-    referer_target = _safe_labeler_return_target(request.headers.get("Referer"))
-    if referer_target:
-        return referer_target
-
-    return LABELER_BASE_PATH
+    # Fallback to session-based auth using Flask-Login
+    try:
+        if current_user.is_authenticated:
+            return current_user.has_role('admin', 'developer')
+    except Exception:
+        pass
+    return False
 
 
 def _get_static_content(filename: str) -> str:
@@ -232,20 +90,6 @@ def _auth_fail(request_id: str):
     )
 
 
-def _ai_auth_fail(request_id: str):
-    return jsonify_with_status(
-        {
-            "success": False,
-            "request_id": request_id,
-            "error": {
-                "type": "auth_error",
-                "message": "Login required for AI features in the labeler.",
-            },
-        },
-        401,
-    )
-
-
 # =============================================================================
 # DOCX Labeler Routes
 # =============================================================================
@@ -264,46 +108,6 @@ def docx_labeler_page():
     return Response(html_content, mimetype="text/html")
 
 
-@app.route(f"{LABELER_BASE_PATH}/labeler/api/models", methods=["GET"])
-@csrf.exempt
-@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_models():
-    """Return AI model metadata for DOCX/PDF labeler settings UIs."""
-    request_id = str(uuid.uuid4())
-    return jsonify(
-        {
-            "success": True,
-            "request_id": request_id,
-            "data": _build_labeler_model_catalog(),
-        }
-    )
-
-
-@app.route(f"{LABELER_BASE_PATH}/labeler/api/auth-status", methods=["GET"])
-@csrf.exempt
-@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_auth_status():
-    """Return browser-session auth status for labeler UI controls."""
-    request_id = str(uuid.uuid4())
-    identity = _labeler_session_identity()
-    next_target = _labeler_auth_return_target()
-    login_url = f"/user/sign-in?next={quote(next_target, safe='')}"
-    logout_url = f"/user/sign-out?next={quote(next_target, safe='')}"
-    return jsonify(
-        {
-            "success": True,
-            "request_id": request_id,
-            "data": {
-                "is_authenticated": bool(identity.get("is_authenticated")),
-                "email": identity.get("email"),
-                "login_url": login_url,
-                "logout_url": logout_url,
-                "ai_enabled": _labeler_ai_auth_check(),
-            },
-        }
-    )
-
-
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/extract-runs", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -311,17 +115,18 @@ def docx_labeler_extract_runs():
     """Extract paragraph runs from a DOCX file for labeling."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: extract-runs request {request_id}", "info")
-    try:
-        import docx
+    if not _labeler_auth_check():
+        log(f"ALDashboard: extract-runs auth failed for request {request_id}", "warning")
+        return _auth_fail(request_id)
 
-        from .docx_wrangling import defragment_docx_runs, get_docx_run_items
+    try:
+        from .docx_wrangling import get_docx_run_items
 
         # Handle both multipart and JSON uploads
         if "file" in request.files:
             upload = request.files["file"]
             filename = upload.filename or "upload.docx"
             content = upload.read()
-            post_data = dict(request.form)
         else:
             post_data = request.get_json(silent=True) or {}
             filename = str(post_data.get("filename") or "upload.docx")
@@ -333,7 +138,6 @@ def docx_labeler_extract_runs():
             raise DashboardAPIValidationError(
                 "Only DOCX files are supported.", status_code=415
             )
-        defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
 
         # Write to temp file for processing
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
@@ -341,11 +145,7 @@ def docx_labeler_extract_runs():
             temp_path = tmp.name
 
         try:
-            doc = docx.Document(temp_path)
-            defragmentation = {"paragraphs_defragmented": 0, "runs_removed": 0}
-            if defragment_runs:
-                doc, defragmentation = defragment_docx_runs(doc)
-            runs = get_docx_run_items(doc)
+            runs = get_docx_run_items(temp_path)
             paragraph_count = 0
             if runs:
                 paragraph_count = max(int(item[0]) for item in runs) + 1
@@ -359,8 +159,6 @@ def docx_labeler_extract_runs():
                     "paragraph_count": paragraph_count,
                     "run_count": len(runs),
                     "runs": runs,
-                    "defragment_runs": defragment_runs,
-                    "defragmentation": defragmentation,
                 }
             })
         finally:
@@ -388,18 +186,12 @@ def docx_labeler_suggest_labels():
     """Use AI to suggest Jinja2 labels for a DOCX file."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: suggest-labels request {request_id}", "info")
-    if not _labeler_ai_auth_check():
+    if not _labeler_auth_check():
         log(f"ALDashboard: suggest-labels auth failed for request {request_id}", "warning")
-        return _ai_auth_fail(request_id)
+        return _auth_fail(request_id)
 
     try:
-        import docx
-
-        from .docx_wrangling import (
-            defragment_docx_runs,
-            get_voted_docx_label_suggestions,
-        )
-        from .validate_docx import detect_docx_automation_features
+        from .docx_wrangling import get_labeled_docx_runs
 
         # Handle both multipart and JSON uploads
         if "file" in request.files:
@@ -420,41 +212,11 @@ def docx_labeler_suggest_labels():
             )
 
         # Extract options
-        prompt_profile = str(
-            post_data.get("prompt_profile") or "standard"
-        ).strip() or "standard"
-        optional_context = post_data.get("context_text")
         custom_prompt = post_data.get("custom_prompt")
         additional_instructions = post_data.get("additional_instructions")
-        defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
-        model = post_data.get("model")
-        if model is None or str(model).strip() == "":
-            model = _build_labeler_model_catalog()["default_model"]
-        model = str(model)
-        judge_model = post_data.get("judge_model")
-        if judge_model is not None:
-            judge_model = str(judge_model).strip() or None
+        model = post_data.get("model", "gpt-4.1-mini")
         openai_api = post_data.get("openai_api")
         openai_base_url = post_data.get("openai_base_url")
-        generator_models = None
-        generator_models_raw = post_data.get("generator_models")
-        if generator_models_raw:
-            if isinstance(generator_models_raw, str):
-                try:
-                    parsed_models = json.loads(generator_models_raw)
-                except json.JSONDecodeError:
-                    parsed_models = [
-                        item.strip()
-                        for item in generator_models_raw.split(",")
-                        if item.strip()
-                    ]
-            elif isinstance(generator_models_raw, list):
-                parsed_models = generator_models_raw
-            else:
-                parsed_models = []
-            generator_models = [
-                str(item).strip() for item in parsed_models if str(item).strip()
-            ] or None
 
         # Parse custom people names if provided
         custom_people_names = None
@@ -474,87 +236,25 @@ def docx_labeler_suggest_labels():
             temp_path = tmp.name
 
         try:
-            review_document = docx.Document(temp_path)
-            if defragment_runs:
-                review_document, _ = defragment_docx_runs(review_document)
-            automation_findings = detect_docx_automation_features(temp_path)
-            document_warnings = [
-                finding
-                for finding in automation_findings.get("findings", [])
-                if finding.get("code")
-                in {
-                    "track_changes",
-                    "structured_document_tags",
-                    "sdt_specialized_controls",
-                    "sdt_plain_text_control",
-                    "sdt_group_control",
-                    "sdt_docpart_non_page_numbers",
-                    "sdt_metadata",
-                    "sdt_bound_or_locked",
-                    "data_binding",
-                    "custom_xml_parts",
-                    "custom_xml_relationships",
-                }
-            ]
-
-            aggregated = get_voted_docx_label_suggestions(
+            suggestions = get_labeled_docx_runs(
                 docx_path=temp_path,
                 custom_people_names=custom_people_names,
                 openai_api=openai_api,
                 openai_base_url=openai_base_url,
                 model=model,
-                generator_models=generator_models,
-                judge_model=judge_model,
-                prompt_profile=prompt_profile,
-                optional_context=optional_context,
                 custom_prompt=custom_prompt,
                 additional_instructions=additional_instructions,
-                defragment_runs=defragment_runs,
-                judge_max_output_tokens=2000,
-            )
-            suggestions = aggregated.get("suggestions", [])
-            aggregation_summary = aggregated.get("aggregation", {})
-            judge_review = aggregated.get("judge_review", {})
-            generation_runs = aggregated.get("generation_runs", [])
-            flagged_selected_count = sum(
-                1 for suggestion in suggestions if suggestion.get("validation_flags")
             )
 
             # Convert to a more friendly format for the UI
             formatted_suggestions = []
-            for suggestion in suggestions:
-                alternates = []
-                for alternate in suggestion.get("alternates", []):
-                    alternates.append(
-                        {
-                            "text": alternate.get("text", ""),
-                            "paragraph": alternate.get("paragraph"),
-                            "run": alternate.get("run"),
-                            "new_paragraph": alternate.get("new_paragraph", 0),
-                            "validation_flags": alternate.get("validation_flags", []),
-                            "confidence": alternate.get("confidence", "low"),
-                            "vote_count": alternate.get("vote_count", 0),
-                            "clean_vote_count": alternate.get("clean_vote_count", 0),
-                            "vote_total": suggestion.get(
-                                "vote_total", len(generation_runs)
-                            ),
-                            "sources": alternate.get("sources", []),
-                        }
-                    )
+            for para_num, run_num, text, new_paragraph in suggestions:
                 formatted_suggestions.append({
-                    "paragraph": suggestion.get("paragraph"),
-                    "run": suggestion.get("run"),
-                    "text": suggestion.get("text", ""),
-                    "new_paragraph": suggestion.get("new_paragraph", 0),
+                    "paragraph": para_num,
+                    "run": run_num,
+                    "text": text,
+                    "new_paragraph": new_paragraph,
                     "id": str(uuid.uuid4()),
-                    "validation_flags": suggestion.get("validation_flags", []),
-                    "judge_review": suggestion.get("judge_review"),
-                    "confidence": suggestion.get("confidence", "low"),
-                    "vote_count": suggestion.get("vote_count", 0),
-                    "clean_vote_count": suggestion.get("clean_vote_count", 0),
-                    "vote_total": suggestion.get("vote_total", len(generation_runs)),
-                    "sources": suggestion.get("sources", []),
-                    "alternates": alternates,
                 })
 
             log(f"ALDashboard: suggest-labels {request_id} generated {len(formatted_suggestions)} suggestions for '{filename}'", "info")
@@ -564,18 +264,6 @@ def docx_labeler_suggest_labels():
                 "data": {
                     "filename": filename,
                     "suggestions": formatted_suggestions,
-                    "defragment_runs": defragment_runs,
-                    "validation": {
-                        "deterministic": {
-                            "flagged_count": flagged_selected_count,
-                            "ai_review_recommended": bool(
-                                aggregation_summary.get("ambiguous_group_count")
-                            ),
-                        },
-                        "ai_review": judge_review,
-                        "document_warnings": document_warnings,
-                        "aggregation": aggregation_summary,
-                    },
                 }
             })
         finally:
@@ -608,9 +296,14 @@ def docx_labeler_apply_labels():
     """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: apply-labels request {request_id}", "info")
+    if not _labeler_auth_check():
+        log(f"ALDashboard: apply-labels auth failed for request {request_id}", "warning")
+        return _auth_fail(request_id)
+
     try:
-        from .docx_wrangling import defragment_docx_runs, update_docx
+        from .docx_wrangling import update_docx
         import docx
+        from lxml import etree
 
         # Handle both multipart and JSON uploads
         if "file" in request.files:
@@ -633,7 +326,6 @@ def docx_labeler_apply_labels():
             raise DashboardAPIValidationError(
                 "Only DOCX files are supported.", status_code=415
             )
-        defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
 
         # Parse labels (new insertions)
         labels = []
@@ -672,20 +364,6 @@ def docx_labeler_apply_labels():
 
         try:
             doc = docx.Document(temp_path)
-            defragmentation = {"paragraphs_defragmented": 0, "runs_removed": 0}
-
-            if defragment_runs and modified_runs:
-                target_paragraph_numbers = sorted(
-                    {
-                        para
-                        for para, _run, _text, new_para in modified_runs
-                        if new_para == 0 and para >= 0
-                    }
-                )
-                if target_paragraph_numbers:
-                    doc, defragmentation = defragment_docx_runs(
-                        doc, paragraph_numbers=target_paragraph_numbers
-                    )
 
             # Apply renames first (find/replace existing Jinja2 labels)
             if renames:
@@ -729,12 +407,6 @@ def docx_labeler_apply_labels():
                 "data": {
                     "filename": output_filename,
                     "docx_base64": base64.b64encode(output_bytes).decode("ascii"),
-                    "defragment_runs": defragment_runs,
-                    "defragmented_before_apply": bool(
-                        defragmentation["paragraphs_defragmented"]
-                        or defragmentation["runs_removed"]
-                    ),
-                    "defragmentation": defragmentation,
                 }
             })
         finally:
@@ -780,6 +452,10 @@ def pdf_labeler_detect_fields():
     """Detect existing form fields in a PDF."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: detect-fields request {request_id}", "info")
+    if not _labeler_auth_check():
+        log(f"ALDashboard: detect-fields auth failed for request {request_id}", "warning")
+        return _auth_fail(request_id)
+
     try:
         from .pdf_field_labeler import list_existing_field_names
         import formfyxer  # type: ignore[import-not-found]
@@ -859,9 +535,9 @@ def pdf_labeler_auto_detect():
     """Use AI to automatically detect and add fields to a PDF."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: auto-detect request {request_id}", "info")
-    if not _labeler_ai_auth_check():
+    if not _labeler_auth_check():
         log(f"ALDashboard: auto-detect auth failed for request {request_id}", "warning")
-        return _ai_auth_fail(request_id)
+        return _auth_fail(request_id)
 
     try:
         import formfyxer  # type: ignore[import-not-found]
@@ -887,10 +563,6 @@ def pdf_labeler_auto_detect():
         # Options
         normalize_fields = parse_bool(post_data.get("normalize_fields"), default=True)
         jur = str(post_data.get("jur", "MA"))
-        model = post_data.get("model")
-        if model is None or str(model).strip() == "":
-            model = _build_labeler_model_catalog()["default_model"]
-        model = str(model)
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -907,19 +579,13 @@ def pdf_labeler_auto_detect():
             # Optionally normalize with AI
             stats = {}
             if normalize_fields:
-                parse_form_kwargs: Dict[str, Any] = {
-                    "title": os.path.splitext(filename)[0],
-                    "jur": jur,
-                    "normalize": True,
-                    "rewrite": True,
-                }
-                try:
-                    parse_signature = inspect.signature(formfyxer.parse_form)
-                    if "model" in parse_signature.parameters:
-                        parse_form_kwargs["model"] = model
-                except Exception:
-                    pass
-                stats = formfyxer.parse_form(output_path, **parse_form_kwargs)
+                stats = formfyxer.parse_form(
+                    output_path,
+                    title=os.path.splitext(filename)[0],
+                    jur=jur,
+                    normalize=True,
+                    rewrite=True,
+                )
 
             # Get the resulting fields
             fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
@@ -981,9 +647,9 @@ def pdf_labeler_relabel():
     """Relabel PDF fields using AI suggestions."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: pdf-relabel request {request_id}", "info")
-    if not _labeler_ai_auth_check():
+    if not _labeler_auth_check():
         log(f"ALDashboard: pdf-relabel auth failed for request {request_id}", "warning")
-        return _ai_auth_fail(request_id)
+        return _auth_fail(request_id)
 
     try:
         from .pdf_field_labeler import relabel_existing_pdf_fields
@@ -1007,10 +673,6 @@ def pdf_labeler_relabel():
             )
 
         jur = str(post_data.get("jur", "MA"))
-        model = post_data.get("model")
-        if model is None or str(model).strip() == "":
-            model = _build_labeler_model_catalog()["default_model"]
-        model = str(model)
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -1026,7 +688,6 @@ def pdf_labeler_relabel():
                 output_pdf_path=output_path,
                 relabel_with_ai=True,
                 jur=jur,
-                model=model,
             )
 
             # Read the output file
@@ -1069,6 +730,10 @@ def pdf_labeler_apply_fields():
     """Apply field definitions to a PDF and return the modified file."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: apply-fields request {request_id}", "info")
+    if not _labeler_auth_check():
+        log(f"ALDashboard: apply-fields auth failed for request {request_id}", "warning")
+        return _auth_fail(request_id)
+
     try:
         import formfyxer  # type: ignore[import-not-found]
         from formfyxer.pdf_wrangling import FormField, FieldType, set_fields
@@ -1193,6 +858,10 @@ def pdf_labeler_rename_fields():
     """Rename fields in an existing PDF."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: rename-fields request {request_id}", "info")
+    if not _labeler_auth_check():
+        log(f"ALDashboard: rename-fields auth failed for request {request_id}", "warning")
+        return _auth_fail(request_id)
+
     try:
         import formfyxer  # type: ignore[import-not-found]
 

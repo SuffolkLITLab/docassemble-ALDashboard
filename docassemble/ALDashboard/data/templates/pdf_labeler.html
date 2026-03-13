@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AssemblyLine PDF Labeler</title>
-    <link rel="icon" type="image/png" href="/packagestatic/docassemble.LITLabTheme/dal-favicon.png">
+    <title id="page-title">AssemblyLine PDF Labeler</title>
+    <link id="page-favicon" rel="icon" type="image/png" href="/packagestatic/docassemble.LITLabTheme/dal-favicon.png">
     <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/bootstrap-theme.css">
     <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/variables.css">
     <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/custom.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script>window.LABELER_BOOTSTRAP = "__LABELER_BOOTSTRAP_JSON__";</script>
     <style>
         .hidden { display: none !important; }
         .pdf-labeler-body { background: #e9edf3; min-height: 100vh; }
@@ -99,10 +100,10 @@
         <header class="navbar bg-dark px-4 py-3">
             <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap gap-3">
                 <div class="d-flex align-items-center gap-3">
-                    <img src="/packagestatic/docassemble.LITLabTheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
+                    <img id="brand-logo" src="/packagestatic/docassemble.LITLabTheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
                     <div class="al-title">
-                        <h1 class="h4 fw-bold mb-0 text-white">AssemblyLine PDF Labeler</h1>
-                        <p class="small mt-1 mb-0 text-light">Add and edit PDF form fields using AI detection</p>
+                        <h1 id="brand-pdf-title" class="h4 fw-bold mb-0 text-white">AssemblyLine PDF Labeler</h1>
+                        <p id="brand-pdf-subtitle" class="small mt-1 mb-0 text-light">Add and edit PDF form fields using AI detection</p>
                     </div>
                 </div>
                 
@@ -258,6 +259,11 @@
     <script type="module">
     import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
 
+    const LABELER_BOOTSTRAP = window.LABELER_BOOTSTRAP || {};
+    const API_BASE_PATH = LABELER_BOOTSTRAP.apiBasePath || '/al';
+    const BRANDING = LABELER_BOOTSTRAP.branding || {};
+    const PDF_CONFIG = LABELER_BOOTSTRAP.pdf || {};
+
     // Set worker
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
 
@@ -317,15 +323,22 @@
     const resetSettingsBtn = document.getElementById('reset-settings');
     const aiModelInput = document.getElementById('ai-model');
     const aiModelSuggestions = document.getElementById('ai-model-suggestions');
+    const pageTitle = document.getElementById('page-title');
+    const pageFavicon = document.getElementById('page-favicon');
+    const brandLogo = document.getElementById('brand-logo');
+    const brandPdfTitle = document.getElementById('brand-pdf-title');
+    const brandPdfSubtitle = document.getElementById('brand-pdf-subtitle');
 
-    // AssemblyLine naming conventions
-    const AL_FIELD_NAMES = {
+    const DEFAULT_FIELD_NAME_LIBRARY = {
         text: ['users[0].name.first', 'users[0].name.last', 'users[0].name.full()', 'users[0].address.address', 
                'users[0].address.city', 'users[0].address.state', 'users[0].address.zip', 'users[0].phone_number',
                'users[0].email', 'other_parties[0].name.full()', 'docket_number', 'case_name'],
         signature: ['users[0].signature', 'other_parties[0].signature', 'attorney.signature'],
         checkbox: ['user_agrees', 'is_plaintiff', 'is_defendant', 'has_children']
     };
+    const FIELD_NAME_LIBRARY = PDF_CONFIG.fieldNameLibrary && Object.keys(PDF_CONFIG.fieldNameLibrary).length
+        ? PDF_CONFIG.fieldNameLibrary
+        : DEFAULT_FIELD_NAME_LIBRARY;
 
     // Tool buttons
     const toolButtons = {
@@ -340,9 +353,35 @@
         return 'field-' + Math.random().toString(36).substr(2, 9);
     }
 
+    function apiUrl(path) {
+        return API_BASE_PATH + path;
+    }
+
+    function applyBranding() {
+        if (pageTitle) {
+            pageTitle.textContent = BRANDING.pdf_page_title || BRANDING.pdf_header_title || 'PDF Labeler';
+            document.title = pageTitle.textContent;
+        }
+        if (pageFavicon && BRANDING.favicon_url) {
+            pageFavicon.href = BRANDING.favicon_url;
+        }
+        if (brandLogo && BRANDING.logo_url) {
+            brandLogo.src = BRANDING.logo_url;
+        }
+        if (brandLogo && BRANDING.logo_alt) {
+            brandLogo.alt = BRANDING.logo_alt;
+        }
+        if (brandPdfTitle) {
+            brandPdfTitle.textContent = BRANDING.pdf_header_title || 'PDF Labeler';
+        }
+        if (brandPdfSubtitle) {
+            brandPdfSubtitle.textContent = BRANDING.pdf_header_subtitle || '';
+        }
+    }
+
     async function fetchModelCatalog() {
         try {
-            const response = await fetch('/al/labeler/api/models', { method: 'GET' });
+            const response = await fetch(apiUrl('/labeler/api/models'), { method: 'GET' });
             const data = await response.json();
             if (!data.success || !data.data) return;
             state.defaultModel = data.data.default_model || state.defaultModel;
@@ -393,7 +432,7 @@
     async function fetchAuthStatus() {
         try {
             const nextTarget = window.location.pathname + window.location.search;
-            const response = await fetch('/al/labeler/api/auth-status?next=' + encodeURIComponent(nextTarget), { method: 'GET' });
+            const response = await fetch(apiUrl('/labeler/api/auth-status') + '?next=' + encodeURIComponent(nextTarget), { method: 'GET' });
             const data = await response.json();
             if (data.success && data.data) {
                 state.auth.isAuthenticated = !!data.data.is_authenticated;
@@ -471,6 +510,10 @@
 
     function defaultFieldName(type) {
         const typeFields = state.fields.filter(f => f.type === type);
+        const library = Array.isArray(FIELD_NAME_LIBRARY[type]) ? FIELD_NAME_LIBRARY[type] : [];
+        if (typeFields.length < library.length) {
+            return library[typeFields.length];
+        }
         const typeName = type.charAt(0).toUpperCase() + type.slice(1);
         return `${typeName}_${typeFields.length + 1}`;
     }
@@ -904,7 +947,7 @@
             const formData = new FormData();
             formData.append('file', state.pdfFile);
 
-            const response = await fetch('/al/pdf-labeler/api/detect-fields', {
+            const response = await fetch(apiUrl('/pdf-labeler/api/detect-fields'), {
                 method: 'POST',
                 body: formData
             });
@@ -956,7 +999,7 @@
             formData.append('normalize_fields', 'true');
             formData.append('model', state.model || state.defaultModel);
 
-            const response = await fetch('/al/pdf-labeler/api/auto-detect', {
+            const response = await fetch(apiUrl('/pdf-labeler/api/auto-detect'), {
                 method: 'POST',
                 body: formData
             });
@@ -1033,7 +1076,7 @@
             formData.append('file', state.pdfFile);
             formData.append('model', state.model || state.defaultModel);
 
-            const response = await fetch('/al/pdf-labeler/api/relabel', {
+            const response = await fetch(apiUrl('/pdf-labeler/api/relabel'), {
                 method: 'POST',
                 body: formData
             });
@@ -1105,7 +1148,7 @@
             formData.append('file', state.pdfFile);
             formData.append('fields', JSON.stringify(fieldsData));
 
-            const response = await fetch('/al/pdf-labeler/api/apply-fields', {
+            const response = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), {
                 method: 'POST',
                 body: formData
             });
@@ -1269,6 +1312,7 @@
         }
     });
 
+    applyBranding();
     fetchModelCatalog();
     fetchAuthStatus();
 

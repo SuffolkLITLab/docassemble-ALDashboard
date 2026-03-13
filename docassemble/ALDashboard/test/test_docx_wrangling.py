@@ -150,6 +150,39 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         self.assertIn("Keep titles like Petitioner", litigation)
         self.assertNotIn("immigration habeas petition practice advisory", litigation)
 
+    @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
+    def test_get_labeled_docx_runs_uses_custom_prompt_library(self, mock_chat_completion):
+        document = docx.Document()
+        document.add_paragraph("Name: ____")
+        mock_chat_completion.return_value = {"results": []}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docx_path = Path(tmpdir) / "sample.docx"
+            prompt_path = Path(tmpdir) / "custom_labeler.yml"
+            document.save(str(docx_path))
+            prompt_path.write_text(
+                """
+docx:
+  default_prompt_profile: alternate
+  prompt_profiles:
+    alternate:
+      label: Alternate
+      role_description: Alternate role description
+      rules_addendum: Alternate rules addendum
+""".strip(),
+                encoding="utf-8",
+            )
+
+            get_labeled_docx_runs(
+                str(docx_path),
+                prompt_profile="alternate",
+                prompt_library_path=str(prompt_path),
+            )
+
+        system_message = mock_chat_completion.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Alternate role description", system_message)
+        self.assertIn("Alternate rules addendum", system_message)
+
     def test_validator_flags_inline_placeholder_rendered_as_new_paragraph(self):
         document = docx.Document()
         paragraph = document.add_paragraph("Grants to:")

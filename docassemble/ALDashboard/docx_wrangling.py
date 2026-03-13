@@ -14,6 +14,8 @@ from docassemble.ALToolbox.llms import chat_completion
 
 from typing import Any, Dict, List, Tuple, Optional, Union, Sequence
 
+from .labeler_config import get_docx_prompt_profile
+
 __all__ = [
     "aggregate_docx_label_suggestion_runs",
     "defragment_docx_runs",
@@ -35,159 +37,42 @@ def _get_docx_label_role_description(
     *,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
     custom_prompt: Optional[str] = None,
+    prompt_library_path: Optional[str] = None,
 ) -> str:
     if custom_prompt:
         return custom_prompt
-
-    standard_prompt = """
-    You will process a DOCX document and return a JSON structure that turns the DOCX file into a template
-    based on the following guidelines and examples. The DOCX will be provided as an annotated series of
-    paragraphs and runs.
-
-    Steps:
-    1. Analyze the document. Identify placeholder text and repeated _____ that should be replaced with a variable name.
-    2. Insert jinja2 tags around a new variable name that represents the placeholder text.
-    3. Mark optional paragraphs with conditional Jinja2 tags.
-    4. Text intended for verbatim output in the final document will remain unchanged.
-    5. The result will be a JSON structure that indicates which paragraphs and runs in the DOCX require modifications,
-    the new text of the modified run with Jinja2 inserted, and a draft question to provide a definition of the variable.
-
-    Example input, with paragraph and run numbers indicated:
-    [
-        [0, 1, "Dear John Smith:"],
-        [1, 0, "This sentence can stay as is in the output and will not be in the reply."],
-        [2, 0, "[Optional: if you are a tenant, include this paragraph]"],
-    ]
-
-    Example reply, indicating paragraph, run, the new text, and a number indicating if this changes the
-    current paragraph, adds one before, or adds one after (-1, 0, 1):
-
-    {
-        "results": [
-            [0, 1, "Dear {{ other_parties[0] }}:", 0],
-            [2, 0, "{%p if is_tenant %}", -1],
-            [3, 0, "{%p endif %}", "", 1],
-        ]
-    }
-
-    The reply ONLY contains the runs that have modified text.
-    """
-
-    litigation_template_addendum = """
-
-    This document may be a pleading or litigation template with caption text, section headings,
-    bracketed drafting notes, editorial instructions, and many visible fill-in blanks.
-
-    For litigation-style templates:
-    1. Bias toward high recall. If text contains repeated underscores, [select], bracketed placeholders,
-       bracketed drafting notes, or author instructions, it usually should be templated rather than left literal.
-    2. Treat repeated underscores, blank signature/date lines, bracketed placeholders like [NAME], [DATE],
-       [COURT], [COUNTY], [Name of Facility], [Full Name], and similar tokens as high-priority placeholder targets.
-    3. Treat bracketed drafting notes and editor hints like [if helpful], [optional], [add facts], [consider adding],
-       similar instructions as drafting artifacts that should not appear in the finished template output.
-    4. When a whole paragraph is mostly author guidance, examples, or drafting instructions rather than final prose,
-       replace the whole paragraph with one or a few clean placeholders instead of making a tiny partial edit.
-       Do not preserve instructional sentences like "Short introduction providing..." or "Add numbered paragraphs..."
-       in the final template text.
-    5. When a paragraph begins with a bracketed note and then contains usable final prose, remove the note and template
-       the remaining prose. Use paragraph-level control tags only when the paragraph is genuinely optional.
-       Otherwise prefer one cleaned paragraph or one placeholder variable instead of separate if/endif tags.
-    6. If a paragraph contains examples in brackets such as "[for example, ...]" or "[select] ...", remove the example
-       text from the final output and replace it with concise variables that capture the needed content.
-    7. Court captions often contain both literal role titles and placeholders. Keep titles like Petitioner,
-       Respondent, Plaintiff, Defendant, Warden, Attorney General, and similar role labels literal unless the
-       document clearly asks for a specific person, court, facility, county, department, or docket detail.
-    8. Headings and section labels should stay literal unless they contain an obvious placeholder, blank, missing
-       number, bracketed instruction, or other drafting cue.
-    9. Do not leave raw bracket tokens, editorial hints, repeated underscores, "___", "[select]", or other obvious
-       behind when a location has been templated.
-    10. Prefer stable, reusable variable names for repeated concepts so multiple runs will agree on the same output.
-
-    Examples for litigation-style templates:
-    - "______ DISTRICT OF [STATE]" -> "{{ district_name }} DISTRICT OF {{ trial_court.address.state }}"
-    - "____ DIVISION" -> "{{ court_division }} DIVISION"
-    - "Case No. _______________" -> "Case No. {{ docket_number }}"
-    - "[NAME], Warden, [Name of Facility];" -> "{{ respondents[0].name.full() }}, Warden, {{ facility_name }};"
-    - "[If helpful, add paragraph summarizing claims presented]. Absent an order from this Court, Petitioner will _________."
-      -> "Absent an order from this Court, Petitioner will {{ requested_harm }}."
-    - "#. Short introduction providing Petitioner’s full name and status." -> "{{ introduction_paragraph }}"
-    - "[If applicable: Venue is proper because Petitioner is detained at [Name of Facility] in City, State...]" -> "{{ venue_paragraph }}"
-    - "[Consider adding a sentence here that sums up Petitioner’s equities...]" -> "{{ petitioner_equities }}"
-    """
-
-    normalized_profile = str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
-    if normalized_profile == "litigation_template":
-        return standard_prompt + litigation_template_addendum
-    return standard_prompt
+    profile_config = get_docx_prompt_profile(
+        prompt_profile,
+        prompt_library_path=prompt_library_path,
+    )
+    return str(profile_config.get("role_description") or "")
 
 
 def _get_docx_label_rules_addendum(
-    *, prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE
+    *,
+    prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
+    prompt_library_path: Optional[str] = None,
 ) -> str:
-    normalized_profile = str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
-    if normalized_profile != "litigation_template":
-        return ""
-
-    return """
-
-    Additional litigation-template naming guidance:
-        Prefer these stable names when they fit the text:
-            district_name
-            district_state
-            court_division
-            facility_name
-            facility_city
-            facility_state
-            field_office_city
-            petitioner_status
-            introduction_paragraph
-            claims_summary
-            requested_harm
-            legal_finding
-            venue_paragraph
-            venue_additional_paragraph
-            venue_reason
-            respondent_residence
-            petitioner_equities
-            factual_background_paragraphs
-            legal_framework_paragraphs
-            legal_issues
-            selected_claim_type
-            statutory_section
-            cfr_section
-            writ_instruction
-            bond_request
-            relief_detail
-            verification_day
-            verification_month
-            verification_year
-
-        Prefer replacing whole drafting-instruction paragraphs with one concise placeholder, such as:
-            "Short introduction..." -> {{ introduction_paragraph }}
-            "Add the legal background..." -> {{ legal_framework_paragraphs }}
-            "Add numbered paragraphs..." -> {{ factual_background_paragraphs }}
-            "[If applicable: Venue is proper ...]" -> {{ venue_paragraph }}
-
-        For court-caption lines, prefer:
-            docket_number for case numbers
-            users[0].name.full() for the petitioner name
-            respondents[i].name.full() for named respondents
-            facility_name or facility_city / facility_state for detention-facility references
-
-        Prefer simple snake_case variables over invented nested objects for non-person litigation data.
-
-        For [select] choices, prefer one concise variable such as:
-            selected_claim_type
-            venue_reason
-            relief_detail
-            legal_issues
-    """
+    profile_config = get_docx_prompt_profile(
+        prompt_profile,
+        prompt_library_path=prompt_library_path,
+    )
+    return str(profile_config.get("rules_addendum") or "")
 
 
 def _get_docx_label_temperature(
-    *, prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE
+    *,
+    prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
+    prompt_library_path: Optional[str] = None,
 ) -> float:
-    return 0.5
+    profile_config = get_docx_prompt_profile(
+        prompt_profile,
+        prompt_library_path=prompt_library_path,
+    )
+    try:
+        return float(profile_config.get("temperature", 0.5))
+    except (TypeError, ValueError):
+        return 0.5
 
 
 def _coerce_modified_run_item(
@@ -1255,6 +1140,7 @@ def get_voted_docx_label_suggestions(
     generator_models: Optional[Sequence[str]] = None,
     judge_model: Optional[str] = None,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
+    prompt_library_path: Optional[str] = None,
     optional_context: Optional[str] = None,
     custom_prompt: Optional[str] = None,
     additional_instructions: Optional[str] = None,
@@ -1282,6 +1168,7 @@ def get_voted_docx_label_suggestions(
             openai_base_url=openai_base_url,
             model=generation_model,
             prompt_profile=prompt_profile,
+            prompt_library_path=prompt_library_path,
             optional_context=optional_context,
             custom_prompt=custom_prompt,
             additional_instructions=additional_instructions,
@@ -1433,6 +1320,7 @@ def get_labeled_docx_runs(
     openai_base_url: Optional[str] = None,
     model: str = "gpt-5-mini",
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
+    prompt_library_path: Optional[str] = None,
     optional_context: Optional[str] = None,
     custom_prompt: Optional[str] = None,
     additional_instructions: Optional[str] = None,
@@ -1455,6 +1343,7 @@ def get_labeled_docx_runs(
     role_description = _get_docx_label_role_description(
         prompt_profile=prompt_profile,
         custom_prompt=custom_prompt,
+        prompt_library_path=prompt_library_path,
     )
 
     custom_name_text = ""
@@ -1571,7 +1460,10 @@ def get_labeled_docx_runs(
         Examples: 
         "(State the reason for eviction)" transforms into `{{ eviction_reason }}`.
     """
-    rules += _get_docx_label_rules_addendum(prompt_profile=prompt_profile)
+    rules += _get_docx_label_rules_addendum(
+        prompt_profile=prompt_profile,
+        prompt_library_path=prompt_library_path,
+    )
     if optional_context and optional_context.strip():
         role_description += (
             "\n\nOptional context for understanding this document:\n"
@@ -1612,7 +1504,10 @@ def get_labeled_docx_runs(
         model=model,
         messages=messages,
         json_mode=True,
-        temperature=_get_docx_label_temperature(prompt_profile=prompt_profile),
+        temperature=_get_docx_label_temperature(
+            prompt_profile=prompt_profile,
+            prompt_library_path=prompt_library_path,
+        ),
         max_output_tokens=max_output_tokens,
         openai_client=openai_client,
         openai_api=openai_api,

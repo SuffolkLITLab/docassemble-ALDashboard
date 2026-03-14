@@ -12,3 +12,5 @@ dist/
 # Local secrets
 .env
 .env.*
+.env2
+*Zone.Identifier*

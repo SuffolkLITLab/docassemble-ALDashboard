@@ -45,6 +45,7 @@ from .api_dashboard_utils import (
     yaml_reformat_payload_from_request,
 )
 from . import api_mcp  # noqa: F401
+from . import api_labelers  # noqa: F401
 
 __all__ = []
 

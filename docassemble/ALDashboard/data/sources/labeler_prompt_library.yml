@@ -1,0 +1,42 @@
+branding:
+  docx_page_title: AssemblyLine DOCX Labeler
+  docx_header_title: AssemblyLine DOCX Labeler
+  docx_header_subtitle: Add or edit Jinja2 template variables
+  pdf_page_title: AssemblyLine PDF Labeler
+  pdf_header_title: AssemblyLine PDF Labeler
+  pdf_header_subtitle: Add and edit PDF form fields using AI detection
+
+docx:
+  default_prompt_profile: standard
+  prompt_profiles:
+    standard:
+      label: General forms
+      help_text: Use for most standard forms and letters.
+    litigation_template:
+      label: Litigation / pleading templates
+      help_text: Use for pleadings with captions, drafting notes, and many visible blanks.
+
+pdf:
+  field_name_library:
+    text:
+      - users[0].name.first
+      - users[0].name.last
+      - users[0].name.full()
+      - users[0].address.address
+      - users[0].address.city
+      - users[0].address.state
+      - users[0].address.zip
+      - users[0].phone_number
+      - users[0].email
+      - other_parties[0].name.full()
+      - docket_number
+      - case_name
+    signature:
+      - users[0].signature
+      - other_parties[0].signature
+      - attorney.signature
+    checkbox:
+      - user_agrees
+      - is_plaintiff
+      - is_defendant
+      - has_children

@@ -1133,6 +1133,7 @@ def aggregate_docx_label_suggestion_runs(
 def get_voted_docx_label_suggestions(
     docx_path: str,
     custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    preferred_variable_names: Optional[Sequence[str]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
@@ -1163,6 +1164,7 @@ def get_voted_docx_label_suggestions(
         suggestions = get_labeled_docx_runs(
             docx_path=docx_path,
             custom_people_names=custom_people_names,
+            preferred_variable_names=preferred_variable_names,
             openai_client=openai_client,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
@@ -1315,6 +1317,7 @@ def update_docx(
 def get_labeled_docx_runs(
     docx_path: str,
     custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    preferred_variable_names: Optional[Sequence[str]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
@@ -1359,6 +1362,40 @@ def get_labeled_docx_runs(
                 )
             name, description = item
             custom_name_text += f"    {name} ({description}), \n"
+
+    preferred_name_text = ""
+    if preferred_variable_names:
+        normalized_preferred_names = sorted(
+            {
+                str(name).strip()
+                for name in preferred_variable_names
+                if str(name).strip()
+            }
+        )
+        if normalized_preferred_names:
+            top_level_names = sorted(
+                {
+                    name.split(".", 1)[0].split("[", 1)[0]
+                    for name in normalized_preferred_names
+                    if name
+                }
+            )
+            preferred_name_text = (
+                "\n\nExisting variable names from the selected Playground interview:\n"
+                "Use these names when they fit the document instead of inventing new top-level names.\n"
+                "Prefer these top-level objects/lists for people and case data when appropriate:\n    "
+                + ", ".join(top_level_names[:80])
+            )
+            if len(normalized_preferred_names) <= 120:
+                preferred_name_text += (
+                    "\nSpecific interview names already in use:\n    "
+                    + ", ".join(normalized_preferred_names)
+                )
+            else:
+                preferred_name_text += (
+                    "\nSpecific interview names already in use (sample):\n    "
+                    + ", ".join(normalized_preferred_names[:120])
+                )
 
     rules = f"""
     Rules for variable names:
@@ -1460,6 +1497,7 @@ def get_labeled_docx_runs(
         Examples: 
         "(State the reason for eviction)" transforms into `{{ eviction_reason }}`.
     """
+    rules += preferred_name_text
     rules += _get_docx_label_rules_addendum(
         prompt_profile=prompt_profile,
         prompt_library_path=prompt_library_path,

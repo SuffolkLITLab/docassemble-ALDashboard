@@ -48,6 +48,38 @@
                     </label>
                     <p id="file-name" class="mt-2 small text-muted hidden"></p>
                     <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
+                    <div id="interview-picker-sidebar-host" class="hidden mt-3">
+                        <div id="interview-picker-panel">
+                            <div class="small fw-medium mb-2">Interview variables source</div>
+                            <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Interview source mode">
+                                <input type="radio" class="btn-check" name="interview-source-mode" id="source-mode-playground" value="playground" checked>
+                                <label class="btn btn-outline-secondary" for="source-mode-playground">Playground</label>
+                                <input type="radio" class="btn-check" name="interview-source-mode" id="source-mode-installed" value="installed">
+                                <label class="btn btn-outline-secondary" for="source-mode-installed">Installed</label>
+                            </div>
+                            <div id="playground-fields">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1" for="playground-project">Project</label>
+                                    <select id="playground-project" class="form-select form-select-sm"></select>
+                                </div>
+                                <div>
+                                    <label class="form-label small mb-1" for="playground-yaml-file">YAML file</label>
+                                    <select id="playground-yaml-file" class="form-select form-select-sm"></select>
+                                </div>
+                            </div>
+                            <div id="installed-fields" class="hidden">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1" for="installed-package">Package</label>
+                                    <select id="installed-package" class="form-select form-select-sm"></select>
+                                </div>
+                                <div>
+                                    <label class="form-label small mb-1" for="installed-yaml-file">YAML file</label>
+                                    <select id="installed-yaml-file" class="form-select form-select-sm"></select>
+                                </div>
+                            </div>
+                            <p id="interview-variable-summary" class="small text-muted mt-2 mb-0 hidden"></p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Loading State -->
@@ -195,6 +227,23 @@
                             Consolidate fragmented runs before labeling and download
                         </label>
                         <div class="form-text">Recommended for Word files where placeholder text is split across multiple runs.</div>
+                    </div>
+                    <div id="use-playground-vars-group" class="mb-4 hidden">
+                        <div class="d-flex align-items-start justify-content-between gap-3">
+                            <div class="form-check flex-grow-1 mb-0">
+                                <input class="form-check-input" type="checkbox" id="use-playground-variables">
+                                <label class="form-check-label fw-medium" for="use-playground-variables">
+                                    Prefer variables from selected interview
+                                </label>
+                                <div id="playground-settings-summary" class="form-text">
+                                    Choose a Playground or installed interview from the sidebar to use its actual variable list in the labeling prompt.
+                                </div>
+                            </div>
+                            <button type="button" id="change-interview-source-btn" class="btn btn-sm btn-outline-secondary hidden">
+                                Change
+                            </button>
+                        </div>
+                        <div id="settings-interview-picker-host" class="hidden mt-3"></div>
                     </div>
                     <div>
                         <label class="form-label fw-medium" for="ai-model">AI Model</label>
@@ -415,6 +464,26 @@
                 logoutUrl: '/user/sign-out',
                 aiEnabled: false
             },
+            interviewSourceMode: 'playground',
+            playground: {
+                projects: [],
+                files: [],
+                selectedProject: 'default',
+                selectedFile: '',
+                variables: [],
+                topLevelNames: []
+            },
+            installed: {
+                packages: [],
+                files: [],
+                selectedPackage: '',
+                selectedFile: '',
+                variables: [],
+                topLevelNames: []
+            },
+            ui: {
+                editInterviewSourceInSettings: false
+            },
             settings: {
                 additionalInstructions: '',
                 contextText: '',
@@ -425,6 +494,7 @@
                 generationMethod: 'multi_run',
                 generatorModels: '',
                 defragmentRuns: true,
+                usePlaygroundVariables: false,
                 showLowConfidence: false
             },
             activeTab: 'existing',
@@ -437,6 +507,18 @@
         // ================================================================
         const fileInput = document.getElementById('file-input');
         const fileName = document.getElementById('file-name');
+        const interviewPickerPanel = document.getElementById('interview-picker-panel');
+        const interviewPickerSidebarHost = document.getElementById('interview-picker-sidebar-host');
+        const settingsInterviewPickerHost = document.getElementById('settings-interview-picker-host');
+        const changeInterviewSourceBtn = document.getElementById('change-interview-source-btn');
+        const interviewSourceModeInputs = Array.from(document.querySelectorAll('input[name="interview-source-mode"]'));
+        const playgroundFields = document.getElementById('playground-fields');
+        const installedFields = document.getElementById('installed-fields');
+        const playgroundProjectSelect = document.getElementById('playground-project');
+        const playgroundYamlFileSelect = document.getElementById('playground-yaml-file');
+        const installedPackageSelect = document.getElementById('installed-package');
+        const installedYamlFileSelect = document.getElementById('installed-yaml-file');
+        const interviewVariableSummary = document.getElementById('interview-variable-summary');
         const loadingState = document.getElementById('loading-state');
         const loadingMessage = document.getElementById('loading-message');
         const errorState = document.getElementById('error-state');
@@ -473,6 +555,9 @@
         const generatorModelsGroup = document.getElementById('generator-models-group');
         const generatorModelsInput = document.getElementById('generator-models');
         const judgeModelInput = document.getElementById('judge-model');
+        const usePlaygroundVariablesInput = document.getElementById('use-playground-variables');
+        const usePlaygroundVarsGroup = document.getElementById('use-playground-vars-group');
+        const playgroundSettingsSummary = document.getElementById('playground-settings-summary');
         const authControls = document.getElementById('auth-controls');
         const aiAuthNotice = document.getElementById('ai-auth-notice');
         const suggestionsValidation = document.getElementById('suggestions-validation');
@@ -593,6 +678,375 @@
             }
         }
 
+        function getActiveInterviewSourceState() {
+            return state.interviewSourceMode === 'installed' ? state.installed : state.playground;
+        }
+
+        function moveInterviewPickerTo(hostElement) {
+            if (!hostElement || !interviewPickerPanel) return;
+            if (interviewPickerPanel.parentElement !== hostElement) {
+                hostElement.appendChild(interviewPickerPanel);
+            }
+        }
+
+        function getActiveInterviewSourceLabel() {
+            var sourceState = getActiveInterviewSourceState();
+            if (state.interviewSourceMode === 'installed') {
+                if (!sourceState.selectedPackage || !sourceState.selectedFile) return '';
+                return sourceState.selectedPackage + '/' + sourceState.selectedFile;
+            }
+            if (!sourceState.selectedProject || !sourceState.selectedFile) return '';
+            return sourceState.selectedProject + '/' + sourceState.selectedFile;
+        }
+
+        function renderInterviewSourceSummary() {
+            if (!interviewVariableSummary || !playgroundSettingsSummary) return;
+            var sourceLabel = getActiveInterviewSourceLabel();
+            var sourceState = getActiveInterviewSourceState();
+            var sourceText = state.interviewSourceMode === 'installed' ? 'installed interview' : 'Playground interview';
+            var count = sourceState.variables.length;
+            if (sourceLabel) {
+                interviewVariableSummary.textContent =
+                    sourceLabel
+                    + (count ? ' (' + count + ' vars, ' + sourceState.topLevelNames.length + ' top-level)' : ' (no variables detected yet)');
+                interviewVariableSummary.classList.remove('hidden');
+                playgroundSettingsSummary.textContent =
+                    'Selected ' + sourceText + ': ' + sourceLabel
+                    + (count ? '. The prompt will prefer its existing variable names.' : '.');
+            } else {
+                interviewVariableSummary.classList.add('hidden');
+                playgroundSettingsSummary.textContent =
+                    'Choose a Playground or installed interview from the sidebar to use its actual variable list in the labeling prompt.';
+            }
+        }
+
+        function renderInterviewPicker() {
+            if (!interviewPickerPanel || !interviewPickerSidebarHost || !settingsInterviewPickerHost || !usePlaygroundVarsGroup) return;
+            var showPicker = !!state.auth.isAuthenticated;
+            usePlaygroundVarsGroup.classList.toggle('hidden', !showPicker);
+            if (changeInterviewSourceBtn) {
+                changeInterviewSourceBtn.classList.toggle('hidden', !showPicker);
+                changeInterviewSourceBtn.textContent = state.ui.editInterviewSourceInSettings ? 'Done' : 'Change';
+            }
+            if (showPicker && state.ui.editInterviewSourceInSettings) {
+                moveInterviewPickerTo(settingsInterviewPickerHost);
+            } else {
+                moveInterviewPickerTo(interviewPickerSidebarHost);
+            }
+            interviewPickerPanel.classList.toggle('hidden', !showPicker);
+            interviewPickerSidebarHost.classList.toggle('hidden', !showPicker || state.ui.editInterviewSourceInSettings);
+            settingsInterviewPickerHost.classList.toggle('hidden', !showPicker || !state.ui.editInterviewSourceInSettings);
+            playgroundFields.classList.toggle('hidden', state.interviewSourceMode !== 'playground');
+            installedFields.classList.toggle('hidden', state.interviewSourceMode !== 'installed');
+            interviewSourceModeInputs.forEach(function(input) {
+                input.checked = input.value === state.interviewSourceMode;
+            });
+
+            playgroundProjectSelect.innerHTML = '';
+            state.playground.projects.forEach(function(projectName) {
+                var option = document.createElement('option');
+                option.value = projectName;
+                option.textContent = projectName;
+                if (projectName === state.playground.selectedProject) option.selected = true;
+                playgroundProjectSelect.appendChild(option);
+            });
+
+            playgroundYamlFileSelect.innerHTML = '';
+            if (!state.playground.files.length) {
+                var emptyPlaygroundOption = document.createElement('option');
+                emptyPlaygroundOption.value = '';
+                emptyPlaygroundOption.textContent = 'No YAML files found';
+                playgroundYamlFileSelect.appendChild(emptyPlaygroundOption);
+            } else {
+                state.playground.files.forEach(function(fileInfo) {
+                    var option = document.createElement('option');
+                    option.value = fileInfo.filename;
+                    option.textContent = fileInfo.label || fileInfo.filename;
+                    if (fileInfo.filename === state.playground.selectedFile) option.selected = true;
+                    playgroundYamlFileSelect.appendChild(option);
+                });
+            }
+
+            installedPackageSelect.innerHTML = '';
+            state.installed.packages.forEach(function(packageName) {
+                var option = document.createElement('option');
+                option.value = packageName;
+                option.textContent = packageName;
+                if (packageName === state.installed.selectedPackage) option.selected = true;
+                installedPackageSelect.appendChild(option);
+            });
+
+            installedYamlFileSelect.innerHTML = '';
+            if (!state.installed.files.length) {
+                var emptyInstalledOption = document.createElement('option');
+                emptyInstalledOption.value = '';
+                emptyInstalledOption.textContent = 'No YAML files found';
+                installedYamlFileSelect.appendChild(emptyInstalledOption);
+            } else {
+                state.installed.files.forEach(function(fileInfo) {
+                    var option = document.createElement('option');
+                    option.value = fileInfo.filename;
+                    option.textContent = fileInfo.label || fileInfo.filename;
+                    if (fileInfo.filename === state.installed.selectedFile) option.selected = true;
+                    installedYamlFileSelect.appendChild(option);
+                });
+            }
+
+            var activeSourceState = getActiveInterviewSourceState();
+            usePlaygroundVariablesInput.disabled = !showPicker || !activeSourceState.selectedFile;
+            if (usePlaygroundVariablesInput.disabled) {
+                state.settings.usePlaygroundVariables = false;
+                usePlaygroundVariablesInput.checked = false;
+            }
+            renderInterviewSourceSummary();
+        }
+
+        function deriveTopLevelNames(variableNames) {
+            return Array.from(new Set(
+                (Array.isArray(variableNames) ? variableNames : [])
+                    .map(function(name) { return String(name || '').trim(); })
+                    .filter(function(name) { return !!name; })
+                    .map(function(name) { return name.split('.', 1)[0].split('[', 1)[0]; })
+                    .filter(function(name) { return !!name; })
+            )).sort(function(a, b) { return a.localeCompare(b); });
+        }
+
+        function splitVariablePathSegments(variableName) {
+            var raw = String(variableName || '').trim();
+            if (!raw) return [];
+            var matches = raw.match(/([^[.\]]+|\[[^\]]*\])/g);
+            return Array.isArray(matches) ? matches.filter(function(part) { return !!part; }) : [raw];
+        }
+
+        function buildInterviewVariableTree(variableNames) {
+            var root = {
+                _description: 'Variables detected from the selected interview'
+            };
+            (Array.isArray(variableNames) ? variableNames : []).forEach(function(variableName) {
+                var segments = splitVariablePathSegments(variableName);
+                if (!segments.length) return;
+                var node = root;
+                segments.forEach(function(segment, index) {
+                    var isLeaf = index === segments.length - 1;
+                    if (!node[segment] || typeof node[segment] !== 'object') {
+                        node[segment] = {};
+                    }
+                    if (isLeaf) {
+                        node[segment]._variable = true;
+                        node[segment]._description = 'Selected interview variable';
+                    }
+                    node = node[segment];
+                });
+            });
+            return root;
+        }
+
+        function getEffectiveVariableTree() {
+            var sourceState = getActiveInterviewSourceState();
+            if (!sourceState.variables.length) {
+                return AL_VARIABLE_TREE;
+            }
+            return Object.assign(
+                {
+                    'Selected interview variables': buildInterviewVariableTree(sourceState.variables)
+                },
+                AL_VARIABLE_TREE
+            );
+        }
+
+        async function fetchJsonOrThrow(url) {
+            var response = await fetch(url, {
+                method: 'GET',
+                credentials: 'same-origin'
+            });
+            if (!response.ok) {
+                throw new Error('Request failed with status ' + response.status);
+            }
+            return response.json();
+        }
+
+        async function fetchPlaygroundProjects() {
+            if (!state.auth.isAuthenticated) {
+                state.playground.projects = [];
+                state.playground.files = [];
+                state.playground.selectedFile = '';
+                state.playground.variables = [];
+                state.playground.topLevelNames = [];
+                renderInterviewPicker();
+                return;
+            }
+            try {
+                var data = await fetchJsonOrThrow('/al/docx-labeler/api/playground-projects');
+                state.playground.projects =
+                    data && data.success && data.data && Array.isArray(data.data.projects)
+                        ? data.data.projects
+                        : [];
+                if (state.playground.projects.indexOf(state.playground.selectedProject) === -1) {
+                    state.playground.selectedProject = state.playground.projects[0] || 'default';
+                }
+                await fetchPlaygroundFiles();
+                return;
+            } catch (_error) {}
+            state.playground.projects = [];
+            state.playground.files = [];
+            state.playground.selectedFile = '';
+            state.playground.variables = [];
+            state.playground.topLevelNames = [];
+            renderInterviewPicker();
+        }
+
+        async function fetchPlaygroundFiles() {
+            if (!state.auth.isAuthenticated || !state.playground.selectedProject) {
+                state.playground.files = [];
+                state.playground.selectedFile = '';
+                state.playground.variables = [];
+                state.playground.topLevelNames = [];
+                renderInterviewPicker();
+                return;
+            }
+            try {
+                var data = await fetchJsonOrThrow(
+                    '/al/docx-labeler/api/playground-files?project='
+                    + encodeURIComponent(state.playground.selectedProject)
+                );
+                var files =
+                    data && data.success && data.data && Array.isArray(data.data.files)
+                        ? data.data.files
+                        : [];
+                state.playground.files = files;
+                var currentStillExists = files.some(function(item) { return item.filename === state.playground.selectedFile; });
+                state.playground.selectedFile = currentStillExists ? state.playground.selectedFile : (files[0] ? files[0].filename : '');
+                renderInterviewPicker();
+                await fetchPlaygroundVariables();
+                return;
+            } catch (_error) {}
+            state.playground.files = [];
+            state.playground.selectedFile = '';
+            state.playground.variables = [];
+            state.playground.topLevelNames = [];
+            renderInterviewPicker();
+        }
+
+        async function fetchPlaygroundVariables() {
+            if (!state.auth.isAuthenticated || !state.playground.selectedProject || !state.playground.selectedFile) {
+                state.playground.variables = [];
+                state.playground.topLevelNames = [];
+                renderInterviewPicker();
+                return;
+            }
+            try {
+                var data = await fetchJsonOrThrow(
+                    '/al/docx-labeler/api/playground-variables?project='
+                    + encodeURIComponent(state.playground.selectedProject)
+                    + '&filename=' + encodeURIComponent(state.playground.selectedFile)
+                );
+                state.playground.variables =
+                    data && data.success && data.data && Array.isArray(data.data.all_names)
+                        ? data.data.all_names
+                        : [];
+                state.playground.topLevelNames =
+                    data && data.success && data.data && Array.isArray(data.data.top_level_names)
+                        ? data.data.top_level_names
+                        : deriveTopLevelNames(state.playground.variables);
+            } catch (_error) {
+                state.playground.variables = [];
+                state.playground.topLevelNames = [];
+            }
+            renderInterviewPicker();
+        }
+
+        async function fetchInstalledPackages() {
+            if (!state.auth.isAuthenticated) {
+                state.installed.packages = [];
+                state.installed.files = [];
+                state.installed.selectedPackage = '';
+                state.installed.selectedFile = '';
+                state.installed.variables = [];
+                state.installed.topLevelNames = [];
+                renderInterviewPicker();
+                return;
+            }
+            try {
+                var data = await fetchJsonOrThrow('/al/docx-labeler/api/installed-packages');
+                state.installed.packages =
+                    data && data.success && data.data && Array.isArray(data.data.packages)
+                        ? data.data.packages
+                        : [];
+                if (state.installed.packages.indexOf(state.installed.selectedPackage) === -1) {
+                    state.installed.selectedPackage = state.installed.packages[0] || '';
+                }
+                await fetchInstalledFiles();
+                return;
+            } catch (_error) {}
+            state.installed.packages = [];
+            state.installed.files = [];
+            state.installed.selectedPackage = '';
+            state.installed.selectedFile = '';
+            state.installed.variables = [];
+            state.installed.topLevelNames = [];
+            renderInterviewPicker();
+        }
+
+        async function fetchInstalledFiles() {
+            if (!state.auth.isAuthenticated || !state.installed.selectedPackage) {
+                state.installed.files = [];
+                state.installed.selectedFile = '';
+                state.installed.variables = [];
+                state.installed.topLevelNames = [];
+                renderInterviewPicker();
+                return;
+            }
+            try {
+                var data = await fetchJsonOrThrow(
+                    '/al/docx-labeler/api/installed-files?package='
+                    + encodeURIComponent(state.installed.selectedPackage)
+                );
+                var files =
+                    data && data.success && data.data && Array.isArray(data.data.files)
+                        ? data.data.files
+                        : [];
+                state.installed.files = files;
+                var currentStillExists = files.some(function(item) { return item.filename === state.installed.selectedFile; });
+                state.installed.selectedFile = currentStillExists ? state.installed.selectedFile : (files[0] ? files[0].filename : '');
+                renderInterviewPicker();
+                await fetchInstalledVariables();
+                return;
+            } catch (_error) {}
+            state.installed.files = [];
+            state.installed.selectedFile = '';
+            state.installed.variables = [];
+            state.installed.topLevelNames = [];
+            renderInterviewPicker();
+        }
+
+        async function fetchInstalledVariables() {
+            if (!state.auth.isAuthenticated || !state.installed.selectedPackage || !state.installed.selectedFile) {
+                state.installed.variables = [];
+                state.installed.topLevelNames = [];
+                renderInterviewPicker();
+                return;
+            }
+            try {
+                var interviewPath = state.installed.selectedPackage + ':' + state.installed.selectedFile;
+                var data = await fetchJsonOrThrow(
+                    '/al/docx-labeler/api/installed-variables?interview_path='
+                    + encodeURIComponent(interviewPath)
+                );
+                state.installed.variables =
+                    data && data.success && data.data && Array.isArray(data.data.all_names)
+                        ? data.data.all_names
+                        : [];
+                state.installed.topLevelNames =
+                    data && data.success && data.data && Array.isArray(data.data.top_level_names)
+                        ? data.data.top_level_names
+                        : deriveTopLevelNames(state.installed.variables);
+            } catch (_error) {
+                state.installed.variables = [];
+                state.installed.topLevelNames = [];
+            }
+            renderInterviewPicker();
+        }
+
         async function fetchAuthStatus() {
             try {
                 var nextTarget = window.location.pathname + window.location.search;
@@ -616,6 +1070,8 @@
             }
             renderAuthControls();
             updateAiUiState();
+            await fetchPlaygroundProjects();
+            await fetchInstalledPackages();
         }
 
         function renderModelSuggestions(filterText) {
@@ -886,13 +1342,9 @@
         // Render the variable tree inside the popover (reuses the same builder)
         function renderSelPopoverTree(filter) {
             selVarTree.innerHTML = '';
-            renderVariableTree(AL_VARIABLE_TREE, '', selVarTree, filter || '');
-            // Re-wire clicks so they target the popover input
-            selVarTree.querySelectorAll('[data-var]').forEach(function(el) {
-                el.addEventListener('click', function() {
-                    selVarInput.value = '{{ ' + el.dataset.var + ' }}';
-                    selVarInput.focus();
-                });
+            renderVariableTree(getEffectiveVariableTree(), '', selVarTree, filter || '', function(varPath) {
+                selVarInput.value = '{{ ' + varPath + ' }}';
+                selVarInput.focus();
             });
         }
 
@@ -1011,11 +1463,12 @@
         // ================================================================
         // Variable-picker tree
         // ================================================================
-        function renderVariableTree(tree, prefix, container, filter) {
-            tree = tree || AL_VARIABLE_TREE;
+        function renderVariableTree(tree, prefix, container, filter, onSelectVariable) {
+            tree = tree || getEffectiveVariableTree();
             prefix = prefix || '';
             container = container || variableTree;
             filter = filter || '';
+            onSelectVariable = onSelectVariable || insertVariable;
             if (container === variableTree) container.innerHTML = '';
             Object.keys(tree).forEach(function(key) {
                 if (key.startsWith('_')) return;
@@ -1029,13 +1482,14 @@
                 }
                 var item = document.createElement('div');
                 item.className = 'mb-1';
-                var isLeaf = typeof value === 'string';
+                var isLeaf = typeof value === 'string' || (typeof value === 'object' && !!value._variable);
                 var hasChildren = typeof value === 'object' && Object.keys(value).filter(function(k) { return !k.startsWith('_'); }).length > 0;
                 var header = document.createElement('div');
                 header.className = 'tree-item d-flex align-items-center gap-1 px-2 py-1 rounded small';
                 if (isLeaf) {
-                    header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + displayPath + '">' + key + '</span><span class="text-muted small ms-1 text-truncate">' + value + '</span>';
-                    header.querySelector('[data-var]').addEventListener('click', function() { insertVariable(displayPath); });
+                    var leafDescription = typeof value === 'string' ? value : (value._description || '');
+                    header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + displayPath + '">' + key + '</span><span class="text-muted small ms-1 text-truncate">' + leafDescription + '</span>';
+                    header.querySelector('[data-var]').addEventListener('click', function() { onSelectVariable(displayPath); });
                 } else {
                     header.innerHTML = '<span class="tree-toggle cursor-pointer">\u25B6</span><span class="fw-medium">' + key + '</span>' + (value._description ? '<span class="text-muted small ms-1">' + value._description + '</span>' : '');
                 }
@@ -1043,7 +1497,7 @@
                 if (hasChildren) {
                     var children = document.createElement('div');
                     children.className = 'tree-children hidden';
-                    renderVariableTree(value, fullPath, children, filter);
+                    renderVariableTree(value, fullPath, children, filter, onSelectVariable);
                     item.appendChild(children);
                     header.addEventListener('click', function(e) {
                         if (e.target.dataset && e.target.dataset.var) return;
@@ -1155,7 +1609,7 @@
             document.getElementById('edit-label-input').value = label.current;
             document.getElementById('edit-label-title').textContent = 'Edit Label';
             document.getElementById('variable-search').value = '';
-            renderVariableTree();
+            renderVariableTree(getEffectiveVariableTree());
             editLabelModal.classList.remove('hidden');
             document.getElementById('edit-label-input').focus();
         }
@@ -1233,6 +1687,11 @@
                 suggestionsList.innerHTML = '<div class="alert alert-warning">AI suggestions require login.</div>';
                 return;
             }
+            var selectedSourceState = getActiveInterviewSourceState();
+            if (state.settings.usePlaygroundVariables && !selectedSourceState.selectedFile) {
+                suggestionsList.innerHTML = '<div class="alert alert-warning">Select an interview before using interview variable names.</div>';
+                return;
+            }
             var formData = new FormData();
             formData.append('file', state.file);
             formData.append('defragment_runs', state.settings.defragmentRuns ? 'true' : 'false');
@@ -1242,6 +1701,23 @@
             formData.append('prompt_profile', state.settings.promptProfile || 'standard');
             formData.append('model', state.settings.model);
             if (state.settings.judgeModel) formData.append('judge_model', state.settings.judgeModel);
+            if (state.settings.usePlaygroundVariables) {
+                if (!selectedSourceState.variables.length) {
+                    suggestionsList.innerHTML = '<div class="alert alert-warning">No interview variables were found for the selected interview.</div>';
+                    return;
+                }
+                formData.append('use_playground_variables', 'true');
+                formData.append('interview_source_mode', state.interviewSourceMode);
+                formData.append('preferred_variable_names', JSON.stringify(selectedSourceState.variables));
+                if (state.interviewSourceMode === 'installed') {
+                    formData.append('installed_package', state.installed.selectedPackage);
+                    formData.append('installed_yaml_file', state.installed.selectedFile);
+                    formData.append('installed_interview_path', state.installed.selectedPackage + ':' + state.installed.selectedFile);
+                } else {
+                    formData.append('playground_project', state.playground.selectedProject);
+                    formData.append('playground_yaml_file', state.playground.selectedFile);
+                }
+            }
             if (state.settings.generationMethod === 'single') {
                 formData.append('generator_models', JSON.stringify([state.settings.model]));
             } else if (state.settings.generationMethod === 'multi_model') {
@@ -1572,7 +2048,7 @@
         document.getElementById('edit-save').addEventListener('click', saveEditLabel);
         document.getElementById('edit-cancel').addEventListener('click', function() { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
         document.getElementById('edit-close').addEventListener('click', function() { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
-        variableSearch.addEventListener('input', function(e) { renderVariableTree(AL_VARIABLE_TREE, '', variableTree, e.target.value); });
+        variableSearch.addEventListener('input', function(e) { renderVariableTree(getEffectiveVariableTree(), '', variableTree, e.target.value); });
         downloadBtn.addEventListener('click', downloadDocument);
         document.getElementById('settings-btn').addEventListener('click', function() {
             document.getElementById('additional-instructions').value = state.settings.additionalInstructions;
@@ -1583,12 +2059,19 @@
             generatorModelsInput.value = state.settings.generatorModels || '';
             judgeModelInput.value = state.settings.judgeModel || '';
             document.getElementById('defragment-runs').checked = !!state.settings.defragmentRuns;
+            usePlaygroundVariablesInput.checked = !!state.settings.usePlaygroundVariables;
             aiModelInput.value = state.settings.model;
+            state.ui.editInterviewSourceInSettings = false;
             renderGenerationMethodFields();
+            renderInterviewPicker();
             renderModelSuggestions('');
             settingsModal.classList.remove('hidden');
         });
-        document.getElementById('close-settings').addEventListener('click', function() { settingsModal.classList.add('hidden'); });
+        document.getElementById('close-settings').addEventListener('click', function() {
+            state.ui.editInterviewSourceInSettings = false;
+            renderInterviewPicker();
+            settingsModal.classList.add('hidden');
+        });
         document.getElementById('save-settings').addEventListener('click', function() {
             state.settings.additionalInstructions = document.getElementById('additional-instructions').value;
             state.settings.contextText = document.getElementById('context-text').value;
@@ -1598,7 +2081,10 @@
             state.settings.generatorModels = generatorModelsInput.value;
             state.settings.judgeModel = judgeModelInput.value.trim();
             state.settings.defragmentRuns = !!document.getElementById('defragment-runs').checked;
+            state.settings.usePlaygroundVariables = !!usePlaygroundVariablesInput.checked;
             state.settings.model = aiModelInput.value.trim() || state.defaultModel;
+            state.ui.editInterviewSourceInSettings = false;
+            renderInterviewPicker();
             settingsModal.classList.add('hidden');
         });
         document.getElementById('reset-settings').addEventListener('click', function() {
@@ -1610,14 +2096,63 @@
             generatorModelsInput.value = '';
             judgeModelInput.value = '';
             document.getElementById('defragment-runs').checked = true;
+            usePlaygroundVariablesInput.checked = false;
             aiModelInput.value = state.defaultModel;
             renderGenerationMethodFields();
+            renderInterviewPicker();
             renderModelSuggestions('');
         });
+        if (changeInterviewSourceBtn) {
+            changeInterviewSourceBtn.addEventListener('click', function() {
+                state.ui.editInterviewSourceInSettings = !state.ui.editInterviewSourceInSettings;
+                renderInterviewPicker();
+            });
+        }
         generationMethodInput.addEventListener('change', renderGenerationMethodFields);
         aiModelInput.addEventListener('input', function() { renderModelSuggestions(aiModelInput.value); });
         aiModelInput.addEventListener('change', function() {
             state.settings.model = aiModelInput.value.trim() || state.defaultModel;
+        });
+        interviewSourceModeInputs.forEach(function(input) {
+            input.addEventListener('change', async function() {
+                if (!input.checked) return;
+                state.interviewSourceMode = input.value === 'installed' ? 'installed' : 'playground';
+                renderInterviewPicker();
+                if (state.interviewSourceMode === 'installed') {
+                    if (!state.installed.packages.length) {
+                        await fetchInstalledPackages();
+                    } else if (state.installed.selectedFile) {
+                        await fetchInstalledVariables();
+                    }
+                } else {
+                    if (!state.playground.projects.length) {
+                        await fetchPlaygroundProjects();
+                    } else if (state.playground.selectedFile) {
+                        await fetchPlaygroundVariables();
+                    }
+                }
+            });
+        });
+        playgroundProjectSelect.addEventListener('change', async function() {
+            state.playground.selectedProject = playgroundProjectSelect.value || 'default';
+            state.playground.selectedFile = '';
+            await fetchPlaygroundFiles();
+        });
+        playgroundYamlFileSelect.addEventListener('change', async function() {
+            state.playground.selectedFile = playgroundYamlFileSelect.value || '';
+            await fetchPlaygroundVariables();
+        });
+        installedPackageSelect.addEventListener('change', async function() {
+            state.installed.selectedPackage = installedPackageSelect.value || '';
+            state.installed.selectedFile = '';
+            await fetchInstalledFiles();
+        });
+        installedYamlFileSelect.addEventListener('change', async function() {
+            state.installed.selectedFile = installedYamlFileSelect.value || '';
+            await fetchInstalledVariables();
+        });
+        usePlaygroundVariablesInput.addEventListener('change', function() {
+            state.settings.usePlaygroundVariables = !!usePlaygroundVariablesInput.checked;
         });
         toggleLowConfidence.checked = !!state.settings.showLowConfidence;
         toggleLowConfidence.addEventListener('change', function() {
@@ -1625,7 +2160,15 @@
             renderSuggestions();
         });
         [settingsModal, bulkReplaceModal, editLabelModal].forEach(function(modal) {
-            modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    if (modal === settingsModal) {
+                        state.ui.editInterviewSourceInSettings = false;
+                        renderInterviewPicker();
+                    }
+                    modal.classList.add('hidden');
+                }
+            });
         });
 
         // Selection popover events

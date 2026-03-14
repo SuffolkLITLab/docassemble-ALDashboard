@@ -347,6 +347,33 @@ docx:
         self.assertNotIn("Optional context for understanding this document", without_context)
 
     @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
+    def test_get_labeled_docx_runs_prefers_selected_interview_variable_names(
+        self, mock_chat_completion
+    ):
+        document = docx.Document()
+        document.add_paragraph("Name: ____")
+        with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
+            document.save(tmp.name)
+            mock_chat_completion.return_value = {"results": []}
+
+            get_labeled_docx_runs(
+                tmp.name,
+                model="gpt-5-mini",
+                preferred_variable_names=[
+                    "users",
+                    "users[0].name.first",
+                    "trial_court",
+                    "docket_number",
+                ],
+            )
+
+        system_prompt = mock_chat_completion.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Existing variable names from the selected Playground interview", system_prompt)
+        self.assertIn("users", system_prompt)
+        self.assertIn("trial_court", system_prompt)
+        self.assertIn("docket_number", system_prompt)
+
+    @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
     def test_get_labeled_docx_runs_uses_default_temperature_for_standard_profile(
         self, mock_chat_completion
     ):

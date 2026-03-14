@@ -9,12 +9,14 @@ Both tools use AI to suggest labels and follow AssemblyLine conventions.
 """
 
 import base64
+import copy
 import inspect
 import io
 import json
 import os
 import tempfile
 import uuid
+from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +25,7 @@ from flask_cors import cross_origin
 from flask_login import current_user
 
 from docassemble.base.config import daconfig
+import docassemble.base.functions
 from docassemble.base.util import log
 from docassemble.webapp.app_object import app, csrf
 from docassemble.webapp.server import api_verify, jsonify_with_status
@@ -137,17 +140,21 @@ def _build_labeler_model_catalog() -> Dict[str, Any]:
     }
 
 
-def _labeler_session_identity() -> Dict[str, Optional[str]]:
+def _labeler_session_identity() -> Dict[str, Any]:
     """Return session identity details for browser users."""
     try:
         if current_user.is_authenticated:
             email_value = getattr(current_user, "email", None)
             if email_value is not None:
                 email_value = str(email_value)
-            return {"is_authenticated": True, "email": email_value}
+            return {
+                "is_authenticated": True,
+                "email": email_value,
+                "user_id": getattr(current_user, "id", None),
+            }
     except Exception:
         pass
-    return {"is_authenticated": False, "email": None}
+    return {"is_authenticated": False, "email": None, "user_id": None}
 
 
 def _labeler_ai_auth_check() -> bool:
@@ -191,6 +198,262 @@ def _labeler_auth_return_target() -> str:
         return referer_target
 
     return LABELER_BASE_PATH
+
+
+def _labeler_playground_auth_check() -> bool:
+    try:
+        return bool(current_user.is_authenticated)
+    except Exception:
+        return False
+
+
+def _playground_auth_fail(request_id: str):
+    return jsonify_with_status(
+        {
+            "success": False,
+            "request_id": request_id,
+            "error": {
+                "type": "auth_error",
+                "message": "Login required for Playground interview access.",
+            },
+        },
+        401,
+    )
+
+
+def _normalize_playground_project(project: Optional[str]) -> str:
+    value = str(project or "default").strip() or "default"
+    if "/" in value or "\\" in value or value.startswith("."):
+        raise DashboardAPIValidationError("Invalid Playground project.", status_code=400)
+    return value
+
+
+def _normalize_playground_filename(filename: Optional[str]) -> str:
+    value = os.path.basename(str(filename or "").strip())
+    if not value or value in {".", ".."}:
+        raise DashboardAPIValidationError(
+            "Playground YAML filename is required.", status_code=400
+        )
+    if not value.lower().endswith((".yml", ".yaml")):
+        raise DashboardAPIValidationError(
+            "Playground file must be a YAML interview.", status_code=400
+        )
+    return value
+
+
+@contextmanager
+def _playground_user_context(user_id: int):
+    original_info = copy.deepcopy(
+        getattr(docassemble.base.functions.this_thread, "current_info", {}) or {}
+    )
+    current_info = copy.deepcopy(original_info)
+    current_info.setdefault("user", {})
+    current_info["user"].update({"is_anonymous": False, "theid": user_id})
+    docassemble.base.functions.this_thread.current_info = current_info
+    try:
+        yield
+    finally:
+        docassemble.base.functions.this_thread.current_info = original_info
+
+
+def _list_playground_projects() -> List[str]:
+    from docassemble.webapp.files import SavedFile
+
+    uid = getattr(current_user, "id", None)
+    if uid is None:
+        return ["default"]
+    playground = SavedFile(uid, fix=False, section="playground")
+    projects = playground.list_of_dirs() or []
+    projects = [proj for proj in projects if isinstance(proj, str) and proj]
+    if "default" not in projects:
+        projects.append("default")
+    return sorted(set(projects))
+
+
+def _list_playground_yaml_files(project: str) -> List[Dict[str, str]]:
+    from docassemble.webapp.playground import Playground
+
+    uid = getattr(current_user, "id", None)
+    if uid is None:
+        return []
+    with _playground_user_context(uid):
+        playground = Playground(project=project)
+        return [
+            {"filename": filename, "label": filename}
+            for filename in playground.file_list
+            if isinstance(filename, str) and filename.lower().endswith((".yml", ".yaml"))
+        ]
+
+
+def _get_playground_variable_info(project: str, filename: str) -> Dict[str, Any]:
+    from docassemble.webapp.playground import Playground
+
+    uid = getattr(current_user, "id", None)
+    if uid is None:
+        raise DashboardAPIValidationError(
+            "Login required for Playground interview access.", status_code=401
+        )
+    with _playground_user_context(uid):
+        pg = Playground(project=project)
+        if filename not in pg.file_list:
+            raise DashboardAPIValidationError(
+                "Selected Playground YAML file was not found.", status_code=404
+            )
+        variable_info = pg.variables_from_file(filename)
+    if not isinstance(variable_info, dict):
+        variable_info = {}
+    all_names = sorted(
+        str(name).strip()
+        for name in (variable_info.get("all_names_reduced") or [])
+        if str(name).strip()
+    )
+    top_level_names = sorted(
+        {name.split(".", 1)[0].split("[", 1)[0] for name in all_names if name}
+    )
+    return {
+        "project": project,
+        "filename": filename,
+        "all_names": all_names,
+        "top_level_names": top_level_names,
+    }
+
+
+def _normalize_installed_package_name(package_name: Optional[str]) -> str:
+    value = str(package_name or "").strip()
+    if not value or "/" in value or "\\" in value or ":" in value:
+        raise DashboardAPIValidationError(
+            "Installed interview package name is required.", status_code=400
+        )
+    if not value.startswith("docassemble."):
+        raise DashboardAPIValidationError(
+            "Installed interview package must start with docassemble.",
+            status_code=400,
+        )
+    return value
+
+
+def _normalize_installed_interview_path(interview_path: Optional[str]) -> str:
+    value = str(interview_path or "").strip()
+    if ":" not in value:
+        raise DashboardAPIValidationError(
+            "Installed interview path must be in package:file format.",
+            status_code=400,
+        )
+    package_name, filename = value.split(":", 1)
+    package_name = _normalize_installed_package_name(package_name)
+    filename = _normalize_playground_filename(filename)
+    return f"{package_name}:{filename}"
+
+
+def _extract_variable_names_from_var_json(variable_json: Any) -> Dict[str, List[str]]:
+    if not isinstance(variable_json, dict):
+        variable_json = {}
+
+    names: List[str] = []
+    seen = set()
+
+    def add_name(entry: Any) -> None:
+        candidate = None
+        if isinstance(entry, str):
+            candidate = entry
+        elif isinstance(entry, dict):
+            for key in ("name", "variable", "var_name", "varName"):
+                if isinstance(entry.get(key), str):
+                    candidate = entry.get(key)
+                    break
+            if candidate is None and isinstance(entry.get(0), str):
+                candidate = entry.get(0)
+        elif isinstance(entry, (list, tuple)) and entry:
+            if isinstance(entry[0], str):
+                candidate = entry[0]
+        if candidate is None:
+            return
+        candidate = str(candidate).strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        names.append(candidate)
+
+    for key in ("var_list", "undefined_names"):
+        values = variable_json.get(key)
+        if isinstance(values, list):
+            for entry in values:
+                add_name(entry)
+
+    names.sort()
+    top_level_names = sorted(
+        {name.split(".", 1)[0].split("[", 1)[0] for name in names if name}
+    )
+    return {"all_names": names, "top_level_names": top_level_names}
+
+
+def _list_installed_interview_packages() -> List[str]:
+    from .aldashboard import list_question_files_in_docassemble_packages
+
+    package_map = list_question_files_in_docassemble_packages()
+    return sorted(
+        package_name
+        for package_name, filenames in package_map.items()
+        if isinstance(package_name, str) and filenames
+    )
+
+
+def _list_installed_interview_files(package_name: str) -> List[Dict[str, str]]:
+    from .aldashboard import list_question_files_in_docassemble_packages
+
+    package_map = list_question_files_in_docassemble_packages()
+    filenames = package_map.get(package_name, [])
+    return [
+        {
+            "filename": filename,
+            "label": filename,
+            "interview_path": f"{package_name}:{filename}",
+        }
+        for filename in sorted(filenames)
+        if isinstance(filename, str) and filename.lower().endswith((".yml", ".yaml"))
+    ]
+
+
+def _get_installed_interview_variable_info(interview_path: str) -> Dict[str, Any]:
+    from docassemble.base.parse import InterviewStatus, interview_source_from_string
+    from docassemble.webapp.server import current_info, get_vars_in_use
+
+    normalized_path = _normalize_installed_interview_path(interview_path)
+    try:
+        interview_source = interview_source_from_string(normalized_path, testing=True)
+        interview = interview_source.get_interview()
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            f"Unable to load installed interview: {exc}", status_code=400
+        ) from exc
+
+    device_id = request.cookies.get("ds", None)
+    interview_status = InterviewStatus(
+        current_info=current_info(
+            yaml=normalized_path, req=request, action=None, device_id=device_id
+        )
+    )
+    try:
+        variable_json, vocab_list, vocab_dict, ac_list = get_vars_in_use(  # pylint: disable=unused-variable
+            interview,
+            interview_status,
+            debug_mode=False,
+            return_json=True,
+            use_playground=False,
+            current_project="default",
+        )
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            f"Unable to analyze installed interview variables: {exc}",
+            status_code=400,
+        ) from exc
+
+    parsed_names = _extract_variable_names_from_var_json(variable_json)
+    return {
+        "interview_path": normalized_path,
+        "all_names": parsed_names["all_names"],
+        "top_level_names": parsed_names["top_level_names"],
+    }
 
 
 def _get_static_content(filename: str) -> str:
@@ -296,12 +559,239 @@ def labeler_auth_status():
             "data": {
                 "is_authenticated": bool(identity.get("is_authenticated")),
                 "email": identity.get("email"),
+                "user_id": identity.get("user_id"),
                 "login_url": login_url,
                 "logout_url": logout_url,
                 "ai_enabled": _labeler_ai_auth_check(),
             },
         }
     )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/playground-projects", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def docx_labeler_playground_projects():
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"projects": _list_playground_projects()},
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: playground-projects {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/playground-files", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def docx_labeler_playground_files():
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        project = _normalize_playground_project(request.args.get("project"))
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"project": project, "files": _list_playground_yaml_files(project)},
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: playground-files {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/playground-variables", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def docx_labeler_playground_variables():
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        project = _normalize_playground_project(request.args.get("project"))
+        filename = _normalize_playground_filename(request.args.get("filename"))
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": _get_playground_variable_info(project, filename),
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: playground-variables {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/installed-packages", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def docx_labeler_installed_packages():
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"packages": _list_installed_interview_packages()},
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: installed-packages {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/installed-files", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def docx_labeler_installed_files():
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        package_name = _normalize_installed_package_name(request.args.get("package"))
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "package": package_name,
+                    "files": _list_installed_interview_files(package_name),
+                },
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: installed-files {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/installed-variables", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def docx_labeler_installed_variables():
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        interview_path = _normalize_installed_interview_path(
+            request.args.get("interview_path")
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": _get_installed_interview_variable_info(interview_path),
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: installed-variables {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
 
 
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/extract-runs", methods=["POST"])
@@ -468,6 +958,70 @@ def docx_labeler_suggest_labels():
             elif isinstance(custom_people_raw, list):
                 custom_people_names = custom_people_raw
 
+        preferred_variable_names = None
+        interview_source_mode = (
+            str(post_data.get("interview_source_mode") or "playground").strip().lower()
+            or "playground"
+        )
+        selected_playground_project = None
+        selected_playground_filename = None
+        selected_installed_interview_path = None
+        preferred_variable_names_raw = post_data.get("preferred_variable_names")
+        if preferred_variable_names_raw:
+            if isinstance(preferred_variable_names_raw, str):
+                try:
+                    parsed_preferred_names = json.loads(preferred_variable_names_raw)
+                except json.JSONDecodeError:
+                    parsed_preferred_names = [
+                        item.strip()
+                        for item in preferred_variable_names_raw.split(",")
+                        if item.strip()
+                    ]
+            elif isinstance(preferred_variable_names_raw, list):
+                parsed_preferred_names = preferred_variable_names_raw
+            else:
+                parsed_preferred_names = []
+            preferred_variable_names = [
+                str(item).strip()
+                for item in parsed_preferred_names
+                if str(item).strip()
+            ] or None
+        use_playground_variables = parse_bool(
+            post_data.get("use_playground_variables"), default=False
+        )
+        if use_playground_variables:
+            if interview_source_mode == "installed":
+                selected_installed_interview_path = _normalize_installed_interview_path(
+                    post_data.get("installed_interview_path")
+                    or (
+                        (
+                            str(post_data.get("installed_package") or "").strip()
+                            + ":"
+                            + str(post_data.get("installed_yaml_file") or "").strip()
+                        )
+                        if (
+                            str(post_data.get("installed_package") or "").strip()
+                            and str(post_data.get("installed_yaml_file") or "").strip()
+                        )
+                        else None
+                    )
+                )
+                if preferred_variable_names is None:
+                    preferred_variable_names = _get_installed_interview_variable_info(
+                        selected_installed_interview_path
+                    )["all_names"]
+            else:
+                selected_playground_project = _normalize_playground_project(
+                    post_data.get("playground_project")
+                )
+                selected_playground_filename = _normalize_playground_filename(
+                    post_data.get("playground_yaml_file")
+                )
+                if preferred_variable_names is None:
+                    preferred_variable_names = _get_playground_variable_info(
+                        selected_playground_project, selected_playground_filename
+                    )["all_names"]
+
         # Write to temp file for processing
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
             tmp.write(content)
@@ -500,6 +1054,7 @@ def docx_labeler_suggest_labels():
             aggregated = get_voted_docx_label_suggestions(
                 docx_path=temp_path,
                 custom_people_names=custom_people_names,
+                preferred_variable_names=preferred_variable_names,
                 openai_api=openai_api,
                 openai_base_url=openai_base_url,
                 model=model,
@@ -565,6 +1120,11 @@ def docx_labeler_suggest_labels():
                     "filename": filename,
                     "suggestions": formatted_suggestions,
                     "defragment_runs": defragment_runs,
+                    "interview_source_mode": interview_source_mode,
+                    "playground_project": selected_playground_project,
+                    "playground_yaml_file": selected_playground_filename,
+                    "installed_interview_path": selected_installed_interview_path,
+                    "playground_variable_count": len(preferred_variable_names or []),
                     "validation": {
                         "deterministic": {
                             "flagged_count": flagged_selected_count,
@@ -1263,4 +1823,3 @@ def pdf_labeler_rename_fields():
             {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
             500,
         )
-

@@ -40,6 +40,7 @@ from .api_dashboard_utils import (
     merge_raw_options,
     parse_bool,
 )
+from .pdf_export_utils import build_pdf_export_fields_per_page
 
 __all__ = []
 
@@ -1928,77 +1929,13 @@ def pdf_labeler_apply_fields():
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
 
-            # Organize fields by page
-            fields_per_page: List[List[FormField]] = [[] for _ in range(page_count)]
-
-            for field_data in fields_data:
-                page_idx = int(field_data.get("pageIndex", 0))
-                if page_idx < 0 or page_idx >= page_count:
-                    continue
-
-                field_type_str = str(field_data.get("type", "text")).lower()
-                if field_type_str in ("text", "multiline"):
-                    field_type = FieldType.TEXT if field_type_str == "text" else FieldType.AREA
-                elif field_type_str == "checkbox":
-                    field_type = FieldType.CHECK_BOX
-                elif field_type_str == "signature":
-                    field_type = FieldType.SIGNATURE
-                elif field_type_str == "radio":
-                    field_type = FieldType.RADIO
-                elif field_type_str in ("dropdown", "choice"):
-                    field_type = FieldType.CHOICE
-                elif field_type_str == "listbox":
-                    field_type = FieldType.LIST_BOX
-                else:
-                    field_type = FieldType.TEXT
-
-                width = float(field_data.get("width", 100))
-                height = float(field_data.get("height", 20))
-                font_name = str(field_data.get("font") or "Helvetica").strip() or "Helvetica"
-                auto_size = parse_bool(field_data.get("autoSize"), default=False)
-                allow_scroll = parse_bool(field_data.get("allowScroll"), default=True)
-                font_size_raw = field_data.get("fontSize")
-                font_size = None if auto_size else int(font_size_raw or 12)
-                field_configs: Dict[str, Any] = {
-                    "width": width,
-                    "height": height,
-                    "fontName": font_name,
-                }
-                field_flag_parts: List[str] = []
-                if field_type == FieldType.AREA:
-                    field_flag_parts.append("multiline")
-                if not allow_scroll:
-                    field_flag_parts.append("doNotScroll")
-                field_configs["fieldFlags"] = " ".join(field_flag_parts)
-                checkbox_style = str(field_data.get("checkboxStyle") or "").strip()
-                if checkbox_style:
-                    field_configs["buttonStyle"] = checkbox_style
-                background_color = field_data.get("backgroundColor")
-                if isinstance(background_color, str) and background_color.strip():
-                    try:
-                        field_configs["fillColor"] = HexColor(background_color.strip())
-                    except Exception:
-                        pass
-                if field_type in (FieldType.CHOICE, FieldType.LIST_BOX, FieldType.RADIO):
-                    raw_options = field_data.get("options")
-                    if isinstance(raw_options, list):
-                        options = [str(option) for option in raw_options if str(option).strip()]
-                    else:
-                        options = []
-                    if options:
-                        field_configs["options"] = options
-                        if field_type == FieldType.RADIO:
-                            field_configs["value"] = options[0]
-
-                form_field = FormField(
-                    field_name=str(field_data.get("name", "field")),
-                    type_name=field_type,
-                    x=int(field_data.get("x", 0)),
-                    y=int(field_data.get("y", 0)),
-                    font_size=font_size,
-                    configs=field_configs,
-                )
-                fields_per_page[page_idx].append(form_field)
+            fields_per_page = build_pdf_export_fields_per_page(
+                fields_data,
+                page_count=page_count,
+                form_field_cls=FormField,
+                field_type_enum=FieldType,
+                color_parser=HexColor,
+            )
 
             # Apply fields using FormFyxer
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:

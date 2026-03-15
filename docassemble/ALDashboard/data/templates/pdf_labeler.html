@@ -1137,6 +1137,7 @@
     }
 
     function syncFieldsListToVisiblePage(force) {
+        if (state.fieldSort !== 'position') return;
         if (state.pageCount <= 1 || fieldsList.classList.contains('hidden')) return;
         if (!force && Date.now() < fieldsListManualScrollUntil) return;
         const pageIndex = getCurrentVisiblePageIndex();
@@ -1195,14 +1196,22 @@
     }
 
     function updateFieldCount() {
-        const count = state.fields.length;
-        fieldCount.textContent = count === 0 ? 'No fields' : count + ' field' + (count === 1 ? '' : 's');
-        fieldsEmpty.classList.toggle('hidden', count !== 0);
-        fieldsList.classList.toggle('hidden', count === 0);
+        const totalCount = state.fields.length;
+        const filteredCount = totalCount === 0 ? 0 : getDisplayedFields().length;
+        const filtersActive = Boolean(String(state.fieldSearch || '').trim() || normalizeFieldType(state.fieldTypeFilter || ''));
+        if (totalCount === 0) {
+            fieldCount.textContent = 'No fields';
+        } else if (filtersActive) {
+            fieldCount.textContent = filteredCount + ' of ' + totalCount + ' fields';
+        } else {
+            fieldCount.textContent = totalCount + ' field' + (totalCount === 1 ? '' : 's');
+        }
+        fieldsEmpty.classList.toggle('hidden', totalCount !== 0);
+        fieldsList.classList.toggle('hidden', totalCount === 0);
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
-        exportBtn.disabled = !state.pdfBytes || count === 0;
-        normalizePassBtn.disabled = !state.pdfBytes || count === 0;
-        relabelBtn.disabled = !state.pdfBytes || count === 0 || !state.auth.aiEnabled;
+        exportBtn.disabled = !state.pdfBytes || totalCount === 0;
+        normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
+        relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
     }
 
     function getDisplayedFields() {
@@ -1248,6 +1257,15 @@
             return left.x - right.x;
         });
         return sorted;
+    }
+
+    function refreshFieldsListFromControls() {
+        renderFieldsList();
+        if (state.selectedFieldId && fieldsList.querySelector('.field-list-item[data-field-id="' + state.selectedFieldId + '"]')) {
+            scrollSelectedFieldIntoView(state.selectedFieldId);
+            return;
+        }
+        scheduleFieldsListSync(true);
     }
 
     function updateToolHint() {
@@ -2198,11 +2216,12 @@
     }
 
     function renderFieldsList() {
+        updateFieldCount();
         if (state.fields.length === 0) {
             fieldsList.innerHTML = '';
             return;
         }
-        const showPageGroups = state.pageCount > 1;
+        const showPageGroups = state.pageCount > 1 && state.fieldSort === 'position';
         const orderedFields = getDisplayedFields();
         fieldsList.innerHTML = '';
         if (orderedFields.length === 0) {
@@ -2215,11 +2234,13 @@
 
         orderedFields.forEach(function (field) {
             const meta = getFieldTypeMeta(field.type);
-            if (!currentGroup || currentPage !== field.pageIndex) {
+            if (!currentGroup || (showPageGroups && currentPage !== field.pageIndex)) {
                 currentPage = field.pageIndex;
                 currentGroup = document.createElement('section');
                 currentGroup.className = 'field-list-page';
-                currentGroup.dataset.pageIndex = String(field.pageIndex);
+                if (showPageGroups) {
+                    currentGroup.dataset.pageIndex = String(field.pageIndex);
+                }
                 if (showPageGroups) {
                     const divider = document.createElement('div');
                     divider.className = 'field-page-divider';
@@ -3075,15 +3096,15 @@
     });
     fieldSearchInput.addEventListener('input', function () {
         state.fieldSearch = fieldSearchInput.value || '';
-        renderFieldsList();
+        refreshFieldsListFromControls();
     });
     fieldTypeFilterInput.addEventListener('change', function () {
         state.fieldTypeFilter = fieldTypeFilterInput.value || '';
-        renderFieldsList();
+        refreshFieldsListFromControls();
     });
     fieldSortInput.addEventListener('change', function () {
         state.fieldSort = fieldSortInput.value || 'position';
-        renderFieldsList();
+        refreshFieldsListFromControls();
     });
     window.addEventListener('resize', function () {
         currentVisiblePageIndex = getCurrentVisiblePageIndex();

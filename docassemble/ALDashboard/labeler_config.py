@@ -319,23 +319,23 @@ def build_default_prompt_library() -> Dict[str, Any]:
         "pdf": {
             "field_name_library": {
                 "text": [
-                    "users[0].name.first",
-                    "users[0].name.last",
-                    "users[0].name.full()",
-                    "users[0].address.address",
-                    "users[0].address.city",
-                    "users[0].address.state",
-                    "users[0].address.zip",
-                    "users[0].phone_number",
-                    "users[0].email",
-                    "other_parties[0].name.full()",
+                    "users1_name_first",
+                    "users1_name_last",
+                    "users1_name_full",
+                    "users1_address_address",
+                    "users1_address_city",
+                    "users1_address_state",
+                    "users1_address_zip",
+                    "users1_phone_number",
+                    "users1_email",
+                    "other_parties1_name_full",
                     "docket_number",
                     "case_name",
                 ],
                 "signature": [
-                    "users[0].signature",
-                    "other_parties[0].signature",
-                    "attorney.signature",
+                    "users1_signature",
+                    "other_parties1_signature",
+                    "attorney_signature",
                 ],
                 "checkbox": [
                     "user_agrees",
@@ -458,3 +458,35 @@ def get_docx_prompt_profile(
     resolved = dict(profile)
     resolved["name"] = requested_profile if requested_profile in prompt_profiles else default_profile
     return resolved
+
+
+def get_pdf_labeler_ui_config(
+    *, prompt_library_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """Return branding and field-name suggestions for the PDF labeler UI."""
+    library = load_labeler_prompt_library(prompt_library_path)
+
+    branding = library.get("branding", {})
+    if not isinstance(branding, Mapping):
+        branding = {}
+
+    pdf_config = library.get("pdf", {})
+    if not isinstance(pdf_config, Mapping):
+        pdf_config = {}
+
+    raw_field_name_library = pdf_config.get("field_name_library", {})
+    if not isinstance(raw_field_name_library, Mapping):
+        raw_field_name_library = {}
+
+    field_name_library: Dict[str, Any] = {}
+    for field_type, raw_names in raw_field_name_library.items():
+        if not isinstance(raw_names, list):
+            continue
+        names = [str(name).strip() for name in raw_names if str(name).strip()]
+        if names:
+            field_name_library[str(field_type)] = names
+
+    return {
+        "branding": dict(branding),
+        "field_name_library": field_name_library,
+    }

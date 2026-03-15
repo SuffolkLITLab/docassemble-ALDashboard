@@ -8,21 +8,19 @@
     <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/bootstrap-theme.css">
     <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/variables.css">
     <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/custom.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-    <script>window.LABELER_BOOTSTRAP = "__LABELER_BOOTSTRAP_JSON__";</script>
     <style>
         .hidden { display: none !important; }
-        .pdf-labeler-body { background: #e9edf3; min-height: 100vh; }
+        .pdf-labeler-body { background: #e8edf5; min-height: 100vh; color: #132238; }
         .pdf-labeler-app { min-height: 100vh; }
         .pdf-main { min-height: 0; }
-        .pdf-container { background: #dfe5ef; }
-        .pdf-fields-panel { width: 20rem; min-width: 20rem; border-color: var(--bs-border-color) !important; }
+        .pdf-container { background: linear-gradient(180deg, #dae3ef 0%, #d6deea 100%); }
+        .pdf-fields-panel { width: 24rem; min-width: 24rem; border-color: var(--bs-border-color) !important; }
         .toolbar-divider { width: 1px; height: 1.5rem; background: rgba(255, 255, 255, 0.25); margin: 0 0.5rem; }
         .icon-16 { width: 1rem; height: 1rem; }
-        .icon-48 { width: 3rem; height: 3rem; color: #a0aec0; }
-        .icon-96 { width: 6rem; height: 6rem; color: #cbd5e1; }
-        .pdf-pages-wrap { max-width: 56rem; }
+        .icon-48 { width: 3rem; height: 3rem; color: #8ca0bc; }
+        .icon-96 { width: 6rem; height: 6rem; color: #b7c3d6; }
+        .pdf-pages-wrap { max-width: 62rem; }
         .model-input { width: 100%; }
         .model-suggestions {
             position: relative;
@@ -47,67 +45,322 @@
             font-size: 0.75rem;
         }
         .model-suggestion-btn:hover { background: var(--bs-light); }
-        .page-overlay { position: absolute; inset: 0; }
+        .tool-btn.active {
+            background-color: #114a8b !important;
+            border-color: #114a8b !important;
+            color: #fff !important;
+            box-shadow: 0 0 0 2px rgba(17, 74, 139, 0.25);
+        }
+        .floating-tool-picker {
+            position: fixed;
+            left: 1rem;
+            bottom: 1rem;
+            z-index: 1050;
+            width: fit-content;
+            max-width: min(42rem, calc(100vw - 2rem));
+            padding: 0.55rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(19, 34, 56, 0.1);
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 18px 34px rgba(14, 29, 51, 0.15);
+            backdrop-filter: blur(8px);
+        }
+        .floating-tool-picker .tool-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+        }
+        .floating-tool-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.38rem;
+            padding: 0.45rem 0.7rem;
+            border: 1px solid #d2dce7;
+            border-radius: 999px;
+            background: #f8fafc;
+            color: #19314f;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+        .floating-tool-btn svg { width: 0.95rem; height: 0.95rem; }
+        .floating-tool-btn.active {
+            border-color: #114a8b;
+            background: #114a8b;
+            color: #fff;
+            box-shadow: 0 0 0 2px rgba(17, 74, 139, 0.16);
+        }
+        .quick-field-editor {
+            position: fixed;
+            z-index: 1060;
+            width: min(18rem, calc(100vw - 1.5rem));
+            padding: 0.8rem;
+            border: 1px solid rgba(17, 74, 139, 0.14);
+            border-radius: 0.9rem;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: 0 18px 32px rgba(14, 29, 51, 0.18);
+            backdrop-filter: blur(10px);
+        }
+        .quick-field-editor .quick-field-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .quick-field-editor .quick-field-input {
+            min-width: 0;
+        }
+        .quick-field-editor .quick-field-help {
+            font-size: 0.76rem;
+            margin-top: 0.35rem;
+        }
+        .quick-field-editor .quick-field-help.info { color: #0b5ed7; }
+        .quick-field-editor .quick-field-help.warning { color: #9a5800; }
+        .header-auth-menu { min-width: 12rem; }
+        .page-overlay {
+            position: absolute;
+            inset: 0;
+            user-select: none;
+            touch-action: none;
+        }
+        .page-overlay.tool-active { cursor: crosshair; }
+        .page-overlay.tool-active.point-insert { cursor: copy; }
         .draft-rect {
             position: absolute;
-            border: 2px dashed #f59e0b;
-            background: rgba(251, 191, 36, 0.3);
+            border: 2px dashed #dd8a12;
+            background: rgba(243, 171, 43, 0.22);
             pointer-events: none;
         }
-        .field-list-item {
-            border: 1px solid var(--bs-border-color);
-            background: #fff;
-            padding: 0.75rem;
-            cursor: pointer;
-            margin-bottom: 0.75rem;
-        }
-        .field-list-item:hover { border-color: #8fa2c0; }
-        .field-list-item.selected {
-            border-color: var(--bs-primary);
-            background: rgba(var(--bs-primary-rgb), 0.08);
-        }
-        .field-list-name { max-width: 11rem; }
         .labeler-toast {
             position: fixed;
             right: 1rem;
             bottom: 1rem;
             z-index: 1080;
-            max-width: 24rem;
+            max-width: 28rem;
             margin-bottom: 0;
         }
-        .drag-over { background: #cfdcf4 !important; }
-        .field-box { position: absolute; border: 2px solid #0ea5e9; background: rgba(14, 165, 233, 0.1); cursor: move; }
-        .field-box:hover { background: rgba(14, 165, 233, 0.2); }
-        .field-box.selected { border-color: #2563eb; background: rgba(37, 99, 235, 0.2); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3); }
-        .field-box.signature { border-color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
-        .field-box.checkbox { border-color: #10b981; background: rgba(16, 185, 129, 0.1); }
-        .resize-handle { position: absolute; width: 10px; height: 10px; background: #2563eb; border: 1px solid white; }
+        .drag-over { background: #cad8eb !important; }
+        .loading-spinner { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .pdf-page-shell {
+            margin-bottom: 1.5rem;
+            border-radius: 0.75rem;
+        }
+        .pdf-page-label {
+            font-size: 0.82rem;
+            color: #4f6582;
+            margin-bottom: 0.45rem;
+        }
+        .pdf-page {
+            position: relative;
+            background: #fff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            box-shadow: 0 10px 22px rgba(16, 31, 56, 0.12);
+        }
+        .field-box {
+            position: absolute;
+            border: 2px solid var(--field-border, #0f6ab3);
+            background: var(--field-fill, rgba(15, 106, 179, 0.12));
+            color: var(--field-text, #0c3d68);
+            cursor: move;
+            border-radius: 0.35rem;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+        }
+        .field-box:hover {
+            background: var(--field-fill-hover, rgba(15, 106, 179, 0.2));
+        }
+        .field-box.selected {
+            box-shadow: 0 0 0 3px rgba(17, 74, 139, 0.25);
+        }
+        .field-box[data-field-type="text"] {
+            --field-border: #0b84c6;
+            --field-fill: rgba(11, 132, 198, 0.12);
+            --field-fill-hover: rgba(11, 132, 198, 0.22);
+            --field-text: #084a70;
+        }
+        .field-box[data-field-type="multiline"] {
+            --field-border: #2563eb;
+            --field-fill: rgba(37, 99, 235, 0.12);
+            --field-fill-hover: rgba(37, 99, 235, 0.2);
+            --field-text: #183f92;
+        }
+        .field-box[data-field-type="checkbox"] {
+            --field-border: #198754;
+            --field-fill: rgba(25, 135, 84, 0.13);
+            --field-fill-hover: rgba(25, 135, 84, 0.2);
+            --field-text: #14513a;
+        }
+        .field-box[data-field-type="signature"] {
+            --field-border: #7c3aed;
+            --field-fill: rgba(124, 58, 237, 0.12);
+            --field-fill-hover: rgba(124, 58, 237, 0.19);
+            --field-text: #5525a8;
+        }
+        .field-box[data-field-type="dropdown"] {
+            --field-border: #c06612;
+            --field-fill: rgba(192, 102, 18, 0.13);
+            --field-fill-hover: rgba(192, 102, 18, 0.2);
+            --field-text: #7c450f;
+        }
+        .field-box[data-field-type="listbox"] {
+            --field-border: #b45309;
+            --field-fill: rgba(180, 83, 9, 0.13);
+            --field-fill-hover: rgba(180, 83, 9, 0.2);
+            --field-text: #6b3506;
+        }
+        .field-box[data-field-type="radio"] {
+            --field-border: #c2410c;
+            --field-fill: rgba(194, 65, 12, 0.12);
+            --field-fill-hover: rgba(194, 65, 12, 0.19);
+            --field-text: #7a2a09;
+        }
+        .field-chip {
+            position: absolute;
+            top: 0.18rem;
+            left: 0.18rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            max-width: calc(100% - 0.36rem);
+            min-width: 0;
+            padding: 0.1rem 0.35rem;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.88);
+            font-size: 0.62rem;
+            line-height: 1.1;
+            color: var(--field-text, #0c3d68);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .field-chip svg { width: 0.7rem; height: 0.7rem; flex: 0 0 auto; }
+        .field-chip .field-chip-name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .field-chip.hide-name .field-chip-name { display: none; }
+        .field-chip.icon-only {
+            padding: 0.08rem 0.2rem;
+            min-width: 1rem;
+            justify-content: center;
+        }
+        .field-chip.wrap-name {
+            align-items: flex-start;
+            border-radius: 0.55rem;
+            white-space: normal;
+        }
+        .field-chip.wrap-name .field-chip-name {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            white-space: normal;
+        }
+        .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            background: #114a8b;
+            border: 1px solid #fff;
+        }
         .resize-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
         .resize-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
         .resize-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
         .resize-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
-        .loading-spinner { animation: spin 1s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .pdf-page { position: relative; margin-bottom: 16px; background: white; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-        .field-label { position: absolute; top: 2px; left: 4px; font-size: 10px; background: rgba(0,0,0,0.7); color: white; padding: 1px 4px; border-radius: 2px; max-width: calc(100% - 8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tool-btn.active { background-color: var(--bs-primary) !important; border-color: var(--bs-primary) !important; color: var(--bs-white) !important; }
-        .header-auth-menu { min-width: 12rem; }
+        .resize-handle.n { top: -5px; left: calc(50% - 5px); cursor: n-resize; }
+        .resize-handle.s { bottom: -5px; left: calc(50% - 5px); cursor: s-resize; }
+        .resize-handle.e { top: calc(50% - 5px); right: -5px; cursor: e-resize; }
+        .resize-handle.w { top: calc(50% - 5px); left: -5px; cursor: w-resize; }
+        .field-list-item {
+            border: 1px solid #d8e0ea;
+            background: #fff;
+            border-radius: 0.75rem;
+            padding: 0.8rem;
+            margin-bottom: 0.8rem;
+            cursor: pointer;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+        }
+        .field-list-item:hover {
+            border-color: #b4c1d2;
+            transform: translateY(-1px);
+        }
+        .field-list-item.selected {
+            border-color: #114a8b;
+            box-shadow: 0 10px 22px rgba(17, 74, 139, 0.12);
+            background: #f8fbff;
+        }
+        .field-card-editor {
+            margin-top: 0.85rem;
+            padding-top: 0.85rem;
+            border-top: 1px solid #dbe5f0;
+        }
+        .field-card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-top: 0.85rem;
+        }
+        .field-card-help {
+            font-size: 0.76rem;
+            margin-top: 0.35rem;
+        }
+        .field-card-help.info { color: #0b5ed7; }
+        .field-card-help.warning { color: #9a5800; }
+        .field-card-subtext {
+            font-size: 0.76rem;
+            color: #60748d;
+        }
+        .font-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 0.5rem;
+            align-items: end;
+        }
+        .font-row .auto-size-wrap {
+            min-width: 7rem;
+        }
+        .field-type-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            border-radius: 999px;
+            padding: 0.15rem 0.45rem;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: #edf2f8;
+            color: #38516d;
+        }
+        .field-type-badge svg { width: 0.8rem; height: 0.8rem; }
+        .dirty-indicator { font-size: 0.72rem; }
+        @media (max-width: 1100px) {
+            .pdf-fields-panel { width: 100%; min-width: 0; max-height: 42vh; }
+            .pdf-main { flex-direction: column !important; }
+            .floating-tool-picker {
+                left: 0.75rem;
+                right: 0.75rem;
+                bottom: 0.75rem;
+                max-width: none;
+            }
+            .quick-field-editor {
+                width: min(22rem, calc(100vw - 1rem));
+            }
+            .font-row {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body class="pdf-labeler-body">
     <div id="app" class="pdf-labeler-app d-flex flex-column">
-        <!-- Header -->
         <header class="navbar bg-dark px-4 py-3">
             <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap gap-3">
                 <div class="d-flex align-items-center gap-3">
                     <img id="brand-logo" src="/packagestatic/docassemble.LITLabTheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
-                    <div class="al-title">
+                    <div>
                         <h1 id="brand-pdf-title" class="h4 fw-bold mb-0 text-white">AssemblyLine PDF Labeler</h1>
-                        <p id="brand-pdf-subtitle" class="small mt-1 mb-0 text-light">Add and edit PDF form fields using AI detection</p>
+                        <p id="brand-pdf-subtitle" class="small mt-1 mb-0 text-light">Add, inspect, rename, and export PDF form fields</p>
                     </div>
                 </div>
-                
-                <!-- Tool Buttons -->
                 <div id="tools-container" class="d-flex align-items-center gap-2 flex-wrap">
                     <div id="auth-controls" class="position-relative"></div>
                     <button id="settings-btn" class="btn btn-outline-light btn-sm">
@@ -119,47 +372,25 @@
                         Upload PDF
                         <input type="file" id="file-input" accept=".pdf" class="d-none">
                     </label>
-                    
                     <div class="toolbar-divider"></div>
-                    
-                    <button id="tool-text" class="tool-btn btn btn-outline-light btn-sm" title="Text Field">
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-                        Text
-                    </button>
-                    <button id="tool-multiline" class="tool-btn btn btn-outline-light btn-sm" title="Multi-line Text">
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 10h18M3 14h18M3 18h10"/></svg>
-                        Multiline
-                    </button>
-                    <button id="tool-checkbox" class="tool-btn btn btn-outline-light btn-sm" title="Checkbox">
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="m9 12 2 2 4-4"/></svg>
-                        Checkbox
-                    </button>
-                    <button id="tool-signature" class="tool-btn btn btn-outline-light btn-sm" title="Signature">
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.5 3.5 6 6-11 11H3v-6.5l11-11Z"/></svg>
-                        Signature
-                    </button>
-                    
-                    <div class="toolbar-divider"></div>
-                    
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
                         Auto-Detect
                     </button>
                     <button id="relabel-btn" class="btn btn-outline-light btn-sm" disabled>
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                         AI Relabel
                     </button>
-
-                    <button id="export-btn" class="btn btn-primary btn-sm" disabled>
-                        Export PDF
-                    </button>
+                    <button id="export-btn" class="btn btn-primary btn-sm" disabled>Export PDF</button>
                 </div>
+            </div>
+            <div class="container-fluid mt-3 d-flex justify-content-end align-items-center flex-wrap gap-2">
+                <span id="document-name" class="small text-light"></span>
+                <span id="dirty-indicator" class="badge text-bg-warning dirty-indicator hidden">Unsaved changes</span>
             </div>
         </header>
 
-        <!-- Main Content -->
         <main class="pdf-main d-flex flex-grow-1 overflow-hidden">
-            <!-- PDF Preview -->
             <div id="pdf-container" class="pdf-container flex-grow-1 overflow-auto p-4">
                 <div id="pdf-empty" class="h-100 d-flex align-items-center justify-content-center text-center">
                     <div>
@@ -167,7 +398,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                         </svg>
                         <h3 class="mt-4 h5 text-muted">Upload a PDF to get started</h3>
-                        <p class="mt-2 text-muted">Drag and drop or click "Upload PDF" above</p>
+                        <p class="mt-2 text-muted">Drag and drop a PDF here or use the upload button above.</p>
                     </div>
                 </div>
                 <div id="pdf-loading" class="hidden h-100 d-flex align-items-center justify-content-center">
@@ -182,58 +413,71 @@
                 <div id="pdf-pages" class="hidden pdf-pages-wrap mx-auto"></div>
             </div>
 
-            <!-- Fields Panel -->
             <aside id="fields-panel" class="pdf-fields-panel bg-white border-start d-flex flex-column overflow-hidden">
                 <div class="p-3 border-bottom">
-                    <h2 class="h5 fw-semibold mb-0">Fields</h2>
-                    <p id="field-count" class="small text-muted mt-1 mb-0">No fields</p>
-                    <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
+                    <div class="d-flex align-items-center justify-content-between gap-2">
+                        <div>
+                            <h2 class="h5 fw-semibold mb-0">Fields</h2>
+                            <p id="field-count" class="small text-muted mt-1 mb-0">No fields</p>
+                        </div>
+                    </div>
+                    <div id="ai-auth-notice" class="alert alert-warning small mt-3 mb-0 hidden"></div>
                 </div>
-                
+
                 <div id="fields-empty" class="flex-grow-1 d-flex align-items-center justify-content-center p-4 text-center">
                     <div>
-                        <p class="text-muted small mb-0">Use the tools above to draw fields on the PDF, or use Auto-Detect.</p>
+                        <p class="text-muted small mb-0">Existing fields will appear here after upload. You can also place new fields from the toolbar.</p>
                     </div>
                 </div>
-                
+
                 <div id="fields-list" class="hidden flex-grow-1 overflow-auto p-3"></div>
-                
-                <!-- Selected Field Editor -->
-                <div id="field-editor" class="hidden border-top bg-light p-3">
-                    <div class="mb-3">
-                        <label class="form-label small text-muted fw-semibold mb-1">Field name</label>
-                        <input type="text" id="field-name-input" class="form-control form-control-sm">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small text-muted fw-semibold mb-1">Field type</label>
-                        <select id="field-type-select" class="form-select form-select-sm">
-                            <option value="text">Single-line Text</option>
-                            <option value="multiline">Multi-line Text</option>
-                            <option value="checkbox">Checkbox</option>
-                            <option value="signature">Signature</option>
-                            <option value="dropdown">Dropdown</option>
-                            <option value="listbox">List Box</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small text-muted fw-semibold mb-1">Page</label>
-                        <div><span id="field-page-display" class="small">1</span></div>
-                    </div>
-                    <button id="delete-field-btn" class="btn btn-outline-danger btn-sm w-100">
-                        Delete Field
-                    </button>
-                </div>
             </aside>
         </main>
 
-        <!-- Error Toast -->
-        <div id="error-toast" class="hidden alert alert-danger labeler-toast">
-            <p id="error-toast-message"></p>
+        <div id="floating-tool-picker" class="floating-tool-picker hidden">
+            <div class="tool-grid">
+                <button id="tool-text" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a text field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"></path></svg>
+                    Text
+                </button>
+                <button id="tool-multiline" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a multiline field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 10h18M3 14h18M3 18h10"></path></svg>
+                    Multiline
+                </button>
+                <button id="tool-checkbox" class="floating-tool-btn tool-btn" type="button" title="Click once to place a checkbox">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><path d="m9 12 2 2 4-4"></path></svg>
+                    Checkbox
+                </button>
+                <button id="tool-signature" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a signature field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.5 3.5 6 6-11 11H3v-6.5l11-11Z"></path></svg>
+                    Signature
+                </button>
+                <button id="tool-dropdown" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a dropdown">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><path d="m7 10 5 5 5-5"></path></svg>
+                    Dropdown
+                </button>
+                <button id="tool-listbox" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a list box">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><path d="M7 8h10M7 12h10M7 16h4"></path></svg>
+                    List Box
+                </button>
+            </div>
         </div>
-        
-        <!-- Success Toast -->
-        <div id="success-toast" class="hidden alert alert-success labeler-toast">
-            <p id="success-toast-message"></p>
+
+        <div id="quick-field-editor" class="quick-field-editor hidden">
+            <div class="quick-field-header">
+                <div id="quick-field-type-badge" class="field-type-badge flex-shrink-0"></div>
+                <input id="quick-field-name" type="text" class="quick-field-input form-control form-control-sm font-monospace" aria-label="PDF field label">
+                <button id="quick-field-close" type="button" class="btn btn-outline-secondary btn-sm flex-shrink-0">Done</button>
+            </div>
+            <div id="quick-field-help" class="quick-field-help info"></div>
+        </div>
+
+        <div id="error-toast" class="hidden alert alert-danger labeler-toast mb-0">
+            <p id="error-toast-message" class="mb-0"></p>
+        </div>
+
+        <div id="success-toast" class="hidden alert alert-success labeler-toast mb-0">
+            <p id="success-toast-message" class="mb-0"></p>
         </div>
 
         <div id="settings-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
@@ -245,7 +489,7 @@
                 <div class="mb-3">
                     <label for="ai-model" class="form-label fw-medium">AI model</label>
                     <input id="ai-model" type="text" class="model-input form-control form-control-sm font-monospace" placeholder="Type model name">
-                    <p class="form-text mb-1">Starts with a curated set for your configured provider. Type to filter the full list.</p>
+                    <p class="form-text mb-1">Starts with the configured recommendations. Type to search all available models.</p>
                     <div id="ai-model-suggestions" class="model-suggestions hidden"></div>
                 </div>
                 <div class="d-flex justify-content-end gap-2 border-top pt-2">
@@ -256,34 +500,150 @@
         </div>
     </div>
 
+    <script id="labeler-bootstrap" type="application/json">__LABELER_BOOTSTRAP_JSON__</script>
     <script type="module">
     import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
 
-    const LABELER_BOOTSTRAP = window.LABELER_BOOTSTRAP || {};
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+
+    function parseBootstrapJson() {
+        const bootstrapEl = document.getElementById('labeler-bootstrap');
+        if (!bootstrapEl) return {};
+        try {
+            return JSON.parse(bootstrapEl.textContent || '{}');
+        } catch (_error) {
+            return {};
+        }
+    }
+
+    const LABELER_BOOTSTRAP = parseBootstrapJson();
     const API_BASE_PATH = LABELER_BOOTSTRAP.apiBasePath || '/al';
     const BRANDING = LABELER_BOOTSTRAP.branding || {};
     const PDF_CONFIG = LABELER_BOOTSTRAP.pdf || {};
+    const PDFLibGlobal = window.PDFLib || {};
 
-    // Set worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+    const FIELD_TYPES = ['text', 'multiline', 'checkbox', 'signature', 'radio', 'dropdown', 'listbox'];
+    const POINT_INSERT_TYPES = new Set(['checkbox', 'radio']);
+    const OPTION_TYPES = new Set(['radio', 'dropdown', 'listbox']);
+    const DEFAULT_OPTION_LIST = ['Option 1', 'Option 2'];
+    const FONT_OPTIONS = [
+        'Helvetica',
+        'Helvetica-Bold',
+        'Courier',
+        'Courier-Bold',
+        'Times-Roman',
+        'Times-Bold'
+    ];
 
-    // State
+    const FIELD_TYPE_META = {
+        text: {
+            label: 'Single-line Text',
+            shortLabel: 'Text',
+            createMode: 'draw',
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"></path></svg>',
+        },
+        multiline: {
+            label: 'Multi-line Text',
+            shortLabel: 'Multi',
+            createMode: 'draw',
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 10h18M3 14h18M3 18h10"></path></svg>',
+        },
+        checkbox: {
+            label: 'Checkbox',
+            shortLabel: 'Check',
+            createMode: 'point',
+            defaultWidth: 0.032,
+            defaultHeight: 0.032,
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><path d="m9 12 2 2 4-4"></path></svg>',
+        },
+        signature: {
+            label: 'Signature',
+            shortLabel: 'Sign',
+            createMode: 'draw',
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.5 3.5 6 6-11 11H3v-6.5l11-11Z"></path></svg>',
+        },
+        radio: {
+            label: 'Radio Group',
+            shortLabel: 'Radio',
+            createMode: 'point',
+            defaultWidth: 0.032,
+            defaultHeight: 0.032,
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3" fill="currentColor"></circle></svg>',
+        },
+        dropdown: {
+            label: 'Dropdown',
+            shortLabel: 'Drop',
+            createMode: 'draw',
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><path d="m7 10 5 5 5-5"></path></svg>',
+        },
+        listbox: {
+            label: 'List Box',
+            shortLabel: 'List',
+            createMode: 'draw',
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><path d="M7 8h10M7 12h10M7 16h4"></path></svg>',
+        },
+    };
+
+    const DEFAULT_FIELD_NAME_LIBRARY = {
+        text: [
+            'users1_name_first',
+            'users1_name_last',
+            'users1_name_full',
+            'users1_address_address',
+            'users1_address_city',
+            'users1_address_state',
+            'users1_address_zip',
+            'users1_phone_number',
+            'users1_email',
+            'other_parties1_name_full',
+            'docket_number',
+            'case_name'
+        ],
+        multiline: [
+            'users1_mailing_address',
+            'special_instructions',
+            'facts_summary'
+        ],
+        signature: [
+            'users1_signature',
+            'other_parties1_signature',
+            'attorney_signature'
+        ],
+        checkbox: [
+            'user_agrees',
+            'is_plaintiff',
+            'is_defendant',
+            'has_children'
+        ],
+        dropdown: ['court_division', 'selected_claim_type'],
+        listbox: ['requested_relief', 'selected_issues'],
+        radio: ['service_method']
+    };
+
+    const FIELD_NAME_LIBRARY = (PDF_CONFIG.fieldNameLibrary && Object.keys(PDF_CONFIG.fieldNameLibrary).length)
+        ? PDF_CONFIG.fieldNameLibrary
+        : ((PDF_CONFIG.field_name_library && Object.keys(PDF_CONFIG.field_name_library).length)
+            ? PDF_CONFIG.field_name_library
+            : DEFAULT_FIELD_NAME_LIBRARY);
+
     const state = {
-        pdfFile: null,
+        fileName: '',
         pdfBytes: null,
+        requestPdfFile: null,
+        quickEditFieldId: null,
+        quickEditFocusPending: false,
         pdfDoc: null,
         pageCount: 0,
         pageSizes: [],
         fields: [],
         selectedFieldId: null,
         selectedTool: null,
-        isDrawing: false,
-        drawStart: null,
-        renderScale: 1.5,
+        renderScale: 1.35,
         defaultModel: 'gpt-5-mini',
         recommendedModels: ['gpt-5-mini'],
         availableModels: [],
         model: 'gpt-5-mini',
+        hasUnsavedChanges: false,
         auth: {
             isAuthenticated: false,
             email: '',
@@ -293,19 +653,19 @@
         }
     };
 
-    // DOM Elements
+    let draftState = null;
+    let dragState = null;
+    let resizeState = null;
+
     const fileInput = document.getElementById('file-input');
+    const pdfContainer = document.getElementById('pdf-container');
     const pdfEmpty = document.getElementById('pdf-empty');
     const pdfLoading = document.getElementById('pdf-loading');
     const loadingMessage = document.getElementById('loading-message');
+    const floatingToolPicker = document.getElementById('floating-tool-picker');
     const pdfPages = document.getElementById('pdf-pages');
     const fieldsEmpty = document.getElementById('fields-empty');
     const fieldsList = document.getElementById('fields-list');
-    const fieldEditor = document.getElementById('field-editor');
-    const fieldNameInput = document.getElementById('field-name-input');
-    const fieldTypeSelect = document.getElementById('field-type-select');
-    const fieldPageDisplay = document.getElementById('field-page-display');
-    const deleteFieldBtn = document.getElementById('delete-field-btn');
     const fieldCount = document.getElementById('field-count');
     const autoDetectBtn = document.getElementById('auto-detect-btn');
     const relabelBtn = document.getElementById('relabel-btn');
@@ -314,10 +674,10 @@
     const errorToastMessage = document.getElementById('error-toast-message');
     const successToast = document.getElementById('success-toast');
     const successToastMessage = document.getElementById('success-toast-message');
-    const authControls = document.getElementById('auth-controls');
     const aiAuthNotice = document.getElementById('ai-auth-notice');
-    const settingsModal = document.getElementById('settings-modal');
+    const authControls = document.getElementById('auth-controls');
     const settingsBtn = document.getElementById('settings-btn');
+    const settingsModal = document.getElementById('settings-modal');
     const closeSettingsBtn = document.getElementById('close-settings');
     const saveSettingsBtn = document.getElementById('save-settings');
     const resetSettingsBtn = document.getElementById('reset-settings');
@@ -328,33 +688,349 @@
     const brandLogo = document.getElementById('brand-logo');
     const brandPdfTitle = document.getElementById('brand-pdf-title');
     const brandPdfSubtitle = document.getElementById('brand-pdf-subtitle');
+    const documentName = document.getElementById('document-name');
+    const dirtyIndicator = document.getElementById('dirty-indicator');
+    const quickFieldEditor = document.getElementById('quick-field-editor');
+    const quickFieldTypeBadge = document.getElementById('quick-field-type-badge');
+    const quickFieldNameInput = document.getElementById('quick-field-name');
+    const quickFieldHelp = document.getElementById('quick-field-help');
+    const quickFieldCloseBtn = document.getElementById('quick-field-close');
 
-    const DEFAULT_FIELD_NAME_LIBRARY = {
-        text: ['users[0].name.first', 'users[0].name.last', 'users[0].name.full()', 'users[0].address.address', 
-               'users[0].address.city', 'users[0].address.state', 'users[0].address.zip', 'users[0].phone_number',
-               'users[0].email', 'other_parties[0].name.full()', 'docket_number', 'case_name'],
-        signature: ['users[0].signature', 'other_parties[0].signature', 'attorney.signature'],
-        checkbox: ['user_agrees', 'is_plaintiff', 'is_defendant', 'has_children']
-    };
-    const FIELD_NAME_LIBRARY = PDF_CONFIG.fieldNameLibrary && Object.keys(PDF_CONFIG.fieldNameLibrary).length
-        ? PDF_CONFIG.fieldNameLibrary
-        : DEFAULT_FIELD_NAME_LIBRARY;
-
-    // Tool buttons
     const toolButtons = {
         text: document.getElementById('tool-text'),
         multiline: document.getElementById('tool-multiline'),
         checkbox: document.getElementById('tool-checkbox'),
-        signature: document.getElementById('tool-signature')
+        signature: document.getElementById('tool-signature'),
+        dropdown: document.getElementById('tool-dropdown'),
+        listbox: document.getElementById('tool-listbox'),
     };
 
-    // Helper functions
     function generateId() {
-        return 'field-' + Math.random().toString(36).substr(2, 9);
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return 'field-' + window.crypto.randomUUID();
+        }
+        return 'field-' + Math.random().toString(36).slice(2, 11);
     }
 
     function apiUrl(path) {
         return API_BASE_PATH + path;
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+    }
+
+    function setDirty(value) {
+        state.hasUnsavedChanges = !!value;
+        dirtyIndicator.classList.toggle('hidden', !state.hasUnsavedChanges);
+    }
+
+    function updateDocumentName() {
+        documentName.textContent = state.fileName ? state.fileName : '';
+    }
+
+    function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    function normalizeFieldType(rawType) {
+        const type = String(rawType || 'text').toLowerCase();
+        return FIELD_TYPES.includes(type) ? type : 'text';
+    }
+
+    function normalizePdfFieldName(rawName) {
+        let name = String(rawName || '').trim();
+        if (!name) return 'field';
+        name = name.replace(/\(\)/g, '');
+        name = name.replace(/\[(\d+)\]/g, function (_match, index) {
+            return String(Number(index) + 1);
+        });
+        name = name.replace(/\./g, '_');
+        name = name.replace(/[^a-zA-Z0-9_]+/g, '_');
+        name = name.replace(/_+/g, '_');
+        name = name.replace(/^_+|_+$/g, '');
+        name = name.toLowerCase();
+        if (!name) name = 'field';
+        if (/^[0-9]/.test(name)) {
+            name = 'field_' + name;
+        }
+        return name;
+    }
+
+    function ensureUniqueFieldName(baseName, excludeFieldId) {
+        const used = new Set(
+            state.fields
+                .filter(function (field) { return field.id !== excludeFieldId; })
+                .map(function (field) { return normalizePdfFieldName(field.name); })
+        );
+        const normalizedBase = normalizePdfFieldName(baseName);
+        let candidate = normalizedBase;
+        let suffix = 1;
+        while (used.has(candidate)) {
+            candidate = normalizedBase + '__' + suffix;
+            suffix += 1;
+        }
+        return candidate;
+    }
+
+    function getDefaultFieldName(type) {
+        const normalizedType = normalizeFieldType(type);
+        const library = Array.isArray(FIELD_NAME_LIBRARY[normalizedType])
+            ? FIELD_NAME_LIBRARY[normalizedType]
+            : (normalizedType === 'multiline' ? FIELD_NAME_LIBRARY.text : []);
+        for (let index = 0; index < library.length; index += 1) {
+            const candidate = normalizePdfFieldName(library[index]);
+            if (!state.fields.some(function (field) { return normalizePdfFieldName(field.name) === candidate; })) {
+                return candidate;
+            }
+        }
+        const fallbackBase = normalizedType === 'checkbox'
+            ? 'checkbox'
+            : normalizedType === 'signature'
+                ? 'signature'
+                : normalizedType === 'dropdown'
+                    ? 'dropdown'
+                    : normalizedType === 'listbox'
+                        ? 'listbox'
+                        : normalizedType === 'radio'
+                            ? 'radio_group'
+                            : normalizedType === 'multiline'
+                                ? 'text_area'
+                                : 'text';
+        return ensureUniqueFieldName(fallbackBase, null);
+    }
+
+    function getFieldTypeMeta(type) {
+        return FIELD_TYPE_META[normalizeFieldType(type)] || FIELD_TYPE_META.text;
+    }
+
+    function getCurrentField() {
+        return state.fields.find(function (field) {
+            return field.id === state.selectedFieldId;
+        }) || null;
+    }
+
+    function getQuickEditField() {
+        if (!state.quickEditFieldId) return null;
+        return state.fields.find(function (field) {
+            return field.id === state.quickEditFieldId;
+        }) || null;
+    }
+
+    function getOverlayForPage(pageIndex) {
+        return document.querySelector('.page-overlay[data-page-index="' + pageIndex + '"]');
+    }
+
+    function showLoading(message) {
+        loadingMessage.textContent = message;
+        pdfEmpty.classList.add('hidden');
+        pdfLoading.classList.remove('hidden');
+        pdfPages.classList.add('hidden');
+    }
+
+    function hideLoading() {
+        pdfLoading.classList.add('hidden');
+    }
+
+    function hideToasts() {
+        errorToast.classList.add('hidden');
+        successToast.classList.add('hidden');
+    }
+
+    function showError(message) {
+        hideToasts();
+        errorToastMessage.textContent = message;
+        errorToast.classList.remove('hidden');
+        window.setTimeout(function () {
+            errorToast.classList.add('hidden');
+        }, 6000);
+    }
+
+    function showSuccess(message) {
+        hideToasts();
+        successToastMessage.textContent = message;
+        successToast.classList.remove('hidden');
+        window.setTimeout(function () {
+            successToast.classList.add('hidden');
+        }, 3200);
+    }
+
+    function updateFieldCount() {
+        const count = state.fields.length;
+        fieldCount.textContent = count === 0 ? 'No fields' : count + ' field' + (count === 1 ? '' : 's');
+        fieldsEmpty.classList.toggle('hidden', count !== 0);
+        fieldsList.classList.toggle('hidden', count === 0);
+        floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
+        exportBtn.disabled = !state.pdfBytes || count === 0;
+        relabelBtn.disabled = !state.pdfBytes || count === 0 || !state.auth.aiEnabled;
+    }
+
+    function updateToolHint() {
+        return;
+    }
+
+    function hideQuickFieldEditor() {
+        state.quickEditFieldId = null;
+        state.quickEditFocusPending = false;
+        quickFieldEditor.classList.add('hidden');
+    }
+
+    function getVisiblePdfViewportRect() {
+        const containerRect = pdfContainer.getBoundingClientRect();
+        const left = Math.max(containerRect.left + 8, 8);
+        const top = Math.max(containerRect.top + 8, 8);
+        const right = Math.min(containerRect.right - 8, window.innerWidth - 8);
+        const bottom = Math.min(containerRect.bottom - 8, window.innerHeight - 8);
+        return {
+            left: left,
+            top: top,
+            right: Math.max(right, left + 1),
+            bottom: Math.max(bottom, top + 1)
+        };
+    }
+
+    function getQuickFieldEditorWidth(fieldEl, viewportRect) {
+        const nameLength = String(quickFieldNameInput.value || '').length;
+        const preferredWidth = Math.max(
+            fieldEl ? fieldEl.offsetWidth + 22 : 0,
+            180,
+            Math.min(520, 92 + (nameLength * 8))
+        );
+        return clamp(preferredWidth, 180, viewportRect.right - viewportRect.left);
+    }
+
+    function positionQuickFieldEditor() {
+        if (quickFieldEditor.classList.contains('hidden')) return;
+        const field = getQuickEditField();
+        if (!field) {
+            hideQuickFieldEditor();
+            return;
+        }
+        const fieldEl = document.querySelector('.field-box[data-field-id="' + field.id + '"]');
+        const viewportRect = getVisiblePdfViewportRect();
+        const editorWidth = getQuickFieldEditorWidth(fieldEl, viewportRect);
+        quickFieldEditor.style.width = Math.round(editorWidth) + 'px';
+        const editorRect = quickFieldEditor.getBoundingClientRect();
+        const margin = 12;
+        let top = viewportRect.top + margin;
+        let left = viewportRect.left + margin;
+
+        if (fieldEl) {
+            const fieldRect = fieldEl.getBoundingClientRect();
+            const fieldVisible = fieldRect.bottom > viewportRect.top &&
+                fieldRect.top < viewportRect.bottom &&
+                fieldRect.right > viewportRect.left &&
+                fieldRect.left < viewportRect.right;
+            const preferredTop = fieldVisible
+                ? fieldRect.top - 2
+                : ((fieldRect.top + fieldRect.bottom) / 2) - (editorRect.height / 2);
+            const alignedLeft = clamp(fieldRect.left, viewportRect.left, viewportRect.right - editorRect.width);
+
+            top = clamp(preferredTop, viewportRect.top, viewportRect.bottom - editorRect.height);
+            if (fieldVisible) {
+                left = alignedLeft;
+            } else {
+                left = alignedLeft;
+            }
+        }
+
+        quickFieldEditor.style.top = Math.round(top) + 'px';
+        quickFieldEditor.style.left = Math.round(left) + 'px';
+    }
+
+    function updateRenderedFieldName(fieldId) {
+        const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        const fieldEl = document.querySelector('.field-box[data-field-id="' + field.id + '"]');
+        if (fieldEl) {
+            const chip = fieldEl.querySelector('.field-chip');
+            const chipName = chip && chip.querySelector('.field-chip-name');
+            if (chipName) {
+                chipName.textContent = field.name || '';
+            }
+            if (chip) {
+                applyFieldChipLayout(fieldEl, chip);
+            }
+        }
+        const listItem = fieldsList.querySelector('.field-list-item[data-field-id="' + field.id + '"]');
+        if (listItem) {
+            const title = listItem.querySelector('.fw-semibold');
+            if (title) {
+                title.textContent = field.name || '';
+            }
+            const sidebarInput = listItem.querySelector('[data-action="field-name"]');
+            if (sidebarInput && document.activeElement !== sidebarInput) {
+                sidebarInput.value = field.name || '';
+            }
+            const help = listItem.querySelector('.field-card-help');
+            if (help) {
+                const nameHelp = getFieldNameHelp(field);
+                help.className = 'field-card-help ' + nameHelp.level;
+                help.innerHTML = nameHelp.html;
+            }
+        }
+    }
+
+    function commitFieldNameChange(fieldId, nextValue, source) {
+        const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        field.name = nextValue;
+        setDirty(true);
+        updateRenderedFieldName(fieldId);
+        if (source !== 'quick') {
+            const quickField = getQuickEditField();
+            if (quickField && quickField.id === fieldId && document.activeElement !== quickFieldNameInput) {
+                quickFieldNameInput.value = field.name || '';
+            }
+        }
+        syncQuickFieldEditor({ preserveInput: source === 'quick' });
+    }
+
+    function syncQuickFieldEditor(options) {
+        const settings = options || {};
+        const field = getQuickEditField();
+        if (!field || field.id !== state.selectedFieldId) {
+            hideQuickFieldEditor();
+            return;
+        }
+
+        const meta = getFieldTypeMeta(field.type);
+        const nameHelp = getFieldNameHelp(field);
+        quickFieldTypeBadge.innerHTML = meta.icon + '<span>' + escapeHtml(meta.label) + '</span>';
+        if (!settings.preserveInput || document.activeElement !== quickFieldNameInput) {
+            quickFieldNameInput.value = field.name || '';
+        }
+        quickFieldNameInput.dataset.fieldId = field.id;
+        quickFieldHelp.className = 'quick-field-help ' + nameHelp.level;
+        quickFieldHelp.innerHTML = nameHelp.html;
+        quickFieldEditor.classList.remove('hidden');
+        positionQuickFieldEditor();
+
+        if (state.quickEditFocusPending) {
+            window.requestAnimationFrame(function () {
+                quickFieldNameInput.focus();
+                quickFieldNameInput.select();
+            });
+            state.quickEditFocusPending = false;
+        }
+    }
+
+    function updateOverlayCursorState() {
+        document.querySelectorAll('.page-overlay').forEach(function (overlay) {
+            overlay.classList.toggle('tool-active', !!state.selectedTool);
+            overlay.classList.toggle('point-insert', !!state.selectedTool && POINT_INSERT_TYPES.has(state.selectedTool));
+        });
+    }
+
+    function setSelectedTool(tool) {
+        state.selectedTool = tool ? normalizeFieldType(tool) : null;
+        Object.keys(toolButtons).forEach(function (key) {
+            toolButtons[key].classList.toggle('active', key === state.selectedTool);
+        });
+        updateToolHint();
+        updateOverlayCursorState();
     }
 
     function applyBranding() {
@@ -375,7 +1051,40 @@
             brandPdfTitle.textContent = BRANDING.pdf_header_title || 'PDF Labeler';
         }
         if (brandPdfSubtitle) {
-            brandPdfSubtitle.textContent = BRANDING.pdf_header_subtitle || '';
+            brandPdfSubtitle.textContent = BRANDING.pdf_header_subtitle || 'Add, inspect, rename, and export PDF form fields';
+        }
+    }
+
+    function renderAuthControls() {
+        if (!authControls) return;
+        if (state.auth.isAuthenticated) {
+            const emailText = state.auth.email || 'Account';
+            authControls.innerHTML =
+                '<button id="auth-menu-btn" class="btn btn-outline-light btn-sm dropdown-toggle" type="button" aria-expanded="false">' + escapeHtml(emailText) + '</button>' +
+                '<div id="auth-menu" class="dropdown-menu dropdown-menu-end header-auth-menu">' +
+                    '<a class="dropdown-item" href="' + escapeHtml(state.auth.logoutUrl || '/user/sign-out') + '">Log out</a>' +
+                '</div>';
+            const menuBtn = document.getElementById('auth-menu-btn');
+            const menu = document.getElementById('auth-menu');
+            menuBtn.addEventListener('click', function (event) {
+                event.stopPropagation();
+                menu.classList.toggle('show');
+            });
+        } else {
+            authControls.innerHTML =
+                '<a class="btn btn-outline-light btn-sm" href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a>';
+        }
+    }
+
+    function updateAiUiState() {
+        const aiEnabled = !!state.auth.aiEnabled;
+        autoDetectBtn.disabled = !state.pdfBytes || !aiEnabled;
+        relabelBtn.disabled = !state.pdfBytes || state.fields.length === 0 || !aiEnabled;
+        if (!aiEnabled) {
+            aiAuthNotice.classList.remove('hidden');
+            aiAuthNotice.innerHTML = 'AI features require login. <a href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a> to use auto-detect and relabel.';
+        } else {
+            aiAuthNotice.classList.add('hidden');
         }
     }
 
@@ -393,39 +1102,6 @@
             aiModelInput.value = state.model;
         } catch (_error) {
             aiModelInput.value = state.model;
-        }
-    }
-
-    function renderAuthControls() {
-        if (!authControls) return;
-        if (state.auth.isAuthenticated) {
-            const emailText = state.auth.email || 'Account';
-            authControls.innerHTML =
-                '<button id="auth-menu-btn" class="btn btn-outline-light btn-sm dropdown-toggle" type="button" aria-expanded="false">' + escapeHtml(emailText) + '</button>' +
-                '<div id="auth-menu" class="dropdown-menu dropdown-menu-end header-auth-menu">' +
-                    '<a class="dropdown-item" href="' + escapeHtml(state.auth.logoutUrl || '/user/sign-out') + '">Log out</a>' +
-                '</div>';
-            const menuBtn = document.getElementById('auth-menu-btn');
-            const menu = document.getElementById('auth-menu');
-            menuBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                menu.classList.toggle('show');
-            });
-        } else {
-            authControls.innerHTML =
-                '<a class="btn btn-outline-light btn-sm" href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a>';
-        }
-    }
-
-    function updateAiUiState() {
-        const aiEnabled = !!state.auth.aiEnabled;
-        autoDetectBtn.disabled = !state.pdfFile || !aiEnabled;
-        relabelBtn.disabled = !state.pdfFile || state.fields.length === 0 || !aiEnabled;
-        if (!aiEnabled) {
-            aiAuthNotice.classList.remove('hidden');
-            aiAuthNotice.innerHTML = 'AI features require login. <a href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a> to enable auto-detect and relabel.';
-        } else {
-            aiAuthNotice.classList.add('hidden');
         }
     }
 
@@ -459,18 +1135,20 @@
         const source = filter
             ? (state.availableModels.length ? state.availableModels : state.recommendedModels)
             : state.recommendedModels;
-        const models = source.filter((name) => !filter || name.toLowerCase().includes(filter)).slice(0, 20);
+        const models = source.filter(function (name) {
+            return !filter || name.toLowerCase().includes(filter);
+        }).slice(0, 20);
         aiModelSuggestions.innerHTML = '';
         if (models.length === 0) {
             aiModelSuggestions.classList.add('hidden');
             return;
         }
-        models.forEach((name) => {
+        models.forEach(function (name) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'model-suggestion-btn font-monospace';
             button.textContent = name;
-            button.addEventListener('click', () => {
+            button.addEventListener('click', function () {
                 aiModelInput.value = name;
                 state.model = name;
                 aiModelSuggestions.classList.add('hidden');
@@ -480,522 +1158,855 @@
         aiModelSuggestions.classList.remove('hidden');
     }
 
-    function showLoading(message) {
-        loadingMessage.textContent = message;
-        pdfEmpty.classList.add('hidden');
-        pdfLoading.classList.remove('hidden');
-        pdfPages.classList.add('hidden');
+    function arrayBufferToUint8Array(buffer) {
+        return new Uint8Array(buffer);
     }
 
-    function hideLoading() {
-        pdfLoading.classList.add('hidden');
-    }
-
-    function showError(message) {
-        errorToastMessage.textContent = message;
-        errorToast.classList.remove('hidden');
-        setTimeout(() => errorToast.classList.add('hidden'), 5000);
-    }
-
-    function showSuccess(message) {
-        successToastMessage.textContent = message;
-        successToast.classList.remove('hidden');
-        setTimeout(() => successToast.classList.add('hidden'), 3000);
-    }
-
-    function updateFieldCount() {
-        const count = state.fields.length;
-        fieldCount.textContent = count === 0 ? 'No fields' : `${count} field${count === 1 ? '' : 's'}`;
-    }
-
-    function defaultFieldName(type) {
-        const typeFields = state.fields.filter(f => f.type === type);
-        const library = Array.isArray(FIELD_NAME_LIBRARY[type]) ? FIELD_NAME_LIBRARY[type] : [];
-        if (typeFields.length < library.length) {
-            return library[typeFields.length];
+    function base64ToUint8Array(base64String) {
+        const binaryString = window.atob(base64String);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let index = 0; index < binaryString.length; index += 1) {
+            bytes[index] = binaryString.charCodeAt(index);
         }
-        const typeName = type.charAt(0).toUpperCase() + type.slice(1);
-        return `${typeName}_${typeFields.length + 1}`;
+        return bytes;
     }
 
-    // Load PDF
-    async function loadPdf(file) {
-        state.pdfFile = file;
-        showLoading('Loading PDF...');
+    function updateRequestPdfFile(pdfBytes, fileName, originalFile) {
+        const nextName = fileName || state.fileName || 'edited-form.pdf';
+        if (originalFile instanceof File && originalFile.size > 0) {
+            if (originalFile.name === nextName) {
+                state.requestPdfFile = originalFile;
+            } else {
+                state.requestPdfFile = new File([originalFile], nextName, { type: 'application/pdf' });
+            }
+            return;
+        }
+        if (pdfBytes && pdfBytes.length) {
+            state.requestPdfFile = new File([pdfBytes], nextName, { type: 'application/pdf' });
+            return;
+        }
+        state.requestPdfFile = null;
+    }
 
+    function syncPdfState(pdfBytes, fileName, originalFile) {
+        state.pdfBytes = pdfBytes;
+        if (fileName) {
+            state.fileName = fileName;
+        }
+        updateRequestPdfFile(pdfBytes, state.fileName, originalFile);
+    }
+
+    function getPdfFileForRequests() {
+        if (state.requestPdfFile && state.requestPdfFile.size > 0) {
+            return state.requestPdfFile;
+        }
+        updateRequestPdfFile(state.pdfBytes, state.fileName);
+        if (state.requestPdfFile && state.requestPdfFile.size > 0) {
+            return state.requestPdfFile;
+        }
+        return new File([], state.fileName || 'edited-form.pdf', { type: 'application/pdf' });
+    }
+
+    async function parseApiResponse(response) {
+        const text = await response.text();
+        let data = null;
         try {
-            const arrayBuffer = await file.arrayBuffer();
-            state.pdfBytes = new Uint8Array(arrayBuffer);
-            state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
-            state.pageCount = state.pdfDoc.numPages;
-            state.pageSizes = [];
-
-            // Get page sizes
-            for (let i = 1; i <= state.pageCount; i++) {
-                const page = await state.pdfDoc.getPage(i);
-                const viewport = page.getViewport({ scale: 1 });
-                state.pageSizes.push({ width: viewport.width, height: viewport.height });
-            }
-
-            // Render pages
-            await renderPages();
-
-            // Detect existing fields
-            showLoading('Detecting existing fields...');
-            await detectExistingFields();
-
-            hideLoading();
-            pdfPages.classList.remove('hidden');
-            
-            // Enable buttons
-            exportBtn.disabled = false;
-
-            updateFieldCount();
-            renderFieldsList();
-            updateAiUiState();
-
-        } catch (error) {
-            console.error('Error loading PDF:', error);
-            showError('Failed to load PDF: ' + error.message);
-            pdfEmpty.classList.remove('hidden');
-            hideLoading();
+            data = text ? JSON.parse(text) : {};
+        } catch (_error) {
+            const returnedHtml = text.trim().startsWith('<');
+            throw new Error(returnedHtml
+                ? 'The server returned HTML instead of JSON.'
+                : 'The server returned invalid JSON.');
         }
-    }
-
-    async function renderPages() {
-        pdfPages.innerHTML = '';
-
-        for (let pageNum = 1; pageNum <= state.pageCount; pageNum++) {
-            const page = await state.pdfDoc.getPage(pageNum);
-            const viewport = page.getViewport({ scale: state.renderScale });
-
-            // Create page container
-            const pageDiv = document.createElement('div');
-            pageDiv.className = 'pdf-page';
-            pageDiv.dataset.pageIndex = pageNum - 1;
-            pageDiv.style.width = viewport.width + 'px';
-            pageDiv.style.height = viewport.height + 'px';
-
-            // Create canvas
-            const canvas = document.createElement('canvas');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            const context = canvas.getContext('2d');
-
-            await page.render({
-                canvasContext: context,
-                viewport: viewport
-            }).promise;
-
-            pageDiv.appendChild(canvas);
-
-            // Create field overlay
-            const overlay = document.createElement('div');
-            overlay.className = 'page-overlay';
-            overlay.dataset.pageIndex = pageNum - 1;
-            pageDiv.appendChild(overlay);
-
-            pdfPages.appendChild(pageDiv);
-
-            // Add event listeners for drawing
-            setupPageEventListeners(overlay, pageNum - 1);
+        if (!response.ok) {
+            throw new Error((data && data.error && data.error.message) ? data.error.message : ('Request failed (' + response.status + ').'));
         }
-
-        // Render existing fields
-        renderFieldsOnPages();
+        return data;
     }
 
-    function setupPageEventListeners(overlay, pageIndex) {
-        overlay.addEventListener('mousedown', (e) => {
-            if (!state.selectedTool) return;
-            if (e.target !== overlay) return;
-
-            const rect = overlay.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width;
-            const y = (e.clientY - rect.top) / rect.height;
-
-            state.isDrawing = true;
-            state.drawStart = { pageIndex, x, y };
-
-            // Deselect current field
-            selectField(null);
-        });
-
-        overlay.addEventListener('mousemove', (e) => {
-            if (!state.isDrawing || !state.drawStart) return;
-            
-            const rect = overlay.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width;
-            const y = (e.clientY - rect.top) / rect.height;
-
-            // Update draft rectangle visual
-            updateDraftRect(pageIndex, state.drawStart.x, state.drawStart.y, x, y);
-        });
-
-        overlay.addEventListener('mouseup', (e) => {
-            if (!state.isDrawing || !state.drawStart) return;
-
-            const rect = overlay.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width;
-            const y = (e.clientY - rect.top) / rect.height;
-
-            // Create field if drag was significant
-            const width = Math.abs(x - state.drawStart.x);
-            const height = Math.abs(y - state.drawStart.y);
-
-            if (width > 0.01 && height > 0.01) {
-                const newField = {
-                    id: generateId(),
-                    name: defaultFieldName(state.selectedTool),
-                    type: state.selectedTool,
-                    pageIndex: pageIndex,
-                    x: Math.min(state.drawStart.x, x),
-                    y: Math.min(state.drawStart.y, y),
-                    width: width,
-                    height: height,
-                    fontSize: 12
-                };
-
-                state.fields.push(newField);
-                renderFieldsOnPages();
-                renderFieldsList();
-                selectField(newField.id);
-                updateFieldCount();
-            }
-
-            // Clean up
-            state.isDrawing = false;
-            state.drawStart = null;
-            removeDraftRect();
-            
-            // Clear tool selection
-            setSelectedTool(null);
-        });
-
-        // Click to deselect
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                selectField(null);
-            }
-        });
+    function normalizeExistingRect(rect, pageSize) {
+        const normalizedWidth = clamp(rect.width / pageSize.width, 0.01, 1);
+        const normalizedHeight = clamp(rect.height / pageSize.height, 0.01, 1);
+        const normalizedX = clamp(rect.x / pageSize.width, 0, 1 - normalizedWidth);
+        const normalizedY = clamp(1 - (rect.y + rect.height) / pageSize.height, 0, 1 - normalizedHeight);
+        return {
+            x: normalizedX,
+            y: normalizedY,
+            width: normalizedWidth,
+            height: normalizedHeight
+        };
     }
 
-    let draftRectEl = null;
-    function updateDraftRect(pageIndex, x1, y1, x2, y2) {
-        const pageDiv = document.querySelector(`.pdf-page[data-page-index="${pageIndex}"]`);
-        if (!pageDiv) return;
-
-        if (!draftRectEl) {
-            draftRectEl = document.createElement('div');
-            draftRectEl.className = 'draft-rect';
-            pageDiv.appendChild(draftRectEl);
+    async function parseExistingFieldsLocally(pdfBytes, pageSizes) {
+        if (!PDFLibGlobal.PDFDocument) {
+            return [];
         }
+        const fields = [];
+        try {
+            const pdfDoc = await PDFLibGlobal.PDFDocument.load(pdfBytes);
+            const form = pdfDoc.getForm();
+            const pdfPages = pdfDoc.getPages();
 
-        const left = Math.min(x1, x2) * 100;
-        const top = Math.min(y1, y2) * 100;
-        const width = Math.abs(x2 - x1) * 100;
-        const height = Math.abs(y2 - y1) * 100;
+            form.getFields().forEach(function (field) {
+                let type = null;
+                let options = undefined;
 
-        draftRectEl.style.left = left + '%';
-        draftRectEl.style.top = top + '%';
-        draftRectEl.style.width = width + '%';
-        draftRectEl.style.height = height + '%';
-    }
-
-    function removeDraftRect() {
-        if (draftRectEl) {
-            draftRectEl.remove();
-            draftRectEl = null;
-        }
-    }
-
-    function renderFieldsOnPages() {
-        // Remove existing field elements
-        document.querySelectorAll('.field-box').forEach(el => el.remove());
-
-        state.fields.forEach(field => {
-            const pageDiv = document.querySelector(`.pdf-page[data-page-index="${field.pageIndex}"]`);
-            if (!pageDiv) return;
-
-            const fieldEl = document.createElement('div');
-            fieldEl.className = `field-box ${field.type} ${state.selectedFieldId === field.id ? 'selected' : ''}`;
-            fieldEl.dataset.fieldId = field.id;
-            fieldEl.style.left = (field.x * 100) + '%';
-            fieldEl.style.top = (field.y * 100) + '%';
-            fieldEl.style.width = (field.width * 100) + '%';
-            fieldEl.style.height = (field.height * 100) + '%';
-
-            // Add label
-            const label = document.createElement('span');
-            label.className = 'field-label';
-            label.textContent = field.name;
-            fieldEl.appendChild(label);
-
-            // Add resize handles if selected
-            if (state.selectedFieldId === field.id) {
-                ['nw', 'ne', 'sw', 'se'].forEach(pos => {
-                    const handle = document.createElement('div');
-                    handle.className = `resize-handle ${pos}`;
-                    handle.dataset.handle = pos;
-                    fieldEl.appendChild(handle);
-                });
-            }
-
-            // Click to select
-            fieldEl.addEventListener('mousedown', (e) => {
-                e.stopPropagation();
-                selectField(field.id);
-
-                // Start drag if not clicking resize handle
-                if (!e.target.classList.contains('resize-handle')) {
-                    startDragField(field, e);
-                } else {
-                    startResizeField(field, e.target.dataset.handle, e);
+                if (PDFLibGlobal.PDFTextField && field instanceof PDFLibGlobal.PDFTextField) {
+                    type = field.isMultiline() ? 'multiline' : 'text';
+                } else if (PDFLibGlobal.PDFCheckBox && field instanceof PDFLibGlobal.PDFCheckBox) {
+                    type = 'checkbox';
+                } else if (PDFLibGlobal.PDFSignature && field instanceof PDFLibGlobal.PDFSignature) {
+                    type = 'signature';
+                } else if (PDFLibGlobal.PDFRadioGroup && field instanceof PDFLibGlobal.PDFRadioGroup) {
+                    type = 'radio';
+                    options = typeof field.getOptions === 'function' ? field.getOptions() : DEFAULT_OPTION_LIST.slice();
+                } else if (PDFLibGlobal.PDFDropdown && field instanceof PDFLibGlobal.PDFDropdown) {
+                    type = 'dropdown';
+                    options = typeof field.getOptions === 'function' ? field.getOptions() : DEFAULT_OPTION_LIST.slice();
+                } else if (PDFLibGlobal.PDFOptionList && field instanceof PDFLibGlobal.PDFOptionList) {
+                    type = 'listbox';
+                    options = typeof field.getOptions === 'function' ? field.getOptions() : DEFAULT_OPTION_LIST.slice();
                 }
-            });
 
-            pageDiv.appendChild(fieldEl);
+                if (!type) return;
+
+                const widgets = field.acroField.getWidgets();
+                widgets.forEach(function (widget) {
+                    const rect = widget.getRectangle();
+                    if (!rect) return;
+
+                    const pageRef = widget.P();
+                    let pageIndex = 0;
+                    if (pageRef) {
+                        const foundIndex = pdfPages.findIndex(function (page) {
+                            return ((page.ref || null) === pageRef);
+                        });
+                        if (foundIndex >= 0) {
+                            pageIndex = foundIndex;
+                        }
+                    }
+                    const pageSize = pageSizes[pageIndex] || pdfPages[pageIndex].getSize();
+                    const normalizedRect = normalizeExistingRect(rect, pageSize);
+                    fields.push({
+                        id: generateId(),
+                        name: field.getName() || getDefaultFieldName(type),
+                        type: type,
+                        pageIndex: pageIndex,
+                        x: normalizedRect.x,
+                        y: normalizedRect.y,
+                        width: normalizedRect.width,
+                        height: normalizedRect.height,
+                        font: 'Helvetica',
+                        fontSize: 12,
+                        autoSize: true,
+                        options: Array.isArray(options) ? options.slice() : undefined
+                    });
+                });
+            });
+            return fields;
+        } catch (error) {
+            console.warn('Unable to parse existing PDF fields locally', error);
+            return [];
+        }
+    }
+
+    async function detectExistingFieldsWithServer() {
+        if (!state.pdfBytes) return [];
+        const formData = new FormData();
+        formData.append('file', getPdfFileForRequests());
+        const response = await fetch(apiUrl('/pdf-labeler/api/detect-fields'), {
+            method: 'POST',
+            body: formData
+        });
+        const data = await parseApiResponse(response);
+        const importedFields = Array.isArray(data.data && data.data.fields) ? data.data.fields : [];
+        return importedFields.map(function (field) {
+            const pageSize = state.pageSizes[field.pageIndex];
+            const fieldType = normalizeFieldType(field.type);
+            const width = pageSize ? clamp(field.width / pageSize.width, 0.01, 1) : 0.1;
+            const height = pageSize ? clamp(field.height / pageSize.height, 0.01, 1) : 0.03;
+            const x = pageSize ? clamp(field.x / pageSize.width, 0, 1 - width) : 0;
+            const y = pageSize ? clamp(1 - ((field.y + field.height) / pageSize.height), 0, 1 - height) : 0;
+            return {
+                id: generateId(),
+                name: field.name || getDefaultFieldName(fieldType),
+                type: fieldType,
+                pageIndex: field.pageIndex,
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+                font: field.font || 'Helvetica',
+                fontSize: field.fontSize || 12,
+                autoSize: field.autoSize !== false,
+                options: Array.isArray(field.options) ? field.options.slice() : undefined
+            };
         });
     }
 
-    let dragState = null;
-    function startDragField(field, e) {
-        const fieldEl = document.querySelector(`[data-field-id="${field.id}"]`);
-        const pageDiv = fieldEl.closest('.pdf-page');
-        const rect = pageDiv.getBoundingClientRect();
+    function getFieldNameHelp(field) {
+        const rawName = String(field.name || '').trim();
+        const normalized = normalizePdfFieldName(rawName);
+        const duplicateExists = state.fields.some(function (candidate) {
+            return candidate.id !== field.id && normalizePdfFieldName(candidate.name) === normalized;
+        });
 
-        const startX = (e.clientX - rect.left) / rect.width;
-        const startY = (e.clientY - rect.top) / rect.height;
-
-        dragState = {
-            field,
-            startX,
-            startY,
-            origX: field.x,
-            origY: field.y
+        if (!rawName) {
+            return {
+                level: 'warning',
+                html: 'Field labels are required.'
+            };
+        }
+        if (duplicateExists) {
+            return {
+                level: 'warning',
+                html: 'Another field already uses this PDF label. Rename it before export to avoid automatic suffixes.'
+            };
+        }
+        if (rawName !== normalized && /[\[\].()]/.test(rawName)) {
+            return {
+                level: 'info',
+                html: 'This looks like DOCX/Jinja syntax. PDFs should use labels like <code>' + escapeHtml(normalized) + '</code>.'
+            };
+        }
+        return {
+            level: 'info',
+            html: 'AssemblyLine PDF labels use underscores and inline list numbers, for example <code>users1_name_full</code>.'
         };
-
-        document.addEventListener('mousemove', onDragMove);
-        document.addEventListener('mouseup', onDragEnd);
     }
 
-    function onDragMove(e) {
-        if (!dragState) return;
-
-        const fieldEl = document.querySelector(`[data-field-id="${dragState.field.id}"]`);
-        const pageDiv = fieldEl.closest('.pdf-page');
-        const rect = pageDiv.getBoundingClientRect();
-
-        const x = (e.clientX - rect.left) / rect.width;
-        const y = (e.clientY - rect.top) / rect.height;
-
-        const dx = x - dragState.startX;
-        const dy = y - dragState.startY;
-
-        dragState.field.x = Math.max(0, Math.min(1 - dragState.field.width, dragState.origX + dx));
-        dragState.field.y = Math.max(0, Math.min(1 - dragState.field.height, dragState.origY + dy));
-
-        renderFieldsOnPages();
+    function renderFontOptions(selectedFont) {
+        return FONT_OPTIONS.map(function (font) {
+            return '<option value="' + escapeHtml(font) + '"' + (font === selectedFont ? ' selected' : '') + '>' + escapeHtml(font) + '</option>';
+        }).join('');
     }
 
-    function onDragEnd() {
-        dragState = null;
-        document.removeEventListener('mousemove', onDragMove);
-        document.removeEventListener('mouseup', onDragEnd);
-    }
-
-    let resizeState = null;
-    function startResizeField(field, handle, e) {
-        e.stopPropagation();
-
-        resizeState = {
-            field,
-            handle,
-            origX: field.x,
-            origY: field.y,
-            origWidth: field.width,
-            origHeight: field.height,
-            startEvent: e
-        };
-
-        document.addEventListener('mousemove', onResizeMove);
-        document.addEventListener('mouseup', onResizeEnd);
-    }
-
-    function onResizeMove(e) {
-        if (!resizeState) return;
-
-        const fieldEl = document.querySelector(`[data-field-id="${resizeState.field.id}"]`);
-        const pageDiv = fieldEl.closest('.pdf-page');
-        const rect = pageDiv.getBoundingClientRect();
-
-        const x = (e.clientX - rect.left) / rect.width;
-        const y = (e.clientY - rect.top) / rect.height;
-        const startX = (resizeState.startEvent.clientX - rect.left) / rect.width;
-        const startY = (resizeState.startEvent.clientY - rect.top) / rect.height;
-
-        const dx = x - startX;
-        const dy = y - startY;
-
-        const handle = resizeState.handle;
-        const minSize = 0.02;
-
-        if (handle.includes('e')) {
-            resizeState.field.width = Math.max(minSize, resizeState.origWidth + dx);
-        }
-        if (handle.includes('w')) {
-            const newWidth = Math.max(minSize, resizeState.origWidth - dx);
-            resizeState.field.x = resizeState.origX + resizeState.origWidth - newWidth;
-            resizeState.field.width = newWidth;
-        }
-        if (handle.includes('s')) {
-            resizeState.field.height = Math.max(minSize, resizeState.origHeight + dy);
-        }
-        if (handle.includes('n')) {
-            const newHeight = Math.max(minSize, resizeState.origHeight - dy);
-            resizeState.field.y = resizeState.origY + resizeState.origHeight - newHeight;
-            resizeState.field.height = newHeight;
-        }
-
-        // Clamp to page bounds
-        resizeState.field.x = Math.max(0, Math.min(1 - resizeState.field.width, resizeState.field.x));
-        resizeState.field.y = Math.max(0, Math.min(1 - resizeState.field.height, resizeState.field.y));
-
-        renderFieldsOnPages();
-    }
-
-    function onResizeEnd() {
-        resizeState = null;
-        document.removeEventListener('mousemove', onResizeMove);
-        document.removeEventListener('mouseup', onResizeEnd);
-    }
-
-    function selectField(fieldId) {
-        state.selectedFieldId = fieldId;
-        renderFieldsOnPages();
-
-        if (fieldId) {
-            const field = state.fields.find(f => f.id === fieldId);
-            if (field) {
-                fieldEditor.classList.remove('hidden');
-                fieldNameInput.value = field.name;
-                fieldTypeSelect.value = field.type;
-                fieldPageDisplay.textContent = (field.pageIndex + 1).toString();
-            }
-        } else {
-            fieldEditor.classList.add('hidden');
-        }
-
-        renderFieldsList();
+    function renderFieldEditor(field) {
+        const meta = getFieldTypeMeta(field.type);
+        const nameHelp = getFieldNameHelp(field);
+        const optionsValue = Array.isArray(field.options) && field.options.length
+            ? field.options.join(', ')
+            : DEFAULT_OPTION_LIST.join(', ');
+        const isTextLike = field.type === 'text' || field.type === 'multiline';
+        const autoSize = field.autoSize !== false;
+        return '' +
+            '<div class="field-card-editor">' +
+                '<div class="d-flex align-items-center justify-content-between gap-2 mb-3">' +
+                    '<div class="field-type-badge">' + meta.icon + '<span>' + escapeHtml(meta.label) + '</span></div>' +
+                    '<div class="field-card-subtext">Editing selected field</div>' +
+                '</div>' +
+                '<div class="mb-3">' +
+                    '<label class="form-label small text-muted fw-semibold mb-1" for="field-name-' + escapeHtml(field.id) + '">PDF field label</label>' +
+                    '<div class="d-flex gap-2">' +
+                        '<input type="text" id="field-name-' + escapeHtml(field.id) + '" class="form-control form-control-sm font-monospace" data-action="field-name" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(field.name) + '">' +
+                        '<button type="button" class="btn btn-outline-secondary btn-sm" data-action="normalize-name" data-field-id="' + escapeHtml(field.id) + '">Normalize</button>' +
+                    '</div>' +
+                    '<div class="field-card-help ' + escapeHtml(nameHelp.level) + '">' + nameHelp.html + '</div>' +
+                '</div>' +
+                '<div class="mb-3">' +
+                    '<label class="form-label small text-muted fw-semibold mb-1" for="field-type-' + escapeHtml(field.id) + '">Field type</label>' +
+                    '<select id="field-type-' + escapeHtml(field.id) + '" class="form-select form-select-sm" data-action="field-type" data-field-id="' + escapeHtml(field.id) + '">' +
+                        '<option value="text"' + (field.type === 'text' ? ' selected' : '') + '>Single-line Text</option>' +
+                        '<option value="multiline"' + (field.type === 'multiline' ? ' selected' : '') + '>Multi-line Text</option>' +
+                        '<option value="checkbox"' + (field.type === 'checkbox' ? ' selected' : '') + '>Checkbox</option>' +
+                        '<option value="signature"' + (field.type === 'signature' ? ' selected' : '') + '>Signature</option>' +
+                        '<option value="radio"' + (field.type === 'radio' ? ' selected' : '') + '>Radio Group</option>' +
+                        '<option value="dropdown"' + (field.type === 'dropdown' ? ' selected' : '') + '>Dropdown</option>' +
+                        '<option value="listbox"' + (field.type === 'listbox' ? ' selected' : '') + '>List Box</option>' +
+                    '</select>' +
+                '</div>' +
+                (isTextLike
+                    ? '<div class="mb-3">' +
+                        '<label class="form-label small text-muted fw-semibold mb-1">Font and size</label>' +
+                        '<div class="font-row">' +
+                            '<div>' +
+                                '<select class="form-select form-select-sm" data-action="field-font" data-field-id="' + escapeHtml(field.id) + '">' +
+                                    renderFontOptions(field.font || 'Helvetica') +
+                                '</select>' +
+                            '</div>' +
+                            '<label class="auto-size-wrap form-check small mb-0 mt-1">' +
+                                '<input class="form-check-input" type="checkbox" data-action="field-auto-size" data-field-id="' + escapeHtml(field.id) + '"' + (autoSize ? ' checked' : '') + '>' +
+                                '<span class="form-check-label">Auto size</span>' +
+                            '</label>' +
+                            '<div>' +
+                                '<input type="number" min="4" max="72" step="1" class="form-control form-control-sm" data-action="field-font-size" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.fontSize || 12)) + '"' + (autoSize ? ' disabled' : '') + '>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>'
+                    : '') +
+                (OPTION_TYPES.has(field.type)
+                    ? '<div class="mb-3">' +
+                        '<label class="form-label small text-muted fw-semibold mb-1" for="field-options-' + escapeHtml(field.id) + '">Options</label>' +
+                        '<textarea id="field-options-' + escapeHtml(field.id) + '" rows="3" class="form-control form-control-sm" data-action="field-options" data-field-id="' + escapeHtml(field.id) + '">' + escapeHtml(optionsValue) + '</textarea>' +
+                        '<div class="form-text small">Separate each option with a comma.</div>' +
+                    '</div>'
+                    : '') +
+                '<div class="field-card-actions">' +
+                    '<button type="button" class="btn btn-outline-secondary btn-sm" data-action="duplicate-field" data-field-id="' + escapeHtml(field.id) + '">Duplicate</button>' +
+                    '<button type="button" class="btn btn-outline-danger btn-sm" data-action="delete-field" data-field-id="' + escapeHtml(field.id) + '">Delete</button>' +
+                '</div>' +
+            '</div>';
     }
 
     function renderFieldsList() {
         if (state.fields.length === 0) {
-            fieldsEmpty.classList.remove('hidden');
-            fieldsList.classList.add('hidden');
+            fieldsList.innerHTML = '';
             return;
         }
-
-        fieldsEmpty.classList.add('hidden');
-        fieldsList.classList.remove('hidden');
+        const orderedFields = state.fields.slice().sort(function (left, right) {
+            if (left.pageIndex !== right.pageIndex) return left.pageIndex - right.pageIndex;
+            if (Math.abs(left.y - right.y) > 0.002) return left.y - right.y;
+            return left.x - right.x;
+        });
         fieldsList.innerHTML = '';
-
-        state.fields.forEach(field => {
+        orderedFields.forEach(function (field) {
+            const meta = getFieldTypeMeta(field.type);
             const item = document.createElement('div');
-            item.className = `field-list-item ${state.selectedFieldId === field.id ? 'selected' : ''}`;
-            item.innerHTML = `
-                <div class="d-flex align-items-center justify-content-between">
-                    <span class="fw-medium small text-truncate field-list-name">${escapeHtml(field.name)}</span>
-                    <span class="small text-muted ms-2">Page ${field.pageIndex + 1}</span>
-                </div>
-                <div class="small text-muted mt-1 text-capitalize">${field.type}</div>
-            `;
-            item.addEventListener('click', () => {
-                selectField(field.id);
-                // Scroll to field
-                const fieldEl = document.querySelector(`[data-field-id="${field.id}"]`);
-                if (fieldEl) {
-                    fieldEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            item.className = 'field-list-item' + (field.id === state.selectedFieldId ? ' selected' : '');
+            item.dataset.fieldId = field.id;
+            item.innerHTML =
+                '<div class="d-flex align-items-start justify-content-between gap-2">' +
+                    '<div class="flex-grow-1 min-w-0">' +
+                        '<div class="fw-semibold text-break">' + escapeHtml(field.name) + '</div>' +
+                        '<div class="small text-muted mt-1">Page ' + (field.pageIndex + 1) + '</div>' +
+                    '</div>' +
+                    '<button type="button" class="btn btn-outline-danger btn-sm delete-field-inline">Delete</button>' +
+                '</div>' +
+                '<div class="mt-2"><span class="field-type-badge">' + meta.icon + '<span>' + escapeHtml(meta.label) + '</span></span></div>' +
+                (field.id === state.selectedFieldId ? renderFieldEditor(field) : '');
+            item.addEventListener('click', function (event) {
+                if (event.target.closest('input, select, textarea, button')) {
+                    return;
                 }
+                selectField(field.id, { focusNameInput: false, scrollIntoView: false });
+            });
+            const deleteButton = item.querySelector('.delete-field-inline');
+            deleteButton.addEventListener('click', function (event) {
+                event.stopPropagation();
+                deleteField(field.id);
+            });
+            item.querySelectorAll('input, select, textarea').forEach(function (control) {
+                control.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                });
             });
             fieldsList.appendChild(item);
         });
     }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    function renderDraftRect() {
+        document.querySelectorAll('.draft-rect').forEach(function (node) { node.remove(); });
+        if (!draftState) return;
+        const overlay = getOverlayForPage(draftState.pageIndex);
+        if (!overlay) return;
+        const draftRect = document.createElement('div');
+        draftRect.className = 'draft-rect';
+        draftRect.style.left = (Math.min(draftState.startX, draftState.currentX) * 100) + '%';
+        draftRect.style.top = (Math.min(draftState.startY, draftState.currentY) * 100) + '%';
+        draftRect.style.width = (Math.abs(draftState.currentX - draftState.startX) * 100) + '%';
+        draftRect.style.height = (Math.abs(draftState.currentY - draftState.startY) * 100) + '%';
+        overlay.appendChild(draftRect);
     }
 
-    function setSelectedTool(tool) {
-        state.selectedTool = tool;
-        Object.entries(toolButtons).forEach(([key, btn]) => {
-            if (key === tool) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-        });
+    function getFieldBoxClasses(field) {
+        return 'field-box' + (field.id === state.selectedFieldId ? ' selected' : '');
     }
 
-    // Detect existing fields
-    async function detectExistingFields() {
-        if (!state.pdfFile) return;
+    function applyFieldChipLayout(fieldEl, labelEl) {
+        const width = fieldEl.offsetWidth;
+        const height = fieldEl.offsetHeight;
+        labelEl.classList.remove('hide-name', 'icon-only', 'wrap-name');
 
-        try {
-            const formData = new FormData();
-            formData.append('file', state.pdfFile);
-
-            const response = await fetch(apiUrl('/pdf-labeler/api/detect-fields'), {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success && data.data.fields) {
-                // Convert to normalized coordinates
-                data.data.fields.forEach(field => {
-                    const pageSize = state.pageSizes[field.pageIndex];
-                    if (pageSize) {
-                        state.fields.push({
-                            id: generateId(),
-                            name: field.name,
-                            type: field.type,
-                            pageIndex: field.pageIndex,
-                            x: field.x / pageSize.width,
-                            y: 1 - (field.y + field.height) / pageSize.height,
-                            width: field.width / pageSize.width,
-                            height: field.height / pageSize.height,
-                            fontSize: field.fontSize || 12
-                        });
-                    }
-                });
-
-                renderFieldsOnPages();
-                renderFieldsList();
-                updateFieldCount();
-                updateAiUiState();
-            }
-        } catch (error) {
-            console.error('Error detecting fields:', error);
+        if (width < 22 || height < 18) {
+            labelEl.classList.add('hide-name', 'icon-only');
+            return;
+        }
+        if (width < 54 || height < 16) {
+            labelEl.classList.add('hide-name', 'icon-only');
+            return;
+        }
+        if (width >= 110 && height >= 30) {
+            labelEl.classList.add('wrap-name');
         }
     }
 
-    // Auto-detect fields with AI
+    function renderFieldsOnPages() {
+        document.querySelectorAll('.field-box').forEach(function (node) {
+            node.remove();
+        });
+        state.fields.forEach(function (field) {
+            const overlay = getOverlayForPage(field.pageIndex);
+            if (!overlay) return;
+
+            const meta = getFieldTypeMeta(field.type);
+            const fieldEl = document.createElement('div');
+            fieldEl.className = getFieldBoxClasses(field);
+            fieldEl.dataset.fieldId = field.id;
+            fieldEl.dataset.fieldType = field.type;
+            fieldEl.style.left = (field.x * 100) + '%';
+            fieldEl.style.top = (field.y * 100) + '%';
+            fieldEl.style.width = (field.width * 100) + '%';
+            fieldEl.style.height = (field.height * 100) + '%';
+
+            const label = document.createElement('div');
+            label.className = 'field-chip';
+            label.innerHTML =
+                meta.icon +
+                '<span class="field-chip-name">' + escapeHtml(field.name) + '</span>';
+            fieldEl.appendChild(label);
+
+            if (field.id === state.selectedFieldId) {
+                ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach(function (handleName) {
+                    const handle = document.createElement('div');
+                    handle.className = 'resize-handle ' + handleName;
+                    handle.dataset.handle = handleName;
+                    fieldEl.appendChild(handle);
+                });
+            }
+
+            fieldEl.addEventListener('pointerdown', function (event) {
+                event.stopPropagation();
+                setSelectedTool(null);
+
+                const target = event.target;
+                if (target && typeof target.closest === 'function' && target.closest('.field-chip')) {
+                    selectField(field.id, { focusNameInput: true, scrollIntoView: false });
+                    return;
+                }
+                selectField(field.id, { focusNameInput: false, scrollIntoView: false });
+                if (target && target.dataset && target.dataset.handle) {
+                    startResize(field.id, target.dataset.handle, event, overlay);
+                    return;
+                }
+                startDrag(field.id, event, overlay);
+            });
+
+            fieldEl.addEventListener('dblclick', function (event) {
+                event.stopPropagation();
+                selectField(field.id, { focusNameInput: true, scrollIntoView: false });
+            });
+
+            overlay.appendChild(fieldEl);
+            applyFieldChipLayout(fieldEl, label);
+        });
+        renderDraftRect();
+        syncQuickFieldEditor({ preserveInput: true });
+    }
+
+    function selectField(fieldId, options) {
+        const settings = options || {};
+        state.selectedFieldId = fieldId;
+        if (!fieldId) {
+            hideQuickFieldEditor();
+        } else if (settings.focusNameInput) {
+            state.quickEditFieldId = fieldId;
+            state.quickEditFocusPending = true;
+        } else if (state.quickEditFieldId && state.quickEditFieldId !== fieldId) {
+            hideQuickFieldEditor();
+        }
+        renderFieldsList();
+        renderFieldsOnPages();
+        if (fieldId && settings.scrollIntoView) {
+            const fieldEl = document.querySelector('.field-box[data-field-id="' + fieldId + '"]');
+            if (fieldEl) {
+                fieldEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+        syncQuickFieldEditor({ preserveInput: true });
+    }
+
+    function replaceFields(fields, options) {
+        const settings = options || {};
+        state.fields = fields.map(function (field) {
+            const width = clamp(Number(field.width), 0.01, 1);
+            const height = clamp(Number(field.height), 0.01, 1);
+            return {
+                id: field.id || generateId(),
+                name: field.name,
+                type: normalizeFieldType(field.type),
+                pageIndex: Number(field.pageIndex) || 0,
+                x: clamp(Number(field.x), 0, 1 - width),
+                y: clamp(Number(field.y), 0, 1 - height),
+                width: width,
+                height: height,
+                font: field.font || 'Helvetica',
+                fontSize: Number(field.fontSize) || 12,
+                autoSize: field.autoSize !== false,
+                options: Array.isArray(field.options) ? field.options.slice() : undefined
+            };
+        });
+        state.selectedFieldId = settings.preserveSelection && state.fields.some(function (field) {
+            return field.id === state.selectedFieldId;
+        }) ? state.selectedFieldId : (state.fields[0] ? state.fields[0].id : null);
+        if (!state.fields.some(function (field) { return field.id === state.quickEditFieldId; })) {
+            hideQuickFieldEditor();
+        }
+        renderFieldsList();
+        renderFieldsOnPages();
+        updateFieldCount();
+    }
+
+    function markDirtyAndRender(skipListRefresh) {
+        setDirty(true);
+        renderFieldsOnPages();
+        if (!skipListRefresh) {
+            renderFieldsList();
+        }
+        updateFieldCount();
+        syncQuickFieldEditor({ preserveInput: true });
+    }
+
+    function createFieldFromTool(pageIndex, x, y, width, height) {
+        if (!state.selectedTool) return;
+        const type = normalizeFieldType(state.selectedTool);
+        const field = {
+            id: generateId(),
+            name: getDefaultFieldName(type),
+            type: type,
+            pageIndex: pageIndex,
+            x: 0,
+            y: 0,
+            width: clamp(width, 0.01, 1),
+            height: clamp(height, 0.01, 1),
+            font: 'Helvetica',
+            fontSize: 12,
+            autoSize: type === 'text' || type === 'multiline',
+            options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined
+        };
+        field.x = clamp(x, 0, 1 - field.width);
+        field.y = clamp(y, 0, 1 - field.height);
+        state.fields.push(field);
+        selectField(field.id, { focusNameInput: true, scrollIntoView: false });
+        setDirty(true);
+        updateFieldCount();
+        renderFieldsList();
+        renderFieldsOnPages();
+    }
+
+    function createPointField(pageIndex, pointX, pointY) {
+        const meta = getFieldTypeMeta(state.selectedTool);
+        const width = meta.defaultWidth || 0.032;
+        const height = meta.defaultHeight || 0.032;
+        const x = clamp(pointX - (width / 2), 0, 1 - width);
+        const y = clamp(pointY - (height / 2), 0, 1 - height);
+        createFieldFromTool(pageIndex, x, y, width, height);
+    }
+
+    function startDrag(fieldId, event, overlay) {
+        const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        const rect = overlay.getBoundingClientRect();
+        const pointerX = (event.clientX - rect.left) / rect.width;
+        const pointerY = (event.clientY - rect.top) / rect.height;
+        dragState = {
+            fieldId: fieldId,
+            pageIndex: field.pageIndex,
+            startPointerX: pointerX,
+            startPointerY: pointerY,
+            originX: field.x,
+            originY: field.y
+        };
+    }
+
+    function startResize(fieldId, handle, event, overlay) {
+        const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        const rect = overlay.getBoundingClientRect();
+        resizeState = {
+            fieldId: fieldId,
+            handle: handle,
+            startX: (event.clientX - rect.left) / rect.width,
+            startY: (event.clientY - rect.top) / rect.height,
+            originX: field.x,
+            originY: field.y,
+            originWidth: field.width,
+            originHeight: field.height
+        };
+    }
+
+    function handleDragMove(event) {
+        if (!dragState) return;
+        const overlay = getOverlayForPage(dragState.pageIndex);
+        if (!overlay) return;
+        const rect = overlay.getBoundingClientRect();
+        const pointerX = (event.clientX - rect.left) / rect.width;
+        const pointerY = (event.clientY - rect.top) / rect.height;
+        const field = state.fields.find(function (candidate) { return candidate.id === dragState.fieldId; });
+        if (!field) return;
+        field.x = clamp(dragState.originX + (pointerX - dragState.startPointerX), 0, 1 - field.width);
+        field.y = clamp(dragState.originY + (pointerY - dragState.startPointerY), 0, 1 - field.height);
+        markDirtyAndRender(true);
+    }
+
+    function handleResizeMove(event) {
+        if (!resizeState) return;
+        const field = state.fields.find(function (candidate) { return candidate.id === resizeState.fieldId; });
+        if (!field) return;
+        const overlay = getOverlayForPage(field.pageIndex);
+        if (!overlay) return;
+        const rect = overlay.getBoundingClientRect();
+        const pointerX = (event.clientX - rect.left) / rect.width;
+        const pointerY = (event.clientY - rect.top) / rect.height;
+        const deltaX = pointerX - resizeState.startX;
+        const deltaY = pointerY - resizeState.startY;
+        let newX = resizeState.originX;
+        let newY = resizeState.originY;
+        let newWidth = resizeState.originWidth;
+        let newHeight = resizeState.originHeight;
+        const minSize = 0.01;
+
+        if (resizeState.handle.includes('e')) {
+            newWidth = resizeState.originWidth + deltaX;
+        }
+        if (resizeState.handle.includes('s')) {
+            newHeight = resizeState.originHeight + deltaY;
+        }
+        if (resizeState.handle.includes('w')) {
+            newWidth = resizeState.originWidth - deltaX;
+            newX = resizeState.originX + deltaX;
+        }
+        if (resizeState.handle.includes('n')) {
+            newHeight = resizeState.originHeight - deltaY;
+            newY = resizeState.originY + deltaY;
+        }
+
+        newWidth = Math.max(minSize, newWidth);
+        newHeight = Math.max(minSize, newHeight);
+        newX = clamp(newX, 0, 1 - newWidth);
+        newY = clamp(newY, 0, 1 - newHeight);
+
+        if (resizeState.handle.includes('w')) {
+            newWidth = Math.min(newWidth, resizeState.originX + resizeState.originWidth - newX);
+        }
+        if (resizeState.handle.includes('n')) {
+            newHeight = Math.min(newHeight, resizeState.originY + resizeState.originHeight - newY);
+        }
+
+        field.x = newX;
+        field.y = newY;
+        field.width = clamp(newWidth, minSize, 1 - field.x);
+        field.height = clamp(newHeight, minSize, 1 - field.y);
+        markDirtyAndRender(true);
+    }
+
+    function clearInteractionState() {
+        draftState = null;
+        dragState = null;
+        resizeState = null;
+        renderDraftRect();
+    }
+
+    function setupPageInteractions(overlay, pageIndex) {
+        overlay.addEventListener('pointerdown', function (event) {
+            if (event.button !== 0) return;
+            const rect = overlay.getBoundingClientRect();
+            const pointX = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+            const pointY = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+
+            if (!state.selectedTool) {
+                if (event.target === overlay) {
+                    selectField(null, { focusNameInput: false, scrollIntoView: false });
+                }
+                return;
+            }
+
+            if (event.target !== overlay) return;
+
+            if (POINT_INSERT_TYPES.has(state.selectedTool)) {
+                createPointField(pageIndex, pointX, pointY);
+                return;
+            }
+
+            draftState = {
+                pageIndex: pageIndex,
+                startX: pointX,
+                startY: pointY,
+                currentX: pointX,
+                currentY: pointY
+            };
+            selectField(null, { focusNameInput: false, scrollIntoView: false });
+            renderDraftRect();
+        });
+    }
+
+    function createPageShell(pageIndex) {
+        const shell = document.createElement('div');
+        shell.className = 'pdf-page-shell';
+
+        const label = document.createElement('div');
+        label.className = 'pdf-page-label';
+        label.textContent = 'Page ' + (pageIndex + 1);
+        shell.appendChild(label);
+
+        const page = document.createElement('div');
+        page.className = 'pdf-page';
+        page.dataset.pageIndex = String(pageIndex);
+        shell.appendChild(page);
+        return { shell: shell, page: page };
+    }
+
+    async function renderPages() {
+        pdfPages.innerHTML = '';
+
+        for (let pageIndex = 0; pageIndex < state.pageCount; pageIndex += 1) {
+            const pageProxy = await state.pdfDoc.getPage(pageIndex + 1);
+            const viewport = pageProxy.getViewport({ scale: state.renderScale });
+            const pageShell = createPageShell(pageIndex);
+            pageShell.page.style.width = viewport.width + 'px';
+            pageShell.page.style.height = viewport.height + 'px';
+
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            pageShell.page.appendChild(canvas);
+
+            const context = canvas.getContext('2d');
+            await pageProxy.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'page-overlay';
+            overlay.dataset.pageIndex = String(pageIndex);
+            pageShell.page.appendChild(overlay);
+            setupPageInteractions(overlay, pageIndex);
+
+            pdfPages.appendChild(pageShell.shell);
+        }
+
+        updateOverlayCursorState();
+        renderFieldsOnPages();
+    }
+
+    async function loadPdf(file) {
+        showLoading('Loading PDF...');
+        hideToasts();
+        clearInteractionState();
+        setSelectedTool(null);
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            syncPdfState(arrayBufferToUint8Array(arrayBuffer), file.name || 'edited-form.pdf', file);
+            updateDocumentName();
+
+            state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
+            state.pageCount = state.pdfDoc.numPages;
+            state.pageSizes = [];
+
+            for (let index = 1; index <= state.pageCount; index += 1) {
+                const page = await state.pdfDoc.getPage(index);
+                const viewport = page.getViewport({ scale: 1 });
+                state.pageSizes.push({ width: viewport.width, height: viewport.height });
+            }
+
+            await renderPages();
+            showLoading('Detecting fields with FormFyxer...');
+
+            const existingFields = await parseExistingFieldsLocally(state.pdfBytes, state.pageSizes);
+            const detectedFields = await detectExistingFieldsWithServer().catch(function (_error) {
+                return existingFields;
+            });
+            replaceFields(detectedFields);
+            setDirty(false);
+            updateAiUiState();
+            floatingToolPicker.classList.remove('hidden');
+            pdfPages.classList.remove('hidden');
+            pdfEmpty.classList.add('hidden');
+            showSuccess(detectedFields.length ? ('Loaded ' + detectedFields.length + ' existing fields.') : 'PDF loaded.');
+        } catch (error) {
+            console.error('Error loading PDF:', error);
+            showError('Failed to load PDF: ' + (error && error.message ? error.message : 'Unknown error.'));
+            pdfEmpty.classList.remove('hidden');
+        } finally {
+            hideLoading();
+        }
+    }
+
+    function deleteField(fieldId) {
+        state.fields = state.fields.filter(function (field) { return field.id !== fieldId; });
+        if (state.selectedFieldId === fieldId) {
+            state.selectedFieldId = state.fields[0] ? state.fields[0].id : null;
+        }
+        setDirty(true);
+        renderFieldsList();
+        renderFieldsOnPages();
+        updateFieldCount();
+    }
+
+    function duplicateSelectedField() {
+        const field = getCurrentField();
+        if (!field) return;
+        const duplicate = {
+            id: generateId(),
+            name: ensureUniqueFieldName(field.name + '_copy', field.id),
+            type: field.type,
+            pageIndex: field.pageIndex,
+            x: clamp(field.x + 0.012, 0, 1 - field.width),
+            y: clamp(field.y + 0.012, 0, 1 - field.height),
+            width: field.width,
+            height: field.height,
+            font: field.font || 'Helvetica',
+            fontSize: field.fontSize,
+            autoSize: field.autoSize !== false,
+            options: Array.isArray(field.options) ? field.options.slice() : undefined
+        };
+        state.fields.push(duplicate);
+        selectField(duplicate.id, { focusNameInput: false, scrollIntoView: false });
+        setDirty(true);
+        updateFieldCount();
+    }
+
+    function updateSelectedField(updates) {
+        const field = getCurrentField();
+        if (!field) return;
+        Object.keys(updates).forEach(function (key) {
+            field[key] = updates[key];
+        });
+        markDirtyAndRender();
+    }
+
+    function normalizeCurrentFieldName() {
+        const field = getCurrentField();
+        if (!field) return;
+        const normalized = ensureUniqueFieldName(field.name, field.id);
+        field.name = normalized;
+        setDirty(true);
+        updateRenderedFieldName(field.id);
+        syncQuickFieldEditor();
+    }
+
+    function convertFieldsToAbsoluteCoordinates() {
+        return state.fields.map(function (field) {
+            const pageSize = state.pageSizes[field.pageIndex];
+            const safeName = ensureUniqueFieldName(field.name, field.id);
+            return {
+                name: safeName,
+                type: field.type,
+                pageIndex: field.pageIndex,
+                x: field.x * pageSize.width,
+                y: (1 - field.y - field.height) * pageSize.height,
+                width: field.width * pageSize.width,
+                height: field.height * pageSize.height,
+                font: field.font || 'Helvetica',
+                fontSize: field.fontSize,
+                autoSize: field.autoSize !== false,
+                options: Array.isArray(field.options) ? field.options.slice() : undefined
+            };
+        });
+    }
+
     async function autoDetectFields() {
-        if (!state.pdfFile) return;
+        if (!state.pdfBytes) return;
         if (!state.auth.aiEnabled) {
             showError('AI auto-detect requires login.');
             return;
         }
 
         showLoading('Auto-detecting fields with AI...');
-
         try {
             const formData = new FormData();
-            formData.append('file', state.pdfFile);
+            formData.append('file', getPdfFileForRequests());
             formData.append('normalize_fields', 'true');
             formData.append('model', state.model || state.defaultModel);
 
@@ -1003,319 +2014,431 @@
                 method: 'POST',
                 body: formData
             });
-
-            const data = await response.json();
-            if (response.status === 401) {
-                throw new Error('AI auto-detect requires login.');
-            }
-
+            const data = await parseApiResponse(response);
             if (!data.success) {
-                throw new Error(data.error?.message || 'Auto-detection failed');
+                throw new Error((data.error && data.error.message) || 'Auto-detection failed.');
             }
 
-            // Update PDF bytes if new fields were added
-            if (data.data.pdf_base64) {
-                const binaryString = atob(data.data.pdf_base64);
-                state.pdfBytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    state.pdfBytes[i] = binaryString.charCodeAt(i);
-                }
+            if (data.data && data.data.pdf_base64) {
+                syncPdfState(base64ToUint8Array(data.data.pdf_base64), state.fileName || 'edited-form.pdf');
             }
 
-            // Clear existing fields and add new ones
-            state.fields = [];
-            if (data.data.fields) {
-                data.data.fields.forEach(field => {
-                    const pageSize = state.pageSizes[field.pageIndex];
-                    if (pageSize) {
-                        state.fields.push({
-                            id: generateId(),
-                            name: field.name,
-                            type: field.type,
-                            pageIndex: field.pageIndex,
-                            x: field.x / pageSize.width,
-                            y: 1 - (field.y + field.height) / pageSize.height,
-                            width: field.width / pageSize.width,
-                            height: field.height / pageSize.height,
-                            fontSize: field.fontSize || 12
-                        });
-                    }
-                });
-            }
+            const importedFields = Array.isArray(data.data && data.data.fields) ? data.data.fields : [];
+            const normalizedFields = importedFields.map(function (field) {
+                const pageSize = state.pageSizes[field.pageIndex];
+                const fieldType = normalizeFieldType(field.type);
+                const width = pageSize ? clamp(field.width / pageSize.width, 0.01, 1) : 0.1;
+                const height = pageSize ? clamp(field.height / pageSize.height, 0.01, 1) : 0.03;
+                const x = pageSize ? clamp(field.x / pageSize.width, 0, 1 - width) : 0;
+                const y = pageSize ? clamp(1 - ((field.y + field.height) / pageSize.height), 0, 1 - height) : 0;
+                return {
+                    id: generateId(),
+                    name: ensureUniqueFieldName(field.name || getDefaultFieldName(fieldType), null),
+                    type: fieldType,
+                    pageIndex: field.pageIndex,
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height,
+                    font: field.font || 'Helvetica',
+                    fontSize: field.fontSize || 12,
+                    autoSize: field.autoSize !== false,
+                    options: Array.isArray(field.options) ? field.options.slice() : undefined
+                };
+            });
 
-            hideLoading();
+            replaceFields(normalizedFields);
+            setDirty(false);
             pdfPages.classList.remove('hidden');
-
-            renderFieldsOnPages();
-            renderFieldsList();
-            updateFieldCount();
-            relabelBtn.disabled = state.fields.length === 0;
-
-            showSuccess(`Detected ${state.fields.length} fields`);
-
+            const detectedCount = normalizedFields.length;
+            showSuccess('Detected ' + detectedCount + ' field' + (detectedCount === 1 ? '' : 's') + '.');
         } catch (error) {
             console.error('Error auto-detecting:', error);
-            hideLoading();
             pdfPages.classList.remove('hidden');
-            showError('Auto-detection failed: ' + error.message);
+            showError('Auto-detection failed: ' + (error && error.message ? error.message : 'Unknown error.'));
+        } finally {
+            hideLoading();
         }
     }
 
-    // AI Relabel
     async function relabelFields() {
-        if (!state.pdfFile || state.fields.length === 0) return;
+        if (!state.pdfBytes || state.fields.length === 0) return;
         if (!state.auth.aiEnabled) {
             showError('AI relabel requires login.');
             return;
         }
+        if (state.hasUnsavedChanges) {
+            const confirmed = window.confirm('AI relabel works on the PDF fields currently embedded in the document. Unsaved manual edits will be replaced. Continue?');
+            if (!confirmed) return;
+        }
 
         showLoading('Relabeling fields with AI...');
-
         try {
             const formData = new FormData();
-            formData.append('file', state.pdfFile);
+            formData.append('file', getPdfFileForRequests());
             formData.append('model', state.model || state.defaultModel);
 
             const response = await fetch(apiUrl('/pdf-labeler/api/relabel'), {
                 method: 'POST',
                 body: formData
             });
-
-            const data = await response.json();
-            if (response.status === 401) {
-                throw new Error('AI relabel requires login.');
-            }
-
+            const data = await parseApiResponse(response);
             if (!data.success) {
-                throw new Error(data.error?.message || 'Relabeling failed');
+                throw new Error((data.error && data.error.message) || 'Relabeling failed.');
             }
 
-            // Update PDF bytes
-            if (data.data.pdf_base64) {
-                const binaryString = atob(data.data.pdf_base64);
-                state.pdfBytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    state.pdfBytes[i] = binaryString.charCodeAt(i);
-                }
-
-                // Reload to get new field names
-                state.pdfFile = new File([state.pdfBytes], state.pdfFile.name, { type: 'application/pdf' });
-                state.fields = [];
-                await detectExistingFields();
+            if (data.data && data.data.pdf_base64) {
+                syncPdfState(base64ToUint8Array(data.data.pdf_base64), state.fileName || 'edited-form.pdf');
             }
-
-            hideLoading();
+            const relabeledFields = await detectExistingFieldsWithServer().catch(function () {
+                return parseExistingFieldsLocally(state.pdfBytes, state.pageSizes);
+            });
+            replaceFields(relabeledFields);
+            setDirty(false);
             pdfPages.classList.remove('hidden');
-            renderFieldsOnPages();
-            renderFieldsList();
-
-            showSuccess('Fields relabeled successfully');
-
+            showSuccess('Fields relabeled successfully.');
         } catch (error) {
             console.error('Error relabeling:', error);
-            hideLoading();
             pdfPages.classList.remove('hidden');
-            showError('Relabeling failed: ' + error.message);
+            showError('Relabeling failed: ' + (error && error.message ? error.message : 'Unknown error.'));
+        } finally {
+            hideLoading();
         }
     }
 
-    // Export PDF
     async function exportPdf() {
         if (!state.pdfBytes || state.fields.length === 0) {
-            showError('No fields to export');
+            showError('There are no fields to export.');
             return;
         }
 
         showLoading('Exporting PDF...');
-
         try {
-            // Convert fields back to absolute coordinates
-            const fieldsData = state.fields.map(field => {
-                const pageSize = state.pageSizes[field.pageIndex];
-                return {
-                    name: field.name,
-                    type: field.type,
-                    pageIndex: field.pageIndex,
-                    x: field.x * pageSize.width,
-                    y: (1 - field.y - field.height) * pageSize.height,
-                    width: field.width * pageSize.width,
-                    height: field.height * pageSize.height,
-                    fontSize: field.fontSize
-                };
-            });
-
             const formData = new FormData();
-            formData.append('file', state.pdfFile);
-            formData.append('fields', JSON.stringify(fieldsData));
+            formData.append('file', getPdfFileForRequests());
+            formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates()));
 
             const response = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), {
                 method: 'POST',
                 body: formData
             });
-
-            const data = await response.json();
-
+            const data = await parseApiResponse(response);
             if (!data.success) {
-                throw new Error(data.error?.message || 'Export failed');
+                throw new Error((data.error && data.error.message) || 'Export failed.');
             }
 
-            // Download the file
-            const binaryString = atob(data.data.pdf_base64);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
+            if (!data.data || !data.data.pdf_base64) {
+                throw new Error('The export endpoint did not return a PDF.');
             }
-            const blob = new Blob([bytes], { type: 'application/pdf' });
+
+            const outputBytes = base64ToUint8Array(data.data.pdf_base64);
+            const filename = data.data.filename || ((state.fileName || 'edited-form').replace(/\.pdf$/i, '') + '-with-fields.pdf');
+
+            const blob = new Blob([outputBytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = data.data.filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
             URL.revokeObjectURL(url);
 
-            hideLoading();
+            syncPdfState(outputBytes, filename);
+            updateDocumentName();
+            setDirty(false);
             pdfPages.classList.remove('hidden');
-            showSuccess('PDF exported successfully');
-
+            showSuccess('PDF exported successfully.');
         } catch (error) {
             console.error('Error exporting:', error);
-            hideLoading();
             pdfPages.classList.remove('hidden');
-            showError('Export failed: ' + error.message);
+            showError('Export failed: ' + (error && error.message ? error.message : 'Unknown error.'));
+        } finally {
+            hideLoading();
         }
     }
 
-    // Event Listeners
-    fileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (file) loadPdf(file);
+    document.addEventListener('pointermove', function (event) {
+        if (draftState) {
+            const overlay = getOverlayForPage(draftState.pageIndex);
+            if (!overlay) return;
+            const rect = overlay.getBoundingClientRect();
+            draftState.currentX = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+            draftState.currentY = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+            renderDraftRect();
+            return;
+        }
+        if (dragState) {
+            handleDragMove(event);
+            return;
+        }
+        if (resizeState) {
+            handleResizeMove(event);
+        }
     });
 
-    settingsBtn.addEventListener('click', () => {
+    document.addEventListener('pointerup', function () {
+        if (draftState && state.selectedTool) {
+            const width = Math.abs(draftState.currentX - draftState.startX);
+            const height = Math.abs(draftState.currentY - draftState.startY);
+            if (width >= 0.01 && height >= 0.01) {
+                createFieldFromTool(
+                    draftState.pageIndex,
+                    Math.min(draftState.startX, draftState.currentX),
+                    Math.min(draftState.startY, draftState.currentY),
+                    width,
+                    height
+                );
+            }
+        }
+        clearInteractionState();
+    });
+
+    fileInput.addEventListener('change', function (event) {
+        const file = event.target.files && event.target.files[0];
+        if (file) {
+            loadPdf(file);
+        }
+        fileInput.value = '';
+    });
+
+    pdfContainer.addEventListener('dragover', function (event) {
+        event.preventDefault();
+        pdfContainer.classList.add('drag-over');
+    });
+
+    pdfContainer.addEventListener('dragleave', function () {
+        pdfContainer.classList.remove('drag-over');
+    });
+
+    pdfContainer.addEventListener('drop', function (event) {
+        event.preventDefault();
+        pdfContainer.classList.remove('drag-over');
+        const file = event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file && file.type === 'application/pdf') {
+            loadPdf(file);
+        }
+    });
+    pdfContainer.addEventListener('scroll', function () {
+        positionQuickFieldEditor();
+    });
+    window.addEventListener('resize', function () {
+        positionQuickFieldEditor();
+    });
+
+    Object.keys(toolButtons).forEach(function (tool) {
+        toolButtons[tool].addEventListener('click', function () {
+            setSelectedTool(state.selectedTool === tool ? null : tool);
+            if (state.selectedTool) {
+                selectField(null, { focusNameInput: false, scrollIntoView: false });
+            }
+        });
+    });
+
+    settingsBtn.addEventListener('click', function () {
         aiModelInput.value = state.model || state.defaultModel;
         renderModelSuggestions('');
         settingsModal.classList.remove('hidden');
     });
-    closeSettingsBtn.addEventListener('click', () => {
+    closeSettingsBtn.addEventListener('click', function () {
         settingsModal.classList.add('hidden');
         aiModelSuggestions.classList.add('hidden');
     });
-    saveSettingsBtn.addEventListener('click', () => {
+    saveSettingsBtn.addEventListener('click', function () {
         state.model = aiModelInput.value.trim() || state.defaultModel;
         settingsModal.classList.add('hidden');
         aiModelSuggestions.classList.add('hidden');
     });
-    resetSettingsBtn.addEventListener('click', () => {
-        aiModelInput.value = state.defaultModel;
+    resetSettingsBtn.addEventListener('click', function () {
         state.model = state.defaultModel;
+        aiModelInput.value = state.defaultModel;
         renderModelSuggestions('');
     });
-
-    aiModelInput.addEventListener('input', () => {
+    aiModelInput.addEventListener('input', function () {
         state.model = aiModelInput.value.trim() || state.defaultModel;
         renderModelSuggestions(aiModelInput.value);
     });
-    aiModelInput.addEventListener('focus', () => {
+    aiModelInput.addEventListener('focus', function () {
         renderModelSuggestions(aiModelInput.value);
     });
-    document.addEventListener('mousedown', (e) => {
-        if (!aiModelSuggestions.contains(e.target) && e.target !== aiModelInput) {
+    quickFieldCloseBtn.addEventListener('click', function () {
+        hideQuickFieldEditor();
+    });
+    quickFieldNameInput.addEventListener('input', function () {
+        const field = getQuickEditField();
+        if (!field) return;
+        commitFieldNameChange(field.id, quickFieldNameInput.value, 'quick');
+    });
+    quickFieldNameInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            hideQuickFieldEditor();
+            return;
+        }
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            hideQuickFieldEditor();
+        }
+    });
+
+    document.addEventListener('mousedown', function (event) {
+        if (!aiModelSuggestions.contains(event.target) && event.target !== aiModelInput) {
             aiModelSuggestions.classList.add('hidden');
         }
         const authMenu = document.getElementById('auth-menu');
-        if (authMenu && !authControls.contains(e.target)) {
+        if (authMenu && !authControls.contains(event.target)) {
             authMenu.classList.remove('show');
         }
-        if (!settingsModal.classList.contains('hidden') && e.target === settingsModal) {
+        if (!settingsModal.classList.contains('hidden') && event.target === settingsModal) {
             settingsModal.classList.add('hidden');
             aiModelSuggestions.classList.add('hidden');
         }
     });
 
-    Object.entries(toolButtons).forEach(([tool, btn]) => {
-        btn.addEventListener('click', () => {
-            setSelectedTool(state.selectedTool === tool ? null : tool);
-        });
+    fieldsList.addEventListener('input', function (event) {
+        const target = event.target;
+        if (!target || !target.dataset) return;
+        const fieldId = target.dataset.fieldId;
+        const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        if (target.dataset.action === 'field-name') {
+            commitFieldNameChange(fieldId, target.value, 'sidebar');
+            return;
+        }
+        if (target.dataset.action === 'field-options') {
+            field.options = target.value.split(',').map(function (option) {
+                return option.trim();
+            }).filter(Boolean);
+            if (!field.options.length) {
+                field.options = DEFAULT_OPTION_LIST.slice();
+            }
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-font-size') {
+            const parsedValue = Number(target.value);
+            if (Number.isFinite(parsedValue)) {
+                field.fontSize = clamp(parsedValue, 4, 72);
+                markDirtyAndRender();
+            }
+        }
+    });
+
+    fieldsList.addEventListener('change', function (event) {
+        const target = event.target;
+        if (!target || !target.dataset) return;
+        const fieldId = target.dataset.fieldId;
+        const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        if (target.dataset.action === 'field-type') {
+            const newType = normalizeFieldType(target.value);
+            field.type = newType;
+            if (newType === 'text' || newType === 'multiline') {
+                field.font = field.font || 'Helvetica';
+                if (typeof field.autoSize !== 'boolean') {
+                    field.autoSize = true;
+                }
+            }
+            if (OPTION_TYPES.has(newType) && (!Array.isArray(field.options) || !field.options.length)) {
+                field.options = DEFAULT_OPTION_LIST.slice();
+            }
+            if (!OPTION_TYPES.has(newType)) {
+                delete field.options;
+            }
+            if (!(newType === 'text' || newType === 'multiline')) {
+                field.autoSize = true;
+            }
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-font') {
+            field.font = target.value || 'Helvetica';
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-auto-size') {
+            field.autoSize = !!target.checked;
+            markDirtyAndRender();
+        }
+    });
+
+    fieldsList.addEventListener('click', function (event) {
+        const actionTarget = event.target.closest('[data-action]');
+        if (!actionTarget) return;
+        const fieldId = actionTarget.dataset.fieldId;
+        if (!fieldId) return;
+        if (actionTarget.dataset.action === 'normalize-name') {
+            event.preventDefault();
+            event.stopPropagation();
+            state.selectedFieldId = fieldId;
+            normalizeCurrentFieldName();
+            return;
+        }
+        if (actionTarget.dataset.action === 'duplicate-field') {
+            event.preventDefault();
+            event.stopPropagation();
+            state.selectedFieldId = fieldId;
+            duplicateSelectedField();
+            return;
+        }
+        if (actionTarget.dataset.action === 'delete-field') {
+            event.preventDefault();
+            event.stopPropagation();
+            deleteField(fieldId);
+        }
     });
 
     autoDetectBtn.addEventListener('click', autoDetectFields);
     relabelBtn.addEventListener('click', relabelFields);
     exportBtn.addEventListener('click', exportPdf);
 
-    // Field editor
-    fieldNameInput.addEventListener('change', () => {
-        if (state.selectedFieldId) {
-            const field = state.fields.find(f => f.id === state.selectedFieldId);
-            if (field) {
-                field.name = fieldNameInput.value;
-                renderFieldsOnPages();
-                renderFieldsList();
-            }
+    document.addEventListener('keydown', function (event) {
+        const targetTag = document.activeElement && document.activeElement.tagName ? document.activeElement.tagName.toUpperCase() : '';
+        if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedFieldId && targetTag !== 'INPUT' && targetTag !== 'TEXTAREA') {
+            event.preventDefault();
+            deleteField(state.selectedFieldId);
+            return;
         }
-    });
-
-    fieldTypeSelect.addEventListener('change', () => {
-        if (state.selectedFieldId) {
-            const field = state.fields.find(f => f.id === state.selectedFieldId);
-            if (field) {
-                field.type = fieldTypeSelect.value;
-                renderFieldsOnPages();
-                renderFieldsList();
-            }
-        }
-    });
-
-    deleteFieldBtn.addEventListener('click', () => {
-        if (state.selectedFieldId) {
-            state.fields = state.fields.filter(f => f.id !== state.selectedFieldId);
-            selectField(null);
-            renderFieldsOnPages();
-            renderFieldsList();
-            updateFieldCount();
-            updateAiUiState();
-        }
-    });
-
-    // Drag and drop
-    const pdfContainer = document.getElementById('pdf-container');
-    pdfContainer.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        pdfContainer.classList.add('drag-over');
-    });
-    pdfContainer.addEventListener('dragleave', () => {
-        pdfContainer.classList.remove('drag-over');
-    });
-    pdfContainer.addEventListener('drop', (e) => {
-        e.preventDefault();
-        pdfContainer.classList.remove('drag-over');
-        const file = e.dataTransfer.files[0];
-        if (file && file.type === 'application/pdf') {
-            loadPdf(file);
-        }
-    });
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Delete' || e.key === 'Backspace') {
-            if (state.selectedFieldId && document.activeElement.tagName !== 'INPUT') {
-                e.preventDefault();
-                deleteFieldBtn.click();
-            }
-        }
-        if (e.key === 'Escape') {
+        if (event.key === 'Escape') {
+            clearInteractionState();
             setSelectedTool(null);
-            selectField(null);
+            selectField(null, { focusNameInput: false, scrollIntoView: false });
             aiModelSuggestions.classList.add('hidden');
             settingsModal.classList.add('hidden');
+            return;
+        }
+        if (!state.selectedFieldId || targetTag === 'INPUT' || targetTag === 'TEXTAREA') {
+            return;
+        }
+        const field = getCurrentField();
+        if (!field) return;
+        const step = event.shiftKey ? 0.01 : 0.003;
+        let moved = false;
+        if (event.key === 'ArrowLeft') {
+            field.x = clamp(field.x - step, 0, 1 - field.width);
+            moved = true;
+        } else if (event.key === 'ArrowRight') {
+            field.x = clamp(field.x + step, 0, 1 - field.width);
+            moved = true;
+        } else if (event.key === 'ArrowUp') {
+            field.y = clamp(field.y - step, 0, 1 - field.height);
+            moved = true;
+        } else if (event.key === 'ArrowDown') {
+            field.y = clamp(field.y + step, 0, 1 - field.height);
+            moved = true;
+        }
+        if (moved) {
+            event.preventDefault();
+            markDirtyAndRender();
         }
     });
 
     applyBranding();
+    updateDocumentName();
+    updateToolHint();
     fetchModelCatalog();
     fetchAuthStatus();
-
+    updateFieldCount();
     </script>
 </body>
 </html>

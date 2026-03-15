@@ -484,6 +484,35 @@ def _get_template_content(filename: str) -> str:
     return ""
 
 
+def _render_template_content(
+    filename: str, *, bootstrap_data: Optional[Dict[str, Any]] = None
+) -> str:
+    """Read a template and inject bootstrap JSON when requested."""
+    html_content = _get_template_content(filename)
+    if not html_content:
+        return ""
+    if bootstrap_data is None:
+        return html_content
+    return html_content.replace(
+        "__LABELER_BOOTSTRAP_JSON__",
+        json.dumps(bootstrap_data, sort_keys=True),
+    )
+
+
+def _build_pdf_labeler_bootstrap() -> Dict[str, Any]:
+    """Build bootstrap data for the PDF labeler page."""
+    from .labeler_config import get_pdf_labeler_ui_config
+
+    pdf_ui_config = get_pdf_labeler_ui_config()
+    return {
+        "apiBasePath": LABELER_BASE_PATH,
+        "branding": pdf_ui_config.get("branding", {}),
+        "pdf": {
+            "fieldNameLibrary": pdf_ui_config.get("field_name_library", {}),
+        },
+    }
+
+
 def _auth_fail(request_id: str):
     return jsonify_with_status(
         {
@@ -1327,7 +1356,9 @@ def docx_labeler_apply_labels():
 def pdf_labeler_page():
     """Serve the PDF labeler interactive UI."""
     log("ALDashboard: Serving PDF labeler page", "info")
-    html_content = _get_template_content("pdf_labeler.html")
+    html_content = _render_template_content(
+        "pdf_labeler.html", bootstrap_data=_build_pdf_labeler_bootstrap()
+    )
     if not html_content:
         log("ALDashboard: PDF labeler template not found", "error")
         return Response("PDF labeler template not found.", status=500, mimetype="text/plain")
@@ -1341,12 +1372,8 @@ def pdf_labeler_detect_fields():
     """Detect existing form fields in a PDF."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: detect-fields request {request_id}", "info")
-    if not _labeler_auth_check():
-        log(f"ALDashboard: detect-fields auth failed for request {request_id}", "warning")
-        return _auth_fail(request_id)
 
     try:
-        from .pdf_field_labeler import list_existing_field_names
         import formfyxer  # type: ignore[import-not-found]
 
         # Handle both multipart and JSON uploads
@@ -1424,9 +1451,9 @@ def pdf_labeler_auto_detect():
     """Use AI to automatically detect and add fields to a PDF."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: auto-detect request {request_id}", "info")
-    if not _labeler_auth_check():
+    if not _labeler_ai_auth_check():
         log(f"ALDashboard: auto-detect auth failed for request {request_id}", "warning")
-        return _auth_fail(request_id)
+        return _ai_auth_fail(request_id)
 
     try:
         import formfyxer  # type: ignore[import-not-found]
@@ -1452,6 +1479,7 @@ def pdf_labeler_auto_detect():
         # Options
         normalize_fields = parse_bool(post_data.get("normalize_fields"), default=True)
         jur = str(post_data.get("jur", "MA"))
+        model = str(post_data.get("model") or "").strip() or None
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -1468,13 +1496,19 @@ def pdf_labeler_auto_detect():
             # Optionally normalize with AI
             stats = {}
             if normalize_fields:
-                stats = formfyxer.parse_form(
-                    output_path,
-                    title=os.path.splitext(filename)[0],
-                    jur=jur,
-                    normalize=True,
-                    rewrite=True,
-                )
+                parse_kwargs: Dict[str, Any] = {
+                    "title": os.path.splitext(filename)[0],
+                    "jur": jur,
+                    "normalize": True,
+                    "rewrite": True,
+                }
+                if model:
+                    parse_kwargs["model"] = model
+                try:
+                    stats = formfyxer.parse_form(output_path, **parse_kwargs)
+                except TypeError:
+                    parse_kwargs.pop("model", None)
+                    stats = formfyxer.parse_form(output_path, **parse_kwargs)
 
             # Get the resulting fields
             fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
@@ -1536,9 +1570,9 @@ def pdf_labeler_relabel():
     """Relabel PDF fields using AI suggestions."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: pdf-relabel request {request_id}", "info")
-    if not _labeler_auth_check():
+    if not _labeler_ai_auth_check():
         log(f"ALDashboard: pdf-relabel auth failed for request {request_id}", "warning")
-        return _auth_fail(request_id)
+        return _ai_auth_fail(request_id)
 
     try:
         from .pdf_field_labeler import relabel_existing_pdf_fields
@@ -1562,6 +1596,7 @@ def pdf_labeler_relabel():
             )
 
         jur = str(post_data.get("jur", "MA"))
+        model = str(post_data.get("model") or "").strip() or None
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -1577,6 +1612,7 @@ def pdf_labeler_relabel():
                 output_pdf_path=output_path,
                 relabel_with_ai=True,
                 jur=jur,
+                model=model,
             )
 
             # Read the output file
@@ -1619,9 +1655,6 @@ def pdf_labeler_apply_fields():
     """Apply field definitions to a PDF and return the modified file."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: apply-fields request {request_id}", "info")
-    if not _labeler_auth_check():
-        log(f"ALDashboard: apply-fields auth failed for request {request_id}", "warning")
-        return _auth_fail(request_id)
 
     try:
         import formfyxer  # type: ignore[import-not-found]
@@ -1691,14 +1724,33 @@ def pdf_labeler_apply_fields():
 
                 width = float(field_data.get("width", 100))
                 height = float(field_data.get("height", 20))
+                font_name = str(field_data.get("font") or "Helvetica").strip() or "Helvetica"
+                auto_size = parse_bool(field_data.get("autoSize"), default=False)
+                font_size_raw = field_data.get("fontSize")
+                font_size = None if auto_size else int(font_size_raw or 12)
+                field_configs: Dict[str, Any] = {
+                    "width": width,
+                    "height": height,
+                    "fontName": font_name,
+                }
+                if field_type in (FieldType.CHOICE, FieldType.LIST_BOX, FieldType.RADIO):
+                    raw_options = field_data.get("options")
+                    if isinstance(raw_options, list):
+                        options = [str(option) for option in raw_options if str(option).strip()]
+                    else:
+                        options = []
+                    if options:
+                        field_configs["options"] = options
+                        if field_type == FieldType.RADIO:
+                            field_configs["value"] = options[0]
 
                 form_field = FormField(
                     field_name=str(field_data.get("name", "field")),
                     type_name=field_type,
                     x=int(field_data.get("x", 0)),
                     y=int(field_data.get("y", 0)),
-                    font_size=int(field_data.get("fontSize") or 12),
-                    configs={"width": width, "height": height},
+                    font_size=font_size,
+                    configs=field_configs,
                 )
                 fields_per_page[page_idx].append(form_field)
 
@@ -1747,9 +1799,6 @@ def pdf_labeler_rename_fields():
     """Rename fields in an existing PDF."""
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: rename-fields request {request_id}", "info")
-    if not _labeler_auth_check():
-        log(f"ALDashboard: rename-fields auth failed for request {request_id}", "warning")
-        return _auth_fail(request_id)
 
     try:
         import formfyxer  # type: ignore[import-not-found]

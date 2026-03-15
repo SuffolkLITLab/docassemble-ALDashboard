@@ -15,6 +15,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
@@ -26,13 +27,15 @@ from flask_login import current_user
 
 from docassemble.base.config import daconfig
 import docassemble.base.functions
-from docassemble.base.util import log
+from docassemble.base.util import get_config, log
 from docassemble.webapp.app_object import app, csrf
-from docassemble.webapp.server import api_verify, jsonify_with_status
+from docassemble.webapp.server import api_verify, jsonify_with_status, r
+from docassemble.webapp.worker_common import workerapp
 
 from .api_dashboard_utils import (
     DashboardAPIValidationError,
     _validate_upload_size,
+    coerce_async_flag,
     decode_base64_content,
     merge_raw_options,
     parse_bool,
@@ -70,6 +73,9 @@ LABELER_MODEL_SET_PRIORITY = [
     CLAUDE_LABELER_MODELS,
 ]
 LABELER_DEFAULT_MODEL = "gpt-5-mini"
+LABELER_JOB_KEY_PREFIX = "da:aldashboard:labeler-job:"
+LABELER_JOB_EXPIRE_SECONDS = 24 * 60 * 60
+ASYNC_CELERY_MODULE = "docassemble.ALDashboard.api_dashboard_worker"
 
 
 def _normalize_provider_family(family_name: Optional[str]) -> str:
@@ -535,6 +541,73 @@ def _ai_auth_fail(request_id: str):
             },
         },
         401,
+    )
+
+
+def _labeler_async_is_configured() -> bool:
+    celery_modules = daconfig.get("celery modules", []) or []
+    return ASYNC_CELERY_MODULE in celery_modules
+
+
+def _labeler_job_key(job_id: str) -> str:
+    return LABELER_JOB_KEY_PREFIX + job_id
+
+
+def _store_labeler_job_mapping(
+    job_id: str, task_id: str, extra: Optional[Dict[str, Any]] = None
+) -> None:
+    payload = {"id": task_id, "created_at": time.time()}
+    if extra:
+        payload.update(extra)
+    pipe = r.pipeline()
+    pipe.set(_labeler_job_key(job_id), json.dumps(payload))
+    pipe.expire(_labeler_job_key(job_id), LABELER_JOB_EXPIRE_SECONDS)
+    pipe.execute()
+
+
+def _fetch_labeler_job_mapping(job_id: str) -> Optional[Dict[str, Any]]:
+    raw = r.get(_labeler_job_key(job_id))
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw.decode())
+    except Exception:
+        return None
+
+
+def _normalize_labeler_result_for_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_labeler_result_for_json(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_labeler_result_for_json(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_labeler_result_for_json(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "value"):
+        inner_value = getattr(value, "value")
+        if inner_value is not None:
+            return _normalize_labeler_result_for_json(inner_value)
+    if hasattr(value, "__dict__"):
+        return _normalize_labeler_result_for_json(vars(value))
+    return str(value)
+
+
+def _queue_labeler_async_job(task: Any, *, kind: str, request_id: str):
+    job_id = str(uuid.uuid4())
+    _store_labeler_job_mapping(job_id, task.id, extra={"kind": kind})
+    return jsonify_with_status(
+        {
+            "success": True,
+            "request_id": request_id,
+            "status": "queued",
+            "job_id": job_id,
+            "job_url": f"{LABELER_BASE_PATH}/pdf-labeler/api/jobs/{job_id}",
+        },
+        202,
     )
 
 
@@ -1350,6 +1423,7 @@ def docx_labeler_apply_labels():
 # =============================================================================
 
 
+@app.route("/pdf-labeler", methods=["GET"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
@@ -1365,6 +1439,58 @@ def pdf_labeler_page():
     return Response(html_content, mimetype="text/html")
 
 
+@app.route("/pdf-labeler/api/jobs/<job_id>", methods=["GET"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/jobs/<job_id>", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def pdf_labeler_job(job_id: str):
+    request_id = str(uuid.uuid4())
+    if not _labeler_ai_auth_check():
+        return _ai_auth_fail(request_id)
+
+    task_info = _fetch_labeler_job_mapping(job_id)
+    if not task_info:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "not_found", "message": "Job not found."},
+            },
+            404,
+        )
+
+    result = workerapp.AsyncResult(id=task_info["id"])
+    state = (result.state or "").upper()
+    if state == "SUCCESS":
+        status = "succeeded"
+    elif state in {"RECEIVED", "STARTED", "RETRY"}:
+        status = "running"
+    elif state == "FAILURE":
+        status = "failed"
+    else:
+        status = "queued"
+
+    body: Dict[str, Any] = {
+        "success": True,
+        "request_id": request_id,
+        "job_id": job_id,
+        "task_id": task_info.get("id"),
+        "status": status,
+        "celery_state": state,
+        "created_at": task_info.get("created_at"),
+    }
+    if state == "SUCCESS":
+        body["data"] = _normalize_labeler_result_for_json(result.get())
+    elif state == "FAILURE":
+        error_obj = result.result
+        body["error"] = {
+            "type": getattr(error_obj, "__class__", type(error_obj)).__name__,
+            "message": str(error_obj),
+        }
+    return jsonify(body)
+
+
+@app.route("/pdf-labeler/api/detect-fields", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/detect-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -1444,6 +1570,7 @@ def pdf_labeler_detect_fields():
         )
 
 
+@app.route("/pdf-labeler/api/auto-detect", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/auto-detect", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -1469,6 +1596,7 @@ def pdf_labeler_auto_detect():
             filename = str(post_data.get("filename") or "upload.pdf")
             content = decode_base64_content(post_data.get("file_content_base64"))
 
+        post_data = merge_raw_options(post_data)
         _validate_upload_size(content)
 
         if not filename.lower().endswith(".pdf"):
@@ -1476,10 +1604,68 @@ def pdf_labeler_auto_detect():
                 "Only PDF files are supported.", status_code=415
             )
 
+        if coerce_async_flag(post_data):
+            if not _labeler_async_is_configured():
+                return jsonify_with_status(
+                    {
+                        "success": False,
+                        "request_id": request_id,
+                        "error": {
+                            "type": "async_not_configured",
+                            "message": (
+                                "Async mode is not configured. Add "
+                                f"{ASYNC_CELERY_MODULE!r} to the docassemble "
+                                "'celery modules' configuration list."
+                            ),
+                        },
+                    },
+                    503,
+                )
+            from .api_dashboard_worker import dashboard_pdf_fields_detect_task
+
+            task = dashboard_pdf_fields_detect_task.delay(
+                payload={
+                    "filename": filename,
+                    "file_content_base64": base64.b64encode(content).decode("ascii"),
+                    "relabel_with_ai": True,
+                    "include_pdf_base64": True,
+                    "include_parse_stats": True,
+                    **post_data,
+                }
+            )
+            return _queue_labeler_async_job(
+                task, kind="pdf_auto_detect", request_id=request_id
+            )
+
         # Options
         normalize_fields = parse_bool(post_data.get("normalize_fields"), default=True)
         jur = str(post_data.get("jur", "MA"))
         model = str(post_data.get("model") or "").strip() or None
+        tools_token = (
+            str(post_data.get("tools_token")).strip()
+            if post_data.get("tools_token") is not None
+            else str(
+                get_config("assembly line", {}).get(
+                    "tools.suffolklitlab.org api key", ""
+                )
+            ).strip()
+            or None
+        )
+        openai_api = (
+            str(post_data.get("openai_api")).strip()
+            if post_data.get("openai_api") is not None
+            else str(
+                get_config("open ai", {}).get("key")
+                or get_config("openai api key")
+                or ""
+            ).strip()
+            or None
+        )
+        openai_base_url = (
+            str(post_data.get("openai_base_url")).strip()
+            if post_data.get("openai_base_url") is not None
+            else str(get_config("openai base url") or "").strip() or None
+        )
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -1502,12 +1688,19 @@ def pdf_labeler_auto_detect():
                     "normalize": True,
                     "rewrite": True,
                 }
+                if tools_token:
+                    parse_kwargs["tools_token"] = tools_token
+                if openai_api:
+                    parse_kwargs["openai_api_key"] = openai_api
+                if openai_base_url:
+                    parse_kwargs["openai_base_url"] = openai_base_url
                 if model:
                     parse_kwargs["model"] = model
                 try:
                     stats = formfyxer.parse_form(output_path, **parse_kwargs)
                 except TypeError:
                     parse_kwargs.pop("model", None)
+                    parse_kwargs.pop("openai_base_url", None)
                     stats = formfyxer.parse_form(output_path, **parse_kwargs)
 
             # Get the resulting fields
@@ -1563,6 +1756,7 @@ def pdf_labeler_auto_detect():
         )
 
 
+@app.route("/pdf-labeler/api/relabel", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/relabel", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -1588,11 +1782,45 @@ def pdf_labeler_relabel():
             filename = str(post_data.get("filename") or "upload.pdf")
             content = decode_base64_content(post_data.get("file_content_base64"))
 
+        post_data = merge_raw_options(post_data)
         _validate_upload_size(content)
 
         if not filename.lower().endswith(".pdf"):
             raise DashboardAPIValidationError(
                 "Only PDF files are supported.", status_code=415
+            )
+
+        if coerce_async_flag(post_data):
+            if not _labeler_async_is_configured():
+                return jsonify_with_status(
+                    {
+                        "success": False,
+                        "request_id": request_id,
+                        "error": {
+                            "type": "async_not_configured",
+                            "message": (
+                                "Async mode is not configured. Add "
+                                f"{ASYNC_CELERY_MODULE!r} to the docassemble "
+                                "'celery modules' configuration list."
+                            ),
+                        },
+                    },
+                    503,
+                )
+            from .api_dashboard_worker import dashboard_pdf_fields_relabel_task
+
+            task = dashboard_pdf_fields_relabel_task.delay(
+                payload={
+                    "filename": filename,
+                    "file_content_base64": base64.b64encode(content).decode("ascii"),
+                    "relabel_with_ai": True,
+                    "include_pdf_base64": True,
+                    "include_parse_stats": True,
+                    **post_data,
+                }
+            )
+            return _queue_labeler_async_job(
+                task, kind="pdf_relabel", request_id=request_id
             )
 
         jur = str(post_data.get("jur", "MA"))
@@ -1648,6 +1876,7 @@ def pdf_labeler_relabel():
         )
 
 
+@app.route("/pdf-labeler/api/apply-fields", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/apply-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -1659,6 +1888,7 @@ def pdf_labeler_apply_fields():
     try:
         import formfyxer  # type: ignore[import-not-found]
         from formfyxer.pdf_wrangling import FormField, FieldType, set_fields
+        from reportlab.lib.colors import HexColor
 
         # Handle both multipart and JSON uploads
         if "file" in request.files:
@@ -1726,6 +1956,7 @@ def pdf_labeler_apply_fields():
                 height = float(field_data.get("height", 20))
                 font_name = str(field_data.get("font") or "Helvetica").strip() or "Helvetica"
                 auto_size = parse_bool(field_data.get("autoSize"), default=False)
+                allow_scroll = parse_bool(field_data.get("allowScroll"), default=True)
                 font_size_raw = field_data.get("fontSize")
                 font_size = None if auto_size else int(font_size_raw or 12)
                 field_configs: Dict[str, Any] = {
@@ -1733,6 +1964,21 @@ def pdf_labeler_apply_fields():
                     "height": height,
                     "fontName": font_name,
                 }
+                field_flag_parts: List[str] = []
+                if field_type == FieldType.AREA:
+                    field_flag_parts.append("multiline")
+                if not allow_scroll:
+                    field_flag_parts.append("doNotScroll")
+                field_configs["fieldFlags"] = " ".join(field_flag_parts)
+                checkbox_style = str(field_data.get("checkboxStyle") or "").strip()
+                if checkbox_style:
+                    field_configs["buttonStyle"] = checkbox_style
+                background_color = field_data.get("backgroundColor")
+                if isinstance(background_color, str) and background_color.strip():
+                    try:
+                        field_configs["fillColor"] = HexColor(background_color.strip())
+                    except Exception:
+                        pass
                 if field_type in (FieldType.CHOICE, FieldType.LIST_BOX, FieldType.RADIO):
                     raw_options = field_data.get("options")
                     if isinstance(raw_options, list):
@@ -1792,6 +2038,7 @@ def pdf_labeler_apply_fields():
         )
 
 
+@app.route("/pdf-labeler/api/rename-fields", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/rename-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)

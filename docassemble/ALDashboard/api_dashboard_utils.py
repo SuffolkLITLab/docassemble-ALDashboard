@@ -1472,11 +1472,17 @@ def pdf_fields_detect_payload_from_options(
     include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
+    model = str(raw.get("model") or "").strip() or None
     tools_token = (
         str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
     )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    openai_base_url = (
+        str(raw.get("openai_base_url"))
+        if raw.get("openai_base_url") is not None
+        else None
     )
     target_field_names = _load_json_field(
         raw.get("target_field_names"),
@@ -1494,6 +1500,8 @@ def pdf_fields_detect_payload_from_options(
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
+            model=model,
         )
         return _finalize_pdf_payload(
             filename=filename,
@@ -1538,11 +1546,17 @@ def pdf_fields_relabel_payload_from_options(
     include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
+    model = str(raw.get("model") or "").strip() or None
     tools_token = (
         str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
     )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    openai_base_url = (
+        str(raw.get("openai_base_url"))
+        if raw.get("openai_base_url") is not None
+        else None
     )
     target_field_names = _load_json_field(
         raw.get("target_field_names"),
@@ -1568,6 +1582,8 @@ def pdf_fields_relabel_payload_from_options(
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
+            model=model,
         )
         return _finalize_pdf_payload(
             filename=filename,

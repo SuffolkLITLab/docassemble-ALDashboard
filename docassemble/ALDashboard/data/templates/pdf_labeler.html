@@ -92,8 +92,8 @@
         .quick-field-editor {
             position: fixed;
             z-index: 1060;
-            width: min(18rem, calc(100vw - 1.5rem));
-            padding: 0.8rem;
+            width: min(26rem, calc(100vw - 1.5rem));
+            padding: 0.55rem;
             border: 1px solid rgba(17, 74, 139, 0.14);
             border-radius: 0.9rem;
             background: rgba(255, 255, 255, 0.98);
@@ -108,12 +108,30 @@
         .quick-field-editor .quick-field-input {
             min-width: 0;
         }
-        .quick-field-editor .quick-field-help {
-            font-size: 0.76rem;
-            margin-top: 0.35rem;
+        .quick-field-editor .quick-field-icon {
+            width: 2rem;
+            height: 2rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            background: #edf2f8;
+            color: #38516d;
+            flex: 0 0 auto;
         }
-        .quick-field-editor .quick-field-help.info { color: #0b5ed7; }
-        .quick-field-editor .quick-field-help.warning { color: #9a5800; }
+        .quick-field-editor .quick-field-icon svg {
+            width: 0.95rem;
+            height: 0.95rem;
+        }
+        .quick-field-editor .quick-field-done {
+            width: 2rem;
+            height: 2rem;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+        }
         .header-auth-menu { min-width: 12rem; }
         .page-overlay {
             position: absolute;
@@ -136,6 +154,26 @@
             z-index: 1080;
             max-width: 28rem;
             margin-bottom: 0;
+        }
+        .loading-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1075;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            background: rgba(18, 29, 46, 0.28);
+            backdrop-filter: blur(4px);
+        }
+        .loading-modal-card {
+            width: min(25rem, calc(100vw - 2rem));
+            padding: 1.1rem 1.25rem;
+            border: 1px solid rgba(17, 74, 139, 0.14);
+            border-radius: 1rem;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: 0 18px 40px rgba(14, 29, 51, 0.18);
+            text-align: center;
         }
         .drag-over { background: #cad8eb !important; }
         .loading-spinner { animation: spin 1s linear infinite; }
@@ -239,6 +277,15 @@
             text-overflow: ellipsis;
         }
         .field-chip.hide-name .field-chip-name { display: none; }
+        .field-chip.compact {
+            top: 0.1rem;
+            left: 0.1rem;
+            gap: 0.18rem;
+            max-width: calc(100% - 0.2rem);
+            padding: 0.04rem 0.24rem;
+            font-size: 0.56rem;
+            line-height: 1;
+        }
         .field-chip.icon-only {
             padding: 0.08rem 0.2rem;
             min-width: 1rem;
@@ -271,14 +318,41 @@
         .resize-handle.s { bottom: -5px; left: calc(50% - 5px); cursor: s-resize; }
         .resize-handle.e { top: calc(50% - 5px); right: -5px; cursor: e-resize; }
         .resize-handle.w { top: calc(50% - 5px); left: -5px; cursor: w-resize; }
+        .field-list-page {
+            margin-bottom: 1rem;
+        }
+        .field-list-page:last-child {
+            margin-bottom: 0;
+        }
+        .field-page-divider {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            margin: 0 0 0.55rem;
+            color: #62768f;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .field-page-divider::before,
+        .field-page-divider::after {
+            content: '';
+            height: 1px;
+            background: #dde5ef;
+            flex: 1 1 auto;
+        }
         .field-list-item {
             border: 1px solid #d8e0ea;
             background: #fff;
-            border-radius: 0.75rem;
-            padding: 0.8rem;
-            margin-bottom: 0.8rem;
+            border-radius: 0.7rem;
+            padding: 0.55rem 0.65rem;
+            margin-bottom: 0.45rem;
             cursor: pointer;
             transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+        }
+        .field-list-item:last-child {
+            margin-bottom: 0;
         }
         .field-list-item:hover {
             border-color: #b4c1d2;
@@ -286,12 +360,42 @@
         }
         .field-list-item.selected {
             border-color: #114a8b;
-            box-shadow: 0 10px 22px rgba(17, 74, 139, 0.12);
+            box-shadow: 0 8px 18px rgba(17, 74, 139, 0.1);
             background: #f8fbff;
         }
+        .field-list-row {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            min-width: 0;
+        }
+        .field-list-icon {
+            width: 1.55rem;
+            height: 1.55rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            background: #edf2f8;
+            color: #38516d;
+            flex: 0 0 auto;
+        }
+        .field-list-icon svg {
+            width: 0.82rem;
+            height: 0.82rem;
+        }
+        .field-list-name {
+            min-width: 0;
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: #17304f;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         .field-card-editor {
-            margin-top: 0.85rem;
-            padding-top: 0.85rem;
+            margin-top: 0.65rem;
+            padding-top: 0.75rem;
             border-top: 1px solid #dbe5f0;
         }
         .field-card-actions {
@@ -331,7 +435,43 @@
             color: #38516d;
         }
         .field-type-badge svg { width: 0.8rem; height: 0.8rem; }
+        .fields-toolbar {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0.55rem;
+            margin-top: 0.8rem;
+        }
+        .fields-toolbar-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 7.2rem;
+            gap: 0.5rem;
+        }
+        .fields-toolbar .form-control,
+        .fields-toolbar .form-select {
+            font-size: 0.78rem;
+        }
+        #fields-list {
+            scroll-behavior: smooth;
+            scrollbar-gutter: stable;
+        }
         .dirty-indicator { font-size: 0.72rem; }
+        .normalization-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.9rem;
+        }
+        .normalization-card {
+            border: 1px solid #d8e0ea;
+            border-radius: 0.8rem;
+            padding: 0.8rem;
+            background: #fbfdff;
+        }
+        .normalization-card .form-check {
+            margin-bottom: 0.55rem;
+        }
+        .normalization-card .form-text {
+            font-size: 0.76rem;
+        }
         @media (max-width: 1100px) {
             .pdf-fields-panel { width: 100%; min-width: 0; max-height: 42vh; }
             .pdf-main { flex-direction: column !important; }
@@ -342,7 +482,10 @@
                 max-width: none;
             }
             .quick-field-editor {
-                width: min(22rem, calc(100vw - 1rem));
+                width: min(24rem, calc(100vw - 1rem));
+            }
+            .normalization-grid {
+                grid-template-columns: 1fr;
             }
             .font-row {
                 grid-template-columns: 1fr;
@@ -372,6 +515,10 @@
                         Upload PDF
                         <input type="file" id="file-input" accept=".pdf" class="d-none">
                     </label>
+                    <button id="normalize-pass-btn" class="btn btn-outline-light btn-sm" disabled>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"></path><path d="m5 7 2 2 4-4"></path><path d="m13 17 2 2 4-4"></path></svg>
+                        Normalize
+                    </button>
                     <div class="toolbar-divider"></div>
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
@@ -401,8 +548,8 @@
                         <p class="mt-2 text-muted">Drag and drop a PDF here or use the upload button above.</p>
                     </div>
                 </div>
-                <div id="pdf-loading" class="hidden h-100 d-flex align-items-center justify-content-center">
-                    <div class="text-center">
+                <div id="pdf-loading" class="loading-modal hidden" role="status" aria-live="polite" aria-modal="true">
+                    <div class="loading-modal-card">
                         <svg class="loading-spinner icon-48 mx-auto text-primary" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -419,6 +566,27 @@
                         <div>
                             <h2 class="h5 fw-semibold mb-0">Fields</h2>
                             <p id="field-count" class="small text-muted mt-1 mb-0">No fields</p>
+                        </div>
+                    </div>
+                    <div class="fields-toolbar">
+                        <input id="field-search" type="search" class="form-control form-control-sm" placeholder="Filter by field name">
+                        <div class="fields-toolbar-row">
+                            <select id="field-type-filter" class="form-select form-select-sm" aria-label="Filter fields by type">
+                                <option value="">All types</option>
+                                <option value="text">Text</option>
+                                <option value="multiline">Multiline</option>
+                                <option value="checkbox">Checkbox</option>
+                                <option value="signature">Signature</option>
+                                <option value="radio">Radio</option>
+                                <option value="dropdown">Dropdown</option>
+                                <option value="listbox">List box</option>
+                            </select>
+                            <select id="field-sort" class="form-select form-select-sm" aria-label="Sort fields">
+                                <option value="position">By position</option>
+                                <option value="name_asc">Name A-Z</option>
+                                <option value="name_desc">Name Z-A</option>
+                                <option value="type_name">Type</option>
+                            </select>
                         </div>
                     </div>
                     <div id="ai-auth-notice" class="alert alert-warning small mt-3 mb-0 hidden"></div>
@@ -465,11 +633,12 @@
 
         <div id="quick-field-editor" class="quick-field-editor hidden">
             <div class="quick-field-header">
-                <div id="quick-field-type-badge" class="field-type-badge flex-shrink-0"></div>
+                <div id="quick-field-type-badge" class="quick-field-icon" aria-hidden="true"></div>
                 <input id="quick-field-name" type="text" class="quick-field-input form-control form-control-sm font-monospace" aria-label="PDF field label">
-                <button id="quick-field-close" type="button" class="btn btn-outline-secondary btn-sm flex-shrink-0">Done</button>
+                <button id="quick-field-close" type="button" class="quick-field-done btn btn-outline-secondary btn-sm" aria-label="Done editing field label" title="Done editing field label">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 13 4 4L19 7"></path></svg>
+                </button>
             </div>
-            <div id="quick-field-help" class="quick-field-help info"></div>
         </div>
 
         <div id="error-toast" class="hidden alert alert-danger labeler-toast mb-0">
@@ -495,6 +664,98 @@
                 <div class="d-flex justify-content-end gap-2 border-top pt-2">
                     <button id="reset-settings" class="btn btn-outline-secondary btn-sm">Reset</button>
                     <button id="save-settings" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="normalization-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 62rem; max-height: 90vh; overflow: auto;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-0">Normalize PDF Fields</h2>
+                        <p class="small text-muted mb-0 mt-1">Apply court-PDF cleanup heuristics to the current detected fields.</p>
+                    </div>
+                    <button id="close-normalization" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="normalization-grid">
+                    <section class="normalization-card">
+                        <label class="form-check">
+                            <input id="norm-checkbox-cross" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Use cross-style checkboxes</span>
+                        </label>
+                        <label class="form-check">
+                            <input id="norm-checkbox-uniform" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Use one checkbox size everywhere</span>
+                        </label>
+                        <label for="norm-checkbox-size" class="form-label small text-muted mb-1">Checkbox size (pt)</label>
+                        <input id="norm-checkbox-size" type="number" min="6" max="24" step="0.5" class="form-control form-control-sm" value="12">
+                        <div class="form-text">Used for existing checkboxes and radio-to-checkbox conversion.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <label class="form-check">
+                            <input id="norm-font-normalize" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Normalize font and size</span>
+                        </label>
+                        <label for="norm-font-name" class="form-label small text-muted mb-1">Font</label>
+                        <select id="norm-font-name" class="form-select form-select-sm">
+                            <option value="Helvetica" selected>Helvetica</option>
+                            <option value="Helvetica-Bold">Helvetica-Bold</option>
+                            <option value="Courier">Courier</option>
+                            <option value="Courier-Bold">Courier-Bold</option>
+                            <option value="Times-Roman">Times-Roman</option>
+                            <option value="Times-Bold">Times-Bold</option>
+                        </select>
+                        <label for="norm-font-size" class="form-label small text-muted mb-1 mt-2">Font size (pt)</label>
+                        <input id="norm-font-size" type="number" min="6" max="18" step="0.5" class="form-control form-control-sm" value="10">
+                    </section>
+                    <section class="normalization-card">
+                        <label class="form-check">
+                            <input id="norm-dropdowns-to-text" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Convert dropdown menus to text fields</span>
+                        </label>
+                        <label class="form-check">
+                            <input id="norm-radios-to-checkboxes" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Convert radio groups to checkbox sets</span>
+                        </label>
+                        <div class="form-text">Yes/no groups become <code>_yes</code> and <code>_no</code>. Other groups become <code>_opt</code>, <code>_opt2</code>, and so on.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <label class="form-check">
+                            <input id="norm-align-rows" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Align nearby fields to a shared baseline</span>
+                        </label>
+                        <label for="norm-align-threshold" class="form-label small text-muted mb-1">Row snap threshold (pt)</label>
+                        <input id="norm-align-threshold" type="number" min="2" max="20" step="0.5" class="form-control form-control-sm" value="6">
+                        <div class="form-text">Fields with centers within this vertical distance snap to a common row baseline.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <label class="form-check">
+                            <input id="norm-autosize-name-address" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Auto-expand name and address fields with fixed heights</span>
+                        </label>
+                        <label for="norm-text-height" class="form-label small text-muted mb-1">Single-line field height (pt)</label>
+                        <input id="norm-text-height" type="number" min="10" max="36" step="0.5" class="form-control form-control-sm" value="14">
+                        <div class="form-text">Used for fields whose labels look like names, addresses, phone numbers, or emails.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <label class="form-check">
+                            <input id="norm-disable-scroll" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Disable scrolling inside text fields</span>
+                        </label>
+                        <label class="form-check">
+                            <input id="norm-multiline-tall" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Turn tall text fields into multiline fields</span>
+                        </label>
+                        <label for="norm-multiline-lines" class="form-label small text-muted mb-1">Multiline threshold (10pt lines)</label>
+                        <input id="norm-multiline-lines" type="number" min="2" max="8" step="0.5" class="form-control form-control-sm" value="2.2">
+                        <label class="form-check mt-2">
+                            <input id="norm-multiline-white" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Use white background for multiline fields</span>
+                        </label>
+                    </section>
+                </div>
+                <div class="d-flex justify-content-end gap-2 border-top pt-3 mt-3">
+                    <button id="apply-normalization" class="btn btn-primary btn-sm">Apply</button>
                 </div>
             </div>
         </div>
@@ -644,6 +905,9 @@
         availableModels: [],
         model: 'gpt-5-mini',
         hasUnsavedChanges: false,
+        fieldSearch: '',
+        fieldTypeFilter: '',
+        fieldSort: 'position',
         auth: {
             isAuthenticated: false,
             email: '',
@@ -656,6 +920,10 @@
     let draftState = null;
     let dragState = null;
     let resizeState = null;
+    let currentVisiblePageIndex = 0;
+    let fieldsListSyncRaf = null;
+    let fieldsListProgrammaticScroll = false;
+    let fieldsListManualScrollUntil = 0;
 
     const fileInput = document.getElementById('file-input');
     const pdfContainer = document.getElementById('pdf-container');
@@ -667,9 +935,13 @@
     const fieldsEmpty = document.getElementById('fields-empty');
     const fieldsList = document.getElementById('fields-list');
     const fieldCount = document.getElementById('field-count');
+    const fieldSearchInput = document.getElementById('field-search');
+    const fieldTypeFilterInput = document.getElementById('field-type-filter');
+    const fieldSortInput = document.getElementById('field-sort');
     const autoDetectBtn = document.getElementById('auto-detect-btn');
     const relabelBtn = document.getElementById('relabel-btn');
     const exportBtn = document.getElementById('export-btn');
+    const normalizePassBtn = document.getElementById('normalize-pass-btn');
     const errorToast = document.getElementById('error-toast');
     const errorToastMessage = document.getElementById('error-toast-message');
     const successToast = document.getElementById('success-toast');
@@ -681,6 +953,9 @@
     const closeSettingsBtn = document.getElementById('close-settings');
     const saveSettingsBtn = document.getElementById('save-settings');
     const resetSettingsBtn = document.getElementById('reset-settings');
+    const normalizationModal = document.getElementById('normalization-modal');
+    const closeNormalizationBtn = document.getElementById('close-normalization');
+    const applyNormalizationBtn = document.getElementById('apply-normalization');
     const aiModelInput = document.getElementById('ai-model');
     const aiModelSuggestions = document.getElementById('ai-model-suggestions');
     const pageTitle = document.getElementById('page-title');
@@ -693,7 +968,6 @@
     const quickFieldEditor = document.getElementById('quick-field-editor');
     const quickFieldTypeBadge = document.getElementById('quick-field-type-badge');
     const quickFieldNameInput = document.getElementById('quick-field-name');
-    const quickFieldHelp = document.getElementById('quick-field-help');
     const quickFieldCloseBtn = document.getElementById('quick-field-close');
 
     const toolButtons = {
@@ -834,27 +1108,90 @@
         pdfLoading.classList.add('hidden');
     }
 
+    function showPdfWorkspace() {
+        if (state.pdfBytes) {
+            pdfPages.classList.remove('hidden');
+            pdfEmpty.classList.add('hidden');
+        }
+    }
+
+    function getCurrentVisiblePageIndex() {
+        if (!state.pageCount) return 0;
+        const containerRect = pdfContainer.getBoundingClientRect();
+        const containerCenterY = containerRect.top + (containerRect.height / 2);
+        let bestPageIndex = currentVisiblePageIndex || 0;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        document.querySelectorAll('.pdf-page-shell').forEach(function (shell) {
+            const rect = shell.getBoundingClientRect();
+            if (rect.bottom < containerRect.top || rect.top > containerRect.bottom) {
+                return;
+            }
+            const centerY = rect.top + (rect.height / 2);
+            const distance = Math.abs(centerY - containerCenterY);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestPageIndex = Number(shell.dataset.pageIndex || 0);
+            }
+        });
+        return bestPageIndex;
+    }
+
+    function syncFieldsListToVisiblePage(force) {
+        if (state.pageCount <= 1 || fieldsList.classList.contains('hidden')) return;
+        if (!force && Date.now() < fieldsListManualScrollUntil) return;
+        const pageIndex = getCurrentVisiblePageIndex();
+        currentVisiblePageIndex = pageIndex;
+        const group = fieldsList.querySelector('.field-list-page[data-page-index="' + pageIndex + '"]');
+        if (!group) return;
+        fieldsListProgrammaticScroll = true;
+        group.scrollIntoView({ block: 'start', behavior: force ? 'auto' : 'smooth' });
+        window.setTimeout(function () {
+            fieldsListProgrammaticScroll = false;
+        }, force ? 0 : 220);
+    }
+
+    function scheduleFieldsListSync(force) {
+        if (fieldsListSyncRaf) {
+            window.cancelAnimationFrame(fieldsListSyncRaf);
+        }
+        fieldsListSyncRaf = window.requestAnimationFrame(function () {
+            fieldsListSyncRaf = null;
+            syncFieldsListToVisiblePage(force);
+        });
+    }
+
+    function scrollSelectedFieldIntoView(fieldId) {
+        if (!fieldId || fieldsList.classList.contains('hidden')) return;
+        const item = fieldsList.querySelector('.field-list-item[data-field-id="' + fieldId + '"]');
+        if (!item) return;
+        fieldsListProgrammaticScroll = true;
+        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        window.setTimeout(function () {
+            fieldsListProgrammaticScroll = false;
+        }, 220);
+    }
+
     function hideToasts() {
         errorToast.classList.add('hidden');
         successToast.classList.add('hidden');
     }
 
-    function showError(message) {
+    function showError(message, timeoutMs) {
         hideToasts();
         errorToastMessage.textContent = message;
         errorToast.classList.remove('hidden');
         window.setTimeout(function () {
             errorToast.classList.add('hidden');
-        }, 6000);
+        }, typeof timeoutMs === 'number' ? timeoutMs : 6000);
     }
 
-    function showSuccess(message) {
+    function showSuccess(message, timeoutMs) {
         hideToasts();
         successToastMessage.textContent = message;
         successToast.classList.remove('hidden');
         window.setTimeout(function () {
             successToast.classList.add('hidden');
-        }, 3200);
+        }, typeof timeoutMs === 'number' ? timeoutMs : 3200);
     }
 
     function updateFieldCount() {
@@ -864,7 +1201,53 @@
         fieldsList.classList.toggle('hidden', count === 0);
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
         exportBtn.disabled = !state.pdfBytes || count === 0;
+        normalizePassBtn.disabled = !state.pdfBytes || count === 0;
         relabelBtn.disabled = !state.pdfBytes || count === 0 || !state.auth.aiEnabled;
+    }
+
+    function getDisplayedFields() {
+        const search = String(state.fieldSearch || '').trim().toLowerCase();
+        const typeFilter = normalizeFieldType(state.fieldTypeFilter || '');
+        const hasTypeFilter = FIELD_TYPES.includes(typeFilter);
+        const filtered = state.fields.filter(function (field) {
+            if (hasTypeFilter && field.type !== typeFilter) {
+                return false;
+            }
+            if (search && String(field.name || '').toLowerCase().indexOf(search) === -1) {
+                return false;
+            }
+            return true;
+        });
+
+        const sorted = filtered.slice();
+        if (state.fieldSort === 'name_asc') {
+            sorted.sort(function (left, right) {
+                return String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' });
+            });
+            return sorted;
+        }
+        if (state.fieldSort === 'name_desc') {
+            sorted.sort(function (left, right) {
+                return String(right.name || '').localeCompare(String(left.name || ''), undefined, { sensitivity: 'base' });
+            });
+            return sorted;
+        }
+        if (state.fieldSort === 'type_name') {
+            sorted.sort(function (left, right) {
+                const leftMeta = getFieldTypeMeta(left.type);
+                const rightMeta = getFieldTypeMeta(right.type);
+                const typeCompare = leftMeta.label.localeCompare(rightMeta.label, undefined, { sensitivity: 'base' });
+                if (typeCompare !== 0) return typeCompare;
+                return String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' });
+            });
+            return sorted;
+        }
+        sorted.sort(function (left, right) {
+            if (left.pageIndex !== right.pageIndex) return left.pageIndex - right.pageIndex;
+            if (Math.abs(left.y - right.y) > 0.002) return left.y - right.y;
+            return left.x - right.x;
+        });
+        return sorted;
     }
 
     function updateToolHint() {
@@ -891,14 +1274,13 @@
         };
     }
 
-    function getQuickFieldEditorWidth(fieldEl, viewportRect) {
+    function getQuickFieldEditorWidth(_fieldEl, viewportRect) {
         const nameLength = String(quickFieldNameInput.value || '').length;
         const preferredWidth = Math.max(
-            fieldEl ? fieldEl.offsetWidth + 22 : 0,
-            180,
-            Math.min(520, 92 + (nameLength * 8))
+            260,
+            Math.min(720, 164 + (nameLength * 9))
         );
-        return clamp(preferredWidth, 180, viewportRect.right - viewportRect.left);
+        return clamp(preferredWidth, 260, viewportRect.right - viewportRect.left);
     }
 
     function positionQuickFieldEditor() {
@@ -997,14 +1379,11 @@
         }
 
         const meta = getFieldTypeMeta(field.type);
-        const nameHelp = getFieldNameHelp(field);
-        quickFieldTypeBadge.innerHTML = meta.icon + '<span>' + escapeHtml(meta.label) + '</span>';
+        quickFieldTypeBadge.innerHTML = meta.icon;
         if (!settings.preserveInput || document.activeElement !== quickFieldNameInput) {
             quickFieldNameInput.value = field.name || '';
         }
         quickFieldNameInput.dataset.fieldId = field.id;
-        quickFieldHelp.className = 'quick-field-help ' + nameHelp.level;
-        quickFieldHelp.innerHTML = nameHelp.html;
         quickFieldEditor.classList.remove('hidden');
         positionQuickFieldEditor();
 
@@ -1171,6 +1550,108 @@
         return bytes;
     }
 
+    function looksLikePdfBytes(pdfBytes) {
+        if (!pdfBytes || pdfBytes.length < 5) return false;
+        return pdfBytes[0] === 0x25 &&
+            pdfBytes[1] === 0x50 &&
+            pdfBytes[2] === 0x44 &&
+            pdfBytes[3] === 0x46 &&
+            pdfBytes[4] === 0x2d;
+    }
+
+    function applyReturnedPdfPayload(data, fallbackName) {
+        if (!data || !data.pdf_base64) {
+            return false;
+        }
+        const nextPdfBytes = base64ToUint8Array(data.pdf_base64);
+        if (!looksLikePdfBytes(nextPdfBytes)) {
+            throw new Error('AI relabel returned output that was not a valid PDF.');
+        }
+        syncPdfState(
+            nextPdfBytes,
+            data.output_filename || data.filename || fallbackName || state.fileName || 'edited-form.pdf'
+        );
+        return true;
+    }
+
+    function didRelabelChangeFieldNames(data) {
+        const previous = Array.isArray(data && data.fields_old) ? data.fields_old : [];
+        const next = Array.isArray(data && data.fields) ? data.fields : [];
+        if (!previous.length || previous.length !== next.length) return null;
+        return previous.some(function (name, index) {
+            return String(name || '') !== String(next[index] || '');
+        });
+    }
+
+    function getRelabelChangedCount(data) {
+        const previous = Array.isArray(data && data.fields_old) ? data.fields_old : [];
+        const next = Array.isArray(data && data.fields) ? data.fields : [];
+        if (!previous.length || previous.length !== next.length) return null;
+        let changedCount = 0;
+        previous.forEach(function (name, index) {
+            if (String(name || '') !== String(next[index] || '')) {
+                changedCount += 1;
+            }
+        });
+        return changedCount;
+    }
+
+    function reconcileRelabeledFields(fields, data) {
+        const expectedNames = Array.isArray(data && data.fields)
+            ? data.fields.map(function (name) { return String(name || ''); })
+            : [];
+        const previousNames = Array.isArray(data && data.fields_old)
+            ? data.fields_old.map(function (name) { return String(name || ''); })
+            : [];
+
+        if (!expectedNames.length) {
+            return Array.isArray(fields) ? fields : [];
+        }
+
+        const baseFields = Array.isArray(fields) && fields.length
+            ? fields.map(function (field) { return Object.assign({}, field); })
+            : state.fields.map(function (field) { return Object.assign({}, field); });
+
+        if (baseFields.length !== expectedNames.length) {
+            return baseFields;
+        }
+
+        if (previousNames.length === expectedNames.length) {
+            const renameMap = new Map();
+            previousNames.forEach(function (name, index) {
+                renameMap.set(name, expectedNames[index]);
+            });
+            return baseFields.map(function (field, index) {
+                const nextName = renameMap.get(String(field.name || '')) || expectedNames[index];
+                return Object.assign({}, field, { name: nextName || field.name });
+            });
+        }
+
+        return baseFields.map(function (field, index) {
+            return Object.assign({}, field, { name: expectedNames[index] || field.name });
+        });
+    }
+
+    function logRelabelDebug(data, detectedFields, relabeledFields) {
+        const previousNames = Array.isArray(data && data.fields_old) ? data.fields_old.slice() : [];
+        const nextNames = Array.isArray(data && data.fields) ? data.fields.slice() : [];
+        const renamedCount = getRelabelChangedCount(data);
+        const detectedNames = Array.isArray(detectedFields)
+            ? detectedFields.map(function (field) { return field.name; })
+            : [];
+        const finalNames = Array.isArray(relabeledFields)
+            ? relabeledFields.map(function (field) { return field.name; })
+            : [];
+        console.groupCollapsed('[pdf-labeler] AI relabel result');
+        console.info('renamedCount:', renamedCount);
+        console.info('worker fields_old:', previousNames);
+        console.info('worker fields:', nextNames);
+        console.info('detected field names after relabel:', detectedNames);
+        console.info('final field names rendered in UI:', finalNames);
+        console.info('raw relabel payload:', data);
+        console.groupEnd();
+    }
+
     function updateRequestPdfFile(pdfBytes, fileName, originalFile) {
         const nextName = fileName || state.fileName || 'edited-form.pdf';
         if (originalFile instanceof File && originalFile.size > 0) {
@@ -1214,14 +1695,65 @@
             data = text ? JSON.parse(text) : {};
         } catch (_error) {
             const returnedHtml = text.trim().startsWith('<');
+            const statusText = response.status ? ('HTTP ' + response.status) : 'request';
+            const finalUrl = response.url ? (' from ' + response.url) : '';
+            if (returnedHtml && response.redirected && response.url && response.url.indexOf('/user/sign-in') !== -1) {
+                throw new Error('Login required for this AI action.');
+            }
             throw new Error(returnedHtml
-                ? 'The server returned HTML instead of JSON.'
-                : 'The server returned invalid JSON.');
+                ? ('The server returned HTML instead of JSON (' + statusText + finalUrl + ').')
+                : ('The server returned invalid JSON (' + statusText + finalUrl + ').'));
         }
         if (!response.ok) {
             throw new Error((data && data.error && data.error.message) ? data.error.message : ('Request failed (' + response.status + ').'));
         }
         return data;
+    }
+
+    function sleep(milliseconds) {
+        return new Promise(function (resolve) {
+            window.setTimeout(resolve, milliseconds);
+        });
+    }
+
+    async function pollLabelerJob(jobUrl, progressMessage) {
+        const startedAt = Date.now();
+        const timeoutMs = 8 * 60 * 1000;
+        while ((Date.now() - startedAt) < timeoutMs) {
+            await sleep(1500);
+            const response = await fetch(jobUrl, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+            });
+            const payload = await parseApiResponse(response);
+            if (payload.status === 'queued' || payload.status === 'running') {
+                showLoading(progressMessage);
+                continue;
+            }
+            if (payload.status === 'failed') {
+                throw new Error((payload.error && payload.error.message) || 'Background job failed.');
+            }
+            if (payload.status === 'succeeded') {
+                return payload.data || {};
+            }
+            throw new Error('Unexpected background job status.');
+        }
+        throw new Error('The background job timed out before it completed.');
+    }
+
+    async function requestAsyncLabelerAction(endpointPath, formData, progressMessage) {
+        formData.append('mode', 'async');
+        const response = await fetch(apiUrl(endpointPath), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' },
+            body: formData
+        });
+        const payload = await parseApiResponse(response);
+        if (payload.status === 'queued' && payload.job_url) {
+            showLoading(progressMessage);
+            return pollLabelerJob(payload.job_url, progressMessage);
+        }
+        return (payload && payload.data) ? payload.data : {};
     }
 
     function normalizeExistingRect(rect, pageSize) {
@@ -1316,6 +1848,7 @@
         formData.append('file', getPdfFileForRequests());
         const response = await fetch(apiUrl('/pdf-labeler/api/detect-fields'), {
             method: 'POST',
+            headers: { 'Accept': 'application/json' },
             body: formData
         });
         const data = await parseApiResponse(response);
@@ -1379,6 +1912,222 @@
         return FONT_OPTIONS.map(function (font) {
             return '<option value="' + escapeHtml(font) + '"' + (font === selectedFont ? ' selected' : '') + '>' + escapeHtml(font) + '</option>';
         }).join('');
+    }
+
+    function ptToNormalizedLength(points, pageIndex, axis) {
+        const pageSize = state.pageSizes[pageIndex] || { width: 612, height: 792 };
+        const dimension = axis === 'x' ? pageSize.width : pageSize.height;
+        return clamp(Number(points) / dimension, 0.001, 1);
+    }
+
+    function looksLikeNameOrAddressField(fieldName) {
+        return /(name|address|street|city|state|zip|postal|phone|email)/i.test(String(fieldName || ''));
+    }
+
+    function isYesNoOption(optionLabel) {
+        const normalized = String(optionLabel || '').trim().toLowerCase();
+        return normalized === 'yes' || normalized === 'true' || normalized === 'no' || normalized === 'false';
+    }
+
+    function getRadioOptionSuffixes(options) {
+        const normalized = options.map(function (option) {
+            return String(option || '').trim().toLowerCase();
+        });
+        if (normalized.length === 2) {
+            const yesIndex = normalized.findIndex(function (option) {
+                return option === 'yes' || option === 'true';
+            });
+            const noIndex = normalized.findIndex(function (option) {
+                return option === 'no' || option === 'false';
+            });
+            if (yesIndex >= 0 && noIndex >= 0) {
+                return normalized.map(function (_option, index) {
+                    return index === yesIndex ? 'yes' : 'no';
+                });
+            }
+        }
+        return normalized.map(function (_option, index) {
+            return index === 0 ? 'opt' : ('opt' + String(index + 1));
+        });
+    }
+
+    function dedupeNormalizedFieldNames(fields) {
+        const used = new Set();
+        return fields.map(function (field) {
+            const updated = Object.assign({}, field);
+            const baseName = normalizePdfFieldName(updated.name);
+            let candidate = baseName;
+            let suffix = 1;
+            while (used.has(candidate)) {
+                candidate = baseName + '__' + suffix;
+                suffix += 1;
+            }
+            used.add(candidate);
+            updated.name = candidate;
+            return updated;
+        });
+    }
+
+    function alignFieldsByRow(fields, thresholdPoints) {
+        const groupedByPage = {};
+        fields.forEach(function (field) {
+            if (!(field.type === 'text' || field.type === 'multiline' || field.type === 'checkbox')) return;
+            if (!groupedByPage[field.pageIndex]) {
+                groupedByPage[field.pageIndex] = [];
+            }
+            groupedByPage[field.pageIndex].push(field);
+        });
+
+        Object.keys(groupedByPage).forEach(function (pageKey) {
+            const pageIndex = Number(pageKey);
+            const threshold = ptToNormalizedLength(thresholdPoints, pageIndex, 'y');
+            const pageFields = groupedByPage[pageKey].slice().sort(function (left, right) {
+                return (left.y + (left.height / 2)) - (right.y + (right.height / 2));
+            });
+            let cluster = [];
+            pageFields.forEach(function (field) {
+                const centerY = field.y + (field.height / 2);
+                if (!cluster.length) {
+                    cluster = [field];
+                    return;
+                }
+                const clusterCenter = cluster.reduce(function (sum, item) {
+                    return sum + item.y + (item.height / 2);
+                }, 0) / cluster.length;
+                if (Math.abs(centerY - clusterCenter) <= threshold) {
+                    cluster.push(field);
+                    return;
+                }
+                if (cluster.length > 1) {
+                    const targetCenter = cluster.reduce(function (sum, item) {
+                        return sum + item.y + (item.height / 2);
+                    }, 0) / cluster.length;
+                    cluster.forEach(function (item) {
+                        item.y = clamp(targetCenter - (item.height / 2), 0, 1 - item.height);
+                    });
+                }
+                cluster = [field];
+            });
+            if (cluster.length > 1) {
+                const targetCenter = cluster.reduce(function (sum, item) {
+                    return sum + item.y + (item.height / 2);
+                }, 0) / cluster.length;
+                cluster.forEach(function (item) {
+                    item.y = clamp(targetCenter - (item.height / 2), 0, 1 - item.height);
+                });
+            }
+        });
+    }
+
+    function readNormalizationSettings() {
+        return {
+            checkboxCross: document.getElementById('norm-checkbox-cross').checked,
+            uniformCheckboxSize: document.getElementById('norm-checkbox-uniform').checked,
+            checkboxSizePt: Number(document.getElementById('norm-checkbox-size').value || 12),
+            normalizeFont: document.getElementById('norm-font-normalize').checked,
+            fontName: document.getElementById('norm-font-name').value || 'Helvetica',
+            fontSizePt: Number(document.getElementById('norm-font-size').value || 10),
+            dropdownsToText: document.getElementById('norm-dropdowns-to-text').checked,
+            radiosToCheckboxes: document.getElementById('norm-radios-to-checkboxes').checked,
+            alignRows: document.getElementById('norm-align-rows').checked,
+            alignThresholdPt: Number(document.getElementById('norm-align-threshold').value || 6),
+            autoSizeNameAddress: document.getElementById('norm-autosize-name-address').checked,
+            fixedTextHeightPt: Number(document.getElementById('norm-text-height').value || 14),
+            disableAutoScroll: document.getElementById('norm-disable-scroll').checked,
+            multilineTallFields: document.getElementById('norm-multiline-tall').checked,
+            multilineThresholdLines: Number(document.getElementById('norm-multiline-lines').value || 2.2),
+            multilineWhiteBackground: document.getElementById('norm-multiline-white').checked
+        };
+    }
+
+    function buildNormalizedFields(settings) {
+        const transformed = [];
+        state.fields.forEach(function (field) {
+            const nextField = Object.assign({}, field);
+            nextField.font = nextField.font || 'Helvetica';
+            nextField.fontSize = Number(nextField.fontSize) || 12;
+
+            if (settings.dropdownsToText && nextField.type === 'dropdown') {
+                nextField.type = 'text';
+                delete nextField.options;
+            }
+
+            if (settings.radiosToCheckboxes && nextField.type === 'radio') {
+                const options = Array.isArray(nextField.options) && nextField.options.length
+                    ? nextField.options.slice()
+                    : ['Yes', 'No'];
+                const suffixes = getRadioOptionSuffixes(options);
+                const boxWidth = ptToNormalizedLength(settings.checkboxSizePt, nextField.pageIndex, 'x');
+                const boxHeight = ptToNormalizedLength(settings.checkboxSizePt, nextField.pageIndex, 'y');
+                const gap = ptToNormalizedLength(Math.max(4, settings.checkboxSizePt * 0.35), nextField.pageIndex, 'x');
+                const totalWidth = (options.length * boxWidth) + ((options.length - 1) * gap);
+                const startX = clamp(nextField.x + Math.max(0, (nextField.width - totalWidth) / 2), 0, 1 - boxWidth);
+                const targetY = clamp((nextField.y + (nextField.height / 2)) - (boxHeight / 2), 0, 1 - boxHeight);
+                const baseName = normalizePdfFieldName(nextField.name);
+                options.forEach(function (_option, index) {
+                    transformed.push({
+                        id: generateId(),
+                        name: baseName + '_' + suffixes[index],
+                        type: 'checkbox',
+                        pageIndex: nextField.pageIndex,
+                        x: clamp(startX + (index * (boxWidth + gap)), 0, 1 - boxWidth),
+                        y: targetY,
+                        width: boxWidth,
+                        height: boxHeight,
+                        font: settings.fontName,
+                        fontSize: settings.fontSizePt,
+                        autoSize: false,
+                        checkboxStyle: settings.checkboxCross ? 'cross' : (nextField.checkboxStyle || 'check'),
+                        allowScroll: false
+                    });
+                });
+                return;
+            }
+
+            if (settings.normalizeFont && (nextField.type === 'text' || nextField.type === 'multiline' || nextField.type === 'signature')) {
+                nextField.font = settings.fontName;
+                nextField.fontSize = settings.fontSizePt;
+            }
+
+            if (settings.checkboxCross && nextField.type === 'checkbox') {
+                nextField.checkboxStyle = 'cross';
+            }
+
+            if (settings.uniformCheckboxSize && nextField.type === 'checkbox') {
+                nextField.width = ptToNormalizedLength(settings.checkboxSizePt, nextField.pageIndex, 'x');
+                nextField.height = ptToNormalizedLength(settings.checkboxSizePt, nextField.pageIndex, 'y');
+            }
+
+            if (settings.disableAutoScroll && (nextField.type === 'text' || nextField.type === 'multiline')) {
+                nextField.allowScroll = false;
+            }
+
+            if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
+                nextField.autoSize = true;
+                nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');
+                nextField.font = settings.fontName;
+                nextField.fontSize = settings.fontSizePt;
+            }
+
+            if (settings.multilineTallFields && nextField.type === 'text') {
+                const lineHeightPt = settings.fontSizePt * 1.2;
+                const fieldHeightPt = nextField.height * (state.pageSizes[nextField.pageIndex] ? state.pageSizes[nextField.pageIndex].height : 792);
+                if ((fieldHeightPt / lineHeightPt) >= settings.multilineThresholdLines) {
+                    nextField.type = 'multiline';
+                }
+            }
+
+            if (settings.multilineWhiteBackground && nextField.type === 'multiline') {
+                nextField.backgroundColor = '#ffffff';
+            }
+
+            transformed.push(nextField);
+        });
+
+        if (settings.alignRows) {
+            alignFieldsByRow(transformed, settings.alignThresholdPt);
+        }
+        return dedupeNormalizedFieldNames(transformed);
     }
 
     function renderFieldEditor(field) {
@@ -1453,26 +2202,40 @@
             fieldsList.innerHTML = '';
             return;
         }
-        const orderedFields = state.fields.slice().sort(function (left, right) {
-            if (left.pageIndex !== right.pageIndex) return left.pageIndex - right.pageIndex;
-            if (Math.abs(left.y - right.y) > 0.002) return left.y - right.y;
-            return left.x - right.x;
-        });
+        const showPageGroups = state.pageCount > 1;
+        const orderedFields = getDisplayedFields();
         fieldsList.innerHTML = '';
+        if (orderedFields.length === 0) {
+            fieldsList.innerHTML = '<div class="text-muted small px-1 py-2">No fields match the current filter.</div>';
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        let currentGroup = null;
+        let currentPage = null;
+
         orderedFields.forEach(function (field) {
             const meta = getFieldTypeMeta(field.type);
+            if (!currentGroup || currentPage !== field.pageIndex) {
+                currentPage = field.pageIndex;
+                currentGroup = document.createElement('section');
+                currentGroup.className = 'field-list-page';
+                currentGroup.dataset.pageIndex = String(field.pageIndex);
+                if (showPageGroups) {
+                    const divider = document.createElement('div');
+                    divider.className = 'field-page-divider';
+                    divider.textContent = 'Page ' + (field.pageIndex + 1);
+                    currentGroup.appendChild(divider);
+                }
+                fragment.appendChild(currentGroup);
+            }
             const item = document.createElement('div');
             item.className = 'field-list-item' + (field.id === state.selectedFieldId ? ' selected' : '');
             item.dataset.fieldId = field.id;
             item.innerHTML =
-                '<div class="d-flex align-items-start justify-content-between gap-2">' +
-                    '<div class="flex-grow-1 min-w-0">' +
-                        '<div class="fw-semibold text-break">' + escapeHtml(field.name) + '</div>' +
-                        '<div class="small text-muted mt-1">Page ' + (field.pageIndex + 1) + '</div>' +
-                    '</div>' +
-                    '<button type="button" class="btn btn-outline-danger btn-sm delete-field-inline">Delete</button>' +
+                '<div class="field-list-row">' +
+                    '<div class="field-list-icon" aria-hidden="true">' + meta.icon + '</div>' +
+                    '<div class="field-list-name" title="' + escapeHtml(field.name) + '">' + escapeHtml(field.name) + '</div>' +
                 '</div>' +
-                '<div class="mt-2"><span class="field-type-badge">' + meta.icon + '<span>' + escapeHtml(meta.label) + '</span></span></div>' +
                 (field.id === state.selectedFieldId ? renderFieldEditor(field) : '');
             item.addEventListener('click', function (event) {
                 if (event.target.closest('input, select, textarea, button')) {
@@ -1480,18 +2243,14 @@
                 }
                 selectField(field.id, { focusNameInput: false, scrollIntoView: false });
             });
-            const deleteButton = item.querySelector('.delete-field-inline');
-            deleteButton.addEventListener('click', function (event) {
-                event.stopPropagation();
-                deleteField(field.id);
-            });
             item.querySelectorAll('input, select, textarea').forEach(function (control) {
                 control.addEventListener('click', function (event) {
                     event.stopPropagation();
                 });
             });
-            fieldsList.appendChild(item);
+            currentGroup.appendChild(item);
         });
+        fieldsList.appendChild(fragment);
     }
 
     function renderDraftRect() {
@@ -1515,17 +2274,28 @@
     function applyFieldChipLayout(fieldEl, labelEl) {
         const width = fieldEl.offsetWidth;
         const height = fieldEl.offsetHeight;
-        labelEl.classList.remove('hide-name', 'icon-only', 'wrap-name');
+        labelEl.classList.remove('hide-name', 'icon-only', 'wrap-name', 'compact');
 
-        if (width < 22 || height < 18) {
+        if (width < 20 || height < 11) {
             labelEl.classList.add('hide-name', 'icon-only');
             return;
         }
-        if (width < 54 || height < 16) {
+
+        if (width < 34) {
             labelEl.classList.add('hide-name', 'icon-only');
             return;
         }
-        if (width >= 110 && height >= 30) {
+
+        if (height < 16) {
+            if (width >= 60) {
+                labelEl.classList.add('compact');
+                return;
+            }
+            labelEl.classList.add('hide-name', 'icon-only');
+            return;
+        }
+
+        if (width >= 96 && height >= 24) {
             labelEl.classList.add('wrap-name');
         }
     }
@@ -1547,6 +2317,9 @@
             fieldEl.style.top = (field.y * 100) + '%';
             fieldEl.style.width = (field.width * 100) + '%';
             fieldEl.style.height = (field.height * 100) + '%';
+            if (field.backgroundColor) {
+                fieldEl.style.background = field.backgroundColor;
+            }
 
             const label = document.createElement('div');
             label.className = 'field-chip';
@@ -1569,16 +2342,21 @@
                 setSelectedTool(null);
 
                 const target = event.target;
-                if (target && typeof target.closest === 'function' && target.closest('.field-chip')) {
-                    selectField(field.id, { focusNameInput: true, scrollIntoView: false });
-                    return;
-                }
-                selectField(field.id, { focusNameInput: false, scrollIntoView: false });
                 if (target && target.dataset && target.dataset.handle) {
+                    selectField(field.id, { focusNameInput: false, scrollIntoView: false });
                     startResize(field.id, target.dataset.handle, event, overlay);
                     return;
                 }
                 startDrag(field.id, event, overlay);
+            });
+
+            fieldEl.addEventListener('click', function (event) {
+                const target = event.target;
+                if (target && target.dataset && target.dataset.handle) {
+                    return;
+                }
+                event.stopPropagation();
+                selectField(field.id, { focusNameInput: true, scrollIntoView: false });
             });
 
             fieldEl.addEventListener('dblclick', function (event) {
@@ -1612,6 +2390,9 @@
                 fieldEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
         }
+        if (fieldId) {
+            scrollSelectedFieldIntoView(fieldId);
+        }
         syncQuickFieldEditor({ preserveInput: true });
     }
 
@@ -1632,6 +2413,9 @@
                 font: field.font || 'Helvetica',
                 fontSize: Number(field.fontSize) || 12,
                 autoSize: field.autoSize !== false,
+                checkboxStyle: field.checkboxStyle || undefined,
+                allowScroll: field.allowScroll !== false,
+                backgroundColor: field.backgroundColor || undefined,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
             };
         });
@@ -1701,10 +2485,13 @@
         dragState = {
             fieldId: fieldId,
             pageIndex: field.pageIndex,
+            startClientX: event.clientX,
+            startClientY: event.clientY,
             startPointerX: pointerX,
             startPointerY: pointerY,
             originX: field.x,
-            originY: field.y
+            originY: field.y,
+            moved: false
         };
     }
 
@@ -1726,6 +2513,19 @@
 
     function handleDragMove(event) {
         if (!dragState) return;
+        const dragDistance = Math.hypot(
+            event.clientX - dragState.startClientX,
+            event.clientY - dragState.startClientY
+        );
+        if (!dragState.moved) {
+            if (dragDistance < 4) {
+                return;
+            }
+            dragState.moved = true;
+            if (state.selectedFieldId !== dragState.fieldId) {
+                selectField(dragState.fieldId, { focusNameInput: false, scrollIntoView: false });
+            }
+        }
         const overlay = getOverlayForPage(dragState.pageIndex);
         if (!overlay) return;
         const rect = overlay.getBoundingClientRect();
@@ -1832,6 +2632,7 @@
     function createPageShell(pageIndex) {
         const shell = document.createElement('div');
         shell.className = 'pdf-page-shell';
+        shell.dataset.pageIndex = String(pageIndex);
 
         const label = document.createElement('div');
         label.className = 'pdf-page-label';
@@ -1877,6 +2678,8 @@
 
         updateOverlayCursorState();
         renderFieldsOnPages();
+        currentVisiblePageIndex = getCurrentVisiblePageIndex();
+        scheduleFieldsListSync(true);
     }
 
     async function loadPdf(file) {
@@ -1911,8 +2714,7 @@
             setDirty(false);
             updateAiUiState();
             floatingToolPicker.classList.remove('hidden');
-            pdfPages.classList.remove('hidden');
-            pdfEmpty.classList.add('hidden');
+            showPdfWorkspace();
             showSuccess(detectedFields.length ? ('Loaded ' + detectedFields.length + ' existing fields.') : 'PDF loaded.');
         } catch (error) {
             console.error('Error loading PDF:', error);
@@ -1949,6 +2751,9 @@
             font: field.font || 'Helvetica',
             fontSize: field.fontSize,
             autoSize: field.autoSize !== false,
+            checkboxStyle: field.checkboxStyle,
+            allowScroll: field.allowScroll !== false,
+            backgroundColor: field.backgroundColor,
             options: Array.isArray(field.options) ? field.options.slice() : undefined
         };
         state.fields.push(duplicate);
@@ -1991,9 +2796,36 @@
                 font: field.font || 'Helvetica',
                 fontSize: field.fontSize,
                 autoSize: field.autoSize !== false,
+                checkboxStyle: field.checkboxStyle,
+                allowScroll: field.allowScroll !== false,
+                backgroundColor: field.backgroundColor,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
             };
         });
+    }
+
+    async function applyNormalizationPass() {
+        if (!state.pdfBytes || state.fields.length === 0) {
+            showError('Load a PDF with fields before running normalization.');
+            return;
+        }
+        const settings = readNormalizationSettings();
+        normalizationModal.classList.add('hidden');
+        showLoading('Applying normalization pass...');
+        try {
+            await sleep(50);
+            const normalizedFields = buildNormalizedFields(settings);
+            replaceFields(normalizedFields, { preserveSelection: true });
+            setDirty(true);
+            showPdfWorkspace();
+            showSuccess('Normalization pass applied.');
+        } catch (error) {
+            console.error('Error applying normalization pass:', error);
+            showPdfWorkspace();
+            showError('Normalization failed: ' + (error && error.message ? error.message : 'Unknown error.'));
+        } finally {
+            hideLoading();
+        }
     }
 
     async function autoDetectFields() {
@@ -2010,51 +2842,53 @@
             formData.append('normalize_fields', 'true');
             formData.append('model', state.model || state.defaultModel);
 
-            const response = await fetch(apiUrl('/pdf-labeler/api/auto-detect'), {
-                method: 'POST',
-                body: formData
-            });
-            const data = await parseApiResponse(response);
-            if (!data.success) {
-                throw new Error((data.error && data.error.message) || 'Auto-detection failed.');
-            }
+            const data = await requestAsyncLabelerAction(
+                '/pdf-labeler/api/auto-detect',
+                formData,
+                'Auto-detect is running in the background...'
+            );
 
-            if (data.data && data.data.pdf_base64) {
-                syncPdfState(base64ToUint8Array(data.data.pdf_base64), state.fileName || 'edited-form.pdf');
-            }
+            applyReturnedPdfPayload(data, state.fileName || 'edited-form.pdf');
 
-            const importedFields = Array.isArray(data.data && data.data.fields) ? data.data.fields : [];
-            const normalizedFields = importedFields.map(function (field) {
-                const pageSize = state.pageSizes[field.pageIndex];
-                const fieldType = normalizeFieldType(field.type);
-                const width = pageSize ? clamp(field.width / pageSize.width, 0.01, 1) : 0.1;
-                const height = pageSize ? clamp(field.height / pageSize.height, 0.01, 1) : 0.03;
-                const x = pageSize ? clamp(field.x / pageSize.width, 0, 1 - width) : 0;
-                const y = pageSize ? clamp(1 - ((field.y + field.height) / pageSize.height), 0, 1 - height) : 0;
-                return {
-                    id: generateId(),
-                    name: ensureUniqueFieldName(field.name || getDefaultFieldName(fieldType), null),
-                    type: fieldType,
-                    pageIndex: field.pageIndex,
-                    x: x,
-                    y: y,
-                    width: width,
-                    height: height,
-                    font: field.font || 'Helvetica',
-                    fontSize: field.fontSize || 12,
-                    autoSize: field.autoSize !== false,
-                    options: Array.isArray(field.options) ? field.options.slice() : undefined
-                };
-            });
+            const importedFields = Array.isArray(data && data.fields) ? data.fields : [];
+            let normalizedFields = [];
+            if (importedFields.length && typeof importedFields[0] === 'object' && importedFields[0] !== null && Object.prototype.hasOwnProperty.call(importedFields[0], 'x')) {
+                normalizedFields = importedFields.map(function (field) {
+                    const pageSize = state.pageSizes[field.pageIndex];
+                    const fieldType = normalizeFieldType(field.type);
+                    const width = pageSize ? clamp(field.width / pageSize.width, 0.01, 1) : 0.1;
+                    const height = pageSize ? clamp(field.height / pageSize.height, 0.01, 1) : 0.03;
+                    const x = pageSize ? clamp(field.x / pageSize.width, 0, 1 - width) : 0;
+                    const y = pageSize ? clamp(1 - ((field.y + field.height) / pageSize.height), 0, 1 - height) : 0;
+                    return {
+                        id: generateId(),
+                        name: ensureUniqueFieldName(field.name || getDefaultFieldName(fieldType), null),
+                        type: fieldType,
+                        pageIndex: field.pageIndex,
+                        x: x,
+                        y: y,
+                        width: width,
+                        height: height,
+                        font: field.font || 'Helvetica',
+                        fontSize: field.fontSize || 12,
+                        autoSize: field.autoSize !== false,
+                        options: Array.isArray(field.options) ? field.options.slice() : undefined
+                    };
+                });
+            } else {
+                normalizedFields = await detectExistingFieldsWithServer().catch(function () {
+                    return parseExistingFieldsLocally(state.pdfBytes, state.pageSizes);
+                });
+            }
 
             replaceFields(normalizedFields);
             setDirty(false);
-            pdfPages.classList.remove('hidden');
+            showPdfWorkspace();
             const detectedCount = normalizedFields.length;
             showSuccess('Detected ' + detectedCount + ' field' + (detectedCount === 1 ? '' : 's') + '.');
         } catch (error) {
             console.error('Error auto-detecting:', error);
-            pdfPages.classList.remove('hidden');
+            showPdfWorkspace();
             showError('Auto-detection failed: ' + (error && error.message ? error.message : 'Unknown error.'));
         } finally {
             hideLoading();
@@ -2078,29 +2912,39 @@
             formData.append('file', getPdfFileForRequests());
             formData.append('model', state.model || state.defaultModel);
 
-            const response = await fetch(apiUrl('/pdf-labeler/api/relabel'), {
-                method: 'POST',
-                body: formData
-            });
-            const data = await parseApiResponse(response);
-            if (!data.success) {
-                throw new Error((data.error && data.error.message) || 'Relabeling failed.');
-            }
+            const data = await requestAsyncLabelerAction(
+                '/pdf-labeler/api/relabel',
+                formData,
+                'AI relabel is running in the background...'
+            );
 
-            if (data.data && data.data.pdf_base64) {
-                syncPdfState(base64ToUint8Array(data.data.pdf_base64), state.fileName || 'edited-form.pdf');
-            }
-            const relabeledFields = await detectExistingFieldsWithServer().catch(function () {
+            const pdfWasUpdated = applyReturnedPdfPayload(data, state.fileName || 'edited-form.pdf');
+            const detectedRelabeledFields = await detectExistingFieldsWithServer().catch(function () {
                 return parseExistingFieldsLocally(state.pdfBytes, state.pageSizes);
             });
+            const relabeledFields = reconcileRelabeledFields(detectedRelabeledFields, data);
+            logRelabelDebug(data, detectedRelabeledFields, relabeledFields);
             replaceFields(relabeledFields);
             setDirty(false);
-            pdfPages.classList.remove('hidden');
-            showSuccess('Fields relabeled successfully.');
+            showPdfWorkspace();
+            if (!pdfWasUpdated) {
+                throw new Error('AI relabel completed without returning an updated PDF.');
+            }
+            const renamedCount = getRelabelChangedCount(data);
+            if (renamedCount === 0) {
+                showError('AI relabel completed, but no field names changed. See the browser console for details.', 15000);
+                return;
+            }
+            showSuccess(
+                typeof renamedCount === 'number'
+                    ? ('Relabeled ' + renamedCount + ' field' + (renamedCount === 1 ? '' : 's') + '.')
+                    : 'Fields relabeled successfully.',
+                9000
+            );
         } catch (error) {
             console.error('Error relabeling:', error);
-            pdfPages.classList.remove('hidden');
-            showError('Relabeling failed: ' + (error && error.message ? error.message : 'Unknown error.'));
+            showPdfWorkspace();
+            showError('Relabeling failed: ' + (error && error.message ? error.message : 'Unknown error.'), 15000);
         } finally {
             hideLoading();
         }
@@ -2120,6 +2964,7 @@
 
             const response = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), {
                 method: 'POST',
+                headers: { 'Accept': 'application/json' },
                 body: formData
             });
             const data = await parseApiResponse(response);
@@ -2147,11 +2992,11 @@
             syncPdfState(outputBytes, filename);
             updateDocumentName();
             setDirty(false);
-            pdfPages.classList.remove('hidden');
+            showPdfWorkspace();
             showSuccess('PDF exported successfully.');
         } catch (error) {
             console.error('Error exporting:', error);
-            pdfPages.classList.remove('hidden');
+            showPdfWorkspace();
             showError('Export failed: ' + (error && error.message ? error.message : 'Unknown error.'));
         } finally {
             hideLoading();
@@ -2220,9 +3065,29 @@
         }
     });
     pdfContainer.addEventListener('scroll', function () {
+        currentVisiblePageIndex = getCurrentVisiblePageIndex();
+        scheduleFieldsListSync(false);
         positionQuickFieldEditor();
     });
+    fieldsList.addEventListener('scroll', function () {
+        if (fieldsListProgrammaticScroll) return;
+        fieldsListManualScrollUntil = Date.now() + 1600;
+    });
+    fieldSearchInput.addEventListener('input', function () {
+        state.fieldSearch = fieldSearchInput.value || '';
+        renderFieldsList();
+    });
+    fieldTypeFilterInput.addEventListener('change', function () {
+        state.fieldTypeFilter = fieldTypeFilterInput.value || '';
+        renderFieldsList();
+    });
+    fieldSortInput.addEventListener('change', function () {
+        state.fieldSort = fieldSortInput.value || 'position';
+        renderFieldsList();
+    });
     window.addEventListener('resize', function () {
+        currentVisiblePageIndex = getCurrentVisiblePageIndex();
+        scheduleFieldsListSync(true);
         positionQuickFieldEditor();
     });
 
@@ -2235,6 +3100,10 @@
         });
     });
 
+    normalizePassBtn.addEventListener('click', function () {
+        if (!state.pdfBytes || state.fields.length === 0) return;
+        normalizationModal.classList.remove('hidden');
+    });
     settingsBtn.addEventListener('click', function () {
         aiModelInput.value = state.model || state.defaultModel;
         renderModelSuggestions('');
@@ -2244,6 +3113,10 @@
         settingsModal.classList.add('hidden');
         aiModelSuggestions.classList.add('hidden');
     });
+    closeNormalizationBtn.addEventListener('click', function () {
+        normalizationModal.classList.add('hidden');
+    });
+    applyNormalizationBtn.addEventListener('click', applyNormalizationPass);
     saveSettingsBtn.addEventListener('click', function () {
         state.model = aiModelInput.value.trim() || state.defaultModel;
         settingsModal.classList.add('hidden');
@@ -2292,6 +3165,9 @@
         if (!settingsModal.classList.contains('hidden') && event.target === settingsModal) {
             settingsModal.classList.add('hidden');
             aiModelSuggestions.classList.add('hidden');
+        }
+        if (!normalizationModal.classList.contains('hidden') && event.target === normalizationModal) {
+            normalizationModal.classList.add('hidden');
         }
     });
 
@@ -2405,6 +3281,7 @@
             selectField(null, { focusNameInput: false, scrollIntoView: false });
             aiModelSuggestions.classList.add('hidden');
             settingsModal.classList.add('hidden');
+            normalizationModal.classList.add('hidden');
             return;
         }
         if (!state.selectedFieldId || targetTag === 'INPUT' || targetTag === 'TEXTAREA') {

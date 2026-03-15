@@ -1,11 +1,27 @@
 import shutil
 import inspect
+import docassemble.base.config
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
+
+if not docassemble.base.config.loaded:
+    docassemble.base.config.load()
+from docassemble.base.util import get_config, log
 
 
 class PDFLabelingError(RuntimeError):
     pass
+
+
+def _assert_valid_pdf_output(pdf_path: str, *, action_label: str) -> None:
+    path = Path(pdf_path)
+    if not path.is_file():
+        raise PDFLabelingError(f"{action_label} did not produce an output PDF.")
+    with path.open("rb") as handle:
+        header = handle.read(5)
+    if not header.startswith(b"%PDF-"):
+        raise PDFLabelingError(f"{action_label} did not produce a valid PDF output.")
 
 
 def _parse_form_with_optional_model(
@@ -16,6 +32,7 @@ def _parse_form_with_optional_model(
     jur: str,
     tools_token: Optional[str],
     openai_api: Optional[str],
+    openai_base_url: Optional[str],
     model: Optional[str],
 ) -> Any:
     parse_kwargs: Dict[str, Any] = {
@@ -26,6 +43,13 @@ def _parse_form_with_optional_model(
         "tools_token": tools_token,
         "openai_api_key": openai_api,
     }
+    if openai_base_url:
+        try:
+            signature = inspect.signature(formfyxer_module.parse_form)
+            if "openai_base_url" in signature.parameters:
+                parse_kwargs["openai_base_url"] = openai_base_url
+        except Exception:
+            pass
     if model:
         try:
             signature = inspect.signature(formfyxer_module.parse_form)
@@ -44,6 +68,94 @@ def _flatten_field_names(fields_per_page: List[List[Any]]) -> List[str]:
             if isinstance(field_name, str) and field_name:
                 names.append(field_name)
     return names
+
+
+def _resolve_formfyxer_credentials(
+    *,
+    tools_token: Optional[str],
+    openai_api: Optional[str],
+    openai_base_url: Optional[str],
+) -> Dict[str, Optional[str]]:
+    resolved_tools_token = tools_token
+    tools_token_source = "request" if resolved_tools_token else None
+    if not resolved_tools_token:
+        resolved_tools_token = (
+            get_config("assembly line", {}).get("tools.suffolklitlab.org api key")
+        )
+        if resolved_tools_token:
+            tools_token_source = "config:assembly line.tools.suffolklitlab.org api key"
+    if not resolved_tools_token:
+        resolved_tools_token = os.getenv("TOOLS_TOKEN") or os.getenv("SPOT_TOKEN")
+        if resolved_tools_token:
+            tools_token_source = "env"
+
+    resolved_openai_api = openai_api
+    openai_api_source = "request" if resolved_openai_api else None
+    if not resolved_openai_api:
+        resolved_openai_api = (
+            get_config("open ai", {}).get("key") or get_config("openai api key")
+        )
+        if resolved_openai_api:
+            openai_api_source = (
+                "config:open ai.key"
+                if get_config("open ai", {}).get("key")
+                else "config:openai api key"
+            )
+    if not resolved_openai_api:
+        resolved_openai_api = os.getenv("OPENAI_API_KEY")
+        if resolved_openai_api:
+            openai_api_source = "env"
+
+    resolved_openai_base_url = openai_base_url
+    openai_base_url_source = "request" if resolved_openai_base_url else None
+    if not resolved_openai_base_url:
+        resolved_openai_base_url = get_config("openai base url")
+        if resolved_openai_base_url:
+            openai_base_url_source = "config:openai base url"
+    if not resolved_openai_base_url:
+        openai_config = get_config("open ai", {})
+        if isinstance(openai_config, dict):
+            resolved_openai_base_url = openai_config.get("base url") or openai_config.get("base_url")
+            if resolved_openai_base_url:
+                openai_base_url_source = (
+                    "config:open ai.base url"
+                    if openai_config.get("base url")
+                    else "config:open ai.base_url"
+                )
+    if not resolved_openai_base_url:
+        resolved_openai_base_url = os.getenv("OPENAI_BASE_URL")
+        if resolved_openai_base_url:
+            openai_base_url_source = "env"
+
+    return {
+        "tools_token": str(resolved_tools_token).strip() if resolved_tools_token else None,
+        "openai_api": str(resolved_openai_api).strip() if resolved_openai_api else None,
+        "openai_base_url": str(resolved_openai_base_url).strip()
+        if resolved_openai_base_url
+        else None,
+        "tools_token_source": tools_token_source,
+        "openai_api_source": openai_api_source,
+        "openai_base_url_source": openai_base_url_source,
+    }
+
+
+def _log_formfyxer_resolution(
+    action: str,
+    *,
+    resolved: Dict[str, Optional[str]],
+    model: Optional[str],
+    jur: str,
+) -> None:
+    log(
+        "ALDashboard: "
+        + action
+        + " FormFyxer credential resolution "
+        + f"(jur={jur}, model={model or 'default'}, "
+        + f"tools_token={'yes' if resolved.get('tools_token') else 'no'} from {resolved.get('tools_token_source') or 'none'}, "
+        + f"openai_api={'yes' if resolved.get('openai_api') else 'no'} from {resolved.get('openai_api_source') or 'none'}, "
+        + f"openai_base_url={'yes' if resolved.get('openai_base_url') else 'no'} from {resolved.get('openai_base_url_source') or 'none'})",
+        "info",
+    )
 
 
 def _build_mapping_from_target_list(
@@ -73,6 +185,7 @@ def relabel_existing_pdf_fields(
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
     import formfyxer  # type: ignore[import-not-found]
@@ -96,14 +209,26 @@ def relabel_existing_pdf_fields(
         )
         formfyxer.rename_pdf_fields(input_pdf_path, output_pdf_path, mapping)
     elif relabel_with_ai:
+        resolved = _resolve_formfyxer_credentials(
+            tools_token=tools_token,
+            openai_api=openai_api,
+            openai_base_url=openai_base_url,
+        )
+        _log_formfyxer_resolution(
+            "pdf relabel",
+            resolved=resolved,
+            model=model,
+            jur=jur,
+        )
         shutil.copyfile(input_pdf_path, output_pdf_path)
         parsed = _parse_form_with_optional_model(
             formfyxer,
             in_file=output_pdf_path,
             title=Path(output_pdf_path).stem,
             jur=jur,
-            tools_token=tools_token,
-            openai_api=openai_api,
+            tools_token=resolved["tools_token"],
+            openai_api=resolved["openai_api"],
+            openai_base_url=resolved["openai_base_url"],
             model=model,
         )
         if isinstance(parsed, dict):
@@ -117,15 +242,18 @@ def relabel_existing_pdf_fields(
             "Provide one of: field_name_mapping, target_field_names, or relabel_with_ai=true."
         )
 
-    if not Path(output_pdf_path).is_file():
-        raise PDFLabelingError("FormFyxer did not produce a relabeled output PDF.")
+    _assert_valid_pdf_output(output_pdf_path, action_label="FormFyxer relabel")
+    updated_names = list_existing_field_names(output_pdf_path)
 
     if not stats:
-        stats = {
-            "fields_old": current_names,
-            "fields": list_existing_field_names(output_pdf_path),
-            "total fields": len(current_names),
-        }
+        stats = {}
+    stats.setdefault("fields_old", current_names)
+    stats.setdefault("fields", updated_names)
+    stats.setdefault("total fields", len(updated_names))
+    stats.setdefault(
+        "renamed fields",
+        sum(1 for old, new in zip(current_names, updated_names) if old != new),
+    )
     return stats
 
 
@@ -138,9 +266,22 @@ def apply_formfyxer_pdf_labeling(
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
     import formfyxer  # type: ignore[import-not-found]
+
+    resolved = _resolve_formfyxer_credentials(
+        tools_token=tools_token,
+        openai_api=openai_api,
+        openai_base_url=openai_base_url,
+    )
+    _log_formfyxer_resolution(
+        "pdf detect/normalize",
+        resolved=resolved,
+        model=model,
+        jur=jur,
+    )
 
     if add_fields:
         formfyxer.auto_add_fields(input_pdf_path, output_pdf_path)
@@ -148,8 +289,7 @@ def apply_formfyxer_pdf_labeling(
         shutil.copyfile(input_pdf_path, output_pdf_path)
 
     output_path = Path(output_pdf_path)
-    if not output_path.is_file():
-        raise PDFLabelingError("FormFyxer did not produce an output PDF.")
+    _assert_valid_pdf_output(str(output_path), action_label="FormFyxer labeling")
 
     if not normalize_fields:
         return {}
@@ -159,8 +299,9 @@ def apply_formfyxer_pdf_labeling(
         in_file=str(output_path),
         title=output_path.stem,
         jur=jur,
-        tools_token=tools_token,
-        openai_api=openai_api,
+        tools_token=resolved["tools_token"],
+        openai_api=resolved["openai_api"],
+        openai_base_url=resolved["openai_base_url"],
         model=model,
     )
     if isinstance(stats, dict):
@@ -177,6 +318,7 @@ def detect_pdf_fields_and_optionally_relabel(
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
     stats = apply_formfyxer_pdf_labeling(
@@ -187,6 +329,7 @@ def detect_pdf_fields_and_optionally_relabel(
         jur=jur,
         tools_token=tools_token,
         openai_api=openai_api,
+        openai_base_url=openai_base_url,
         model=model,
     )
     if target_field_names is not None:
@@ -197,6 +340,7 @@ def detect_pdf_fields_and_optionally_relabel(
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
             model=model,
         )
         if isinstance(stats, dict):

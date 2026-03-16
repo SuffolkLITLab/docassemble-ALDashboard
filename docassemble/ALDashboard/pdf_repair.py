@@ -496,10 +496,67 @@ def ocr_pdf(
 
 
 # ---------------------------------------------------------------------------
+# 6) Auto-repair cascade
+# ---------------------------------------------------------------------------
+
+_AUTO_REPAIR_SEQUENCE: List[str] = [
+    "qpdf_repair",
+    "ghostscript_reprint",
+    "repair_metadata",
+]
+
+
+def auto_repair(
+    input_pdf_path: str,
+    output_pdf_path: str,
+) -> Dict[str, Any]:
+    """Try multiple repair strategies in sequence until one produces a valid PDF.
+
+    The cascade order is: qpdf → ghostscript → metadata repair.
+    The first strategy that produces a file openable by pikepdf wins.
+    """
+    import pikepdf  # type: ignore[import-untyped]
+
+    errors: List[Dict[str, str]] = []
+
+    for strategy in _AUTO_REPAIR_SEQUENCE:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            candidate_path = tmp.name
+
+        try:
+            func = REPAIR_ACTIONS[strategy]
+            result = func(input_pdf_path, candidate_path)
+
+            # Validate: must be openable and have at least one page
+            with pikepdf.open(candidate_path) as pdf_check:
+                page_count = len(pdf_check.pages)
+
+            _copy_if_same(candidate_path, output_pdf_path)
+            result["action"] = "auto"
+            result["strategy_used"] = strategy
+            result["strategies_tried"] = [e["strategy"] for e in errors] + [strategy]
+            result["page_count"] = page_count
+            return result
+        except Exception as exc:
+            errors.append({"strategy": strategy, "error": str(exc)})
+        finally:
+            if os.path.exists(candidate_path):
+                os.remove(candidate_path)
+
+    summary = "; ".join(
+        f"{e['strategy']}: {e['error']}" for e in errors
+    )
+    raise PDFRepairError(
+        f"Auto-repair failed — all strategies exhausted. {summary}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
-REPAIR_ACTIONS = {
+REPAIR_ACTIONS: Dict[str, Any] = {
+    "auto": auto_repair,
     "ghostscript_reprint": ghostscript_reprint,
     "qpdf_repair": qpdf_repair,
     "unlock": unlock_pdf,
@@ -508,6 +565,10 @@ REPAIR_ACTIONS = {
 }
 
 REPAIR_ACTION_HELP = {
+    "auto": (
+        "Automatically try multiple repair strategies in sequence "
+        "(qpdf, Ghostscript, metadata) until one produces a valid PDF."
+    ),
     "ghostscript_reprint": (
         "Re-distill the PDF through Ghostscript to produce a completely fresh file. "
         "Optionally preserves existing form field locations and types."

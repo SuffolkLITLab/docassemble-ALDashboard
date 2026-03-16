@@ -16,6 +16,7 @@ from docassemble.ALDashboard.pdf_repair import (
     _assert_pdf,
     _copy_if_same,
     _require_executable,
+    auto_repair,
     ghostscript_reprint,
     list_repair_actions,
     ocr_pdf,
@@ -100,7 +101,7 @@ class TestListRepairActions(unittest.TestCase):
         names = {a["action"] for a in actions}
         self.assertEqual(
             names,
-            {"ghostscript_reprint", "qpdf_repair", "unlock", "repair_metadata", "ocr"},
+            {"auto", "ghostscript_reprint", "qpdf_repair", "unlock", "repair_metadata", "ocr"},
         )
         for action in actions:
             self.assertIn("description", action)
@@ -314,6 +315,70 @@ class TestRepairMetadata(unittest.TestCase):
                 os.remove(in_path)
             if os.path.exists(out_path):
                 os.remove(out_path)
+
+
+CORRUPTED_PDF = os.path.join(os.path.dirname(__file__), "corrupted.pdf")
+
+
+class TestAutoRepair(unittest.TestCase):
+    """Tests for the auto-repair cascade."""
+
+    def test_auto_repair_on_corrupted_pdf(self):
+        """auto_repair should recover a truncated PDF via the Ghostscript fallback."""
+        if not os.path.isfile(CORRUPTED_PDF):
+            self.skipTest("test/corrupted.pdf fixture not present")
+        try:
+            import shutil
+            if shutil.which("gs") is None:
+                self.skipTest("Ghostscript (gs) not on PATH")
+        except Exception:
+            pass
+
+        out_path = tempfile.mktemp(suffix=".pdf")
+        try:
+            result = auto_repair(CORRUPTED_PDF, out_path)
+            self.assertEqual(result["action"], "auto")
+            self.assertEqual(result["strategy_used"], "ghostscript_reprint")
+            self.assertIn("qpdf_repair", result["strategies_tried"])
+            self.assertGreater(result["page_count"], 0)
+            self.assertTrue(os.path.isfile(out_path))
+
+            import pikepdf
+            with pikepdf.open(out_path) as pdf:
+                self.assertGreater(len(pdf.pages), 0)
+        finally:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_auto_repair_via_run_repair(self):
+        """run_repair('auto', ...) should dispatch to auto_repair."""
+        if not os.path.isfile(CORRUPTED_PDF):
+            self.skipTest("test/corrupted.pdf fixture not present")
+        try:
+            import shutil
+            if shutil.which("gs") is None:
+                self.skipTest("Ghostscript (gs) not on PATH")
+        except Exception:
+            pass
+
+        out_path = tempfile.mktemp(suffix=".pdf")
+        try:
+            result = run_repair("auto", CORRUPTED_PDF, out_path)
+            self.assertEqual(result["action"], "auto")
+            self.assertTrue(os.path.isfile(out_path))
+        finally:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_auto_in_repair_actions(self):
+        """'auto' should be listed in REPAIR_ACTIONS."""
+        self.assertIn("auto", REPAIR_ACTIONS)
+
+    def test_auto_in_list_repair_actions(self):
+        """list_repair_actions() should include auto."""
+        actions = list_repair_actions()
+        names = [a["action"] for a in actions]
+        self.assertIn("auto", names)
 
 
 if __name__ == "__main__":

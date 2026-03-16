@@ -846,6 +846,15 @@
                     <span id="repair-status-text"></span>
                 </div>
                 <div class="d-flex flex-column gap-2">
+                    <div class="repair-action-card border rounded p-3 border-primary bg-light">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Auto-Repair</h3>
+                                <p class="small text-muted mb-0">Automatically try multiple repair strategies (qpdf, Ghostscript, metadata) until one produces a valid PDF.</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="auto">Run</button>
+                        </div>
+                    </div>
                     <div class="repair-action-card border rounded p-3">
                         <div class="d-flex align-items-start justify-content-between gap-2">
                             <div>
@@ -909,6 +918,38 @@
                             <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="ocr">Run</button>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="password-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 28rem;">
+                <h2 class="h5 fw-semibold mb-2">Password Required</h2>
+                <p class="small text-muted mb-3">This PDF is password-protected. Enter the password to unlock it.</p>
+                <div id="password-error" class="hidden alert alert-danger small mb-3"></div>
+                <div class="mb-3">
+                    <label for="password-input" class="form-label small">Password</label>
+                    <input id="password-input" type="password" class="form-control form-control-sm" placeholder="Enter PDF password">
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="password-cancel" class="btn btn-sm btn-light">Cancel</button>
+                    <button id="password-submit" class="btn btn-sm btn-primary">Unlock</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="repair-prompt-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 32rem;">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <svg class="flex-shrink-0 mt-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">PDF Cannot Be Opened</h2>
+                        <p id="repair-prompt-message" class="small text-muted mb-0">This PDF could not be rendered. Would you like to try repairing it?</p>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="repair-prompt-cancel" class="btn btn-sm btn-light">Cancel</button>
+                    <button id="repair-prompt-fix" class="btn btn-sm btn-primary">Try Fixing</button>
                 </div>
             </div>
         </div>
@@ -1115,6 +1156,15 @@
     const closeRepairBtn = document.getElementById('close-repair');
     const repairStatus = document.getElementById('repair-status');
     const repairStatusText = document.getElementById('repair-status-text');
+    const passwordModal = document.getElementById('password-modal');
+    const passwordInput = document.getElementById('password-input');
+    const passwordError = document.getElementById('password-error');
+    const passwordSubmitBtn = document.getElementById('password-submit');
+    const passwordCancelBtn = document.getElementById('password-cancel');
+    const repairPromptModal = document.getElementById('repair-prompt-modal');
+    const repairPromptMessage = document.getElementById('repair-prompt-message');
+    const repairPromptFixBtn = document.getElementById('repair-prompt-fix');
+    const repairPromptCancelBtn = document.getElementById('repair-prompt-cancel');
     const aiModelInput = document.getElementById('ai-model');
     const aiModelSuggestions = document.getElementById('ai-model-suggestions');
     const pageTitle = document.getElementById('page-title');
@@ -3277,11 +3327,124 @@
             showSuccess(detectedFields.length ? ('Loaded ' + detectedFields.length + ' existing fields.') : 'PDF loaded.');
         } catch (error) {
             console.error('Error loading PDF:', error);
-            showError('Failed to load PDF: ' + (error && error.message ? error.message : 'Unknown error.'));
-            pdfEmpty.classList.remove('hidden');
+            hideLoading();
+
+            if (error && error.name === 'PasswordException') {
+                tryAutoUnlock(file);
+                return;
+            }
+
+            showRepairPrompt(file, error);
+            return;
         } finally {
             hideLoading();
         }
+    }
+
+    /**
+     * Attempt to unlock the PDF without a password via the server-side
+     * repair API.  If the blank-password unlock succeeds the repaired
+     * file is reloaded immediately.  Otherwise the password dialog is shown.
+     */
+    async function tryAutoUnlock(file) {
+        showLoading('Trying to unlock PDF...');
+        try {
+            var formData = new FormData();
+            formData.append('file', file);
+            formData.append('action', 'unlock');
+
+            var response = await fetch(apiUrl('/pdf-labeler/api/repair'), {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+                body: formData
+            });
+            var result = await parseApiResponse(response);
+            if (result.success && result.data && result.data.pdf_base64) {
+                var binaryStr = atob(result.data.pdf_base64);
+                var bytes = new Uint8Array(binaryStr.length);
+                for (var i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                var unlockedFile = new File([bytes], result.data.filename || state.fileName || 'unlocked.pdf', { type: 'application/pdf' });
+                hideLoading();
+                showSuccess('PDF unlocked successfully.');
+                await loadPdf(unlockedFile);
+                return;
+            }
+        } catch (_err) {
+            // blank-password unlock failed — fall through to password dialog
+        }
+        hideLoading();
+        showPasswordDialog(file);
+    }
+
+    function showPasswordDialog(file) {
+        state._pendingPasswordFile = file;
+        passwordInput.value = '';
+        passwordError.classList.add('hidden');
+        passwordError.textContent = '';
+        passwordModal.classList.remove('hidden');
+        passwordInput.focus();
+    }
+
+    async function submitPassword() {
+        var file = state._pendingPasswordFile;
+        if (!file) return;
+        var pw = passwordInput.value;
+        if (!pw) {
+            passwordError.textContent = 'Please enter a password.';
+            passwordError.classList.remove('hidden');
+            return;
+        }
+        passwordSubmitBtn.disabled = true;
+        passwordError.classList.add('hidden');
+        try {
+            var formData = new FormData();
+            formData.append('file', file);
+            formData.append('action', 'unlock');
+            formData.append('password', pw);
+
+            var response = await fetch(apiUrl('/pdf-labeler/api/repair'), {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+                body: formData
+            });
+            var result = await parseApiResponse(response);
+            if (!result.success) {
+                var errMsg = (result.error && result.error.message) || 'Incorrect password or unlock failed.';
+                throw new Error(errMsg);
+            }
+            var data = result.data || {};
+            if (!data.pdf_base64) throw new Error('No unlocked PDF was returned.');
+
+            var binaryStr = atob(data.pdf_base64);
+            var bytes = new Uint8Array(binaryStr.length);
+            for (var i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+            }
+            var unlockedFile = new File([bytes], data.filename || state.fileName || 'unlocked.pdf', { type: 'application/pdf' });
+            passwordModal.classList.add('hidden');
+            state._pendingPasswordFile = null;
+            showSuccess('PDF unlocked successfully.');
+            await loadPdf(unlockedFile);
+        } catch (err) {
+            passwordError.textContent = err.message || 'Failed to unlock PDF.';
+            passwordError.classList.remove('hidden');
+        } finally {
+            passwordSubmitBtn.disabled = false;
+        }
+    }
+
+    function showRepairPrompt(file, error) {
+        state._pendingRepairFile = file;
+        var msg = 'This PDF could not be rendered.';
+        if (error && error.message) {
+            msg += ' (' + error.message + ')';
+        }
+        msg += ' Would you like to try repairing it?';
+        repairPromptMessage.textContent = msg;
+        pdfEmpty.classList.add('hidden');
+        repairPromptModal.classList.remove('hidden');
     }
 
     function deleteField(fieldId) {
@@ -3683,6 +3846,31 @@
             if (!action || !state.pdfBytes) return;
             runRepairAction(action);
         });
+    });
+    passwordSubmitBtn.addEventListener('click', submitPassword);
+    passwordInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') submitPassword();
+    });
+    passwordCancelBtn.addEventListener('click', function () {
+        passwordModal.classList.add('hidden');
+        state._pendingPasswordFile = null;
+        pdfEmpty.classList.remove('hidden');
+    });
+    repairPromptFixBtn.addEventListener('click', function () {
+        repairPromptModal.classList.add('hidden');
+        if (state._pendingRepairFile || state.pdfBytes) {
+            runRepairAction('auto');
+        } else {
+            repairStatus.classList.add('hidden');
+            repairModal.querySelectorAll('.repair-run-btn').forEach(function (btn) { btn.disabled = false; });
+            repairBtn.disabled = false;
+            repairModal.classList.remove('hidden');
+        }
+    });
+    repairPromptCancelBtn.addEventListener('click', function () {
+        repairPromptModal.classList.add('hidden');
+        state._pendingRepairFile = null;
+        pdfEmpty.classList.remove('hidden');
     });
     settingsBtn.addEventListener('click', function () {
         aiModelInput.value = state.model || state.defaultModel;

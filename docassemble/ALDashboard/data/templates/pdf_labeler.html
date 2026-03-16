@@ -132,6 +132,21 @@
             justify-content: center;
             flex: 0 0 auto;
         }
+        .quick-field-suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            margin-top: 0.45rem;
+        }
+        .quick-field-suggestions.hidden {
+            display: none;
+        }
+        .quick-field-suggestion {
+            max-width: 100%;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            line-height: 1.1;
+        }
         .header-auth-menu { min-width: 12rem; }
         .page-overlay {
             position: absolute;
@@ -639,6 +654,7 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 13 4 4L19 7"></path></svg>
                 </button>
             </div>
+            <div id="quick-field-suggestions" class="quick-field-suggestions hidden" aria-label="Suggested field names"></div>
         </div>
 
         <div id="error-toast" class="hidden alert alert-danger labeler-toast mb-0">
@@ -896,6 +912,7 @@
         pdfDoc: null,
         pageCount: 0,
         pageSizes: [],
+        pageTextBoxes: [],
         fields: [],
         selectedFieldId: null,
         selectedTool: null,
@@ -969,6 +986,7 @@
     const quickFieldTypeBadge = document.getElementById('quick-field-type-badge');
     const quickFieldNameInput = document.getElementById('quick-field-name');
     const quickFieldCloseBtn = document.getElementById('quick-field-close');
+    const quickFieldSuggestions = document.getElementById('quick-field-suggestions');
 
     const toolButtons = {
         text: document.getElementById('tool-text'),
@@ -1018,6 +1036,7 @@
         let name = String(rawName || '').trim();
         if (!name) return 'field';
         name = name.replace(/\(\)/g, '');
+        name = name.replace(/['`’]/g, '');
         name = name.replace(/\[(\d+)\]/g, function (_match, index) {
             return String(Number(index) + 1);
         });
@@ -1031,6 +1050,242 @@
             name = 'field_' + name;
         }
         return name;
+    }
+
+    function extractTextBoxesFromPage(pageProxy) {
+        return pageProxy.getTextContent().then(function (textContent) {
+            const viewport = pageProxy.getViewport({ scale: 1 });
+            const textItems = [];
+            textContent.items.forEach(function (item) {
+                if (!item || !('str' in item) || !item.str || !item.str.trim() || !('transform' in item)) {
+                    return;
+                }
+                const transform = item.transform;
+                const x = Number(transform[4] || 0);
+                const y = viewport.height - Number(transform[5] || 0);
+                const fontSize = Math.max(Math.abs(Number(transform[3] || 0)), 6);
+                const width = Math.max(Number(item.width || 0), item.str.trim().length * fontSize * 0.46);
+                textItems.push({
+                    text: item.str.trim(),
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: fontSize,
+                    fontSize: fontSize
+                });
+            });
+            return groupTextItemsIntoBoxes(textItems).map(function (box) {
+                return {
+                    text: box.text,
+                    x: clamp(box.x / viewport.width, 0, 1),
+                    y: clamp(box.y / viewport.height, 0, 1),
+                    width: clamp(box.width / viewport.width, 0, 1),
+                    height: clamp(box.height / viewport.height, 0, 1),
+                    fontSize: box.fontSize
+                };
+            });
+        }).catch(function (error) {
+            console.warn('Failed to extract PDF text for heuristic naming:', error);
+            return [];
+        });
+    }
+
+    function groupTextItemsIntoBoxes(textItems) {
+        if (!Array.isArray(textItems) || textItems.length === 0) return [];
+        const items = textItems.slice().sort(function (left, right) {
+            const yDiff = Math.abs(left.y - right.y);
+            if (yDiff < 3) {
+                return left.x - right.x;
+            }
+            return left.y - right.y;
+        });
+        const boxes = [];
+        let currentBox = null;
+        items.forEach(function (item) {
+            if (!currentBox) {
+                currentBox = {
+                    text: item.text,
+                    x: item.x,
+                    y: item.y,
+                    width: item.width,
+                    height: item.height,
+                    fontSize: item.fontSize
+                };
+                return;
+            }
+            const sameLineThreshold = Math.max(currentBox.fontSize * 0.45, 4);
+            const gap = item.x - (currentBox.x + currentBox.width);
+            const maxGap = Math.max(currentBox.fontSize * 0.9, 12);
+            if (Math.abs(item.y - currentBox.y) <= sameLineThreshold && gap <= maxGap) {
+                currentBox.text += (gap > 2 ? ' ' : '') + item.text;
+                currentBox.width = Math.max(currentBox.width, (item.x + item.width) - currentBox.x);
+                currentBox.height = Math.max(currentBox.height, item.height);
+                currentBox.fontSize = Math.max(currentBox.fontSize, item.fontSize);
+                return;
+            }
+            boxes.push(currentBox);
+            currentBox = {
+                text: item.text,
+                x: item.x,
+                y: item.y,
+                width: item.width,
+                height: item.height,
+                fontSize: item.fontSize
+            };
+        });
+        if (currentBox) {
+            boxes.push(currentBox);
+        }
+        return boxes.filter(function (box) {
+            return box.text && box.text.trim() && !/^[_\s.\-:]{1,4}$/.test(box.text.trim());
+        });
+    }
+
+    function getRectBounds(rect) {
+        return {
+            left: rect.x,
+            right: rect.x + rect.width,
+            top: rect.y,
+            bottom: rect.y + rect.height,
+            centerX: rect.x + (rect.width / 2),
+            centerY: rect.y + (rect.height / 2)
+        };
+    }
+
+    function getTextBoxBounds(box) {
+        return {
+            left: box.x,
+            right: box.x + box.width,
+            top: box.y,
+            bottom: box.y + box.height,
+            centerX: box.x + (box.width / 2),
+            centerY: box.y + (box.height / 2)
+        };
+    }
+
+    function cleanSuggestedLabelText(rawText) {
+        let text = String(rawText || '').trim();
+        if (!text) return '';
+        text = text.replace(/\s+/g, ' ');
+        text = text.replace(/^[\s:;.,\-–—_]+|[\s:;.,\-–—_]+$/g, '');
+        if (!text) return '';
+        const parts = text.split(/\s+/);
+        if (parts.length > 10) {
+            text = parts.slice(0, 10).join(' ');
+        }
+        return text;
+    }
+
+    function getNearbyFieldNameBases(pageIndex, rect, excludeFieldId) {
+        const rectBounds = getRectBounds(rect);
+        const nearby = new Set();
+        state.fields.forEach(function (field) {
+            if (field.pageIndex !== pageIndex || field.id === excludeFieldId) return;
+            const fieldBounds = getRectBounds(field);
+            const verticalDistance = Math.abs(fieldBounds.centerY - rectBounds.centerY);
+            const horizontalGap = Math.min(
+                Math.abs(rectBounds.left - fieldBounds.right),
+                Math.abs(fieldBounds.left - rectBounds.right)
+            );
+            if (verticalDistance <= Math.max(rect.height * 1.6, field.height * 1.6, 0.05) && horizontalGap <= 0.1) {
+                nearby.add(normalizePdfFieldName(field.name));
+            }
+        });
+        return nearby;
+    }
+
+    // Contract: return up to 3 normalized field-name suggestions for a candidate
+    // rect on a page, ordered by likely usefulness and already filtered against
+    // immediate neighboring field names.
+    function buildFieldNameSuggestions(pageIndex, rect, type, excludeFieldId) {
+        const textBoxes = Array.isArray(state.pageTextBoxes[pageIndex]) ? state.pageTextBoxes[pageIndex] : [];
+        if (!textBoxes.length) return [];
+        const rectBounds = getRectBounds(rect);
+        const rowTolerance = Math.max(rect.height * 1.6, 0.045);
+        const sideGapLimit = Math.max(rect.width * 3.5, 0.22);
+        const belowGapLimit = Math.max(rect.height * 2.4, 0.12);
+        const nearbyNames = getNearbyFieldNameBases(pageIndex, rect, excludeFieldId);
+        const matches = [];
+
+        textBoxes.forEach(function (box) {
+            const text = cleanSuggestedLabelText(box.text);
+            if (!text) return;
+            const boxBounds = getTextBoxBounds(box);
+            const verticalDistance = Math.abs(boxBounds.centerY - rectBounds.centerY);
+            const overlapWidth = Math.min(rectBounds.right, boxBounds.right) - Math.max(rectBounds.left, boxBounds.left);
+            const overlapRatio = overlapWidth > 0 ? overlapWidth / Math.min(rect.width, box.width) : 0;
+
+            if (boxBounds.right <= rectBounds.left + 0.01 && verticalDistance <= rowTolerance) {
+                const gap = rectBounds.left - boxBounds.right;
+                if (gap <= sideGapLimit) {
+                    matches.push({
+                        text: text,
+                        source: 'left',
+                        score: 320 - (gap * 1000) - (verticalDistance * 700)
+                    });
+                }
+            }
+
+            if (boxBounds.left >= rectBounds.right - 0.01 && verticalDistance <= rowTolerance) {
+                const gap = boxBounds.left - rectBounds.right;
+                if (gap <= sideGapLimit) {
+                    matches.push({
+                        text: text,
+                        source: 'right',
+                        score: 220 - (gap * 1000) - (verticalDistance * 700)
+                    });
+                }
+            }
+
+            if (boxBounds.top >= rectBounds.bottom - 0.01) {
+                const gap = boxBounds.top - rectBounds.bottom;
+                if (gap <= belowGapLimit && overlapRatio >= 0.18) {
+                    matches.push({
+                        text: text,
+                        source: 'below',
+                        score: 180 - (gap * 1200) + (overlapRatio * 100)
+                    });
+                }
+            }
+        });
+
+        const leftMatches = matches
+            .filter(function (candidate) { return candidate.source === 'left'; })
+            .sort(function (left, right) { return right.score - left.score; });
+        const rightMatches = matches
+            .filter(function (candidate) { return candidate.source === 'right'; })
+            .sort(function (left, right) { return right.score - left.score; });
+        const belowMatches = matches
+            .filter(function (candidate) { return candidate.source === 'below'; })
+            .sort(function (left, right) { return right.score - left.score; });
+
+        const ordered = [];
+        if (leftMatches[0]) {
+            ordered.push(leftMatches[0]);
+            if (belowMatches[0]) ordered.push(belowMatches[0]);
+            if (rightMatches[0]) ordered.push(rightMatches[0]);
+        } else {
+            if (rightMatches[0]) ordered.push(rightMatches[0]);
+            if (belowMatches[0]) ordered.push(belowMatches[0]);
+        }
+
+        const seenNames = new Set();
+        const suggestions = [];
+        ordered.forEach(function (candidate) {
+            if (!candidate || suggestions.length >= 3) return;
+            const normalized = normalizePdfFieldName(candidate.text);
+            if (!normalized || seenNames.has(normalized) || nearbyNames.has(normalized)) {
+                return;
+            }
+            seenNames.add(normalized);
+            suggestions.push({
+                name: ensureUniqueFieldName(normalized, excludeFieldId || null),
+                source: candidate.source,
+                text: candidate.text
+            });
+        });
+
+        return suggestions.slice(0, 3);
     }
 
     function ensureUniqueFieldName(baseName, excludeFieldId) {
@@ -1276,6 +1531,8 @@
         state.quickEditFieldId = null;
         state.quickEditFocusPending = false;
         quickFieldEditor.classList.add('hidden');
+        quickFieldSuggestions.innerHTML = '';
+        quickFieldSuggestions.classList.add('hidden');
     }
 
     function getVisiblePdfViewportRect() {
@@ -1402,6 +1659,7 @@
             quickFieldNameInput.value = field.name || '';
         }
         quickFieldNameInput.dataset.fieldId = field.id;
+        renderQuickFieldSuggestions(field);
         quickFieldEditor.classList.remove('hidden');
         positionQuickFieldEditor();
 
@@ -1412,6 +1670,28 @@
             });
             state.quickEditFocusPending = false;
         }
+    }
+
+    function renderQuickFieldSuggestions(field) {
+        const suggestions = Array.isArray(field && field.nameSuggestions) ? field.nameSuggestions : [];
+        quickFieldSuggestions.innerHTML = '';
+        if (!suggestions.length) {
+            quickFieldSuggestions.classList.add('hidden');
+            return;
+        }
+        suggestions.forEach(function (suggestion) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'quick-field-suggestion btn btn-outline-secondary btn-sm';
+            button.dataset.suggestedName = suggestion.name;
+            button.title = suggestion.text ? ('From nearby text: ' + suggestion.text) : suggestion.name;
+            button.textContent = suggestion.name;
+            if (normalizePdfFieldName(suggestion.name) === normalizePdfFieldName(field.name)) {
+                button.classList.add('active');
+            }
+            quickFieldSuggestions.appendChild(button);
+        });
+        quickFieldSuggestions.classList.remove('hidden');
     }
 
     function updateOverlayCursorState() {
@@ -2464,22 +2744,30 @@
     function createFieldFromTool(pageIndex, x, y, width, height) {
         if (!state.selectedTool) return;
         const type = normalizeFieldType(state.selectedTool);
+        const rect = {
+            x: clamp(x, 0, 1 - clamp(width, 0.01, 1)),
+            y: clamp(y, 0, 1 - clamp(height, 0.01, 1)),
+            width: clamp(width, 0.01, 1),
+            height: clamp(height, 0.01, 1)
+        };
+        const nameSuggestions = buildFieldNameSuggestions(pageIndex, rect, type, null);
         const field = {
             id: generateId(),
-            name: getDefaultFieldName(type),
+            name: nameSuggestions[0] ? nameSuggestions[0].name : getDefaultFieldName(type),
             type: type,
             pageIndex: pageIndex,
             x: 0,
             y: 0,
-            width: clamp(width, 0.01, 1),
-            height: clamp(height, 0.01, 1),
+            width: rect.width,
+            height: rect.height,
             font: 'Helvetica',
             fontSize: 12,
             autoSize: type === 'text' || type === 'multiline',
-            options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined
+            options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined,
+            nameSuggestions: nameSuggestions
         };
-        field.x = clamp(x, 0, 1 - field.width);
-        field.y = clamp(y, 0, 1 - field.height);
+        field.x = rect.x;
+        field.y = rect.y;
         state.fields.push(field);
         selectField(field.id, { focusNameInput: true, scrollIntoView: false });
         setDirty(true);
@@ -2717,11 +3005,13 @@
             state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
             state.pageCount = state.pdfDoc.numPages;
             state.pageSizes = [];
+            state.pageTextBoxes = [];
 
             for (let index = 1; index <= state.pageCount; index += 1) {
                 const page = await state.pdfDoc.getPage(index);
                 const viewport = page.getViewport({ scale: 1 });
                 state.pageSizes.push({ width: viewport.width, height: viewport.height });
+                state.pageTextBoxes.push(await extractTextBoxesFromPage(page));
             }
 
             await renderPages();
@@ -3173,6 +3463,19 @@
             event.preventDefault();
             hideQuickFieldEditor();
         }
+    });
+    quickFieldSuggestions.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-suggested-name]');
+        const field = getQuickEditField();
+        if (!button || !field) return;
+        const nextName = button.dataset.suggestedName || '';
+        if (!nextName) return;
+        event.preventDefault();
+        commitFieldNameChange(field.id, nextName, 'quick');
+        quickFieldNameInput.value = nextName;
+        renderQuickFieldSuggestions(field);
+        quickFieldNameInput.focus();
+        quickFieldNameInput.select();
     });
 
     document.addEventListener('mousedown', function (event) {

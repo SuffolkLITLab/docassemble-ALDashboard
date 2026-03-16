@@ -12,6 +12,7 @@ from .api_dashboard_utils import (
     pdf_fields_detect_payload_from_options,
     pdf_fields_relabel_payload_from_options,
     pdf_label_fields_payload_from_options,
+    pdf_repair_payload_from_options,
     relabel_payload_from_options,
     review_screen_payload_from_options,
     translation_payload_from_options,
@@ -104,3 +105,9 @@ def dashboard_yaml_check_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_yaml_reformat_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return yaml_reformat_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return pdf_repair_payload_from_options(payload)

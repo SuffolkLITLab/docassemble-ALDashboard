@@ -24,7 +24,10 @@ dependencies = [
     'dayamlchecker>=0.2.0',
     'pyspellchecker>=0.6.3',
     'ruamel.yaml>=0.17.4',
-    'textstat>=0.7.0'
+    'textstat>=0.7.0',
+    'pikepdf>=8.0.0',
+    'pdfrw>=0.4',
+    'ocrmypdf>=15.0'
 ]
 license="MIT"
 license-files = [

@@ -54,6 +54,7 @@ When installed on a docassemble server, ALDashboard exposes a Flask API at:
 - `POST /al/api/v1/dashboard/pdf/label-fields`
 - `POST /al/api/v1/dashboard/pdf/fields/detect`
 - `POST /al/api/v1/dashboard/pdf/fields/relabel`
+- `POST /al/api/v1/dashboard/pdf/repair`
 - `GET /al/api/v1/dashboard/jobs/{job_id}`
 - `GET /al/api/v1/dashboard/jobs/{job_id}/download`
 - `DELETE /al/api/v1/dashboard/jobs/{job_id}`
@@ -127,6 +128,15 @@ celery modules:
   - Input: PDF with existing fields.
   - Relabel modes: `field_name_mapping` (exact old->new map), ordered `target_field_names`, or AI (`relabel_with_ai=true`).
   - Output: Relabeled PDF and resulting field names; optional parse stats/base64 output.
+- `POST /al/api/v1/dashboard/pdf/repair`
+  - Run a single repair action on an uploaded PDF. Omit `action` to list available actions.
+  - `action` values: `ghostscript_reprint`, `qpdf_repair`, `unlock`, `repair_metadata`, `ocr`.
+  - `ghostscript_reprint`: Re-distill through Ghostscript. Optional `preserve_fields=true` to extract and re-apply field locations.
+  - `qpdf_repair`: Fix cross-reference tables and rebuild the page tree via pikepdf.
+  - `unlock`: Remove encryption/permissions. Optional `password` parameter.
+  - `repair_metadata`: Fix broken catalog/metadata entries (pikepdf, then pdfrw fallback).
+  - `ocr`: Add searchable text layer via ocrmypdf. Optional `language` (default `eng`) and `skip_text` (default `true`).
+  - Output: `repair_result` object and optional `pdf_base64`.
 - `GET /al/api/v1/dashboard/jobs/{job_id}/download`
   - Streams the first available file artifact from a completed async job.
   - Optional query parameters:

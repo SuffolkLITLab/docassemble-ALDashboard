@@ -43,6 +43,7 @@ from .api_dashboard_utils import (
     validate_translation_payload_from_request,
     yaml_check_payload_from_request,
     yaml_reformat_payload_from_request,
+    pdf_repair_payload_from_request,
 )
 from . import api_mcp  # noqa: F401
 from . import api_labelers  # noqa: F401
@@ -68,6 +69,7 @@ if not in_celery:
         dashboard_validate_translation_task,
         dashboard_yaml_check_task,
         dashboard_yaml_reformat_task,
+        dashboard_pdf_repair_task,
     )
 
 
@@ -540,6 +542,16 @@ def dashboard_pdf_fields_relabel():
     return _run_endpoint(
         pdf_fields_relabel_payload_from_request,
         dashboard_pdf_fields_relabel_task,
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/repair", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_pdf_repair():
+    return _run_endpoint(
+        pdf_repair_payload_from_request,
+        dashboard_pdf_repair_task,
     )
 
 

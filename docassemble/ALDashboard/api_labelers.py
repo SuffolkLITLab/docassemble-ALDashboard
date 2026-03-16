@@ -14,6 +14,7 @@ import inspect
 import io
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -77,6 +78,70 @@ LABELER_DEFAULT_MODEL = "gpt-5-mini"
 LABELER_JOB_KEY_PREFIX = "da:aldashboard:labeler-job:"
 LABELER_JOB_EXPIRE_SECONDS = 24 * 60 * 60
 ASYNC_CELERY_MODULE = "docassemble.ALDashboard.api_dashboard_worker"
+
+
+def _sanitize_checkbox_export_value(raw_value: Any) -> str:
+    token = str(raw_value or "").strip() or "Yes"
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", token).strip("_")
+    return token or "Yes"
+
+
+def _get_named_pdf_parent(field_obj: Any) -> Optional[Any]:
+    if hasattr(field_obj, "T"):
+        return field_obj
+    if hasattr(field_obj, "Parent"):
+        return _get_named_pdf_parent(field_obj.Parent)
+    return None
+
+
+def _rename_checkbox_export_state(field_obj: Any, export_value: str, pikepdf_module: Any) -> None:
+    desired_state = pikepdf_module.Name("/" + _sanitize_checkbox_export_value(export_value))
+    current_state = pikepdf_module.Name("/Yes")
+    if hasattr(field_obj, "AP"):
+        for appearance_key in ("/N", "/D", "/R"):
+            if appearance_key not in field_obj.AP:
+                continue
+            appearance_dict = field_obj.AP[appearance_key]
+            if current_state in appearance_dict and desired_state not in appearance_dict:
+                appearance_dict[desired_state] = appearance_dict[current_state]
+                del appearance_dict[current_state]
+    for attr_name in ("V", "AS", "DV"):
+        if hasattr(field_obj, attr_name) and getattr(field_obj, attr_name) == current_state:
+            setattr(field_obj, attr_name, desired_state)
+
+
+def _apply_checkbox_export_values(pdf_path: str, value_by_field_name: Dict[str, str]) -> None:
+    desired = {
+        str(name): _sanitize_checkbox_export_value(value)
+        for name, value in value_by_field_name.items()
+        if str(name).strip() and _sanitize_checkbox_export_value(value) != "Yes"
+    }
+    if not desired:
+        return
+
+    import pikepdf
+
+    with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
+        for page in pdf.pages:
+            if "/Annots" not in page:
+                continue
+            for annot in page.Annots:
+                try:
+                    if annot.Type != "/Annot" or annot.Subtype != "/Widget":
+                        continue
+                    named_parent = _get_named_pdf_parent(annot)
+                    if not named_parent or not hasattr(named_parent, "T"):
+                        continue
+                    field_name = str(named_parent.T)
+                    if field_name not in desired:
+                        continue
+                    export_value = desired[field_name]
+                    _rename_checkbox_export_state(named_parent, export_value, pikepdf)
+                    if named_parent is not annot:
+                        _rename_checkbox_export_state(annot, export_value, pikepdf)
+                except Exception:
+                    continue
+        pdf.save(pdf_path)
 
 
 def _normalize_provider_family(family_name: Optional[str]) -> str:
@@ -1929,6 +1994,12 @@ def pdf_labeler_apply_fields():
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
 
+            checkbox_export_values = {
+                str(field.get("name", "")): str(field.get("checkboxExportValue", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "checkbox" and str(field.get("checkboxExportValue", "")).strip()
+            }
+
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
                 page_count=page_count,
@@ -1942,6 +2013,7 @@ def pdf_labeler_apply_fields():
                 output_path = tmp_out.name
 
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
+            _apply_checkbox_export_values(output_path, checkbox_export_values)
 
             # Read the output file
             with open(output_path, "rb") as f:
@@ -2039,6 +2111,111 @@ def pdf_labeler_rename_fields():
                     "filename": output_filename,
                     "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
                 }
+            })
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+# ---------------------------------------------------------------------------
+# PDF repair
+# ---------------------------------------------------------------------------
+
+
+@app.route("/pdf-labeler/api/repair", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/repair", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_repair():
+    """Run a single PDF repair action and return the repaired file."""
+    from .pdf_repair import PDFRepairError, list_repair_actions, run_repair
+
+    request_id = str(uuid.uuid4())
+
+    try:
+        post_data = request.get_json(silent=True) or {}
+        form_data = dict(request.form)
+        merged = {**form_data, **post_data}
+
+        action = str(merged.get("action") or "").strip()
+        if not action:
+            return jsonify({
+                "success": True,
+                "request_id": request_id,
+                "data": {"available_actions": list_repair_actions()},
+            })
+
+        # Read PDF content
+        if "file" in request.files:
+            upload = request.files["file"]
+            filename = upload.filename or "upload.pdf"
+            content = upload.read()
+        else:
+            filename = str(merged.get("filename") or "upload.pdf")
+            b64 = merged.get("file_content_base64")
+            if not b64:
+                raise DashboardAPIValidationError(
+                    "A PDF file is required (upload or file_content_base64)."
+                )
+            content = decode_base64_content(b64)
+
+        _validate_upload_size(content)
+        if not filename.lower().endswith(".pdf"):
+            raise DashboardAPIValidationError(
+                "Only PDF files are supported.", status_code=415
+            )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+            output_path = tmp_out.name
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+        repair_options: Dict[str, Any] = {}
+        if action == "ghostscript_reprint":
+            repair_options["preserve_fields"] = parse_bool(
+                merged.get("preserve_fields"), default=False
+            )
+        elif action == "unlock":
+            pw = merged.get("password")
+            if pw is not None:
+                repair_options["password"] = str(pw)
+        elif action == "ocr":
+            lang = merged.get("language")
+            if lang is not None:
+                repair_options["language"] = str(lang).strip() or "eng"
+            skip = merged.get("skip_text")
+            if skip is not None:
+                repair_options["skip_text"] = parse_bool(skip, default=True)
+
+        try:
+            result = run_repair(action, input_path, output_path, options=repair_options)
+            with open(output_path, "rb") as fh:
+                output_bytes = fh.read()
+            output_filename = f"repaired_{filename}"
+            return jsonify({
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "filename": output_filename,
+                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    "repair_result": result,
+                },
             })
         finally:
             if os.path.exists(input_path):

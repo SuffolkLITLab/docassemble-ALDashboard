@@ -472,20 +472,42 @@
         .dirty-indicator { font-size: 0.72rem; }
         .normalization-grid {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.9rem;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.7rem;
         }
         .normalization-card {
             border: 1px solid #d8e0ea;
             border-radius: 0.8rem;
-            padding: 0.8rem;
+            padding: 0.65rem 0.75rem;
             background: #fbfdff;
         }
+        .normalization-card-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: #53657b;
+            margin: 0 0 0.5rem;
+        }
         .normalization-card .form-check {
-            margin-bottom: 0.55rem;
+            margin-bottom: 0.4rem;
+        }
+        .normalization-inline {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.45rem;
+            align-items: end;
+        }
+        .normalization-inline-2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.45rem;
+            align-items: end;
         }
         .normalization-card .form-text {
-            font-size: 0.76rem;
+            font-size: 0.72rem;
+            margin-top: 0.35rem;
+            line-height: 1.25;
         }
         @media (max-width: 1100px) {
             .pdf-fields-panel { width: 100%; min-width: 0; max-height: 42vh; }
@@ -533,6 +555,10 @@
                     <button id="normalize-pass-btn" class="btn btn-outline-light btn-sm" disabled>
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"></path><path d="m5 7 2 2 4-4"></path><path d="m13 17 2 2 4-4"></path></svg>
                         Normalize
+                    </button>
+                    <button id="repair-btn" class="btn btn-outline-light btn-sm" disabled title="PDF Repair Tools">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        Repair
                     </button>
                     <div class="toolbar-divider"></div>
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
@@ -650,6 +676,9 @@
             <div class="quick-field-header">
                 <div id="quick-field-type-badge" class="quick-field-icon" aria-hidden="true"></div>
                 <input id="quick-field-name" type="text" class="quick-field-input form-control form-control-sm font-monospace" aria-label="PDF field label">
+                <button id="quick-field-delete" type="button" class="quick-field-done btn btn-outline-danger btn-sm" aria-label="Delete field" title="Delete field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
+                </button>
                 <button id="quick-field-close" type="button" class="quick-field-done btn btn-outline-secondary btn-sm" aria-label="Done editing field label" title="Done editing field label">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 13 4 4L19 7"></path></svg>
                 </button>
@@ -685,46 +714,71 @@
         </div>
 
         <div id="normalization-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
-            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 62rem; max-height: 90vh; overflow: auto;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 58rem; max-height: 90vh; overflow: auto;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
                     <div>
                         <h2 class="h5 fw-semibold mb-0">Normalize PDF Fields</h2>
-                        <p class="small text-muted mb-0 mt-1">Apply court-PDF cleanup heuristics to the current detected fields.</p>
+                        <p class="small text-muted mb-0 mt-1">Apply court-PDF cleanup heuristics to the current fields.</p>
                     </div>
                     <button id="close-normalization" class="btn btn-sm btn-light">Close</button>
                 </div>
                 <div class="normalization-grid">
                     <section class="normalization-card">
-                        <label class="form-check">
-                            <input id="norm-checkbox-cross" class="form-check-input" type="checkbox" checked>
-                            <span class="form-check-label fw-medium">Use cross-style checkboxes</span>
-                        </label>
+                        <h3 class="normalization-card-title">Checkboxes</h3>
                         <label class="form-check">
                             <input id="norm-checkbox-uniform" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Use one checkbox size everywhere</span>
                         </label>
-                        <label for="norm-checkbox-size" class="form-label small text-muted mb-1">Checkbox size (pt)</label>
-                        <input id="norm-checkbox-size" type="number" min="6" max="24" step="0.5" class="form-control form-control-sm" value="12">
-                        <div class="form-text">Used for existing checkboxes and radio-to-checkbox conversion.</div>
+                        <div class="normalization-inline">
+                            <div>
+                                <label for="norm-checkbox-style" class="form-label small text-muted mb-1">Style</label>
+                                <select id="norm-checkbox-style" class="form-select form-select-sm">
+                                    <option value="cross" selected>Cross</option>
+                                    <option value="check">Check</option>
+                                    <option value="circle">Circle</option>
+                                    <option value="star">Star</option>
+                                    <option value="diamond">Diamond</option>
+                                    <option value="square">Square</option>
+                                    <option value="">Keep existing</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="norm-checkbox-size" class="form-label small text-muted mb-1">Size (pt)</label>
+                                <input id="norm-checkbox-size" type="number" min="6" max="24" step="0.5" class="form-control form-control-sm" value="12">
+                            </div>
+                            <div>
+                                <label for="norm-checkbox-export-value" class="form-label small text-muted mb-1">Export value</label>
+                                <input id="norm-checkbox-export-value" type="text" class="form-control form-control-sm font-monospace" value="Yes" placeholder="Yes">
+                            </div>
+                        </div>
+                        <div class="form-text">Recommended: style <code>cross</code>, export value <code>Yes</code>.</div>
                     </section>
                     <section class="normalization-card">
+                        <h3 class="normalization-card-title">Typography</h3>
                         <label class="form-check">
                             <input id="norm-font-normalize" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Normalize font and size</span>
                         </label>
-                        <label for="norm-font-name" class="form-label small text-muted mb-1">Font</label>
-                        <select id="norm-font-name" class="form-select form-select-sm">
-                            <option value="Helvetica" selected>Helvetica</option>
-                            <option value="Helvetica-Bold">Helvetica-Bold</option>
-                            <option value="Courier">Courier</option>
-                            <option value="Courier-Bold">Courier-Bold</option>
-                            <option value="Times-Roman">Times-Roman</option>
-                            <option value="Times-Bold">Times-Bold</option>
-                        </select>
-                        <label for="norm-font-size" class="form-label small text-muted mb-1 mt-2">Font size (pt)</label>
-                        <input id="norm-font-size" type="number" min="6" max="18" step="0.5" class="form-control form-control-sm" value="10">
+                        <div class="normalization-inline-2">
+                            <div>
+                                <label for="norm-font-name" class="form-label small text-muted mb-1">Font</label>
+                                <select id="norm-font-name" class="form-select form-select-sm">
+                                    <option value="Helvetica" selected>Helvetica</option>
+                                    <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                    <option value="Courier">Courier</option>
+                                    <option value="Courier-Bold">Courier-Bold</option>
+                                    <option value="Times-Roman">Times-Roman</option>
+                                    <option value="Times-Bold">Times-Bold</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="norm-font-size" class="form-label small text-muted mb-1">Size (pt)</label>
+                                <input id="norm-font-size" type="number" min="6" max="18" step="0.5" class="form-control form-control-sm" value="10">
+                            </div>
+                        </div>
                     </section>
                     <section class="normalization-card">
+                        <h3 class="normalization-card-title">Conversions</h3>
                         <label class="form-check">
                             <input id="norm-dropdowns-to-text" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Convert dropdown menus to text fields</span>
@@ -733,27 +787,30 @@
                             <input id="norm-radios-to-checkboxes" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Convert radio groups to checkbox sets</span>
                         </label>
-                        <div class="form-text">Yes/no groups become <code>_yes</code> and <code>_no</code>. Other groups become <code>_opt</code>, <code>_opt2</code>, and so on.</div>
+                        <div class="form-text">Yes/no groups become <code>_yes</code> and <code>_no</code>. Others become <code>_opt</code>, <code>_opt2</code>, and so on.</div>
                     </section>
                     <section class="normalization-card">
+                        <h3 class="normalization-card-title">Alignment</h3>
                         <label class="form-check">
                             <input id="norm-align-rows" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Align nearby fields to a shared baseline</span>
                         </label>
                         <label for="norm-align-threshold" class="form-label small text-muted mb-1">Row snap threshold (pt)</label>
                         <input id="norm-align-threshold" type="number" min="2" max="20" step="0.5" class="form-control form-control-sm" value="6">
-                        <div class="form-text">Fields with centers within this vertical distance snap to a common row baseline.</div>
+                        <div class="form-text">Fields with nearby centers snap to a shared row baseline.</div>
                     </section>
                     <section class="normalization-card">
+                        <h3 class="normalization-card-title">Single-Line Text</h3>
                         <label class="form-check">
                             <input id="norm-autosize-name-address" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Auto-expand name and address fields with fixed heights</span>
                         </label>
                         <label for="norm-text-height" class="form-label small text-muted mb-1">Single-line field height (pt)</label>
                         <input id="norm-text-height" type="number" min="10" max="36" step="0.5" class="form-control form-control-sm" value="14">
-                        <div class="form-text">Used for fields whose labels look like names, addresses, phone numbers, or emails.</div>
+                        <div class="form-text">Applies to fields that look like names, addresses, phone numbers, or emails.</div>
                     </section>
                     <section class="normalization-card">
+                        <h3 class="normalization-card-title">Multiline Text</h3>
                         <label class="form-check">
                             <input id="norm-disable-scroll" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Disable scrolling inside text fields</span>
@@ -764,7 +821,7 @@
                         </label>
                         <label for="norm-multiline-lines" class="form-label small text-muted mb-1">Multiline threshold (10pt lines)</label>
                         <input id="norm-multiline-lines" type="number" min="2" max="8" step="0.5" class="form-control form-control-sm" value="2.2">
-                        <label class="form-check mt-2">
+                        <label class="form-check mt-1">
                             <input id="norm-multiline-white" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Use white background for multiline fields</span>
                         </label>
@@ -772,6 +829,86 @@
                 </div>
                 <div class="d-flex justify-content-end gap-2 border-top pt-3 mt-3">
                     <button id="apply-normalization" class="btn btn-primary btn-sm">Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="repair-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 40rem; max-height: 90vh; overflow: auto;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-0">PDF Repair Tools</h2>
+                        <p class="small text-muted mb-0 mt-1">Run one repair action at a time on the current PDF.</p>
+                    </div>
+                    <button id="close-repair" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div id="repair-status" class="hidden alert alert-info small mb-3">
+                    <span id="repair-status-text"></span>
+                </div>
+                <div class="d-flex flex-column gap-2">
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Ghostscript Reprint</h3>
+                                <p class="small text-muted mb-2">Re-distill through Ghostscript for a completely fresh file. Requires <code>gs</code> on PATH.</p>
+                                <label class="form-check">
+                                    <input id="repair-gs-preserve" class="form-check-input" type="checkbox">
+                                    <span class="form-check-label small">Preserve existing field locations</span>
+                                </label>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="ghostscript_reprint">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Fix Structure (qpdf)</h3>
+                                <p class="small text-muted mb-2">Repair cross-reference tables and rebuild the page tree with pikepdf.</p>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="qpdf_repair">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Unlock PDF</h3>
+                                <p class="small text-muted mb-2">Remove encryption and permission restrictions.</p>
+                                <div class="mt-1">
+                                    <label for="repair-unlock-pw" class="form-label small text-muted mb-1">Password (if required)</label>
+                                    <input id="repair-unlock-pw" type="password" class="form-control form-control-sm" style="max-width: 16rem;" placeholder="Leave blank for owner-only restrictions">
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="unlock">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Repair Metadata</h3>
+                                <p class="small text-muted mb-2">Fix broken catalog and metadata entries. Tries pikepdf first, then pdfrw.</p>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="repair_metadata">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">OCR (Add Text Layer)</h3>
+                                <p class="small text-muted mb-2">Add searchable text to scanned pages. Requires <code>ocrmypdf</code> on PATH.</p>
+                                <div class="d-flex gap-2 mt-1 flex-wrap">
+                                    <div>
+                                        <label for="repair-ocr-lang" class="form-label small text-muted mb-1">Language</label>
+                                        <input id="repair-ocr-lang" type="text" class="form-control form-control-sm" style="max-width: 8rem;" value="eng" placeholder="eng">
+                                    </div>
+                                    <label class="form-check mt-auto mb-1">
+                                        <input id="repair-ocr-skip" class="form-check-input" type="checkbox" checked>
+                                        <span class="form-check-label small">Skip pages with text</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="ocr">Run</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -973,6 +1110,11 @@
     const normalizationModal = document.getElementById('normalization-modal');
     const closeNormalizationBtn = document.getElementById('close-normalization');
     const applyNormalizationBtn = document.getElementById('apply-normalization');
+    const repairBtn = document.getElementById('repair-btn');
+    const repairModal = document.getElementById('repair-modal');
+    const closeRepairBtn = document.getElementById('close-repair');
+    const repairStatus = document.getElementById('repair-status');
+    const repairStatusText = document.getElementById('repair-status-text');
     const aiModelInput = document.getElementById('ai-model');
     const aiModelSuggestions = document.getElementById('ai-model-suggestions');
     const pageTitle = document.getElementById('page-title');
@@ -985,6 +1127,7 @@
     const quickFieldEditor = document.getElementById('quick-field-editor');
     const quickFieldTypeBadge = document.getElementById('quick-field-type-badge');
     const quickFieldNameInput = document.getElementById('quick-field-name');
+    const quickFieldDeleteBtn = document.getElementById('quick-field-delete');
     const quickFieldCloseBtn = document.getElementById('quick-field-close');
     const quickFieldSuggestions = document.getElementById('quick-field-suggestions');
 
@@ -1030,6 +1173,11 @@
     function normalizeFieldType(rawType) {
         const type = String(rawType || 'text').toLowerCase();
         return FIELD_TYPES.includes(type) ? type : 'text';
+    }
+
+    function normalizeOptionalFieldType(rawType) {
+        const type = String(rawType || '').trim().toLowerCase();
+        return FIELD_TYPES.includes(type) ? type : '';
     }
 
     function normalizePdfFieldName(rawName) {
@@ -1453,7 +1601,7 @@
     function updateFieldCount() {
         const totalCount = state.fields.length;
         const filteredCount = totalCount === 0 ? 0 : getDisplayedFields().length;
-        const filtersActive = Boolean(String(state.fieldSearch || '').trim() || normalizeFieldType(state.fieldTypeFilter || ''));
+        const filtersActive = Boolean(String(state.fieldSearch || '').trim() || normalizeOptionalFieldType(state.fieldTypeFilter || ''));
         if (totalCount === 0) {
             fieldCount.textContent = 'No fields';
         } else if (filtersActive) {
@@ -1466,12 +1614,13 @@
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
         exportBtn.disabled = !state.pdfBytes || totalCount === 0;
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
+        repairBtn.disabled = !state.pdfBytes;
         relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
     }
 
     function getDisplayedFields() {
         const search = String(state.fieldSearch || '').trim().toLowerCase();
-        const typeFilter = normalizeFieldType(state.fieldTypeFilter || '');
+        const typeFilter = normalizeOptionalFieldType(state.fieldTypeFilter || '');
         const hasTypeFilter = FIELD_TYPES.includes(typeFilter);
         const filtered = state.fields.filter(function (field) {
             if (hasTypeFilter && field.type !== typeFilter) {
@@ -2175,6 +2324,75 @@
         });
     }
 
+    async function runRepairAction(action) {
+        if (!state.pdfBytes) return;
+        var allBtns = repairModal.querySelectorAll('.repair-run-btn');
+        allBtns.forEach(function (b) { b.disabled = true; });
+        repairStatus.className = 'alert alert-info small mb-3';
+        repairStatusText.textContent = 'Running ' + action + '...';
+        repairStatus.classList.remove('hidden');
+
+        try {
+            var formData = new FormData();
+            formData.append('file', getPdfFileForRequests());
+            formData.append('action', action);
+
+            if (action === 'ghostscript_reprint') {
+                var preserve = document.getElementById('repair-gs-preserve').checked;
+                formData.append('preserve_fields', preserve ? 'true' : 'false');
+            } else if (action === 'unlock') {
+                var pw = document.getElementById('repair-unlock-pw').value;
+                if (pw) formData.append('password', pw);
+            } else if (action === 'ocr') {
+                var lang = document.getElementById('repair-ocr-lang').value.trim() || 'eng';
+                formData.append('language', lang);
+                var skip = document.getElementById('repair-ocr-skip').checked;
+                formData.append('skip_text', skip ? 'true' : 'false');
+            }
+
+            var response = await fetch(apiUrl('/pdf-labeler/api/repair'), {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+                body: formData
+            });
+            var result = await parseApiResponse(response);
+            if (!result.success) {
+                var errMsg = (result.error && result.error.message) || 'Repair failed.';
+                throw new Error(errMsg);
+            }
+
+            var data = result.data || {};
+            var pdfBase64 = data.pdf_base64;
+            if (!pdfBase64) throw new Error('No repaired PDF was returned.');
+
+            // Decode base64 to Uint8Array
+            var binaryStr = atob(pdfBase64);
+            var bytes = new Uint8Array(binaryStr.length);
+            for (var i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+            }
+
+            // Reload the repaired PDF into the editor
+            var repairedFile = new File([bytes], data.filename || state.fileName || 'repaired.pdf', { type: 'application/pdf' });
+            repairModal.classList.add('hidden');
+            await loadPdf(repairedFile);
+
+            var repairResult = data.repair_result || {};
+            var summaryParts = [action + ' completed'];
+            if (repairResult.fields_restored) {
+                summaryParts.push(repairResult.fields_restored + ' fields restored');
+            }
+            if (repairResult.warnings && repairResult.warnings.length) {
+                summaryParts.push(repairResult.warnings.join('; '));
+            }
+            showSuccess(summaryParts.join('. ') + '.');
+        } catch (err) {
+            repairStatus.className = 'alert alert-danger small mb-3';
+            repairStatusText.textContent = err.message || 'Repair failed.';
+            allBtns.forEach(function (b) { b.disabled = false; });
+        }
+    }
+
     function getFieldNameHelp(field) {
         const rawName = String(field.name || '').trim();
         const normalized = normalizePdfFieldName(rawName);
@@ -2319,7 +2537,8 @@
 
     function readNormalizationSettings() {
         return {
-            checkboxCross: document.getElementById('norm-checkbox-cross').checked,
+            checkboxStyle: document.getElementById('norm-checkbox-style').value || '',
+            checkboxExportValue: String(document.getElementById('norm-checkbox-export-value').value || '').trim() || 'Yes',
             uniformCheckboxSize: document.getElementById('norm-checkbox-uniform').checked,
             checkboxSizePt: Number(document.getElementById('norm-checkbox-size').value || 12),
             normalizeFont: document.getElementById('norm-font-normalize').checked,
@@ -2375,7 +2594,8 @@
                         font: settings.fontName,
                         fontSize: settings.fontSizePt,
                         autoSize: false,
-                        checkboxStyle: settings.checkboxCross ? 'cross' : (nextField.checkboxStyle || 'check'),
+                        checkboxStyle: settings.checkboxStyle || nextField.checkboxStyle || 'check',
+                        checkboxExportValue: settings.checkboxExportValue || nextField.checkboxExportValue || 'Yes',
                         allowScroll: false
                     });
                 });
@@ -2387,8 +2607,12 @@
                 nextField.fontSize = settings.fontSizePt;
             }
 
-            if (settings.checkboxCross && nextField.type === 'checkbox') {
-                nextField.checkboxStyle = 'cross';
+            if (nextField.type === 'checkbox' && settings.checkboxStyle) {
+                nextField.checkboxStyle = settings.checkboxStyle;
+            }
+
+            if (nextField.type === 'checkbox' && settings.checkboxExportValue) {
+                nextField.checkboxExportValue = settings.checkboxExportValue;
             }
 
             if (settings.uniformCheckboxSize && nextField.type === 'checkbox') {
@@ -2477,6 +2701,28 @@
                             '</label>' +
                             '<div>' +
                                 '<input type="number" min="4" max="72" step="1" class="form-control form-control-sm" data-action="field-font-size" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.fontSize || 12)) + '"' + (autoSize ? ' disabled' : '') + '>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>'
+                    : '') +
+                (field.type === 'checkbox'
+                    ? '<div class="mb-3">' +
+                        '<label class="form-label small text-muted fw-semibold mb-1">Checkbox settings</label>' +
+                        '<div class="normalization-inline-2">' +
+                            '<div>' +
+                                '<label class="form-label small text-muted mb-1" for="field-checkbox-style-' + escapeHtml(field.id) + '">Style</label>' +
+                                '<select id="field-checkbox-style-' + escapeHtml(field.id) + '" class="form-select form-select-sm" data-action="field-checkbox-style" data-field-id="' + escapeHtml(field.id) + '">' +
+                                    '<option value="cross"' + ((field.checkboxStyle || 'check') === 'cross' ? ' selected' : '') + '>Cross</option>' +
+                                    '<option value="check"' + ((field.checkboxStyle || 'check') === 'check' ? ' selected' : '') + '>Check</option>' +
+                                    '<option value="circle"' + (field.checkboxStyle === 'circle' ? ' selected' : '') + '>Circle</option>' +
+                                    '<option value="star"' + (field.checkboxStyle === 'star' ? ' selected' : '') + '>Star</option>' +
+                                    '<option value="diamond"' + (field.checkboxStyle === 'diamond' ? ' selected' : '') + '>Diamond</option>' +
+                                    '<option value="square"' + (field.checkboxStyle === 'square' ? ' selected' : '') + '>Square</option>' +
+                                '</select>' +
+                            '</div>' +
+                            '<div>' +
+                                '<label class="form-label small text-muted mb-1" for="field-checkbox-export-value-' + escapeHtml(field.id) + '">Export value</label>' +
+                                '<input id="field-checkbox-export-value-' + escapeHtml(field.id) + '" type="text" class="form-control form-control-sm font-monospace" data-action="field-checkbox-export-value" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.checkboxExportValue || 'Yes')) + '">' +
                             '</div>' +
                         '</div>' +
                     '</div>'
@@ -2715,6 +2961,7 @@
                 fontSize: Number(field.fontSize) || 12,
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle || undefined,
+                checkboxExportValue: field.checkboxExportValue || undefined,
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor || undefined,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
@@ -2763,6 +3010,7 @@
             font: 'Helvetica',
             fontSize: 12,
             autoSize: type === 'text' || type === 'multiline',
+            checkboxExportValue: type === 'checkbox' ? 'Yes' : undefined,
             options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined,
             nameSuggestions: nameSuggestions
         };
@@ -3041,6 +3289,9 @@
         if (state.selectedFieldId === fieldId) {
             state.selectedFieldId = state.fields[0] ? state.fields[0].id : null;
         }
+        if (state.quickEditFieldId === fieldId) {
+            hideQuickFieldEditor();
+        }
         setDirty(true);
         renderFieldsList();
         renderFieldsOnPages();
@@ -3063,6 +3314,7 @@
             fontSize: field.fontSize,
             autoSize: field.autoSize !== false,
             checkboxStyle: field.checkboxStyle,
+            checkboxExportValue: field.checkboxExportValue,
             allowScroll: field.allowScroll !== false,
             backgroundColor: field.backgroundColor,
             options: Array.isArray(field.options) ? field.options.slice() : undefined
@@ -3108,6 +3360,7 @@
                 fontSize: field.fontSize,
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle,
+                checkboxExportValue: field.checkboxExportValue,
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
@@ -3415,6 +3668,22 @@
         if (!state.pdfBytes || state.fields.length === 0) return;
         normalizationModal.classList.remove('hidden');
     });
+    repairBtn.addEventListener('click', function () {
+        if (!state.pdfBytes) return;
+        repairStatus.classList.add('hidden');
+        repairModal.querySelectorAll('.repair-run-btn').forEach(function (btn) { btn.disabled = false; });
+        repairModal.classList.remove('hidden');
+    });
+    closeRepairBtn.addEventListener('click', function () {
+        repairModal.classList.add('hidden');
+    });
+    repairModal.querySelectorAll('.repair-run-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var action = btn.dataset.repairAction;
+            if (!action || !state.pdfBytes) return;
+            runRepairAction(action);
+        });
+    });
     settingsBtn.addEventListener('click', function () {
         aiModelInput.value = state.model || state.defaultModel;
         renderModelSuggestions('');
@@ -3447,6 +3716,11 @@
     });
     quickFieldCloseBtn.addEventListener('click', function () {
         hideQuickFieldEditor();
+    });
+    quickFieldDeleteBtn.addEventListener('click', function () {
+        const field = getQuickEditField();
+        if (!field) return;
+        deleteField(field.id);
     });
     quickFieldNameInput.addEventListener('input', function () {
         const field = getQuickEditField();
@@ -3493,6 +3767,9 @@
         if (!normalizationModal.classList.contains('hidden') && event.target === normalizationModal) {
             normalizationModal.classList.add('hidden');
         }
+        if (!repairModal.classList.contains('hidden') && event.target === repairModal) {
+            repairModal.classList.add('hidden');
+        }
     });
 
     fieldsList.addEventListener('input', function (event) {
@@ -3521,6 +3798,11 @@
                 field.fontSize = clamp(parsedValue, 4, 72);
                 markDirtyAndRender();
             }
+            return;
+        }
+        if (target.dataset.action === 'field-checkbox-export-value') {
+            field.checkboxExportValue = String(target.value || '').trim() || 'Yes';
+            markDirtyAndRender(true);
         }
     });
 
@@ -3545,6 +3827,10 @@
             if (!OPTION_TYPES.has(newType)) {
                 delete field.options;
             }
+            if (newType === 'checkbox') {
+                field.checkboxStyle = field.checkboxStyle || 'check';
+                field.checkboxExportValue = field.checkboxExportValue || 'Yes';
+            }
             if (!(newType === 'text' || newType === 'multiline')) {
                 field.autoSize = true;
             }
@@ -3553,6 +3839,11 @@
         }
         if (target.dataset.action === 'field-font') {
             field.font = target.value || 'Helvetica';
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-checkbox-style') {
+            field.checkboxStyle = target.value || 'check';
             markDirtyAndRender();
             return;
         }

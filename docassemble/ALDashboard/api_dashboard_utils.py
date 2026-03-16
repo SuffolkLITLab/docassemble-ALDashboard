@@ -1601,6 +1601,91 @@ def pdf_fields_relabel_payload_from_options(
             os.remove(output_path)
 
 
+# ---------------------------------------------------------------------------
+# PDF repair
+# ---------------------------------------------------------------------------
+
+
+def pdf_repair_payload_from_request() -> Dict[str, Any]:
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return pdf_repair_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
+
+
+def pdf_repair_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .pdf_repair import PDFRepairError, list_repair_actions, run_repair
+
+    raw = merge_raw_options(raw_options)
+    action = str(raw.get("action") or "").strip()
+    if not action:
+        return {"available_actions": list_repair_actions()}
+
+    filename = str(raw.get("filename") or "upload.pdf")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError(
+            "file_content_base64 is required for repair actions."
+        )
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+    if not filename.lower().endswith(".pdf"):
+        raise DashboardAPIValidationError(
+            "Only PDF uploads are supported.", status_code=415
+        )
+    input_path = _write_temp_file(filename, content)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_file:
+        output_path = out_file.name
+    if os.path.exists(output_path):
+        os.remove(output_path)
+
+    include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
+    repair_options: Dict[str, Any] = {}
+    if action == "ghostscript_reprint":
+        repair_options["preserve_fields"] = parse_bool(
+            raw.get("preserve_fields"), default=False
+        )
+    elif action == "unlock":
+        pw = raw.get("password")
+        if pw is not None:
+            repair_options["password"] = str(pw)
+    elif action == "ocr":
+        lang = raw.get("language")
+        if lang is not None:
+            repair_options["language"] = str(lang).strip() or "eng"
+        skip = raw.get("skip_text")
+        if skip is not None:
+            repair_options["skip_text"] = parse_bool(skip, default=True)
+
+    try:
+        result = run_repair(
+            action, input_path, output_path, options=repair_options
+        )
+        payload: Dict[str, Any] = {
+            "input_filename": filename,
+            "output_filename": f"repaired_{filename}",
+            "repair_result": result,
+        }
+        if include_pdf_base64 and os.path.isfile(output_path):
+            with open(output_path, "rb") as handle:
+                payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
+        return payload
+    except PDFRepairError as err:
+        raise DashboardAPIValidationError(str(err), status_code=400)
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
 def build_openapi_spec() -> Dict[str, Any]:
     return {
         "openapi": "3.1.0",
@@ -1718,6 +1803,18 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
+            f"{DASHBOARD_API_BASE_PATH}/pdf/repair": {
+                "post": {
+                    "summary": "Repair / fix a PDF",
+                    "description": (
+                        "Run a single repair action on an uploaded PDF. "
+                        "Send without `action` to list available actions. "
+                        "Actions: ghostscript_reprint (re-distill, optionally preserve fields), "
+                        "qpdf_repair (fix xref/page tree), unlock (remove encryption), "
+                        "repair_metadata (fix catalog/metadata), ocr (add text layer)."
+                    ),
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/jobs/{{job_id}}": {
                 "get": {"summary": "Get async job status and result"},
                 "delete": {"summary": "Delete async job metadata"},
@@ -1780,6 +1877,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/repair</code></li>
     <li><code>GET {DASHBOARD_API_BASE_PATH}/jobs/&lt;job_id&gt;/download</code></li>
   </ul>
   <h2>Notes</h2>
@@ -1797,6 +1895,7 @@ def build_docs_html() -> str:
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
     <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>.</li>
     <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>.</li>
+    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
   </ul>
   <h2>DOCX Modes</h2>
   <ul>

@@ -6,19 +6,23 @@ to be installed.  External-tool tests use ``unittest.mock`` to patch
 """
 
 import os
-import struct
 import tempfile
 import unittest
 from unittest import mock
 
 from docassemble.ALDashboard.pdf_repair import (
     PDFRepairError,
+    REPAIR_ACTIONS,
     _assert_pdf,
     _copy_if_same,
     _require_executable,
+    ghostscript_reprint,
     list_repair_actions,
+    ocr_pdf,
+    qpdf_repair,
+    repair_metadata,
     run_repair,
-    REPAIR_ACTIONS,
+    unlock_pdf,
 )
 
 
@@ -142,8 +146,6 @@ class TestGhostscriptReprint(unittest.TestCase):
                 return mock.MagicMock(returncode=0, stderr="")
 
             mock_run.side_effect = side_effect
-            from docassemble.ALDashboard.pdf_repair import ghostscript_reprint
-
             result = ghostscript_reprint(in_path, out_path, preserve_fields=False)
             self.assertEqual(result["action"], "ghostscript_reprint")
             self.assertFalse(result["preserve_fields"])
@@ -161,8 +163,6 @@ class TestGhostscriptReprint(unittest.TestCase):
             _make_minimal_pdf(inp.name)
             in_path = inp.name
         try:
-            from docassemble.ALDashboard.pdf_repair import ghostscript_reprint
-
             with self.assertRaises(PDFRepairError):
                 ghostscript_reprint(in_path, in_path + ".out")
         finally:
@@ -188,8 +188,6 @@ class TestOCR(unittest.TestCase):
                 return mock.MagicMock(returncode=0, stderr="")
 
             mock_run.side_effect = side_effect
-            from docassemble.ALDashboard.pdf_repair import ocr_pdf
-
             result = ocr_pdf(in_path, out_path, language="eng")
             self.assertEqual(result["action"], "ocr")
             self.assertEqual(result["language"], "eng")
@@ -210,8 +208,6 @@ class TestOCR(unittest.TestCase):
             _make_minimal_pdf(inp.name)
             in_path = inp.name
         try:
-            from docassemble.ALDashboard.pdf_repair import ocr_pdf
-
             with self.assertRaises(PDFRepairError):
                 ocr_pdf(in_path, in_path + ".ocr.pdf")
         finally:
@@ -227,8 +223,6 @@ class TestOCR(unittest.TestCase):
             _make_minimal_pdf(inp.name)
             in_path = inp.name
         try:
-            from docassemble.ALDashboard.pdf_repair import ocr_pdf
-
             with self.assertRaises(PDFRepairError) as ctx:
                 ocr_pdf(in_path, in_path + ".ocr.pdf")
             self.assertIn("timed out", str(ctx.exception))
@@ -253,8 +247,6 @@ class TestQpdfRepair(unittest.TestCase):
             pdf.add_blank_page(page_size=(612, 792))
             pdf.save(in_path)
             pdf.close()
-
-            from docassemble.ALDashboard.pdf_repair import qpdf_repair
 
             result = qpdf_repair(in_path, out_path)
             self.assertEqual(result["action"], "qpdf_repair")
@@ -285,8 +277,6 @@ class TestUnlockPDF(unittest.TestCase):
             pdf.save(in_path)
             pdf.close()
 
-            from docassemble.ALDashboard.pdf_repair import unlock_pdf
-
             result = unlock_pdf(in_path, out_path)
             self.assertEqual(result["action"], "unlock")
             self.assertFalse(result["password_was_supplied"])
@@ -314,8 +304,6 @@ class TestRepairMetadata(unittest.TestCase):
             pdf.add_blank_page(page_size=(612, 792))
             pdf.save(in_path)
             pdf.close()
-
-            from docassemble.ALDashboard.pdf_repair import repair_metadata
 
             result = repair_metadata(in_path, out_path)
             self.assertEqual(result["action"], "repair_metadata")

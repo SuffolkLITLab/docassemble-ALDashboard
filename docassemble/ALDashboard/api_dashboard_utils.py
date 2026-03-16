@@ -1606,6 +1606,29 @@ def pdf_fields_relabel_payload_from_options(
 # ---------------------------------------------------------------------------
 
 
+def _extract_repair_options(
+    raw: Mapping[str, Any], action: str
+) -> Dict[str, Any]:
+    """Build keyword arguments for ``pdf_repair.run_repair`` from raw request data."""
+    options: Dict[str, Any] = {}
+    if action == "ghostscript_reprint":
+        options["preserve_fields"] = parse_bool(
+            raw.get("preserve_fields"), default=False
+        )
+    elif action == "unlock":
+        pw = raw.get("password")
+        if pw is not None:
+            options["password"] = str(pw)
+    elif action == "ocr":
+        lang = raw.get("language")
+        if lang is not None:
+            options["language"] = str(lang).strip() or "eng"
+        skip = raw.get("skip_text")
+        if skip is not None:
+            options["skip_text"] = parse_bool(skip, default=True)
+    return options
+
+
 def pdf_repair_payload_from_request() -> Dict[str, Any]:
     upload = _read_single_upload(field_name="file")
     raw = merge_raw_options(_request_dict())
@@ -1647,22 +1670,7 @@ def pdf_repair_payload_from_options(
         os.remove(output_path)
 
     include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
-    repair_options: Dict[str, Any] = {}
-    if action == "ghostscript_reprint":
-        repair_options["preserve_fields"] = parse_bool(
-            raw.get("preserve_fields"), default=False
-        )
-    elif action == "unlock":
-        pw = raw.get("password")
-        if pw is not None:
-            repair_options["password"] = str(pw)
-    elif action == "ocr":
-        lang = raw.get("language")
-        if lang is not None:
-            repair_options["language"] = str(lang).strip() or "eng"
-        skip = raw.get("skip_text")
-        if skip is not None:
-            repair_options["skip_text"] = parse_bool(skip, default=True)
+    repair_options = _extract_repair_options(raw, action)
 
     try:
         result = run_repair(

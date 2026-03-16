@@ -35,6 +35,7 @@ from docassemble.webapp.worker_common import workerapp
 
 from .api_dashboard_utils import (
     DashboardAPIValidationError,
+    _extract_repair_options,
     _validate_upload_size,
     coerce_async_flag,
     decode_base64_content,
@@ -2186,22 +2187,7 @@ def pdf_labeler_repair():
         if os.path.exists(output_path):
             os.remove(output_path)
 
-        repair_options: Dict[str, Any] = {}
-        if action == "ghostscript_reprint":
-            repair_options["preserve_fields"] = parse_bool(
-                merged.get("preserve_fields"), default=False
-            )
-        elif action == "unlock":
-            pw = merged.get("password")
-            if pw is not None:
-                repair_options["password"] = str(pw)
-        elif action == "ocr":
-            lang = merged.get("language")
-            if lang is not None:
-                repair_options["language"] = str(lang).strip() or "eng"
-            skip = merged.get("skip_text")
-            if skip is not None:
-                repair_options["skip_text"] = parse_bool(skip, default=True)
+        repair_options = _extract_repair_options(merged, action)
 
         try:
             result = run_repair(action, input_path, output_path, options=repair_options)
@@ -2227,6 +2213,11 @@ def pdf_labeler_repair():
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
             exc.status_code,
+        )
+    except PDFRepairError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "repair_error", "message": str(exc)}},
+            400,
         )
     except Exception as exc:
         return jsonify_with_status(

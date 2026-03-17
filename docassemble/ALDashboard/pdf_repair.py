@@ -659,3 +659,60 @@ def list_repair_actions() -> List[Dict[str, str]]:
         {"action": key, "description": REPAIR_ACTION_HELP.get(key, "")}
         for key in REPAIR_ACTIONS
     ]
+
+
+def strip_embedded_fonts(
+    input_pdf_path: str,
+    output_pdf_path: str,
+) -> Dict[str, Any]:
+    """Remove embedded font programs from a PDF.
+
+    This deletes ``/FontFile``, ``/FontFile2``, and ``/FontFile3`` streams
+    from every font descriptor in the PDF.  The font *metrics* (name, widths,
+    encoding) are kept so that viewers can still substitute a similar system
+    font, but the file size drops significantly when large fonts were
+    embedded.
+
+    Returns a dict with ``fonts_removed`` (int) and ``status``.
+    """
+    _assert_pdf(input_pdf_path)
+    import pikepdf
+
+    _copy_if_same(input_pdf_path, output_pdf_path)
+
+    fonts_removed = 0
+    with pikepdf.open(input_pdf_path) as pdf:
+        for page in pdf.pages:
+            resources = page.get("/Resources")
+            if not resources:
+                continue
+            font_dict = resources.get("/Font")
+            if not font_dict:
+                continue
+            for _font_name in list(font_dict.keys()):
+                font_obj = font_dict[_font_name]
+                if not isinstance(font_obj, pikepdf.Object):
+                    continue
+                try:
+                    font_obj = font_obj.resolve() if hasattr(font_obj, "resolve") else font_obj  # type: ignore[operator]
+                except Exception:
+                    continue
+                descriptor = None
+                if hasattr(font_obj, "get"):
+                    descriptor = font_obj.get("/FontDescriptor")
+                if descriptor is None:
+                    continue
+                try:
+                    descriptor = descriptor.resolve() if hasattr(descriptor, "resolve") else descriptor  # type: ignore[operator]
+                except Exception:
+                    continue
+                for key in ("/FontFile", "/FontFile2", "/FontFile3"):
+                    if hasattr(descriptor, "get") and descriptor.get(key) is not None:
+                        del descriptor[key]
+                        fonts_removed += 1
+        pdf.save(output_pdf_path)
+
+    return {
+        "status": "ok",
+        "fonts_removed": fonts_removed,
+    }

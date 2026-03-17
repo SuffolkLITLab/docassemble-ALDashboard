@@ -915,6 +915,11 @@
                         <label for="norm-text-height" class="form-label small text-muted mb-1">Single-line field height (pt)</label>
                         <input id="norm-text-height" type="number" min="10" max="36" step="0.5" class="form-control form-control-sm" value="14">
                         <div class="form-text">If the field looks like a name, address, phone number, or email, fix field height and turn on auto-font-size.</div>
+                        <label class="form-check mt-2">
+                            <input id="norm-remove-embedded-fonts" class="form-check-input" type="checkbox">
+                            <span class="form-check-label fw-medium">Remove embedded fonts</span>
+                        </label>
+                        <div class="form-text">Strip embedded font programs from the PDF. Viewers will substitute system fonts. Reduces file size but may alter appearance.</div>
                     </section>
                     <section class="normalization-card">
                         <h3 class="normalization-card-title">Conversions</h3>
@@ -1137,6 +1142,70 @@
                         <label class="form-check-label small" for="util-copy-load-result">Load resulting PDF in the labeler</label>
                     </div>
                     <button id="util-copy-run" class="btn btn-primary btn-sm" disabled>Copy Fields</button>
+                </section>
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Bulk Upload &amp; Normalize PDFs</h3>
+                    <p class="small text-muted mb-2">Upload multiple PDFs, apply normalization steps to each, and download a .zip with the results.</p>
+                    <div id="util-bulk-status" class="hidden alert small mb-3"></div>
+                    <div id="util-bulk-size-warning" class="hidden alert alert-warning small mb-3">
+                        <strong>Warning:</strong> Total upload size is <span id="util-bulk-size-display"></span>. Uploads larger than ~16 MB may be rejected by the server depending on its configuration.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-medium mb-1">PDF files</label>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-outline-secondary btn-sm flex-shrink-0">
+                                Choose files
+                                <input type="file" id="util-bulk-files" accept=".pdf" multiple class="d-none">
+                            </label>
+                            <span id="util-bulk-file-count" class="small text-muted"></span>
+                        </div>
+                    </div>
+                    <div class="mb-3 border rounded p-2 bg-light">
+                        <div class="small fw-medium mb-2">Normalization steps</div>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-font" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Normalize font to
+                                <select id="util-bulk-norm-font-name" class="form-select form-select-sm d-inline-block" style="width:auto;vertical-align:middle;">
+                                    <option value="Helvetica" selected>Helvetica</option>
+                                    <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                    <option value="Courier">Courier</option>
+                                    <option value="Courier-Bold">Courier-Bold</option>
+                                    <option value="Times-Roman">Times-Roman</option>
+                                    <option value="Times-Bold">Times-Bold</option>
+                                </select>
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-fontsize" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Normalize font size to
+                                <input id="util-bulk-norm-fontsize-val" type="number" min="6" max="18" step="0.5" value="10" class="form-control form-control-sm d-inline-block" style="width:4rem;vertical-align:middle;"> pt
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-checkbox-style" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Normalize checkbox style to
+                                <select id="util-bulk-norm-checkbox-style-val" class="form-select form-select-sm d-inline-block" style="width:auto;vertical-align:middle;">
+                                    <option value="cross" selected>Cross</option>
+                                    <option value="check">Check</option>
+                                    <option value="circle">Circle</option>
+                                    <option value="star">Star</option>
+                                    <option value="diamond">Diamond</option>
+                                    <option value="square">Square</option>
+                                </select>
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-checkbox-size" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Uniform checkbox size
+                                <input id="util-bulk-norm-checkbox-size-val" type="number" min="6" max="24" step="0.5" value="12" class="form-control form-control-sm d-inline-block" style="width:4rem;vertical-align:middle;"> pt
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-strip-fonts" class="form-check-input" type="checkbox">
+                            <span class="form-check-label small">Remove embedded fonts</span>
+                        </label>
+                    </div>
+                    <button id="util-bulk-run" class="btn btn-primary btn-sm" disabled>Normalize &amp; Download .zip</button>
                 </section>
             </div>
         </div>
@@ -3260,7 +3329,8 @@
             disableAutoScroll: document.getElementById('norm-disable-scroll').checked,
             multilineTallFields: document.getElementById('norm-multiline-tall').checked,
             multilineThresholdLines: Number(document.getElementById('norm-multiline-lines').value || 2.2),
-            multilineWhiteBackground: document.getElementById('norm-multiline-white').checked
+            multilineWhiteBackground: document.getElementById('norm-multiline-white').checked,
+            removeEmbeddedFonts: document.getElementById('norm-remove-embedded-fonts').checked
         };
     }
 
@@ -4205,6 +4275,26 @@
             const normalizedFields = buildNormalizedFields(settings);
             replaceFields(normalizedFields, { preserveSelection: true });
             setDirty(true);
+
+            if (settings.removeEmbeddedFonts && state.pdfBytes) {
+                showLoading('Removing embedded fonts...');
+                var formData = new FormData();
+                formData.append('file', getPdfFileForRequests());
+                var resp = await fetch(apiUrl('/pdf-labeler/api/strip-fonts'), {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json' },
+                    body: formData
+                });
+                var data = await parseApiResponse(resp);
+                if (data.success && data.data && data.data.pdf_base64) {
+                    var strippedBytes = base64ToUint8Array(data.data.pdf_base64);
+                    syncPdfState(strippedBytes, state.fileName || 'edited-form.pdf');
+                    state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
+                    await renderPages();
+                    replaceFields(state.fields, { preserveSelection: true });
+                }
+            }
+
             showPdfWorkspace();
             showSuccess('Normalization pass applied.');
         } catch (error) {
@@ -4547,6 +4637,11 @@
         document.getElementById('util-copy-source-file').value = '';
         document.getElementById('util-copy-dest-file').value = '';
         document.getElementById('util-copy-status').classList.add('hidden');
+        document.getElementById('util-bulk-status').classList.add('hidden');
+        document.getElementById('util-bulk-size-warning').classList.add('hidden');
+        document.getElementById('util-bulk-files').value = '';
+        bulkFiles = [];
+        updateBulkState();
         updateUtilActiveButtons();
         updateUtilCopyRunState();
         utilitiesModal.classList.remove('hidden');
@@ -4645,6 +4740,106 @@
         })
         .finally(function () {
             updateUtilCopyRunState();
+        });
+    });
+
+    /* --------------- Bulk normalize --------------- */
+    var bulkFiles = [];
+    var BULK_WARN_BYTES = 16 * 1024 * 1024;
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function updateBulkState() {
+        document.getElementById('util-bulk-run').disabled = bulkFiles.length === 0;
+        document.getElementById('util-bulk-file-count').textContent =
+            bulkFiles.length ? bulkFiles.length + ' file' + (bulkFiles.length === 1 ? '' : 's') + ' selected' : '';
+        var totalSize = bulkFiles.reduce(function (sum, f) { return sum + f.size; }, 0);
+        var sizeWarning = document.getElementById('util-bulk-size-warning');
+        if (totalSize > BULK_WARN_BYTES) {
+            document.getElementById('util-bulk-size-display').textContent = formatBytes(totalSize);
+            sizeWarning.classList.remove('hidden');
+        } else {
+            sizeWarning.classList.add('hidden');
+        }
+    }
+
+    document.getElementById('util-bulk-files').addEventListener('change', function (e) {
+        bulkFiles = e.target.files ? Array.from(e.target.files) : [];
+        updateBulkState();
+    });
+
+    document.getElementById('util-bulk-run').addEventListener('click', function () {
+        if (!bulkFiles.length) return;
+        var statusEl = document.getElementById('util-bulk-status');
+        statusEl.className = 'alert alert-info small mb-3';
+        statusEl.textContent = 'Normalizing ' + bulkFiles.length + ' PDF' + (bulkFiles.length === 1 ? '' : 's') + '...';
+        statusEl.classList.remove('hidden');
+        document.getElementById('util-bulk-run').disabled = true;
+
+        var options = {
+            normalizeFont: document.getElementById('util-bulk-norm-font').checked,
+            fontName: document.getElementById('util-bulk-norm-font-name').value,
+            normalizeFontSize: document.getElementById('util-bulk-norm-fontsize').checked,
+            fontSizePt: Number(document.getElementById('util-bulk-norm-fontsize-val').value || 10),
+            normalizeCheckboxStyle: document.getElementById('util-bulk-norm-checkbox-style').checked,
+            checkboxStyle: document.getElementById('util-bulk-norm-checkbox-style-val').value,
+            checkboxExportValue: 'Yes',
+            uniformCheckboxSize: document.getElementById('util-bulk-norm-checkbox-size').checked,
+            checkboxSizePt: Number(document.getElementById('util-bulk-norm-checkbox-size-val').value || 12),
+            removeEmbeddedFonts: document.getElementById('util-bulk-norm-strip-fonts').checked
+        };
+
+        var formData = new FormData();
+        formData.append('options', JSON.stringify(options));
+        bulkFiles.forEach(function (file) {
+            formData.append('files', file, file.name);
+        });
+
+        fetch(apiUrl('/pdf-labeler/api/bulk-normalize'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' },
+            body: formData
+        })
+        .then(function (resp) { return parseApiResponse(resp); })
+        .then(function (data) {
+            if (!data.success) {
+                throw new Error((data.error && data.error.message) || 'Bulk normalize failed.');
+            }
+            if (!data.data || !data.data.zip_base64) {
+                throw new Error('Server did not return a .zip file.');
+            }
+            var zipBytes = base64ToUint8Array(data.data.zip_base64);
+            var zipName = data.data.filename || 'normalized-pdfs.zip';
+
+            var summary = 'Normalized ' + data.data.processed + '/' + data.data.total + ' PDF' + (data.data.total === 1 ? '' : 's') + '.';
+            if (data.data.errors && data.data.errors.length) {
+                summary += ' Errors: ' + data.data.errors.join('; ');
+                statusEl.className = 'alert alert-warning small mb-3';
+            } else {
+                statusEl.className = 'alert alert-success small mb-3';
+            }
+            statusEl.textContent = summary;
+
+            var blob = new Blob([zipBytes], { type: 'application/zip' });
+            var url = URL.createObjectURL(blob);
+            var anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = zipName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+            URL.revokeObjectURL(url);
+        })
+        .catch(function (err) {
+            statusEl.className = 'alert alert-danger small mb-3';
+            statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'Unknown error.');
+        })
+        .finally(function () {
+            updateBulkState();
         });
     });
 

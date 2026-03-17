@@ -2687,3 +2687,283 @@ def pdf_labeler_copy_fields():
             },
             500,
         )
+
+
+@app.route("/pdf-labeler/api/strip-fonts", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/strip-fonts", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_strip_fonts():
+    """Remove embedded font programs from a PDF."""
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: strip-fonts request {request_id}", "info")
+
+    try:
+        from .pdf_repair import strip_embedded_fonts
+
+        if "file" in request.files:
+            upload = request.files["file"]
+            filename = upload.filename or "upload.pdf"
+            content = upload.read()
+        else:
+            post_data = request.get_json(silent=True) or {}
+            filename = str(post_data.get("filename") or "upload.pdf")
+            content = decode_base64_content(post_data.get("file_content_base64"))
+
+        _validate_upload_size(content)
+        if not filename.lower().endswith(".pdf"):
+            raise DashboardAPIValidationError(
+                "Only PDF files are supported.", status_code=415
+            )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+            output_path = tmp_out.name
+
+        try:
+            result = strip_embedded_fonts(input_path, output_path)
+            with open(output_path, "rb") as fh:
+                output_bytes = fh.read()
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename,
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                        "fonts_removed": result.get("fonts_removed", 0),
+                    },
+                }
+            )
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route("/pdf-labeler/api/bulk-normalize", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/bulk-normalize", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_bulk_normalize():
+    """Normalize one or more PDFs and return a zip archive.
+
+    Accepts multipart form data with one or more ``files`` and a JSON
+    ``options`` field describing which normalization steps to apply.
+    """
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: bulk-normalize request {request_id}", "info")
+
+    try:
+        import pikepdf
+        import formfyxer  # type: ignore[import-not-found]
+        from formfyxer.pdf_wrangling import FormField, FieldType, set_fields
+        from reportlab.lib.colors import HexColor
+        from .pdf_repair import strip_embedded_fonts
+
+        # Read options
+        options_raw = request.form.get("options", "{}")
+        try:
+            options = json.loads(options_raw) if isinstance(options_raw, str) else {}
+        except json.JSONDecodeError:
+            options = {}
+
+        # Read uploaded files
+        uploaded_files = request.files.getlist("files")
+        if not uploaded_files:
+            raise DashboardAPIValidationError("At least one PDF file is required.")
+
+        file_entries: list[dict[str, Any]] = []
+        for upload in uploaded_files:
+            filename = upload.filename or "upload.pdf"
+            content = upload.read()
+            _validate_upload_size(content)
+            if not filename.lower().endswith(".pdf"):
+                continue
+            file_entries.append({"filename": filename, "content": content})
+
+        if not file_entries:
+            raise DashboardAPIValidationError("No valid PDF files were uploaded.")
+
+        # Parse normalization options with defaults matching the UI
+        norm_font = parse_bool(options.get("normalizeFont"), default=True)
+        norm_font_name = str(options.get("fontName") or "Helvetica").strip() or "Helvetica"
+        norm_font_size = parse_bool(options.get("normalizeFontSize"), default=True)
+        font_size_pt = int(options.get("fontSizePt") or 10)
+        norm_checkbox_style = parse_bool(options.get("normalizeCheckboxStyle"), default=True)
+        checkbox_style = str(options.get("checkboxStyle") or "cross").strip() or "cross"
+        checkbox_export_value = str(options.get("checkboxExportValue") or "Yes").strip() or "Yes"
+        uniform_checkbox_size = parse_bool(options.get("uniformCheckboxSize"), default=True)
+        checkbox_size_pt = int(options.get("checkboxSizePt") or 12)
+        remove_embedded_fonts_flag = parse_bool(options.get("removeEmbeddedFonts"), default=False)
+
+        import zipfile as _zipfile
+
+        zip_buffer = io.BytesIO()
+        processed_count = 0
+        errors: list[str] = []
+
+        with _zipfile.ZipFile(zip_buffer, "w", _zipfile.ZIP_DEFLATED) as zf:
+            for entry in file_entries:
+                fname = entry["filename"]
+                content = entry["content"]
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+                        tmp_in.write(content)
+                        input_path = tmp_in.name
+
+                    try:
+                        # Detect existing fields
+                        with pikepdf.open(input_path) as pdf_doc:
+                            page_count = len(pdf_doc.pages)
+                            page_sizes = []
+                            for page in pdf_doc.pages:
+                                mbox = page.get("/MediaBox")
+                                if mbox:
+                                    coords = [float(v) for v in mbox]
+                                    page_sizes.append(
+                                        {"width": coords[2] - coords[0], "height": coords[3] - coords[1]}
+                                    )
+                                else:
+                                    page_sizes.append({"width": 612, "height": 792})
+
+                        # Use formfyxer to detect fields
+                        detected = formfyxer.get_existing_pdf_fields(input_path)
+                        if not detected:
+                            detected = []
+
+                        # Build normalized field definitions
+                        normalized_fields: list[dict[str, Any]] = []
+                        for field in detected:
+                            f: dict[str, Any] = dict(field) if isinstance(field, dict) else {}
+                            field_name = str(f.get("name", f.get("var_name", "field")))
+                            field_type_str = str(f.get("type", "text")).lower()
+                            page_idx = int(f.get("page", f.get("pageIndex", 0)))
+                            if page_idx >= page_count:
+                                page_idx = 0
+
+                            nf: dict[str, Any] = {
+                                "name": field_name,
+                                "type": field_type_str,
+                                "pageIndex": page_idx,
+                                "x": float(f.get("x", 0)),
+                                "y": float(f.get("y", 0)),
+                                "width": float(f.get("width", 100)),
+                                "height": float(f.get("height", 20)),
+                                "font": norm_font_name if norm_font else str(f.get("font", "Helvetica")),
+                                "fontSize": font_size_pt if norm_font_size else int(f.get("fontSize", 12) or 12),
+                                "autoSize": True,
+                            }
+
+                            if field_type_str == "checkbox" and norm_checkbox_style:
+                                nf["checkboxStyle"] = checkbox_style
+                                nf["checkboxExportValue"] = checkbox_export_value
+                            if field_type_str == "checkbox" and uniform_checkbox_size:
+                                nf["width"] = checkbox_size_pt
+                                nf["height"] = checkbox_size_pt
+
+                            normalized_fields.append(nf)
+
+                        if not normalized_fields:
+                            # No fields to normalize; include as-is
+                            zf.writestr(fname, content)
+                            processed_count += 1
+                            continue
+
+                        fields_per_page = build_pdf_export_fields_per_page(
+                            normalized_fields,
+                            page_count=page_count,
+                            form_field_cls=FormField,
+                            field_type_enum=FieldType,
+                            color_parser=HexColor,
+                        )
+
+                        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+                            output_path = tmp_out.name
+
+                        set_fields(input_path, output_path, fields_per_page, overwrite=True)
+
+                        # Apply checkbox export values
+                        checkbox_values = {
+                            nf["name"]: nf.get("checkboxExportValue", "")
+                            for nf in normalized_fields
+                            if nf.get("type") == "checkbox" and nf.get("checkboxExportValue")
+                        }
+                        if checkbox_values:
+                            _apply_checkbox_export_values(output_path, checkbox_values)
+
+                        # Strip embedded fonts if requested
+                        if remove_embedded_fonts_flag:
+                            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_stripped:
+                                stripped_path = tmp_stripped.name
+                            strip_embedded_fonts(output_path, stripped_path)
+                            os.remove(output_path)
+                            output_path = stripped_path
+
+                        with open(output_path, "rb") as fh:
+                            zf.writestr(fname, fh.read())
+                        os.remove(output_path)
+                        processed_count += 1
+                    finally:
+                        if os.path.exists(input_path):
+                            os.remove(input_path)
+                except Exception as exc:
+                    errors.append(f"{fname}: {exc}")
+
+        zip_buffer.seek(0)
+        zip_b64 = base64.b64encode(zip_buffer.read()).decode("ascii")
+
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "zip_base64": zip_b64,
+                    "filename": "normalized-pdfs.zip",
+                    "processed": processed_count,
+                    "total": len(file_entries),
+                    "errors": errors,
+                },
+            }
+        )
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )

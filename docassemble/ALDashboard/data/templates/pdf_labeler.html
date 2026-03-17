@@ -552,6 +552,10 @@
                         Upload PDF
                         <input type="file" id="file-input" accept=".pdf" class="d-none">
                     </label>
+                    <button id="open-playground-btn" class="btn btn-outline-light btn-sm" title="Open a PDF from the Playground templates folder">
+                        <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        Open from Playground
+                    </button>
                     <button id="normalize-pass-btn" class="btn btn-outline-light btn-sm" disabled>
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"></path><path d="m5 7 2 2 4-4"></path><path d="m13 17 2 2 4-4"></path></svg>
                         Normalize
@@ -559,6 +563,10 @@
                     <button id="repair-btn" class="btn btn-outline-light btn-sm" disabled title="PDF Repair Tools">
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                         Repair
+                    </button>
+                    <button id="utilities-btn" class="btn btn-outline-light btn-sm" title="PDF Utilities">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"></path></svg>
+                        Utilities
                     </button>
                     <div class="toolbar-divider"></div>
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
@@ -570,6 +578,10 @@
                         AI Relabel
                     </button>
                     <button id="export-btn" class="btn btn-primary btn-sm" disabled>Export PDF</button>
+                    <button id="save-playground-btn" class="btn btn-outline-success btn-sm hidden" disabled title="Save this PDF back to the Playground templates folder">
+                        <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                        Save to Playground
+                    </button>
                 </div>
             </div>
             <div class="container-fluid mt-3 d-flex justify-content-end align-items-center flex-wrap gap-2">
@@ -706,9 +718,124 @@
                     <p class="form-text mb-1">Starts with the configured recommendations. Type to search all available models.</p>
                     <div id="ai-model-suggestions" class="model-suggestions hidden"></div>
                 </div>
+                <div class="mb-3">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="use-playground-variables">
+                        <label class="form-check-label fw-medium" for="use-playground-variables">
+                            Use interview variable names as hints
+                        </label>
+                    </div>
+                    <div id="pdf-interview-picker" class="hidden">
+                        <div class="small fw-medium mb-2">Interview variables source</div>
+                        <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Interview source mode">
+                            <input type="radio" class="btn-check" name="pdf-interview-source-mode" id="pdf-source-mode-playground" value="playground" checked>
+                            <label class="btn btn-outline-secondary" for="pdf-source-mode-playground">Playground</label>
+                            <input type="radio" class="btn-check" name="pdf-interview-source-mode" id="pdf-source-mode-installed" value="installed">
+                            <label class="btn btn-outline-secondary" for="pdf-source-mode-installed">Installed</label>
+                        </div>
+                        <div id="pdf-playground-fields">
+                            <div class="mb-2">
+                                <label class="form-label small mb-1" for="pdf-playground-project">Project</label>
+                                <select id="pdf-playground-project" class="form-select form-select-sm"></select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-1" for="pdf-playground-yaml-file">YAML file</label>
+                                <select id="pdf-playground-yaml-file" class="form-select form-select-sm"></select>
+                            </div>
+                        </div>
+                        <div id="pdf-installed-fields" class="hidden">
+                            <div class="mb-2">
+                                <label class="form-label small mb-1" for="pdf-installed-package">Package</label>
+                                <select id="pdf-installed-package" class="form-select form-select-sm"></select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-1" for="pdf-installed-yaml-file">YAML file</label>
+                                <select id="pdf-installed-yaml-file" class="form-select form-select-sm"></select>
+                            </div>
+                        </div>
+                        <p id="pdf-interview-variable-summary" class="small text-muted mt-2 mb-0 hidden"></p>
+                    </div>
+                </div>
+                <div class="mb-3 border-top pt-3">
+                    <h3 class="h6 fw-semibold mb-2">Field defaults (saved for session)</h3>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <div>
+                            <label for="settings-default-font" class="form-label small text-muted mb-1">Default font</label>
+                            <select id="settings-default-font" class="form-select form-select-sm">
+                                <option value="Helvetica">Helvetica</option>
+                                <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                <option value="Courier">Courier</option>
+                                <option value="Courier-Bold">Courier-Bold</option>
+                                <option value="Times-Roman">Times-Roman</option>
+                                <option value="Times-Bold">Times-Bold</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="settings-default-font-size" class="form-label small text-muted mb-1">Default size (pt)</label>
+                            <input id="settings-default-font-size" type="number" min="4" max="72" step="1" class="form-control form-control-sm" value="10">
+                        </div>
+                        <div>
+                            <label for="settings-default-checkbox-style" class="form-label small text-muted mb-1">Checkbox style</label>
+                            <select id="settings-default-checkbox-style" class="form-select form-select-sm">
+                                <option value="cross">Cross</option>
+                                <option value="check">Check</option>
+                                <option value="circle">Circle</option>
+                                <option value="star">Star</option>
+                                <option value="diamond">Diamond</option>
+                                <option value="square">Square</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="form-text mb-0">These defaults apply to newly created fields and are remembered for this browser session.</p>
+                </div>
                 <div class="d-flex justify-content-end gap-2 border-top pt-2">
                     <button id="reset-settings" class="btn btn-outline-secondary btn-sm">Reset</button>
                     <button id="save-settings" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Open from Playground modal -->
+        <div id="open-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Open from Playground</h2>
+                    <button id="close-open-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="open-pg-project">Project</label>
+                    <select id="open-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="open-pg-template">Template file</label>
+                    <select id="open-pg-template" class="form-select form-select-sm"></select>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="open-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="open-pg-confirm" class="btn btn-primary btn-sm">Open</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save to Playground modal -->
+        <div id="save-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Save to Playground</h2>
+                    <button id="close-save-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="save-pg-project">Project</label>
+                    <select id="save-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="save-pg-filename">Filename</label>
+                    <input id="save-pg-filename" type="text" class="form-control form-control-sm" placeholder="template.pdf">
+                </div>
+                <p id="save-pg-status" class="small text-muted hidden"></p>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="save-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="save-pg-confirm" class="btn btn-primary btn-sm">Save</button>
                 </div>
             </div>
         </div>
@@ -729,6 +856,14 @@
                             <input id="norm-checkbox-uniform" class="form-check-input" type="checkbox" checked>
                             <span class="form-check-label fw-medium">Use one checkbox size everywhere</span>
                         </label>
+                        <div>
+                            <label for="norm-checkbox-size" class="form-label small text-muted mb-1">Size (pt)</label>
+                            <input id="norm-checkbox-size" type="number" min="6" max="24" step="0.5" class="form-control form-control-sm" value="12">
+                        </div>
+                        <label class="form-check mt-2">
+                            <input id="norm-checkbox-style-enable" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Normalize checkbox style</span>
+                        </label>
                         <div class="normalization-inline">
                             <div>
                                 <label for="norm-checkbox-style" class="form-label small text-muted mb-1">Style</label>
@@ -739,12 +874,7 @@
                                     <option value="star">Star</option>
                                     <option value="diamond">Diamond</option>
                                     <option value="square">Square</option>
-                                    <option value="">Keep existing</option>
                                 </select>
-                            </div>
-                            <div>
-                                <label for="norm-checkbox-size" class="form-label small text-muted mb-1">Size (pt)</label>
-                                <input id="norm-checkbox-size" type="number" min="6" max="24" step="0.5" class="form-control form-control-sm" value="12">
                             </div>
                             <div>
                                 <label for="norm-checkbox-export-value" class="form-label small text-muted mb-1">Export value</label>
@@ -757,25 +887,34 @@
                         <h3 class="normalization-card-title">Typography</h3>
                         <label class="form-check">
                             <input id="norm-font-normalize" class="form-check-input" type="checkbox" checked>
-                            <span class="form-check-label fw-medium">Normalize font and size</span>
+                            <span class="form-check-label fw-medium">Normalize font</span>
                         </label>
-                        <div class="normalization-inline-2">
-                            <div>
-                                <label for="norm-font-name" class="form-label small text-muted mb-1">Font</label>
-                                <select id="norm-font-name" class="form-select form-select-sm">
-                                    <option value="Helvetica" selected>Helvetica</option>
-                                    <option value="Helvetica-Bold">Helvetica-Bold</option>
-                                    <option value="Courier">Courier</option>
-                                    <option value="Courier-Bold">Courier-Bold</option>
-                                    <option value="Times-Roman">Times-Roman</option>
-                                    <option value="Times-Bold">Times-Bold</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label for="norm-font-size" class="form-label small text-muted mb-1">Size (pt)</label>
-                                <input id="norm-font-size" type="number" min="6" max="18" step="0.5" class="form-control form-control-sm" value="10">
-                            </div>
+                        <div>
+                            <label for="norm-font-name" class="form-label small text-muted mb-1">Font</label>
+                            <select id="norm-font-name" class="form-select form-select-sm">
+                                <option value="Helvetica" selected>Helvetica</option>
+                                <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                <option value="Courier">Courier</option>
+                                <option value="Courier-Bold">Courier-Bold</option>
+                                <option value="Times-Roman">Times-Roman</option>
+                                <option value="Times-Bold">Times-Bold</option>
+                            </select>
                         </div>
+                        <label class="form-check mt-2">
+                            <input id="norm-fontsize-normalize" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Normalize font size</span>
+                        </label>
+                        <div>
+                            <label for="norm-font-size" class="form-label small text-muted mb-1">Size (pt)</label>
+                            <input id="norm-font-size" type="number" min="6" max="18" step="0.5" class="form-control form-control-sm" value="10">
+                        </div>
+                        <label class="form-check mt-2">
+                            <input id="norm-autosize-name-address" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Fix single-line text field height and auto-size</span>
+                        </label>
+                        <label for="norm-text-height" class="form-label small text-muted mb-1">Single-line field height (pt)</label>
+                        <input id="norm-text-height" type="number" min="10" max="36" step="0.5" class="form-control form-control-sm" value="14">
+                        <div class="form-text">If the field looks like a name, address, phone number, or email, fix field height and turn on auto-font-size.</div>
                     </section>
                     <section class="normalization-card">
                         <h3 class="normalization-card-title">Conversions</h3>
@@ -798,16 +937,13 @@
                         <label for="norm-align-threshold" class="form-label small text-muted mb-1">Row snap threshold (pt)</label>
                         <input id="norm-align-threshold" type="number" min="2" max="20" step="0.5" class="form-control form-control-sm" value="6">
                         <div class="form-text">Fields with nearby centers snap to a shared row baseline.</div>
-                    </section>
-                    <section class="normalization-card">
-                        <h3 class="normalization-card-title">Single-Line Text</h3>
-                        <label class="form-check">
-                            <input id="norm-autosize-name-address" class="form-check-input" type="checkbox" checked>
-                            <span class="form-check-label fw-medium">Auto-expand name and address fields with fixed heights</span>
+                        <label class="form-check mt-2">
+                            <input id="norm-align-columns" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Align nearby fields to a shared left edge</span>
                         </label>
-                        <label for="norm-text-height" class="form-label small text-muted mb-1">Single-line field height (pt)</label>
-                        <input id="norm-text-height" type="number" min="10" max="36" step="0.5" class="form-control form-control-sm" value="14">
-                        <div class="form-text">Applies to fields that look like names, addresses, phone numbers, or emails.</div>
+                        <label for="norm-align-col-threshold" class="form-label small text-muted mb-1">Column snap threshold (pt)</label>
+                        <input id="norm-align-col-threshold" type="number" min="2" max="20" step="0.5" class="form-control form-control-sm" value="6">
+                        <div class="form-text">Fields with nearby left edges snap to a shared vertical rule.</div>
                     </section>
                     <section class="normalization-card">
                         <h3 class="normalization-card-title">Multiline Text</h3>
@@ -861,9 +997,19 @@
                                 <h3 class="h6 fw-semibold mb-1">Ghostscript Reprint</h3>
                                 <p class="small text-muted mb-2">Re-distill through Ghostscript for a completely fresh file. Requires <code>gs</code> on PATH.</p>
                                 <label class="form-check">
-                                    <input id="repair-gs-preserve" class="form-check-input" type="checkbox">
+                                    <input id="repair-gs-preserve" class="form-check-input" type="checkbox" checked>
                                     <span class="form-check-label small">Preserve existing field locations</span>
                                 </label>
+                                <div class="mt-2">
+                                    <label for="repair-gs-optimization" class="form-label small text-muted mb-1">Optimize for</label>
+                                    <select id="repair-gs-optimization" class="form-select form-select-sm" style="max-width: 14rem;">
+                                        <option value="prepress" selected>Prepress (highest quality)</option>
+                                        <option value="printer">Print</option>
+                                        <option value="ebook">Ebook (medium)</option>
+                                        <option value="screen">Screen (smallest size)</option>
+                                        <option value="default">Default (no optimization)</option>
+                                    </select>
+                                </div>
                             </div>
                             <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="ghostscript_reprint">Run</button>
                         </div>
@@ -951,6 +1097,47 @@
                     <button id="repair-prompt-cancel" class="btn btn-sm btn-light">Cancel</button>
                     <button id="repair-prompt-fix" class="btn btn-sm btn-primary">Try Fixing</button>
                 </div>
+            </div>
+        </div>
+
+        <div id="utilities-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 36rem; max-height: 85vh; overflow-y: auto;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Utilities</h2>
+                    <button id="utilities-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Copy Fields Between PDFs</h3>
+                    <p class="small text-muted mb-3">Copy form field positions from a source PDF onto a destination PDF. All existing fields in the destination will be replaced.</p>
+                    <div id="util-copy-status" class="hidden alert small mb-3"></div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-medium mb-1">Source PDF <span class="text-muted fw-normal">(has the fields)</span></label>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-outline-secondary btn-sm flex-shrink-0">
+                                Upload
+                                <input type="file" id="util-copy-source-file" accept=".pdf" class="d-none">
+                            </label>
+                            <button id="util-copy-source-active" class="btn btn-outline-primary btn-sm flex-shrink-0" disabled title="Use the PDF currently loaded in the labeler">Use Active PDF</button>
+                            <span id="util-copy-source-name" class="small text-muted text-truncate"></span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-medium mb-1">Destination PDF <span class="text-muted fw-normal">(receives the fields)</span></label>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-outline-secondary btn-sm flex-shrink-0">
+                                Upload
+                                <input type="file" id="util-copy-dest-file" accept=".pdf" class="d-none">
+                            </label>
+                            <button id="util-copy-dest-active" class="btn btn-outline-primary btn-sm flex-shrink-0" disabled title="Use the PDF currently loaded in the labeler">Use Active PDF</button>
+                            <span id="util-copy-dest-name" class="small text-muted text-truncate"></span>
+                        </div>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input id="util-copy-load-result" class="form-check-input" type="checkbox" checked>
+                        <label class="form-check-label small" for="util-copy-load-result">Load resulting PDF in the labeler</label>
+                    </div>
+                    <button id="util-copy-run" class="btn btn-primary btn-sm" disabled>Copy Fields</button>
+                </section>
             </div>
         </div>
     </div>
@@ -1109,8 +1296,58 @@
             loginUrl: '/user/sign-in',
             logoutUrl: '/user/sign-out',
             aiEnabled: false
-        }
+        },
+        playgroundSource: {
+            project: '',
+            filename: '',
+        },
+        interviewSourceMode: 'playground',
+        playground: {
+            projects: [],
+            files: [],
+            selectedProject: 'default',
+            selectedFile: '',
+            variables: [],
+            topLevelNames: []
+        },
+        installed: {
+            packages: [],
+            files: [],
+            selectedPackage: '',
+            selectedFile: '',
+            variables: [],
+            topLevelNames: []
+        },
+        usePlaygroundVariables: false
     };
+
+    // --- Session-persisted defaults for font, fontSize, checkboxStyle ---
+    const SESSION_DEFAULTS_KEY = 'pdfLabeler_sessionDefaults';
+    const HARD_DEFAULTS = { font: 'Helvetica', fontSize: 10, checkboxStyle: 'cross', checkboxExportValue: 'Yes' };
+
+    function _loadSessionDefaults() {
+        try {
+            const raw = sessionStorage.getItem(SESSION_DEFAULTS_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                return Object.assign({}, HARD_DEFAULTS, parsed);
+            }
+        } catch (_e) { /* ignore */ }
+        return Object.assign({}, HARD_DEFAULTS);
+    }
+    function _saveSessionDefaults(defaults) {
+        try {
+            sessionStorage.setItem(SESSION_DEFAULTS_KEY, JSON.stringify(defaults));
+        } catch (_e) { /* ignore */ }
+    }
+    function getSessionDefault(key) {
+        return _loadSessionDefaults()[key] || HARD_DEFAULTS[key];
+    }
+    function setSessionDefault(key, value) {
+        const defaults = _loadSessionDefaults();
+        defaults[key] = value;
+        _saveSessionDefaults(defaults);
+    }
 
     let draftState = null;
     let dragState = null;
@@ -1156,6 +1393,9 @@
     const closeRepairBtn = document.getElementById('close-repair');
     const repairStatus = document.getElementById('repair-status');
     const repairStatusText = document.getElementById('repair-status-text');
+    const utilitiesBtn = document.getElementById('utilities-btn');
+    const utilitiesModal = document.getElementById('utilities-modal');
+    const utilitiesCloseBtn = document.getElementById('utilities-close');
     const passwordModal = document.getElementById('password-modal');
     const passwordInput = document.getElementById('password-input');
     const passwordError = document.getElementById('password-error');
@@ -1174,6 +1414,20 @@
     const brandPdfSubtitle = document.getElementById('brand-pdf-subtitle');
     const documentName = document.getElementById('document-name');
     const dirtyIndicator = document.getElementById('dirty-indicator');
+    const openPlaygroundBtn = document.getElementById('open-playground-btn');
+    const savePlaygroundBtn = document.getElementById('save-playground-btn');
+    const openPlaygroundModalEl = document.getElementById('open-playground-modal');
+    const savePlaygroundModalEl = document.getElementById('save-playground-modal');
+    const usePlaygroundVariablesInput = document.getElementById('use-playground-variables');
+    const pdfInterviewPicker = document.getElementById('pdf-interview-picker');
+    const pdfPlaygroundFields = document.getElementById('pdf-playground-fields');
+    const pdfInstalledFields = document.getElementById('pdf-installed-fields');
+    const pdfPlaygroundProjectSelect = document.getElementById('pdf-playground-project');
+    const pdfPlaygroundYamlFileSelect = document.getElementById('pdf-playground-yaml-file');
+    const pdfInstalledPackageSelect = document.getElementById('pdf-installed-package');
+    const pdfInstalledYamlFileSelect = document.getElementById('pdf-installed-yaml-file');
+    const pdfInterviewVariableSummary = document.getElementById('pdf-interview-variable-summary');
+    const pdfInterviewSourceModeInputs = Array.from(document.querySelectorAll('input[name="pdf-interview-source-mode"]'));
     const quickFieldEditor = document.getElementById('quick-field-editor');
     const quickFieldTypeBadge = document.getElementById('quick-field-type-badge');
     const quickFieldNameInput = document.getElementById('quick-field-name');
@@ -1663,6 +1917,7 @@
         fieldsList.classList.toggle('hidden', totalCount === 0);
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
         exportBtn.disabled = !state.pdfBytes || totalCount === 0;
+        savePlaygroundBtn.disabled = !state.pdfBytes || totalCount === 0;
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
         repairBtn.disabled = !state.pdfBytes;
         relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
@@ -1872,13 +2127,27 @@
     }
 
     function renderQuickFieldSuggestions(field) {
-        const suggestions = Array.isArray(field && field.nameSuggestions) ? field.nameSuggestions : [];
+        const detectedSuggestions = Array.isArray(field && field.nameSuggestions) ? field.nameSuggestions : [];
+        // Merge in playground/installed variable names that match the current input
+        const varHints = getEffectivePdfVariables();
+        const currentVal = (quickFieldNameInput.value || '').trim().toLowerCase();
+        const usedNames = new Set(state.fields.map(function(f) { return f.name; }));
+        const detectedNames = new Set(detectedSuggestions.map(function(s) { return s.name; }));
+        const extraSuggestions = [];
+        if (varHints.length > 0 && currentVal) {
+            varHints.forEach(function(v) {
+                if (!detectedNames.has(v) && v.toLowerCase().indexOf(currentVal) !== -1) {
+                    extraSuggestions.push({ name: v, text: 'From interview variables' });
+                }
+            });
+        }
+        const allSuggestions = detectedSuggestions.concat(extraSuggestions.slice(0, 10));
         quickFieldSuggestions.innerHTML = '';
-        if (!suggestions.length) {
+        if (!allSuggestions.length) {
             quickFieldSuggestions.classList.add('hidden');
             return;
         }
-        suggestions.forEach(function (suggestion) {
+        allSuggestions.forEach(function (suggestion) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'quick-field-suggestion btn btn-outline-secondary btn-sm';
@@ -1962,6 +2231,8 @@
         } else {
             aiAuthNotice.classList.add('hidden');
         }
+        savePlaygroundBtn.classList.toggle('hidden', !state.auth.isAuthenticated);
+        openPlaygroundBtn.classList.toggle('hidden', !state.auth.isAuthenticated);
     }
 
     async function fetchModelCatalog() {
@@ -2004,6 +2275,336 @@
         }
         renderAuthControls();
         updateAiUiState();
+        if (state.auth.isAuthenticated) {
+            fetchPdfPlaygroundProjects();
+        }
+    }
+
+    // ================================================================
+    // Playground integration (variable hints, open, save)
+    // ================================================================
+
+    async function fetchPdfPlaygroundProjects() {
+        if (!state.auth.isAuthenticated) {
+            state.playground.projects = [];
+            state.playground.files = [];
+            return;
+        }
+        try {
+            var response = await fetch(apiUrl('/labeler/api/playground-projects'), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            state.playground.projects =
+                data && data.success && data.data && Array.isArray(data.data.projects)
+                    ? data.data.projects : [];
+            if (state.playground.projects.indexOf(state.playground.selectedProject) === -1)
+                state.playground.selectedProject = state.playground.projects[0] || 'default';
+            await fetchPdfPlaygroundFiles();
+        } catch (_e) {
+            state.playground.projects = [];
+        }
+        renderPdfInterviewPicker();
+    }
+
+    async function fetchPdfPlaygroundFiles() {
+        if (!state.playground.selectedProject) { state.playground.files = []; renderPdfInterviewPicker(); return; }
+        try {
+            var response = await fetch(apiUrl('/labeler/api/playground-files?project=' + encodeURIComponent(state.playground.selectedProject)), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            var files = data && data.success && data.data && Array.isArray(data.data.files) ? data.data.files : [];
+            state.playground.files = files;
+            var exists = files.some(function(f) { return f.filename === state.playground.selectedFile; });
+            state.playground.selectedFile = exists ? state.playground.selectedFile : (files[0] ? files[0].filename : '');
+            await fetchPdfPlaygroundVariables();
+        } catch (_e) {
+            state.playground.files = [];
+            state.playground.variables = [];
+            state.playground.topLevelNames = [];
+        }
+        renderPdfInterviewPicker();
+    }
+
+    async function fetchPdfPlaygroundVariables() {
+        if (!state.playground.selectedProject || !state.playground.selectedFile) {
+            state.playground.variables = [];
+            state.playground.topLevelNames = [];
+            renderPdfInterviewPicker();
+            return;
+        }
+        try {
+            var response = await fetch(apiUrl('/labeler/api/playground-variables?project=' + encodeURIComponent(state.playground.selectedProject) + '&filename=' + encodeURIComponent(state.playground.selectedFile)), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            state.playground.variables =
+                data && data.success && data.data && Array.isArray(data.data.all_names) ? data.data.all_names : [];
+            state.playground.topLevelNames =
+                data && data.success && data.data && Array.isArray(data.data.top_level_names) ? data.data.top_level_names : [];
+        } catch (_e) {
+            state.playground.variables = [];
+            state.playground.topLevelNames = [];
+        }
+        renderPdfInterviewPicker();
+    }
+
+    async function fetchPdfInstalledPackages() {
+        if (!state.auth.isAuthenticated) { state.installed.packages = []; return; }
+        try {
+            var response = await fetch(apiUrl('/docx-labeler/api/installed-packages'), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            state.installed.packages = data && data.success && data.data && Array.isArray(data.data.packages) ? data.data.packages : [];
+            if (state.installed.packages.indexOf(state.installed.selectedPackage) === -1)
+                state.installed.selectedPackage = state.installed.packages[0] || '';
+            await fetchPdfInstalledFiles();
+        } catch (_e) {
+            state.installed.packages = [];
+        }
+        renderPdfInterviewPicker();
+    }
+
+    async function fetchPdfInstalledFiles() {
+        if (!state.installed.selectedPackage) { state.installed.files = []; renderPdfInterviewPicker(); return; }
+        try {
+            var response = await fetch(apiUrl('/docx-labeler/api/installed-files?package=' + encodeURIComponent(state.installed.selectedPackage)), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            var files = data && data.success && data.data && Array.isArray(data.data.files) ? data.data.files : [];
+            state.installed.files = files;
+            var exists = files.some(function(f) { return f.filename === state.installed.selectedFile; });
+            state.installed.selectedFile = exists ? state.installed.selectedFile : (files[0] ? files[0].filename : '');
+            await fetchPdfInstalledVariables();
+        } catch (_e) { state.installed.files = []; state.installed.variables = []; state.installed.topLevelNames = []; }
+        renderPdfInterviewPicker();
+    }
+
+    async function fetchPdfInstalledVariables() {
+        if (!state.installed.selectedPackage || !state.installed.selectedFile) {
+            state.installed.variables = []; state.installed.topLevelNames = []; renderPdfInterviewPicker(); return;
+        }
+        try {
+            var path = state.installed.selectedPackage + ':' + state.installed.selectedFile;
+            var response = await fetch(apiUrl('/docx-labeler/api/installed-variables?interview_path=' + encodeURIComponent(path)), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            state.installed.variables = data && data.success && data.data && Array.isArray(data.data.all_names) ? data.data.all_names : [];
+            state.installed.topLevelNames = data && data.success && data.data && Array.isArray(data.data.top_level_names) ? data.data.top_level_names : [];
+        } catch (_e) { state.installed.variables = []; state.installed.topLevelNames = []; }
+        renderPdfInterviewPicker();
+    }
+
+    function renderPdfInterviewPicker() {
+        pdfInterviewPicker.classList.toggle('hidden', !state.usePlaygroundVariables);
+        var isPlayground = state.interviewSourceMode === 'playground';
+        pdfPlaygroundFields.classList.toggle('hidden', !isPlayground);
+        pdfInstalledFields.classList.toggle('hidden', isPlayground);
+        pdfInterviewSourceModeInputs.forEach(function(inp) { inp.checked = inp.value === state.interviewSourceMode; });
+
+        // Populate playground selects
+        pdfPlaygroundProjectSelect.innerHTML = '';
+        state.playground.projects.forEach(function(proj) {
+            var opt = document.createElement('option');
+            opt.value = proj; opt.textContent = proj;
+            opt.selected = proj === state.playground.selectedProject;
+            pdfPlaygroundProjectSelect.appendChild(opt);
+        });
+        pdfPlaygroundYamlFileSelect.innerHTML = '';
+        state.playground.files.forEach(function(f) {
+            var opt = document.createElement('option');
+            opt.value = f.filename; opt.textContent = f.filename;
+            opt.selected = f.filename === state.playground.selectedFile;
+            pdfPlaygroundYamlFileSelect.appendChild(opt);
+        });
+
+        // Populate installed selects
+        pdfInstalledPackageSelect.innerHTML = '';
+        state.installed.packages.forEach(function(pkg) {
+            var opt = document.createElement('option');
+            opt.value = pkg; opt.textContent = pkg;
+            opt.selected = pkg === state.installed.selectedPackage;
+            pdfInstalledPackageSelect.appendChild(opt);
+        });
+        pdfInstalledYamlFileSelect.innerHTML = '';
+        state.installed.files.forEach(function(f) {
+            var opt = document.createElement('option');
+            opt.value = f.filename; opt.textContent = f.filename;
+            opt.selected = f.filename === state.installed.selectedFile;
+            pdfInstalledYamlFileSelect.appendChild(opt);
+        });
+
+        // Variable summary
+        var vars = getEffectivePdfVariables();
+        if (vars.length > 0) {
+            pdfInterviewVariableSummary.textContent = vars.length + ' variable name' + (vars.length === 1 ? '' : 's') + ' loaded.';
+            pdfInterviewVariableSummary.classList.remove('hidden');
+        } else {
+            pdfInterviewVariableSummary.classList.add('hidden');
+        }
+    }
+
+    function getEffectivePdfVariables() {
+        if (!state.usePlaygroundVariables) return [];
+        if (state.interviewSourceMode === 'installed')
+            return state.installed.variables || [];
+        return state.playground.variables || [];
+    }
+
+    // Open from Playground modal
+    async function openPlaygroundModal() {
+        if (!state.auth.isAuthenticated) { showError('Login required to access Playground.'); return; }
+        // Show modal immediately with loading states
+        var openPgProject = document.getElementById('open-pg-project');
+        var openPgTemplate = document.getElementById('open-pg-template');
+        openPgProject.innerHTML = '<option value="">Loading projects...</option>';
+        openPgTemplate.innerHTML = '<option value="">Waiting for projects...</option>';
+        openPlaygroundModalEl.classList.remove('hidden');
+        // Load data in background
+        (async function() {
+            try {
+                await fetchPdfPlaygroundProjects();
+                openPgProject.innerHTML = '';
+                state.playground.projects.forEach(function(proj) {
+                    var opt = document.createElement('option');
+                    opt.value = proj; opt.textContent = proj;
+                    opt.selected = proj === state.playground.selectedProject;
+                    openPgProject.appendChild(opt);
+                });
+                await fetchOpenPlaygroundTemplates();
+            } catch (e) {
+                console.error('Error loading playground data:', e);
+                openPgProject.innerHTML = '<option value="">(error loading projects)</option>';
+                openPgTemplate.innerHTML = '<option value="">(error loading templates)</option>';
+            }
+        })();
+    }
+
+    async function fetchOpenPlaygroundTemplates() {
+        var openPgProject = document.getElementById('open-pg-project');
+        var openPgTemplate = document.getElementById('open-pg-template');
+        var project = openPgProject.value || 'default';
+        openPgTemplate.innerHTML = '<option value="">Loading...</option>';
+        try {
+            var response = await fetch(apiUrl('/labeler/api/playground-templates?project=' + encodeURIComponent(project) + '&type=pdf'), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            var templates = data && data.success && data.data && Array.isArray(data.data.templates) ? data.data.templates : [];
+            openPgTemplate.innerHTML = '';
+            if (templates.length === 0) {
+                var opt = document.createElement('option');
+                opt.value = ''; opt.textContent = '(no PDF templates found)';
+                openPgTemplate.appendChild(opt);
+                return;
+            }
+            templates.forEach(function(t) {
+                var opt = document.createElement('option');
+                opt.value = t.filename; opt.textContent = t.filename + (t.size ? ' (' + Math.round(t.size / 1024) + ' KB)' : '');
+                openPgTemplate.appendChild(opt);
+            });
+        } catch (_e) {
+            openPgTemplate.innerHTML = '<option value="">(error loading templates)</option>';
+        }
+    }
+
+    async function confirmOpenFromPlayground() {
+        var openPgProject = document.getElementById('open-pg-project');
+        var openPgTemplate = document.getElementById('open-pg-template');
+        var project = openPgProject.value || 'default';
+        var filename = openPgTemplate.value;
+        if (!filename) { showError('Select a template file.'); return; }
+        openPlaygroundModalEl.classList.add('hidden');
+        showLoading('Loading ' + filename + ' from Playground...');
+        try {
+            var response = await fetch(apiUrl('/labeler/api/playground-templates/load?project=' + encodeURIComponent(project) + '&filename=' + encodeURIComponent(filename)), { method: 'GET', credentials: 'same-origin' });
+            var data = await response.json();
+            if (!data.success || !data.data || !data.data.file_content_base64) {
+                throw new Error((data.error && data.error.message) || 'Failed to load template.');
+            }
+            var bytes = base64ToUint8Array(data.data.file_content_base64);
+            var file = new File([bytes], filename, { type: 'application/pdf' });
+            state.playgroundSource = { project: project, filename: filename };
+            savePlaygroundBtn.classList.remove('hidden');
+            await loadPdf(file);
+            showSuccess('Opened ' + filename + ' from Playground.');
+        } catch (error) {
+            showPdfWorkspace();
+            showError('Failed to load from Playground: ' + (error.message || 'Unknown error.'));
+        } finally { hideLoading(); }
+    }
+
+    // Save to Playground modal
+    async function openSavePlaygroundModal() {
+        if (!state.auth.isAuthenticated) { showError('Login required to save to Playground.'); return; }
+        if (!state.pdfBytes) { showError('No PDF loaded.'); return; }
+        // Show modal immediately
+        var savePgProject = document.getElementById('save-pg-project');
+        var savePgFilename = document.getElementById('save-pg-filename');
+        var savePgStatus = document.getElementById('save-pg-status');
+        savePgProject.innerHTML = '<option value="">Loading projects...</option>';
+        savePgFilename.value = state.playgroundSource.filename || state.fileName || 'template.pdf';
+        if (!savePgFilename.value.toLowerCase().endsWith('.pdf'))
+            savePgFilename.value += '.pdf';
+        savePgStatus.classList.add('hidden');
+        savePlaygroundModalEl.classList.remove('hidden');
+        // Load projects in background
+        (async function() {
+            try {
+                await fetchPdfPlaygroundProjects();
+                savePgProject.innerHTML = '';
+                state.playground.projects.forEach(function(proj) {
+                    var opt = document.createElement('option');
+                    opt.value = proj; opt.textContent = proj;
+                    opt.selected = proj === (state.playgroundSource.project || state.playground.selectedProject);
+                    savePgProject.appendChild(opt);
+                });
+            } catch (e) {
+                console.error('Error loading projects:', e);
+                savePgProject.innerHTML = '<option value="">(error loading projects)</option>';
+            }
+        })();
+    }
+
+    async function confirmSaveToPlayground() {
+        var savePgProject = document.getElementById('save-pg-project');
+        var savePgFilename = document.getElementById('save-pg-filename');
+        var savePgStatus = document.getElementById('save-pg-status');
+        var project = savePgProject.value || 'default';
+        var filename = savePgFilename.value.trim();
+        if (!filename || !filename.toLowerCase().endsWith('.pdf')) {
+            savePgStatus.textContent = 'Filename must end with .pdf'; savePgStatus.classList.remove('hidden'); return;
+        }
+        savePlaygroundModalEl.classList.add('hidden');
+        showLoading('Saving to Playground...');
+        try {
+            // First export to get the latest PDF with field changes applied
+            var pdfContent;
+            if (state.hasUnsavedChanges && state.fields.length > 0) {
+                var formData = new FormData();
+                formData.append('file', getPdfFileForRequests());
+                formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates()));
+                var exportResponse = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), { method: 'POST', headers: { 'Accept': 'application/json' }, body: formData });
+                var exportData = await parseApiResponse(exportResponse);
+                if (!exportData.success || !exportData.data || !exportData.data.pdf_base64) {
+                    throw new Error('Failed to apply fields before saving.');
+                }
+                pdfContent = exportData.data.pdf_base64;
+            } else {
+                // Use current PDF bytes as-is
+                var raw = '';
+                var bytes = new Uint8Array(state.pdfBytes);
+                for (var i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+                pdfContent = window.btoa(raw);
+            }
+
+            var response = await fetch(apiUrl('/labeler/api/playground-templates/save'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ project: project, filename: filename, file_content_base64: pdfContent }),
+                credentials: 'same-origin'
+            });
+            var data = await response.json();
+            if (!data.success) throw new Error((data.error && data.error.message) || 'Save failed.');
+            state.playgroundSource = { project: project, filename: filename };
+            savePlaygroundBtn.classList.remove('hidden');
+            setDirty(false);
+            showPdfWorkspace();
+            showSuccess((data.data && data.data.created ? 'Created' : 'Updated') + ' ' + filename + ' in Playground.');
+        } catch (error) {
+            showPdfWorkspace();
+            showError('Save to Playground failed: ' + (error.message || 'Unknown error.'));
+        } finally { hideLoading(); }
     }
 
     function renderModelSuggestions(filterText) {
@@ -2325,8 +2926,8 @@
                         y: normalizedRect.y,
                         width: normalizedRect.width,
                         height: normalizedRect.height,
-                        font: 'Helvetica',
-                        fontSize: 12,
+                        font: getSessionDefault('font'),
+                        fontSize: getSessionDefault('fontSize'),
                         autoSize: true,
                         options: Array.isArray(options) ? options.slice() : undefined
                     });
@@ -2366,8 +2967,8 @@
                 y: y,
                 width: width,
                 height: height,
-                font: field.font || 'Helvetica',
-                fontSize: field.fontSize || 12,
+                font: field.font || getSessionDefault('font'),
+                fontSize: field.fontSize || getSessionDefault('fontSize'),
                 autoSize: field.autoSize !== false,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
             };
@@ -2390,6 +2991,8 @@
             if (action === 'ghostscript_reprint') {
                 var preserve = document.getElementById('repair-gs-preserve').checked;
                 formData.append('preserve_fields', preserve ? 'true' : 'false');
+                var pdfOpt = document.getElementById('repair-gs-optimization').value || 'prepress';
+                formData.append('pdf_optimization', pdfOpt);
             } else if (action === 'unlock') {
                 var pw = document.getElementById('repair-unlock-pw').value;
                 if (pw) formData.append('password', pw);
@@ -2487,7 +3090,7 @@
     }
 
     function looksLikeNameOrAddressField(fieldName) {
-        return /(name|address|street|city|state|zip|postal|phone|email)/i.test(String(fieldName || ''));
+        return /(name|address|street|city|state|zip|postal|phone|phone_number|email|cell)/i.test(String(fieldName || ''));
     }
 
     function isYesNoOption(optionLabel) {
@@ -2585,19 +3188,73 @@
         });
     }
 
+    function alignFieldsByColumn(fields, thresholdPoints) {
+        const groupedByPage = {};
+        fields.forEach(function (field) {
+            if (!(field.type === 'text' || field.type === 'multiline' || field.type === 'checkbox')) return;
+            if (!groupedByPage[field.pageIndex]) {
+                groupedByPage[field.pageIndex] = [];
+            }
+            groupedByPage[field.pageIndex].push(field);
+        });
+
+        Object.keys(groupedByPage).forEach(function (pageKey) {
+            const pageIndex = Number(pageKey);
+            const threshold = ptToNormalizedLength(thresholdPoints, pageIndex, 'x');
+            const pageFields = groupedByPage[pageKey].slice().sort(function (left, right) {
+                return left.x - right.x;
+            });
+            let cluster = [];
+            pageFields.forEach(function (field) {
+                if (!cluster.length) {
+                    cluster = [field];
+                    return;
+                }
+                const clusterLeft = cluster.reduce(function (sum, item) {
+                    return sum + item.x;
+                }, 0) / cluster.length;
+                if (Math.abs(field.x - clusterLeft) <= threshold) {
+                    cluster.push(field);
+                    return;
+                }
+                if (cluster.length > 1) {
+                    var targetLeft = cluster.reduce(function (sum, item) {
+                        return sum + item.x;
+                    }, 0) / cluster.length;
+                    cluster.forEach(function (item) {
+                        item.x = clamp(targetLeft, 0, 1 - item.width);
+                    });
+                }
+                cluster = [field];
+            });
+            if (cluster.length > 1) {
+                var targetLeft = cluster.reduce(function (sum, item) {
+                    return sum + item.x;
+                }, 0) / cluster.length;
+                cluster.forEach(function (item) {
+                    item.x = clamp(targetLeft, 0, 1 - item.width);
+                });
+            }
+        });
+    }
+
     function readNormalizationSettings() {
         return {
+            normalizeCheckboxStyle: document.getElementById('norm-checkbox-style-enable').checked,
             checkboxStyle: document.getElementById('norm-checkbox-style').value || '',
             checkboxExportValue: String(document.getElementById('norm-checkbox-export-value').value || '').trim() || 'Yes',
             uniformCheckboxSize: document.getElementById('norm-checkbox-uniform').checked,
             checkboxSizePt: Number(document.getElementById('norm-checkbox-size').value || 12),
             normalizeFont: document.getElementById('norm-font-normalize').checked,
-            fontName: document.getElementById('norm-font-name').value || 'Helvetica',
-            fontSizePt: Number(document.getElementById('norm-font-size').value || 10),
+            normalizeFontSize: document.getElementById('norm-fontsize-normalize').checked,
+            fontName: document.getElementById('norm-font-name').value || getSessionDefault('font'),
+            fontSizePt: Number(document.getElementById('norm-font-size').value || getSessionDefault('fontSize')),
             dropdownsToText: document.getElementById('norm-dropdowns-to-text').checked,
             radiosToCheckboxes: document.getElementById('norm-radios-to-checkboxes').checked,
             alignRows: document.getElementById('norm-align-rows').checked,
             alignThresholdPt: Number(document.getElementById('norm-align-threshold').value || 6),
+            alignColumns: document.getElementById('norm-align-columns').checked,
+            alignColumnThresholdPt: Number(document.getElementById('norm-align-col-threshold').value || 6),
             autoSizeNameAddress: document.getElementById('norm-autosize-name-address').checked,
             fixedTextHeightPt: Number(document.getElementById('norm-text-height').value || 14),
             disableAutoScroll: document.getElementById('norm-disable-scroll').checked,
@@ -2611,8 +3268,8 @@
         const transformed = [];
         state.fields.forEach(function (field) {
             const nextField = Object.assign({}, field);
-            nextField.font = nextField.font || 'Helvetica';
-            nextField.fontSize = Number(nextField.fontSize) || 12;
+            nextField.font = nextField.font || getSessionDefault('font');
+            nextField.fontSize = Number(nextField.fontSize) || getSessionDefault('fontSize');
 
             if (settings.dropdownsToText && nextField.type === 'dropdown') {
                 nextField.type = 'text';
@@ -2641,11 +3298,11 @@
                         y: targetY,
                         width: boxWidth,
                         height: boxHeight,
-                        font: settings.fontName,
-                        fontSize: settings.fontSizePt,
+                        font: settings.normalizeFont ? settings.fontName : nextField.font,
+                        fontSize: settings.normalizeFontSize ? settings.fontSizePt : nextField.fontSize,
                         autoSize: false,
-                        checkboxStyle: settings.checkboxStyle || nextField.checkboxStyle || 'check',
-                        checkboxExportValue: settings.checkboxExportValue || nextField.checkboxExportValue || 'Yes',
+                        checkboxStyle: (settings.normalizeCheckboxStyle && settings.checkboxStyle) || nextField.checkboxStyle || 'check',
+                        checkboxExportValue: (settings.normalizeCheckboxStyle && settings.checkboxExportValue) || nextField.checkboxExportValue || 'Yes',
                         allowScroll: false
                     });
                 });
@@ -2654,14 +3311,16 @@
 
             if (settings.normalizeFont && (nextField.type === 'text' || nextField.type === 'multiline' || nextField.type === 'signature')) {
                 nextField.font = settings.fontName;
+            }
+            if (settings.normalizeFontSize && (nextField.type === 'text' || nextField.type === 'multiline' || nextField.type === 'signature')) {
                 nextField.fontSize = settings.fontSizePt;
             }
 
-            if (nextField.type === 'checkbox' && settings.checkboxStyle) {
+            if (settings.normalizeCheckboxStyle && nextField.type === 'checkbox' && settings.checkboxStyle) {
                 nextField.checkboxStyle = settings.checkboxStyle;
             }
 
-            if (nextField.type === 'checkbox' && settings.checkboxExportValue) {
+            if (settings.normalizeCheckboxStyle && nextField.type === 'checkbox' && settings.checkboxExportValue) {
                 nextField.checkboxExportValue = settings.checkboxExportValue;
             }
 
@@ -2677,8 +3336,6 @@
             if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.autoSize = true;
                 nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');
-                nextField.font = settings.fontName;
-                nextField.fontSize = settings.fontSizePt;
             }
 
             if (settings.multilineTallFields && nextField.type === 'text') {
@@ -2698,6 +3355,9 @@
 
         if (settings.alignRows) {
             alignFieldsByRow(transformed, settings.alignThresholdPt);
+        }
+        if (settings.alignColumns) {
+            alignFieldsByColumn(transformed, settings.alignColumnThresholdPt);
         }
         return dedupeNormalizedFieldNames(transformed);
     }
@@ -2742,7 +3402,7 @@
                         '<div class="font-row">' +
                             '<div>' +
                                 '<select class="form-select form-select-sm" data-action="field-font" data-field-id="' + escapeHtml(field.id) + '">' +
-                                    renderFontOptions(field.font || 'Helvetica') +
+                                    renderFontOptions(field.font || getSessionDefault('font')) +
                                 '</select>' +
                             '</div>' +
                             '<label class="auto-size-wrap form-check small mb-0 mt-1">' +
@@ -2750,7 +3410,7 @@
                                 '<span class="form-check-label">Auto size</span>' +
                             '</label>' +
                             '<div>' +
-                                '<input type="number" min="4" max="72" step="1" class="form-control form-control-sm" data-action="field-font-size" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.fontSize || 12)) + '"' + (autoSize ? ' disabled' : '') + '>' +
+                                '<input type="number" min="4" max="72" step="1" class="form-control form-control-sm" data-action="field-font-size" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.fontSize || getSessionDefault('fontSize'))) + '"' + (autoSize ? ' disabled' : '') + '>' +
                             '</div>' +
                         '</div>' +
                     '</div>'
@@ -3007,8 +3667,8 @@
                 y: clamp(Number(field.y), 0, 1 - height),
                 width: width,
                 height: height,
-                font: field.font || 'Helvetica',
-                fontSize: Number(field.fontSize) || 12,
+                font: field.font || getSessionDefault('font'),
+                fontSize: Number(field.fontSize) || getSessionDefault('fontSize'),
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle || undefined,
                 checkboxExportValue: field.checkboxExportValue || undefined,
@@ -3057,10 +3717,10 @@
             y: 0,
             width: rect.width,
             height: rect.height,
-            font: 'Helvetica',
-            fontSize: 12,
+            font: getSessionDefault('font'),
+            fontSize: getSessionDefault('fontSize'),
             autoSize: type === 'text' || type === 'multiline',
-            checkboxExportValue: type === 'checkbox' ? 'Yes' : undefined,
+            checkboxExportValue: type === 'checkbox' ? getSessionDefault('checkboxExportValue') : undefined,
             options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined,
             nameSuggestions: nameSuggestions
         };
@@ -3271,7 +3931,8 @@
             const context = canvas.getContext('2d');
             await pageProxy.render({
                 canvasContext: context,
-                viewport: viewport
+                viewport: viewport,
+                annotationMode: 0
             }).promise;
 
             const overlay = document.createElement('div');
@@ -3473,7 +4134,7 @@
             y: clamp(field.y + 0.012, 0, 1 - field.height),
             width: field.width,
             height: field.height,
-            font: field.font || 'Helvetica',
+            font: field.font || getSessionDefault('font'),
             fontSize: field.fontSize,
             autoSize: field.autoSize !== false,
             checkboxStyle: field.checkboxStyle,
@@ -3519,7 +4180,7 @@
                 y: (1 - field.y - field.height) * pageSize.height,
                 width: field.width * pageSize.width,
                 height: field.height * pageSize.height,
-                font: field.font || 'Helvetica',
+                font: field.font || getSessionDefault('font'),
                 fontSize: field.fontSize,
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle,
@@ -3569,6 +4230,21 @@
             formData.append('normalize_fields', 'true');
             formData.append('model', state.model || state.defaultModel);
 
+            // Pass preferred variable names from Playground/installed interview
+            var effectiveVars = getEffectivePdfVariables();
+            if (state.usePlaygroundVariables && effectiveVars.length > 0) {
+                formData.append('use_playground_variables', 'true');
+                formData.append('preferred_variable_names', JSON.stringify(effectiveVars));
+                formData.append('interview_source_mode', state.interviewSourceMode);
+                if (state.interviewSourceMode === 'playground') {
+                    formData.append('playground_project', state.playground.selectedProject);
+                    formData.append('playground_yaml_file', state.playground.selectedFile);
+                } else {
+                    formData.append('installed_package', state.installed.selectedPackage);
+                    formData.append('installed_yaml_file', state.installed.selectedFile);
+                }
+            }
+
             const data = await requestAsyncLabelerAction(
                 '/pdf-labeler/api/auto-detect',
                 formData,
@@ -3596,8 +4272,8 @@
                         y: y,
                         width: width,
                         height: height,
-                        font: field.font || 'Helvetica',
-                        fontSize: field.fontSize || 12,
+                        font: field.font || getSessionDefault('font'),
+                        fontSize: field.fontSize || getSessionDefault('fontSize'),
                         autoSize: field.autoSize !== false,
                         options: Array.isArray(field.options) ? field.options.slice() : undefined
                     };
@@ -3829,6 +4505,11 @@
 
     normalizePassBtn.addEventListener('click', function () {
         if (!state.pdfBytes || state.fields.length === 0) return;
+        // Pre-populate normalization modal with session defaults
+        var sessionDefs = _loadSessionDefaults();
+        document.getElementById('norm-font-name').value = sessionDefs.font || 'Helvetica';
+        document.getElementById('norm-font-size').value = String(sessionDefs.fontSize || 10);
+        document.getElementById('norm-checkbox-style').value = sessionDefs.checkboxStyle || 'cross';
         normalizationModal.classList.remove('hidden');
     });
     repairBtn.addEventListener('click', function () {
@@ -3840,6 +4521,133 @@
     closeRepairBtn.addEventListener('click', function () {
         repairModal.classList.add('hidden');
     });
+
+    /* --------------- Utilities modal --------------- */
+    var utilCopySourceBytes = null;
+    var utilCopySourceName = '';
+    var utilCopyDestBytes = null;
+    var utilCopyDestName = '';
+
+    function updateUtilCopyRunState() {
+        document.getElementById('util-copy-run').disabled = !(utilCopySourceBytes && utilCopyDestBytes);
+    }
+    function updateUtilActiveButtons() {
+        var hasPdf = !!state.pdfBytes;
+        document.getElementById('util-copy-source-active').disabled = !hasPdf;
+        document.getElementById('util-copy-dest-active').disabled = !hasPdf;
+    }
+
+    utilitiesBtn.addEventListener('click', function () {
+        utilCopySourceBytes = null;
+        utilCopySourceName = '';
+        utilCopyDestBytes = null;
+        utilCopyDestName = '';
+        document.getElementById('util-copy-source-name').textContent = '';
+        document.getElementById('util-copy-dest-name').textContent = '';
+        document.getElementById('util-copy-source-file').value = '';
+        document.getElementById('util-copy-dest-file').value = '';
+        document.getElementById('util-copy-status').classList.add('hidden');
+        updateUtilActiveButtons();
+        updateUtilCopyRunState();
+        utilitiesModal.classList.remove('hidden');
+    });
+    utilitiesCloseBtn.addEventListener('click', function () {
+        utilitiesModal.classList.add('hidden');
+    });
+
+    document.getElementById('util-copy-source-file').addEventListener('change', function (e) {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        file.arrayBuffer().then(function (buf) {
+            utilCopySourceBytes = new Uint8Array(buf);
+            utilCopySourceName = file.name || 'source.pdf';
+            document.getElementById('util-copy-source-name').textContent = utilCopySourceName;
+            updateUtilCopyRunState();
+        });
+    });
+    document.getElementById('util-copy-dest-file').addEventListener('change', function (e) {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        file.arrayBuffer().then(function (buf) {
+            utilCopyDestBytes = new Uint8Array(buf);
+            utilCopyDestName = file.name || 'destination.pdf';
+            document.getElementById('util-copy-dest-name').textContent = utilCopyDestName;
+            updateUtilCopyRunState();
+        });
+    });
+    document.getElementById('util-copy-source-active').addEventListener('click', function () {
+        if (!state.pdfBytes) return;
+        utilCopySourceBytes = state.pdfBytes;
+        utilCopySourceName = state.fileName || 'active.pdf';
+        document.getElementById('util-copy-source-name').textContent = utilCopySourceName + ' (active)';
+        updateUtilCopyRunState();
+    });
+    document.getElementById('util-copy-dest-active').addEventListener('click', function () {
+        if (!state.pdfBytes) return;
+        utilCopyDestBytes = state.pdfBytes;
+        utilCopyDestName = state.fileName || 'active.pdf';
+        document.getElementById('util-copy-dest-name').textContent = utilCopyDestName + ' (active)';
+        updateUtilCopyRunState();
+    });
+
+    document.getElementById('util-copy-run').addEventListener('click', function () {
+        if (!utilCopySourceBytes || !utilCopyDestBytes) return;
+        var statusEl = document.getElementById('util-copy-status');
+        statusEl.className = 'alert alert-info small mb-3';
+        statusEl.textContent = 'Copying fields...';
+        statusEl.classList.remove('hidden');
+        document.getElementById('util-copy-run').disabled = true;
+
+        var formData = new FormData();
+        formData.append('source', new Blob([utilCopySourceBytes], { type: 'application/pdf' }), utilCopySourceName);
+        formData.append('destination', new Blob([utilCopyDestBytes], { type: 'application/pdf' }), utilCopyDestName);
+
+        fetch(apiUrl('/pdf-labeler/api/copy-fields'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' },
+            body: formData
+        })
+        .then(function (resp) { return parseApiResponse(resp); })
+        .then(function (data) {
+            if (!data.success) {
+                throw new Error((data.error && data.error.message) || 'Copy failed.');
+            }
+            if (!data.data || !data.data.pdf_base64) {
+                throw new Error('Server did not return a PDF.');
+            }
+            var outputBytes = base64ToUint8Array(data.data.pdf_base64);
+            var outputName = data.data.filename || 'result-with-fields.pdf';
+
+            statusEl.className = 'alert alert-success small mb-3';
+            statusEl.textContent = 'Fields copied successfully.';
+
+            var shouldLoad = document.getElementById('util-copy-load-result').checked;
+            if (shouldLoad) {
+                utilitiesModal.classList.add('hidden');
+                var blob = new Blob([outputBytes], { type: 'application/pdf' });
+                var file = new File([blob], outputName, { type: 'application/pdf' });
+                loadPdf(file);
+            } else {
+                var blob = new Blob([outputBytes], { type: 'application/pdf' });
+                var url = URL.createObjectURL(blob);
+                var anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = outputName;
+                document.body.appendChild(anchor);
+                anchor.click();
+                document.body.removeChild(anchor);
+                URL.revokeObjectURL(url);
+            }
+        })
+        .catch(function (err) {
+            statusEl.className = 'alert alert-danger small mb-3';
+            statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'Unknown error.');
+        })
+        .finally(function () {
+            updateUtilCopyRunState();
+        });
+    });
+
     repairModal.querySelectorAll('.repair-run-btn').forEach(function (btn) {
         btn.addEventListener('click', function () {
             var action = btn.dataset.repairAction;
@@ -3875,6 +4683,11 @@
     settingsBtn.addEventListener('click', function () {
         aiModelInput.value = state.model || state.defaultModel;
         renderModelSuggestions('');
+        // Load session defaults into settings UI
+        var sessionDefs = _loadSessionDefaults();
+        document.getElementById('settings-default-font').value = sessionDefs.font || 'Helvetica';
+        document.getElementById('settings-default-font-size').value = String(sessionDefs.fontSize || 10);
+        document.getElementById('settings-default-checkbox-style').value = sessionDefs.checkboxStyle || 'cross';
         settingsModal.classList.remove('hidden');
     });
     closeSettingsBtn.addEventListener('click', function () {
@@ -3887,12 +4700,21 @@
     applyNormalizationBtn.addEventListener('click', applyNormalizationPass);
     saveSettingsBtn.addEventListener('click', function () {
         state.model = aiModelInput.value.trim() || state.defaultModel;
+        // Save session defaults
+        setSessionDefault('font', document.getElementById('settings-default-font').value || 'Helvetica');
+        setSessionDefault('fontSize', Number(document.getElementById('settings-default-font-size').value) || 10);
+        setSessionDefault('checkboxStyle', document.getElementById('settings-default-checkbox-style').value || 'cross');
         settingsModal.classList.add('hidden');
         aiModelSuggestions.classList.add('hidden');
     });
     resetSettingsBtn.addEventListener('click', function () {
         state.model = state.defaultModel;
         aiModelInput.value = state.defaultModel;
+        // Reset session defaults to hard defaults
+        _saveSessionDefaults(Object.assign({}, HARD_DEFAULTS));
+        document.getElementById('settings-default-font').value = HARD_DEFAULTS.font;
+        document.getElementById('settings-default-font-size').value = String(HARD_DEFAULTS.fontSize);
+        document.getElementById('settings-default-checkbox-style').value = HARD_DEFAULTS.checkboxStyle;
         renderModelSuggestions('');
     });
     aiModelInput.addEventListener('input', function () {
@@ -4004,7 +4826,7 @@
             const newType = normalizeFieldType(target.value);
             field.type = newType;
             if (newType === 'text' || newType === 'multiline') {
-                field.font = field.font || 'Helvetica';
+                field.font = field.font || getSessionDefault('font');
                 if (typeof field.autoSize !== 'boolean') {
                     field.autoSize = true;
                 }
@@ -4026,7 +4848,7 @@
             return;
         }
         if (target.dataset.action === 'field-font') {
-            field.font = target.value || 'Helvetica';
+            field.font = target.value || getSessionDefault('font');
             markDirtyAndRender();
             return;
         }
@@ -4070,6 +4892,46 @@
     autoDetectBtn.addEventListener('click', autoDetectFields);
     relabelBtn.addEventListener('click', relabelFields);
     exportBtn.addEventListener('click', exportPdf);
+
+    // Playground event listeners
+    openPlaygroundBtn.addEventListener('click', openPlaygroundModal);
+    savePlaygroundBtn.addEventListener('click', openSavePlaygroundModal);
+    document.getElementById('close-open-playground').addEventListener('click', function() { openPlaygroundModalEl.classList.add('hidden'); });
+    document.getElementById('open-pg-cancel').addEventListener('click', function() { openPlaygroundModalEl.classList.add('hidden'); });
+    document.getElementById('open-pg-confirm').addEventListener('click', confirmOpenFromPlayground);
+    document.getElementById('open-pg-project').addEventListener('change', fetchOpenPlaygroundTemplates);
+    document.getElementById('close-save-playground').addEventListener('click', function() { savePlaygroundModalEl.classList.add('hidden'); });
+    document.getElementById('save-pg-cancel').addEventListener('click', function() { savePlaygroundModalEl.classList.add('hidden'); });
+    document.getElementById('save-pg-confirm').addEventListener('click', confirmSaveToPlayground);
+
+    // Interview variable picker event listeners
+    usePlaygroundVariablesInput.addEventListener('change', function() {
+        state.usePlaygroundVariables = usePlaygroundVariablesInput.checked;
+        renderPdfInterviewPicker();
+    });
+    pdfInterviewSourceModeInputs.forEach(function(inp) {
+        inp.addEventListener('change', function() {
+            state.interviewSourceMode = inp.value;
+            if (inp.value === 'installed' && state.installed.packages.length === 0) fetchPdfInstalledPackages();
+            renderPdfInterviewPicker();
+        });
+    });
+    pdfPlaygroundProjectSelect.addEventListener('change', function() {
+        state.playground.selectedProject = pdfPlaygroundProjectSelect.value;
+        fetchPdfPlaygroundFiles();
+    });
+    pdfPlaygroundYamlFileSelect.addEventListener('change', function() {
+        state.playground.selectedFile = pdfPlaygroundYamlFileSelect.value;
+        fetchPdfPlaygroundVariables();
+    });
+    pdfInstalledPackageSelect.addEventListener('change', function() {
+        state.installed.selectedPackage = pdfInstalledPackageSelect.value;
+        fetchPdfInstalledFiles();
+    });
+    pdfInstalledYamlFileSelect.addEventListener('change', function() {
+        state.installed.selectedFile = pdfInstalledYamlFileSelect.value;
+        fetchPdfInstalledVariables();
+    });
 
     document.addEventListener('keydown', function (event) {
         const targetTag = document.activeElement && document.activeElement.tagName ? document.activeElement.tagName.toUpperCase() : '';

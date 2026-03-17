@@ -67,33 +67,6 @@ data:
     image: users-cog
     privilege:
       - admin
-  - name: Generate a review screen draft
-    url: ${ interview_url(i=user_info().package + ":review_screen_generator.yml", reset=1) }
-    image: pencil-alt
-  - name: Validate docx template
-    url: ${ interview_url(i=user_info().package + ":validate_docx.yml", reset=1) }
-    image: file-word
-  - name: Validate translation files
-    url: ${ interview_url(i=user_info().package + ":validate_translation.yml", reset=1) }
-    image: language
-  - name: Prepare translation files
-    url: ${ interview_url(i=user_info().package + ":generate_translation.yml", reset=1) }
-    image: language
-  - name: Validate an attachment fields block
-    url: ${ interview_url(i=user_info().package + ":validate_attachment.yml", reset=1) }
-    image: paperclip
-  - name: Lint interview text
-    url: ${ interview_url(i=user_info().package + ":interview_linter.yml", reset=1) }
-    image: spell-check
-  - name: PDF tools
-    url: ${ interview_url(i=user_info().package + ":pdf_wrangling.yml", reset=1) }
-    image: file-pdf
-  - name: Auto-label DOCX
-    url: ${ interview_url(i=user_info().package + ":docx_wrangling.yml", reset=1) }
-    image: file-word
-  - name: Compile Bootstrap theme
-    url: ${ interview_url(i=user_info().package + ":compile_bootstrap.yml", reset=1) }
-    image: palette
   - name: Install fonts
     url: ${ interview_url(i=user_info().package + ":install_fonts.yml", reset=1)}
     image: font
@@ -111,3 +84,30 @@ data:
     image: folder-tree
     privilege:
       - admin
+  - name: Generate a review screen draft
+    url: ${ interview_url(i=user_info().package + ":review_screen_generator.yml", reset=1) }
+    image: pencil-alt
+  - name: Validate docx template
+    url: ${ interview_url(i=user_info().package + ":validate_docx.yml", reset=1) }
+    image: file-word
+  - name: Validate translation files
+    url: ${ interview_url(i=user_info().package + ":validate_translation.yml", reset=1) }
+    image: language
+  - name: Prepare translation files
+    url: ${ interview_url(i=user_info().package + ":generate_translation.yml", reset=1) }
+    image: language
+  - name: Validate an attachment fields block
+    url: ${ interview_url(i=user_info().package + ":validate_attachment.yml", reset=1) }
+    image: paperclip
+  - name: Interview style check (lint)
+    url: ${ interview_url(i=user_info().package + ":interview_linter.yml", reset=1) }
+    image: spell-check
+  - name: Auto-label DOCX
+    url: "/al/docx-labeler"
+    image: file-word
+  - name: Auto-label PDF
+    url: "/al/pdf-labeler"
+    image: file-pdf    
+  - name: Compile Bootstrap theme
+    url: ${ interview_url(i=user_info().package + ":compile_bootstrap.yml", reset=1) }
+    image: palette

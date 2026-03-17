@@ -58,7 +58,7 @@ def _copy_if_same(src: str, dst: str) -> None:
 
 
 def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
-    """Extract basic field metadata (name, rect, type, page) with pikepdf."""
+    """Extract field metadata (name, rect, type, page, appearance, value) with pikepdf."""
     import pikepdf  # type: ignore[import-untyped]
 
     fields: List[Dict[str, Any]] = []
@@ -81,6 +81,10 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
                     except Exception:
                         pass
                 flags = int(obj.get("/Ff", 0)) if "/Ff" in obj else 0
+                da = str(obj.get("/DA", "")) if "/DA" in obj else None
+                value = str(obj.get("/V", "")) if "/V" in obj else None
+                # Capture /AS (appearance state) for checkboxes / radios
+                as_state = str(obj.get("/AS", "")) if "/AS" in obj else None
                 fields.append(
                     {
                         "page": page_idx,
@@ -88,6 +92,9 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
                         "type": ft,
                         "rect": rect,
                         "flags": flags,
+                        "da": da,
+                        "value": value,
+                        "as": as_state,
                     }
                 )
     return fields
@@ -130,6 +137,18 @@ def _restore_fields_pikepdf(
                 annot["/FT"] = pikepdf.Name(ft if ft.startswith("/") else f"/{ft}")
             if info.get("flags"):
                 annot["/Ff"] = info["flags"]
+            # Restore default appearance string (font, size, color)
+            if info.get("da"):
+                annot["/DA"] = pikepdf.String(info["da"])
+            # Restore value
+            if info.get("value"):
+                annot["/V"] = pikepdf.String(info["value"])
+            # Restore appearance state for checkboxes/radios
+            if info.get("as"):
+                as_val = info["as"]
+                annot["/AS"] = pikepdf.Name(
+                    as_val if as_val.startswith("/") else f"/{as_val}"
+                )
 
             ref = pdf.make_indirect(annot)
             annots = page.get("/Annots")
@@ -141,9 +160,20 @@ def _restore_fields_pikepdf(
 
         if all_field_refs:
             acroform["/Fields"] = pikepdf.Array(all_field_refs)
+            # Tell PDF readers to regenerate field appearances
+            acroform["/NeedAppearances"] = True
             pdf.Root["/AcroForm"] = pdf.make_indirect(acroform)
 
         pdf.save(pdf_path)
+
+
+_VALID_GS_PDF_SETTINGS = {
+    "screen",
+    "ebook",
+    "printer",
+    "prepress",
+    "default",
+}
 
 
 def ghostscript_reprint(
@@ -151,13 +181,21 @@ def ghostscript_reprint(
     output_pdf_path: str,
     *,
     preserve_fields: bool = False,
+    pdf_optimization: str = "prepress",
 ) -> Dict[str, Any]:
     """Re-distill the PDF through Ghostscript.
 
     When *preserve_fields* is ``True`` field metadata (name, rect, type)
     is extracted first and re-applied to the reprinted file.
+
+    *pdf_optimization* controls the ``-dPDFSETTINGS`` Ghostscript option.
+    Accepted values: ``"screen"``, ``"ebook"``, ``"printer"``,
+    ``"prepress"`` (default), ``"default"``.
     """
     gs = _require_executable("gs")
+
+    if pdf_optimization not in _VALID_GS_PDF_SETTINGS:
+        pdf_optimization = "prepress"
 
     saved_fields: List[Dict[str, Any]] = []
     if preserve_fields:
@@ -180,7 +218,7 @@ def ghostscript_reprint(
             "-dSAFER",
             "-sDEVICE=pdfwrite",
             "-dCompatibilityLevel=1.7",
-            "-dPDFSETTINGS=/prepress",
+            f"-dPDFSETTINGS=/{pdf_optimization}",
             f"-sOutputFile={tmp_path}",
             input_pdf_path,
         ]
@@ -210,6 +248,7 @@ def ghostscript_reprint(
         "action": "ghostscript_reprint",
         "preserve_fields": preserve_fields,
         "fields_restored": len(saved_fields) if preserve_fields else 0,
+        "pdf_optimization": pdf_optimization,
     }
 
 

@@ -1615,6 +1615,9 @@ def _extract_repair_options(
         options["preserve_fields"] = parse_bool(
             raw.get("preserve_fields"), default=False
         )
+        pdf_opt = str(raw.get("pdf_optimization") or "").strip()
+        if pdf_opt:
+            options["pdf_optimization"] = pdf_opt
     elif action == "unlock":
         pw = raw.get("password")
         if pw is not None:

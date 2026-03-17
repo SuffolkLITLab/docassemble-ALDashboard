@@ -679,6 +679,315 @@ def _queue_labeler_async_job(task: Any, *, kind: str, request_id: str):
 
 
 # =============================================================================
+# Playground Template Management (shared by DOCX and PDF labelers)
+# =============================================================================
+
+_TEMPLATE_EXTENSIONS_DOCX = (".docx",)
+_TEMPLATE_EXTENSIONS_PDF = (".pdf",)
+_TEMPLATE_EXTENSIONS_ALL = _TEMPLATE_EXTENSIONS_DOCX + _TEMPLATE_EXTENSIONS_PDF
+
+
+def _normalize_template_filename(filename: Optional[str], *, allowed_extensions: tuple = _TEMPLATE_EXTENSIONS_ALL) -> str:
+    value = os.path.basename(str(filename or "").strip())
+    if not value or value in {".", ".."}:
+        raise DashboardAPIValidationError(
+            "Template filename is required.", status_code=400
+        )
+    if not value.lower().endswith(allowed_extensions):
+        raise DashboardAPIValidationError(
+            f"Template file must be one of: {', '.join(allowed_extensions)}", status_code=400
+        )
+    return value
+
+
+def _list_playground_template_files(project: str, *, extensions: tuple = _TEMPLATE_EXTENSIONS_ALL) -> List[Dict[str, str]]:
+    from docassemble.webapp.backend import directory_for
+    from docassemble.webapp.files import SavedFile
+
+    uid = getattr(current_user, "id", None)
+    if uid is None:
+        return []
+    area = SavedFile(uid, fix=True, section="playgroundtemplate")
+    the_directory = directory_for(area, project)
+    if not os.path.isdir(the_directory):
+        return []
+    results = []
+    for fname in sorted(os.listdir(the_directory)):
+        if not fname.lower().endswith(extensions):
+            continue
+        fpath = os.path.join(the_directory, fname)
+        if os.path.isfile(fpath):
+            results.append({
+                "filename": fname,
+                "label": fname,
+                "size": os.path.getsize(fpath),
+            })
+    return results
+
+
+def _load_playground_template_file(project: str, filename: str) -> bytes:
+    from docassemble.webapp.backend import directory_for
+    from docassemble.webapp.files import SavedFile
+
+    uid = getattr(current_user, "id", None)
+    if uid is None:
+        raise DashboardAPIValidationError(
+            "Login required.", status_code=401
+        )
+    area = SavedFile(uid, fix=True, section="playgroundtemplate")
+    the_directory = directory_for(area, project)
+    filepath = os.path.join(the_directory, filename)
+    real_dir = os.path.realpath(the_directory)
+    real_file = os.path.realpath(filepath)
+    if not real_file.startswith(real_dir + os.sep):
+        raise DashboardAPIValidationError(
+            "Invalid template path.", status_code=400
+        )
+    if not os.path.isfile(filepath):
+        raise DashboardAPIValidationError(
+            f"Template file '{filename}' not found in project '{project}'.",
+            status_code=404,
+        )
+    with open(filepath, "rb") as fh:
+        return fh.read()
+
+
+def _save_playground_template_file(project: str, filename: str, content: bytes) -> Dict[str, Any]:
+    from docassemble.webapp.backend import directory_for
+    from docassemble.webapp.files import SavedFile
+
+    uid = getattr(current_user, "id", None)
+    if uid is None:
+        raise DashboardAPIValidationError(
+            "Login required.", status_code=401
+        )
+    area = SavedFile(uid, fix=True, section="playgroundtemplate")
+    the_directory = directory_for(area, project)
+    real_dir = os.path.realpath(the_directory)
+    filepath = os.path.join(the_directory, filename)
+    real_file = os.path.realpath(filepath)
+    if not real_file.startswith(real_dir + os.sep):
+        raise DashboardAPIValidationError(
+            "Invalid template path.", status_code=400
+        )
+    os.makedirs(the_directory, exist_ok=True)
+    is_new = not os.path.isfile(filepath)
+    with open(filepath, "wb") as fh:
+        fh.write(content)
+    area.finalize()
+    return {
+        "project": project,
+        "filename": filename,
+        "size": len(content),
+        "created": is_new,
+    }
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-projects", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def labeler_playground_projects():
+    """Shared endpoint: list playground projects for both labelers."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        return jsonify({
+            "success": True,
+            "request_id": request_id,
+            "data": {"projects": _list_playground_projects()},
+        })
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: labeler playground-projects {request_id} error: {exc!r}", "error")
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-files", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def labeler_playground_files():
+    """Shared endpoint: list YAML files in a playground project."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        project = _normalize_playground_project(request.args.get("project"))
+        return jsonify({
+            "success": True,
+            "request_id": request_id,
+            "data": {"project": project, "files": _list_playground_yaml_files(project)},
+        })
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: labeler playground-files {request_id} error: {exc!r}", "error")
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-variables", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def labeler_playground_variables():
+    """Shared endpoint: get variables from a playground YAML file."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        project = _normalize_playground_project(request.args.get("project"))
+        filename = _normalize_playground_filename(request.args.get("filename"))
+        return jsonify({
+            "success": True,
+            "request_id": request_id,
+            "data": _get_playground_variable_info(project, filename),
+        })
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: labeler playground-variables {request_id} error: {exc!r}", "error")
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-templates", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def labeler_playground_templates():
+    """List template files (DOCX/PDF) in a playground project's template folder."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        project = _normalize_playground_project(request.args.get("project"))
+        file_type = str(request.args.get("type") or "").strip().lower()
+        if file_type == "docx":
+            extensions = _TEMPLATE_EXTENSIONS_DOCX
+        elif file_type == "pdf":
+            extensions = _TEMPLATE_EXTENSIONS_PDF
+        else:
+            extensions = _TEMPLATE_EXTENSIONS_ALL
+        return jsonify({
+            "success": True,
+            "request_id": request_id,
+            "data": {
+                "project": project,
+                "templates": _list_playground_template_files(project, extensions=extensions),
+            },
+        })
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: playground-templates {request_id} error: {exc!r}", "error")
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-templates/load", methods=["GET"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
+def labeler_playground_template_load():
+    """Load a template file from a playground project's template folder."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        project = _normalize_playground_project(request.args.get("project"))
+        filename = _normalize_template_filename(request.args.get("filename"))
+        content = _load_playground_template_file(project, filename)
+        return jsonify({
+            "success": True,
+            "request_id": request_id,
+            "data": {
+                "project": project,
+                "filename": filename,
+                "size": len(content),
+                "file_content_base64": base64.b64encode(content).decode("ascii"),
+            },
+        })
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: playground-template-load {request_id} error: {exc!r}", "error")
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-templates/save", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def labeler_playground_template_save():
+    """Save a template file back to a playground project's template folder."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_playground_auth_check():
+        return _playground_auth_fail(request_id)
+    try:
+        post_data = request.get_json(silent=True) or {}
+        if "file" in request.files:
+            upload = request.files["file"]
+            filename = upload.filename or ""
+            content = upload.read()
+            project = _normalize_playground_project(
+                request.form.get("project") or post_data.get("project")
+            )
+        else:
+            filename = str(post_data.get("filename") or "")
+            project = _normalize_playground_project(post_data.get("project"))
+            content = decode_base64_content(post_data.get("file_content_base64"))
+        filename = _normalize_template_filename(filename)
+        _validate_upload_size(content)
+        result = _save_playground_template_file(project, filename, content)
+        action = "created" if result["created"] else "updated"
+        log(
+            f"ALDashboard: playground-template-save {request_id} {action} '{filename}' in project '{project}'",
+            "info",
+        )
+        return jsonify({
+            "success": True,
+            "request_id": request_id,
+            "data": result,
+        })
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: playground-template-save {request_id} error: {exc!r}", "error")
+        return jsonify_with_status(
+            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+# =============================================================================
 # DOCX Labeler Routes
 # =============================================================================
 
@@ -1734,6 +2043,65 @@ def pdf_labeler_auto_detect():
             else str(get_config("openai base url") or "").strip() or None
         )
 
+        # Resolve preferred variable names from Playground/installed interview
+        preferred_variable_names: Optional[List[str]] = None
+        preferred_variable_names_raw = post_data.get("preferred_variable_names")
+        if preferred_variable_names_raw:
+            if isinstance(preferred_variable_names_raw, str):
+                try:
+                    parsed_preferred_names = json.loads(preferred_variable_names_raw)
+                except json.JSONDecodeError:
+                    parsed_preferred_names = [
+                        item.strip()
+                        for item in preferred_variable_names_raw.split(",")
+                        if item.strip()
+                    ]
+            elif isinstance(preferred_variable_names_raw, list):
+                parsed_preferred_names = preferred_variable_names_raw
+            else:
+                parsed_preferred_names = []
+            preferred_variable_names = [
+                str(item).strip()
+                for item in parsed_preferred_names
+                if str(item).strip()
+            ] or None
+        use_playground_variables = parse_bool(
+            post_data.get("use_playground_variables"), default=False
+        )
+        interview_source_mode = (
+            str(post_data.get("interview_source_mode") or "playground").strip().lower()
+            or "playground"
+        )
+        if use_playground_variables and preferred_variable_names is None:
+            if interview_source_mode == "installed":
+                installed_path = post_data.get("installed_interview_path") or (
+                    (
+                        str(post_data.get("installed_package") or "").strip()
+                        + ":"
+                        + str(post_data.get("installed_yaml_file") or "").strip()
+                    )
+                    if (
+                        str(post_data.get("installed_package") or "").strip()
+                        and str(post_data.get("installed_yaml_file") or "").strip()
+                    )
+                    else None
+                )
+                if installed_path:
+                    normalized_path = _normalize_installed_interview_path(installed_path)
+                    preferred_variable_names = _get_installed_interview_variable_info(
+                        normalized_path
+                    )["all_names"]
+            else:
+                pg_project = _normalize_playground_project(
+                    post_data.get("playground_project")
+                )
+                pg_yaml = post_data.get("playground_yaml_file")
+                if pg_yaml:
+                    pg_yaml = _normalize_playground_filename(pg_yaml)
+                    preferred_variable_names = _get_playground_variable_info(
+                        pg_project, pg_yaml
+                    )["all_names"]
+
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
@@ -1744,7 +2112,10 @@ def pdf_labeler_auto_detect():
 
         try:
             # Auto-add fields using FormFyxer
-            formfyxer.auto_add_fields(input_path, output_path)
+            formfyxer.auto_add_fields(
+                input_path, output_path,
+                preferred_names=preferred_variable_names,
+            )
 
             # Optionally normalize with AI
             stats = {}
@@ -2222,5 +2593,97 @@ def pdf_labeler_repair():
     except Exception as exc:
         return jsonify_with_status(
             {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            500,
+        )
+
+
+@app.route("/pdf-labeler/api/copy-fields", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/copy-fields", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_copy_fields():
+    """Copy form field positions from a source PDF onto a destination PDF."""
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: copy-fields request {request_id}", "info")
+
+    try:
+        import formfyxer  # type: ignore[import-not-found]
+
+        source_file = request.files.get("source")
+        dest_file = request.files.get("destination")
+        if not source_file or not dest_file:
+            raise DashboardAPIValidationError(
+                "Both 'source' and 'destination' PDF files are required."
+            )
+
+        source_bytes = source_file.read()
+        dest_bytes = dest_file.read()
+        _validate_upload_size(source_bytes)
+        _validate_upload_size(dest_bytes)
+
+        source_name = source_file.filename or "source.pdf"
+        dest_name = dest_file.filename or "destination.pdf"
+        if not source_name.lower().endswith(".pdf") or not dest_name.lower().endswith(
+            ".pdf"
+        ):
+            raise DashboardAPIValidationError(
+                "Only PDF files are supported.", status_code=415
+            )
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".pdf", delete=False
+        ) as tmp_src, tempfile.NamedTemporaryFile(
+            suffix=".pdf", delete=False
+        ) as tmp_dst:
+            tmp_src.write(source_bytes)
+            source_path = tmp_src.name
+            tmp_dst.write(dest_bytes)
+            dest_path = tmp_dst.name
+
+        try:
+            result_pdf = formfyxer.swap_pdf_page(
+                source_pdf=source_path, destination_pdf=dest_path
+            )
+            with tempfile.NamedTemporaryFile(
+                suffix=".pdf", delete=False
+            ) as tmp_out:
+                output_path = tmp_out.name
+            result_pdf.save(output_path)
+            with open(output_path, "rb") as fh:
+                output_bytes = fh.read()
+            output_filename = dest_name.replace(".pdf", "-with-fields.pdf")
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": output_filename,
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
+                }
+            )
+        finally:
+            for p in (source_path, dest_path):
+                if os.path.exists(p):
+                    os.remove(p)
+            if "output_path" in locals() and os.path.exists(output_path):
+                os.remove(output_path)
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )

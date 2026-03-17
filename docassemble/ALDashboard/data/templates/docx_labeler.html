@@ -46,6 +46,10 @@
                         <span class="visually-hidden">Choose DOCX file</span>
                         <input type="file" id="file-input" accept=".docx" class="dl-file-input">
                     </label>
+                    <button id="open-playground-btn" class="btn btn-sm btn-outline-secondary mt-2 hidden" title="Open a DOCX from the Playground templates folder">
+                        <svg style="width:14px;height:14px;" class="me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        Open from Playground
+                    </button>
                     <p id="file-name" class="mt-2 small text-muted hidden"></p>
                     <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
                     <div id="interview-picker-sidebar-host" class="hidden mt-3">
@@ -148,6 +152,10 @@
                     <div class="dl-download-bar">
                         <button id="download-btn" class="btn btn-primary w-100 py-2 fw-semibold" disabled>
                             Download Updated DOCX
+                        </button>
+                        <button id="save-playground-btn" class="btn btn-outline-success w-100 py-2 fw-semibold mt-2 hidden" disabled title="Save this DOCX back to the Playground templates folder">
+                            <svg style="width:14px;height:14px;" class="me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                            Save to Playground
                         </button>
                         <p id="download-status" class="mt-2 small text-muted text-center hidden"></p>
                     </div>
@@ -331,6 +339,51 @@
             </div>
         </div>
 
+        <!-- Open from Playground modal -->
+        <div id="open-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Open from Playground</h2>
+                    <button id="close-open-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="open-pg-project">Project</label>
+                    <select id="open-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="open-pg-template">Template file</label>
+                    <select id="open-pg-template" class="form-select form-select-sm"></select>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="open-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="open-pg-confirm" class="btn btn-primary btn-sm">Open</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save to Playground modal -->
+        <div id="save-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Save to Playground</h2>
+                    <button id="close-save-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="save-pg-project">Project</label>
+                    <select id="save-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="save-pg-filename">Filename</label>
+                    <input id="save-pg-filename" type="text" class="form-control form-control-sm" placeholder="template.docx">
+                </div>
+                <p id="save-pg-status" class="small text-muted hidden"></p>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="save-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="save-pg-confirm" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Selection Popover (appears when text is highlighted in preview) -->
         <div id="sel-popover" class="dl-sel-popover hidden">
             <div class="dl-sel-popover-header">
@@ -450,6 +503,7 @@
             file: null,
             fileContent: null,
             originalHtml: '',
+            playgroundSource: null,
             runs: [],          // original runs from extract-runs endpoint
             existingLabels: [],
             suggestions: [],
@@ -507,6 +561,10 @@
         // ================================================================
         const fileInput = document.getElementById('file-input');
         const fileName = document.getElementById('file-name');
+        const openPlaygroundBtn = document.getElementById('open-playground-btn');
+        const savePlaygroundBtn = document.getElementById('save-playground-btn');
+        const openPlaygroundModalEl = document.getElementById('open-playground-modal');
+        const savePlaygroundModalEl = document.getElementById('save-playground-modal');
         const interviewPickerPanel = document.getElementById('interview-picker-panel');
         const interviewPickerSidebarHost = document.getElementById('interview-picker-sidebar-host');
         const settingsInterviewPickerHost = document.getElementById('settings-interview-picker-host');
@@ -675,6 +733,13 @@
                 aiAuthNotice.innerHTML = 'AI labeling requires login. <a href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a> to enable suggestions.';
             } else {
                 aiAuthNotice.classList.add('hidden');
+            }
+            // Show playground buttons only when authenticated
+            if (state.auth.isAuthenticated) {
+                openPlaygroundBtn.classList.remove('hidden');
+            } else {
+                openPlaygroundBtn.classList.add('hidden');
+                savePlaygroundBtn.classList.add('hidden');
             }
         }
 
@@ -1959,11 +2024,191 @@
         }
 
         // ================================================================
+        // Playground open / save
+        // ================================================================
+        async function openDocxPlaygroundModal() {
+            if (!state.auth.isAuthenticated) { showError('Login required to access Playground.'); return; }
+            // Show modal immediately with loading states
+            var openPgProject = document.getElementById('open-pg-project');
+            var openPgTemplate = document.getElementById('open-pg-template');
+            openPgProject.innerHTML = '<option value="">Loading projects...</option>';
+            openPgTemplate.innerHTML = '<option value="">Waiting for projects...</option>';
+            openPlaygroundModalEl.classList.remove('hidden');
+            // Load data in background
+            (async function() {
+                try {
+                    await fetchPlaygroundProjects();
+                    openPgProject.innerHTML = '';
+                    state.playground.projects.forEach(function(proj) {
+                        var opt = document.createElement('option');
+                        opt.value = proj; opt.textContent = proj;
+                        opt.selected = proj === state.playground.selectedProject;
+                        openPgProject.appendChild(opt);
+                    });
+                    await fetchDocxOpenPlaygroundTemplates();
+                } catch (e) {
+                    console.error('Error loading playground data:', e);
+                    openPgProject.innerHTML = '<option value="">(error loading projects)</option>';
+                    openPgTemplate.innerHTML = '<option value="">(error loading templates)</option>';
+                }
+            })();
+        }
+
+        async function fetchDocxOpenPlaygroundTemplates() {
+            var openPgProject = document.getElementById('open-pg-project');
+            var openPgTemplate = document.getElementById('open-pg-template');
+            var project = openPgProject.value || 'default';
+            openPgTemplate.innerHTML = '<option value="">Loading...</option>';
+            try {
+                var data = await fetchJsonOrThrow(
+                    '/al/labeler/api/playground-templates?project=' + encodeURIComponent(project) + '&type=docx'
+                );
+                var templates = data && data.success && data.data && Array.isArray(data.data.templates) ? data.data.templates : [];
+                openPgTemplate.innerHTML = '';
+                if (templates.length === 0) {
+                    var opt = document.createElement('option');
+                    opt.value = ''; opt.textContent = '(no DOCX templates found)';
+                    openPgTemplate.appendChild(opt);
+                    return;
+                }
+                templates.forEach(function(t) {
+                    var opt = document.createElement('option');
+                    opt.value = t.filename; opt.textContent = t.filename + (t.size ? ' (' + Math.round(t.size / 1024) + ' KB)' : '');
+                    openPgTemplate.appendChild(opt);
+                });
+            } catch (_e) {
+                openPgTemplate.innerHTML = '<option value="">(error loading templates)</option>';
+            }
+        }
+
+        async function confirmOpenFromPlayground() {
+            var openPgProject = document.getElementById('open-pg-project');
+            var openPgTemplate = document.getElementById('open-pg-template');
+            var project = openPgProject.value || 'default';
+            var filename = openPgTemplate.value;
+            if (!filename) { showError('Select a template file.'); return; }
+            openPlaygroundModalEl.classList.add('hidden');
+            showLoading('Loading ' + filename + ' from Playground...');
+            try {
+                var data = await fetchJsonOrThrow(
+                    '/al/labeler/api/playground-templates/load?project=' + encodeURIComponent(project) + '&filename=' + encodeURIComponent(filename)
+                );
+                if (!data.success || !data.data || !data.data.file_content_base64) {
+                    throw new Error((data.error && data.error.message) || 'Failed to load template.');
+                }
+                var binaryString = atob(data.data.file_content_base64);
+                var bytes = new Uint8Array(binaryString.length);
+                for (var i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+                var file = new File([blob], filename, { type: blob.type });
+                state.playgroundSource = { project: project, filename: filename };
+                savePlaygroundBtn.classList.remove('hidden');
+                await processFile(file);
+            } catch (error) {
+                showError('Failed to load from Playground: ' + (error.message || 'Unknown error.'));
+            } finally { hideLoading(); }
+        }
+
+        async function openSavePlaygroundModal() {
+            if (!state.auth.isAuthenticated) { showError('Login required to save to Playground.'); return; }
+            if (!state.file) { showError('No DOCX file loaded.'); return; }
+            // Show modal immediately
+            var savePgProject = document.getElementById('save-pg-project');
+            var savePgFilename = document.getElementById('save-pg-filename');
+            var savePgStatus = document.getElementById('save-pg-status');
+            savePgProject.innerHTML = '<option value="">Loading projects...</option>';
+            savePgFilename.value = (state.playgroundSource && state.playgroundSource.filename) || (state.file && state.file.name) || 'template.docx';
+            if (!savePgFilename.value.toLowerCase().endsWith('.docx'))
+                savePgFilename.value += '.docx';
+            savePgStatus.classList.add('hidden');
+            savePlaygroundModalEl.classList.remove('hidden');
+            // Load projects in background
+            (async function() {
+                try {
+                    await fetchPlaygroundProjects();
+                    savePgProject.innerHTML = '';
+                    state.playground.projects.forEach(function(proj) {
+                        var opt = document.createElement('option');
+                        opt.value = proj; opt.textContent = proj;
+                        opt.selected = proj === ((state.playgroundSource && state.playgroundSource.project) || state.playground.selectedProject);
+                        savePgProject.appendChild(opt);
+                    });
+                } catch (e) {
+                    console.error('Error loading projects:', e);
+                    savePgProject.innerHTML = '<option value="">(error loading projects)</option>';
+                }
+            })();
+        }
+
+        async function confirmSaveToPlayground() {
+            var savePgProject = document.getElementById('save-pg-project');
+            var savePgFilename = document.getElementById('save-pg-filename');
+            var savePgStatus = document.getElementById('save-pg-status');
+            var project = savePgProject.value || 'default';
+            var filename = savePgFilename.value.trim();
+            if (!filename || !filename.toLowerCase().endsWith('.docx')) {
+                savePgStatus.textContent = 'Filename must end with .docx'; savePgStatus.classList.remove('hidden'); return;
+            }
+            savePlaygroundModalEl.classList.add('hidden');
+            showLoading('Saving to Playground...');
+            try {
+                // First apply any pending changes via the apply-labels endpoint
+                var renames = [];
+                Object.entries(state.labelRenames).forEach(function(entry) {
+                    var original = entry[0], newValue = entry[1];
+                    if (original !== newValue) renames.push({ original: original, replacement: newValue });
+                });
+                var acceptedLabels = state.suggestions.filter(function(s) { return s.status === 'accepted'; }).map(function(s) {
+                    return { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
+                });
+
+                var docxBase64;
+                if (renames.length > 0 || acceptedLabels.length > 0) {
+                    var formData = new FormData();
+                    formData.append('file', state.file);
+                    formData.append('defragment_runs', state.settings.defragmentRuns ? 'true' : 'false');
+                    if (renames.length > 0) formData.append('renames', JSON.stringify(renames));
+                    if (acceptedLabels.length > 0) formData.append('labels', JSON.stringify(acceptedLabels));
+                    var applyResponse = await fetch('/al/docx-labeler/api/apply-labels', { method: 'POST', body: formData });
+                    var applyData = await applyResponse.json();
+                    if (!applyData.success || !applyData.data || !applyData.data.docx_base64) {
+                        throw new Error('Failed to apply changes before saving.');
+                    }
+                    docxBase64 = applyData.data.docx_base64;
+                } else {
+                    // No changes - send the original file as base64
+                    var arrayBuffer = await state.file.arrayBuffer();
+                    var bytes = new Uint8Array(arrayBuffer);
+                    var raw = '';
+                    for (var i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+                    docxBase64 = window.btoa(raw);
+                }
+
+                var response = await fetch('/al/labeler/api/playground-templates/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ project: project, filename: filename, file_content_base64: docxBase64 }),
+                    credentials: 'same-origin'
+                });
+                var data = await response.json();
+                if (!data.success) throw new Error((data.error && data.error.message) || 'Save failed.');
+                state.playgroundSource = { project: project, filename: filename };
+                savePlaygroundBtn.classList.remove('hidden');
+                downloadStatus.textContent = (data.data && data.data.created ? 'Created' : 'Updated') + ' ' + filename + ' in Playground.';
+                downloadStatus.classList.remove('hidden');
+            } catch (error) {
+                showError('Save to Playground failed: ' + (error.message || 'Unknown error.'));
+            } finally { hideLoading(); }
+        }
+
+        // ================================================================
         // Download
         // ================================================================
         function updateDownloadButton() {
             var hasChanges = Object.keys(state.labelRenames).length > 0 || state.suggestions.some(function(s) { return s.status === 'accepted'; });
             downloadBtn.disabled = !hasChanges;
+            // Save to Playground is enabled when a file is loaded (changes or not, the user may want to save the original)
+            savePlaygroundBtn.disabled = !state.file;
         }
 
         async function downloadDocument() {
@@ -2019,6 +2264,21 @@
         // Event listeners
         // ================================================================
         fileInput.addEventListener('change', function(e) { var file = e.target.files[0]; if (file) processFile(file); });
+
+        // Playground open / save listeners
+        openPlaygroundBtn.addEventListener('click', openDocxPlaygroundModal);
+        savePlaygroundBtn.addEventListener('click', openSavePlaygroundModal);
+        document.getElementById('open-pg-project').addEventListener('change', fetchDocxOpenPlaygroundTemplates);
+        document.getElementById('open-pg-confirm').addEventListener('click', confirmOpenFromPlayground);
+        document.getElementById('open-pg-cancel').addEventListener('click', function() { openPlaygroundModalEl.classList.add('hidden'); });
+        document.getElementById('close-open-playground').addEventListener('click', function() { openPlaygroundModalEl.classList.add('hidden'); });
+        document.getElementById('save-pg-confirm').addEventListener('click', confirmSaveToPlayground);
+        document.getElementById('save-pg-cancel').addEventListener('click', function() { savePlaygroundModalEl.classList.add('hidden'); });
+        document.getElementById('close-save-playground').addEventListener('click', function() { savePlaygroundModalEl.classList.add('hidden'); });
+        // Close playground modals on backdrop click
+        [openPlaygroundModalEl, savePlaygroundModalEl].forEach(function(modal) {
+            modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
+        });
         tabExisting.addEventListener('click', function() { switchTab('existing'); });
         tabSuggestions.addEventListener('click', function() { switchTab('suggestions'); });
         document.getElementById('accept-all-btn').addEventListener('click', function() {

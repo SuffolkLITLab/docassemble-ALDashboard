@@ -266,6 +266,40 @@
             --field-fill-hover: rgba(194, 65, 12, 0.19);
             --field-text: #7a2a09;
         }
+        /* --- Preview mode --- */
+        .field-preview-content {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            padding: 0 2px;
+        }
+        .field-preview-content.preview-checkbox {
+            justify-content: center;
+            padding: 0;
+        }
+        .field-preview-content.preview-signature {
+            padding: 2px;
+        }
+        .field-preview-content.preview-signature img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            opacity: 0.85;
+        }
+        .field-box.previewing .field-chip {
+            display: none;
+        }
+        .field-box.previewing {
+            background: transparent;
+            border-color: rgba(0, 0, 0, 0.08);
+            box-shadow: none;
+        }
+        #preview-btn.active {
+            background: rgba(255, 255, 255, 0.2);
+        }
         .field-chip {
             position: absolute;
             top: 0.18rem;
@@ -567,6 +601,11 @@
                     <button id="utilities-btn" class="btn btn-outline-light btn-sm" title="PDF Utilities">
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"></path></svg>
                         Utilities
+                    </button>
+                    <button id="preview-btn" class="btn btn-outline-light btn-sm" disabled title="Toggle field value preview">
+                        <svg id="preview-icon-open" class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        <svg id="preview-icon-closed" class="icon-16 me-1 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                        Preview
                     </button>
                     <div class="toolbar-divider"></div>
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
@@ -1350,6 +1389,7 @@
         fields: [],
         selectedFieldId: null,
         selectedTool: null,
+        previewMode: false,
         renderScale: 1.35,
         defaultModel: 'gpt-5-mini',
         recommendedModels: ['gpt-5-mini'],
@@ -1463,6 +1503,7 @@
     const repairStatus = document.getElementById('repair-status');
     const repairStatusText = document.getElementById('repair-status-text');
     const utilitiesBtn = document.getElementById('utilities-btn');
+    const previewBtn = document.getElementById('preview-btn');
     const utilitiesModal = document.getElementById('utilities-modal');
     const utilitiesCloseBtn = document.getElementById('utilities-close');
     const passwordModal = document.getElementById('password-modal');
@@ -1529,6 +1570,39 @@
         div.textContent = text == null ? '' : String(text);
         return div.innerHTML;
     }
+
+    /** Map PDF standard font names to CSS font-family + weight. */
+    function pdfFontToCss(pdfFont) {
+        var f = String(pdfFont || 'Helvetica');
+        if (f === 'Helvetica-Bold') return { family: 'Helvetica, Arial, sans-serif', weight: 'bold' };
+        if (f === 'Courier') return { family: '"Courier New", Courier, monospace', weight: 'normal' };
+        if (f === 'Courier-Bold') return { family: '"Courier New", Courier, monospace', weight: 'bold' };
+        if (f === 'Times-Roman') return { family: '"Times New Roman", Times, serif', weight: 'normal' };
+        if (f === 'Times-Bold') return { family: '"Times New Roman", Times, serif', weight: 'bold' };
+        return { family: 'Helvetica, Arial, sans-serif', weight: 'normal' };
+    }
+
+    var CHECKBOX_PREVIEW_GLYPHS = {
+        cross: '\u2717',    // ✗
+        check: '\u2713',    // ✓
+        circle: '\u25CF',   // ●
+        star: '\u2605',     // ★
+        diamond: '\u25C6',  // ◆
+        square: '\u25A0'    // ■
+    };
+
+    var _signatureDataUrl = null;
+    (function preloadSignature() {
+        var img = new Image();
+        img.onload = function () {
+            var canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            _signatureDataUrl = canvas.toDataURL('image/png');
+        };
+        img.src = '/packagestatic/docassemble.ALDashboard/placeholder_signature.png';
+    })();
 
     function setDirty(value) {
         state.hasUnsavedChanges = !!value;
@@ -1990,6 +2064,13 @@
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
         repairBtn.disabled = !state.pdfBytes;
         relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
+        previewBtn.disabled = !state.pdfBytes || totalCount === 0;
+        if (!state.pdfBytes || totalCount === 0) {
+            state.previewMode = false;
+            previewBtn.classList.remove('active');
+            document.getElementById('preview-icon-open').classList.remove('hidden');
+            document.getElementById('preview-icon-closed').classList.add('hidden');
+        }
     }
 
     function getDisplayedFields() {
@@ -3655,6 +3736,47 @@
                 '<span class="field-chip-name">' + escapeHtml(field.name) + '</span>';
             fieldEl.appendChild(label);
 
+            // --- Preview mode content ---
+            if (state.previewMode) {
+                fieldEl.classList.add('previewing');
+                var previewDiv = document.createElement('div');
+                previewDiv.className = 'field-preview-content';
+
+                if (field.type === 'checkbox' || field.type === 'radio') {
+                    previewDiv.classList.add('preview-checkbox');
+                    var glyph = CHECKBOX_PREVIEW_GLYPHS[field.checkboxStyle || getSessionDefault('checkboxStyle')] || '\u2713';
+                    previewDiv.textContent = glyph;
+                    // Scale the glyph to fit the box
+                    var overlayEl = getOverlayForPage(field.pageIndex);
+                    var boxPx = overlayEl ? Math.min(field.width * overlayEl.offsetWidth, field.height * overlayEl.offsetHeight) : 20;
+                    previewDiv.style.fontSize = Math.max(8, boxPx * 0.8) + 'px';
+                    previewDiv.style.lineHeight = '1';
+                    previewDiv.style.color = '#000';
+                } else if (field.type === 'signature') {
+                    previewDiv.classList.add('preview-signature');
+                    if (_signatureDataUrl) {
+                        var sigImg = document.createElement('img');
+                        sigImg.src = _signatureDataUrl;
+                        sigImg.alt = 'Signature preview';
+                        previewDiv.appendChild(sigImg);
+                    }
+                } else {
+                    // text, multiline, dropdown, listbox — render the field name
+                    var css = pdfFontToCss(field.font || getSessionDefault('font'));
+                    var ptSize = field.fontSize || getSessionDefault('fontSize') || 10;
+                    // 1 PDF pt = renderScale CSS px on the scaled canvas overlay
+                    var pxSize = ptSize * state.renderScale;
+                    previewDiv.style.fontFamily = css.family;
+                    previewDiv.style.fontWeight = css.weight;
+                    previewDiv.style.fontSize = pxSize + 'px';
+                    previewDiv.style.lineHeight = '1.15';
+                    previewDiv.style.color = '#000';
+                    previewDiv.style.whiteSpace = field.type === 'multiline' ? 'pre-wrap' : 'nowrap';
+                    previewDiv.textContent = field.name || '';
+                }
+                fieldEl.appendChild(previewDiv);
+            }
+
             if (field.id === state.selectedFieldId) {
                 ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach(function (handleName) {
                     const handle = document.createElement('div');
@@ -4626,6 +4748,14 @@
         document.getElementById('util-copy-source-active').disabled = !hasPdf;
         document.getElementById('util-copy-dest-active').disabled = !hasPdf;
     }
+
+    previewBtn.addEventListener('click', function () {
+        state.previewMode = !state.previewMode;
+        previewBtn.classList.toggle('active', state.previewMode);
+        document.getElementById('preview-icon-open').classList.toggle('hidden', state.previewMode);
+        document.getElementById('preview-icon-closed').classList.toggle('hidden', !state.previewMode);
+        renderFieldsOnPages();
+    });
 
     utilitiesBtn.addEventListener('click', function () {
         utilCopySourceBytes = null;

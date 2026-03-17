@@ -12,7 +12,7 @@
     <style>
         .hidden { display: none !important; }
         .pdf-labeler-body { background: #e8edf5; min-height: 100vh; color: #132238; }
-        .pdf-labeler-app { min-height: 100vh; }
+        .pdf-labeler-app { height: 100vh; }
         .pdf-main { min-height: 0; }
         .pdf-container { background: linear-gradient(180deg, #dae3ef 0%, #d6deea 100%); }
         .pdf-fields-panel {
@@ -2165,7 +2165,6 @@
             scrollSelectedFieldIntoView(state.selectedFieldId);
             return;
         }
-        scheduleFieldsListSync(true);
     }
 
     function updateToolHint() {
@@ -4215,7 +4214,6 @@
         updateOverlayCursorState();
         renderFieldsOnPages();
         currentVisiblePageIndex = getCurrentVisiblePageIndex();
-        scheduleFieldsListSync(true);
     }
 
     async function loadPdf(file) {
@@ -4757,7 +4755,6 @@
     });
     pdfContainer.addEventListener('scroll', function () {
         currentVisiblePageIndex = getCurrentVisiblePageIndex();
-        scheduleFieldsListSync(false);
         positionQuickFieldEditor();
     });
     fieldsList.addEventListener('scroll', function () {
@@ -4778,7 +4775,6 @@
     });
     window.addEventListener('resize', function () {
         currentVisiblePageIndex = getCurrentVisiblePageIndex();
-        scheduleFieldsListSync(true);
         positionQuickFieldEditor();
     });
 

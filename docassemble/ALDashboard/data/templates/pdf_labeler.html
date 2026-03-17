@@ -15,12 +15,23 @@
         .pdf-labeler-app { min-height: 100vh; }
         .pdf-main { min-height: 0; }
         .pdf-container { background: linear-gradient(180deg, #dae3ef 0%, #d6deea 100%); }
-        .pdf-fields-panel { width: 24rem; min-width: 24rem; border-color: var(--bs-border-color) !important; }
+        .pdf-fields-panel {
+            width: 24rem;
+            min-width: 24rem;
+            border-color: var(--bs-border-color) !important;
+            overscroll-behavior: contain;
+        }
         .toolbar-divider { width: 1px; height: 1.5rem; background: rgba(255, 255, 255, 0.25); margin: 0 0.5rem; }
         .icon-16 { width: 1rem; height: 1rem; }
         .icon-48 { width: 3rem; height: 3rem; color: #8ca0bc; }
         .icon-96 { width: 6rem; height: 6rem; color: #b7c3d6; }
         .pdf-pages-wrap { max-width: 62rem; }
+        #fields-list {
+            overscroll-behavior: contain;
+            overflow-anchor: none;
+            scroll-behavior: smooth;
+            scrollbar-gutter: stable;
+        }
         .model-input { width: 100%; }
         .model-suggestions {
             position: relative;
@@ -1986,6 +1997,41 @@
         return bestPageIndex;
     }
 
+    function scrollFieldsListToElement(element, options) {
+        if (!element || fieldsList.classList.contains('hidden')) return;
+        const settings = options || {};
+        const behavior = settings.behavior || 'smooth';
+        const mode = settings.mode || 'nearest';
+        const listRect = fieldsList.getBoundingClientRect();
+        const itemRect = element.getBoundingClientRect();
+        const topWithinList = itemRect.top - listRect.top + fieldsList.scrollTop;
+        const bottomWithinList = itemRect.bottom - listRect.top + fieldsList.scrollTop;
+        let targetTop = fieldsList.scrollTop;
+
+        if (mode === 'start') {
+            targetTop = topWithinList;
+        } else if (mode === 'center') {
+            targetTop = topWithinList - ((fieldsList.clientHeight - itemRect.height) / 2);
+        } else {
+            const visibleTop = fieldsList.scrollTop;
+            const visibleBottom = visibleTop + fieldsList.clientHeight;
+            if (topWithinList < visibleTop) {
+                targetTop = topWithinList;
+            } else if (bottomWithinList > visibleBottom) {
+                targetTop = bottomWithinList - fieldsList.clientHeight;
+            }
+        }
+
+        fieldsListProgrammaticScroll = true;
+        fieldsList.scrollTo({
+            top: Math.max(0, targetTop),
+            behavior: behavior,
+        });
+        window.setTimeout(function () {
+            fieldsListProgrammaticScroll = false;
+        }, behavior === 'auto' ? 0 : 220);
+    }
+
     function syncFieldsListToVisiblePage(force) {
         if (state.fieldSort !== 'position') return;
         if (state.pageCount <= 1 || fieldsList.classList.contains('hidden')) return;
@@ -1994,11 +2040,10 @@
         currentVisiblePageIndex = pageIndex;
         const group = fieldsList.querySelector('.field-list-page[data-page-index="' + pageIndex + '"]');
         if (!group) return;
-        fieldsListProgrammaticScroll = true;
-        group.scrollIntoView({ block: 'start', behavior: force ? 'auto' : 'smooth' });
-        window.setTimeout(function () {
-            fieldsListProgrammaticScroll = false;
-        }, force ? 0 : 220);
+        scrollFieldsListToElement(group, {
+            mode: 'start',
+            behavior: force ? 'auto' : 'smooth'
+        });
     }
 
     function scheduleFieldsListSync(force) {
@@ -2015,11 +2060,7 @@
         if (!fieldId || fieldsList.classList.contains('hidden')) return;
         const item = fieldsList.querySelector('.field-list-item[data-field-id="' + fieldId + '"]');
         if (!item) return;
-        fieldsListProgrammaticScroll = true;
-        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        window.setTimeout(function () {
-            fieldsListProgrammaticScroll = false;
-        }, 220);
+        scrollFieldsListToElement(item, { mode: 'nearest', behavior: 'smooth' });
     }
 
     function hideToasts() {
@@ -3649,7 +3690,7 @@
                 if (event.target.closest('input, select, textarea, button')) {
                     return;
                 }
-                selectField(field.id, { focusNameInput: false, scrollIntoView: false });
+                selectField(field.id, { focusNameInput: false, scrollIntoView: true });
             });
             item.querySelectorAll('input, select, textarea').forEach(function (control) {
                 control.addEventListener('click', function (event) {
@@ -3768,11 +3809,40 @@
                     var pxSize = ptSize * state.renderScale;
                     previewDiv.style.fontFamily = css.family;
                     previewDiv.style.fontWeight = css.weight;
-                    previewDiv.style.fontSize = pxSize + 'px';
                     previewDiv.style.lineHeight = '1.15';
                     previewDiv.style.color = '#000';
                     previewDiv.style.whiteSpace = field.type === 'multiline' ? 'pre-wrap' : 'nowrap';
                     previewDiv.textContent = field.name || '';
+
+                    // Apply auto-sizing: adjust font to fit field dimensions
+                    if (field.autoSize && field.name && field.type === 'text') {
+                        var pageSize = state.pageSizes[field.pageIndex] || { width: 612, height: 792 };
+                        var fieldWidthPx = field.width * (pageSize.width * state.renderScale);
+                        var fieldHeightPx = field.height * (pageSize.height * state.renderScale);
+                        
+                        // Max font size based on field height (single-line text, ~15% padding)
+                        var maxPxSize = fieldHeightPx * 0.85 / 1.15;  // Account for line-height
+                        
+                        // Start with the smaller of declared size or height-based max
+                        pxSize = Math.min(pxSize, maxPxSize);
+                        
+                        // Now check if text width fits; scale down if needed
+                        var fontStr = css.weight + ' ' + Math.round(pxSize) + 'px ' + css.family;
+                        var canvas = document.createElement('canvas');
+                        var ctx = canvas.getContext('2d');
+                        if (ctx) {
+                            ctx.font = fontStr;
+                            var textWidth = ctx.measureText(previewDiv.textContent).width;
+                            var padding = 4;  // Left/right padding in PDF viewer
+                            
+                            // Scale down if text exceeds field width
+                            if (textWidth + padding > fieldWidthPx && textWidth > 0) {
+                                pxSize = pxSize * (fieldWidthPx - padding) / textWidth;
+                            }
+                        }
+                    }
+
+                    previewDiv.style.fontSize = pxSize + 'px';
                 }
                 fieldEl.appendChild(previewDiv);
             }
@@ -3805,7 +3875,13 @@
                     return;
                 }
                 event.stopPropagation();
-                selectField(field.id, { focusNameInput: true, scrollIntoView: false });
+                // First click selects (handles only); second click on
+                // already-selected field opens the quick editor.
+                if (state.selectedFieldId === field.id) {
+                    selectField(field.id, { focusNameInput: true, scrollIntoView: false });
+                } else {
+                    selectField(field.id, { focusNameInput: false, scrollIntoView: false });
+                }
             });
 
             fieldEl.addEventListener('dblclick', function (event) {
@@ -5052,6 +5128,15 @@
     quickFieldCloseBtn.addEventListener('click', function () {
         hideQuickFieldEditor();
     });
+
+    // Close quick editor when clicking outside it, but keep the field selected
+    document.addEventListener('mousedown', function (event) {
+        if (state.quickEditFieldId &&
+            !quickFieldEditor.contains(event.target) &&
+            !event.target.closest('.field-box[data-field-id="' + state.quickEditFieldId + '"]')) {
+            hideQuickFieldEditor();
+        }
+    }, true);
     quickFieldDeleteBtn.addEventListener('click', function () {
         const field = getQuickEditField();
         if (!field) return;

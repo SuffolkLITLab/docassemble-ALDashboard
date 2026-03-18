@@ -10,7 +10,6 @@ Both tools use AI to suggest labels and follow AssemblyLine conventions.
 
 import base64
 import copy
-import inspect
 import io
 import json
 import os
@@ -140,7 +139,7 @@ def _apply_checkbox_export_values(pdf_path: str, value_by_field_name: Dict[str, 
                     _rename_checkbox_export_state(named_parent, export_value, pikepdf)
                     if named_parent is not annot:
                         _rename_checkbox_export_state(annot, export_value, pikepdf)
-                except Exception:
+                except Exception:  # nosec B112
                     continue
         pdf.save(pdf_path)
 
@@ -225,7 +224,7 @@ def _labeler_session_identity() -> Dict[str, Any]:
                 "email": email_value,
                 "user_id": getattr(current_user, "id", None),
             }
-    except Exception:
+    except Exception:  # nosec B110
         pass
     return {"is_authenticated": False, "email": None, "user_id": None}
 
@@ -538,7 +537,7 @@ def _get_static_content(filename: str) -> str:
         with importlib.resources.as_file(ref) as path:
             if path.exists():
                 return path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # nosec B110
         pass
     return ""
 
@@ -552,7 +551,7 @@ def _get_template_content(filename: str) -> str:
         with importlib.resources.as_file(ref) as path:
             if path.exists():
                 return path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # nosec B110
         pass
     return ""
 
@@ -1046,121 +1045,11 @@ def labeler_auth_status():
     )
 
 
-@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/playground-projects", methods=["GET"])
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/installed-packages", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_playground_projects():
-    request_id = str(uuid.uuid4())
-    if not _labeler_playground_auth_check():
-        return _playground_auth_fail(request_id)
-    try:
-        return jsonify(
-            {
-                "success": True,
-                "request_id": request_id,
-                "data": {"projects": _list_playground_projects()},
-            }
-        )
-    except DashboardAPIValidationError as exc:
-        return jsonify_with_status(
-            {
-                "success": False,
-                "request_id": request_id,
-                "error": {"type": "validation_error", "message": exc.message},
-            },
-            exc.status_code,
-        )
-    except Exception as exc:
-        log(f"ALDashboard: playground-projects {request_id} server error: {exc!r}", "error")
-        return jsonify_with_status(
-            {
-                "success": False,
-                "request_id": request_id,
-                "error": {"type": "server_error", "message": str(exc)},
-            },
-            500,
-        )
-
-
-@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/playground-files", methods=["GET"])
-@csrf.exempt
-@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_playground_files():
-    request_id = str(uuid.uuid4())
-    if not _labeler_playground_auth_check():
-        return _playground_auth_fail(request_id)
-    try:
-        project = _normalize_playground_project(request.args.get("project"))
-        return jsonify(
-            {
-                "success": True,
-                "request_id": request_id,
-                "data": {"project": project, "files": _list_playground_yaml_files(project)},
-            }
-        )
-    except DashboardAPIValidationError as exc:
-        return jsonify_with_status(
-            {
-                "success": False,
-                "request_id": request_id,
-                "error": {"type": "validation_error", "message": exc.message},
-            },
-            exc.status_code,
-        )
-    except Exception as exc:
-        log(f"ALDashboard: playground-files {request_id} server error: {exc!r}", "error")
-        return jsonify_with_status(
-            {
-                "success": False,
-                "request_id": request_id,
-                "error": {"type": "server_error", "message": str(exc)},
-            },
-            500,
-        )
-
-
-@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/playground-variables", methods=["GET"])
-@csrf.exempt
-@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_playground_variables():
-    request_id = str(uuid.uuid4())
-    if not _labeler_playground_auth_check():
-        return _playground_auth_fail(request_id)
-    try:
-        project = _normalize_playground_project(request.args.get("project"))
-        filename = _normalize_playground_filename(request.args.get("filename"))
-        return jsonify(
-            {
-                "success": True,
-                "request_id": request_id,
-                "data": _get_playground_variable_info(project, filename),
-            }
-        )
-    except DashboardAPIValidationError as exc:
-        return jsonify_with_status(
-            {
-                "success": False,
-                "request_id": request_id,
-                "error": {"type": "validation_error", "message": exc.message},
-            },
-            exc.status_code,
-        )
-    except Exception as exc:
-        log(f"ALDashboard: playground-variables {request_id} server error: {exc!r}", "error")
-        return jsonify_with_status(
-            {
-                "success": False,
-                "request_id": request_id,
-                "error": {"type": "server_error", "message": str(exc)},
-            },
-            500,
-        )
-
-
-@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/installed-packages", methods=["GET"])
-@csrf.exempt
-@cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_installed_packages():
+def labeler_installed_packages():
+    """Shared endpoint: list installed interview packages for both labelers."""
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1193,10 +1082,11 @@ def docx_labeler_installed_packages():
         )
 
 
-@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/installed-files", methods=["GET"])
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/installed-files", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_installed_files():
+def labeler_installed_files():
+    """Shared endpoint: list YAML files in an installed interview package."""
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1233,10 +1123,11 @@ def docx_labeler_installed_files():
         )
 
 
-@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/installed-variables", methods=["GET"])
+@app.route(f"{LABELER_BASE_PATH}/labeler/api/installed-variables", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_installed_variables():
+def labeler_installed_variables():
+    """Shared endpoint: get variables from an installed interview."""
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1793,7 +1684,6 @@ def docx_labeler_apply_labels():
         )
 
 
-# =============================================================================
 # =============================================================================
 # PDF Labeler Routes
 # =============================================================================

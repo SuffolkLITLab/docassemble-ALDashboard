@@ -48,14 +48,14 @@ def _parse_form_with_optional_model(
             signature = inspect.signature(formfyxer_module.parse_form)
             if "openai_base_url" in signature.parameters:
                 parse_kwargs["openai_base_url"] = openai_base_url
-        except Exception:
+        except (TypeError, ValueError):
             pass
     if model:
         try:
             signature = inspect.signature(formfyxer_module.parse_form)
             if "model" in signature.parameters:
                 parse_kwargs["model"] = model
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return formfyxer_module.parse_form(in_file, **parse_kwargs)
 
@@ -83,11 +83,11 @@ def _resolve_formfyxer_credentials(
             get_config("assembly line", {}).get("tools.suffolklitlab.org api key")
         )
         if resolved_tools_token:
-            tools_token_source = "config:assembly line.tools.suffolklitlab.org api key"
+            tools_token_source = "config:assembly line.tools.suffolklitlab.org api key"  # nosec B105
     if not resolved_tools_token:
         resolved_tools_token = os.getenv("TOOLS_TOKEN") or os.getenv("SPOT_TOKEN")
         if resolved_tools_token:
-            tools_token_source = "env"
+            tools_token_source = "env"  # nosec B105
 
     resolved_openai_api = openai_api
     openai_api_source = "request" if resolved_openai_api else None

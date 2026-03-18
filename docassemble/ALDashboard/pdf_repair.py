@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -70,7 +70,7 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
             for annot in annots:  # type: ignore[attr-defined]
                 try:
                     obj = annot.resolve() if hasattr(annot, "resolve") else annot
-                except Exception:
+                except Exception:  # nosec B112
                     continue
                 ft = str(obj.get("/FT", "")) if "/FT" in obj else None
                 field_name = str(obj.get("/T", "")) if "/T" in obj else None
@@ -78,7 +78,7 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
                 if "/Rect" in obj:
                     try:
                         rect = [float(v) for v in obj["/Rect"]]
-                    except Exception:
+                    except (ValueError, TypeError):
                         pass
                 flags = int(obj.get("/Ff", 0)) if "/Ff" in obj else 0
                 da = str(obj.get("/DA", "")) if "/DA" in obj else None
@@ -222,7 +222,7 @@ def ghostscript_reprint(
             f"-sOutputFile={tmp_path}",
             input_pdf_path,
         ]
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             cmd, capture_output=True, text=True, timeout=120
         )
         if result.returncode != 0:
@@ -508,7 +508,7 @@ def ocr_pdf(
             cmd.append("--skip-text")
         cmd += [input_pdf_path, tmp_path]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # nosec B603
         if result.returncode not in (0, 6):
             # ocrmypdf exit code 6 = "no text found" (still produces output)
             stderr = (result.stderr or "").strip()
@@ -695,7 +695,7 @@ def strip_embedded_fonts(
                     continue
                 try:
                     font_obj = font_obj.resolve() if hasattr(font_obj, "resolve") else font_obj  # type: ignore[operator]
-                except Exception:
+                except Exception:  # nosec B112
                     continue
                 descriptor = None
                 if hasattr(font_obj, "get"):
@@ -704,7 +704,7 @@ def strip_embedded_fonts(
                     continue
                 try:
                     descriptor = descriptor.resolve() if hasattr(descriptor, "resolve") else descriptor  # type: ignore[operator]
-                except Exception:
+                except Exception:  # nosec B112
                     continue
                 for key in ("/FontFile", "/FontFile2", "/FontFile3"):
                     if hasattr(descriptor, "get") and descriptor.get(key) is not None:

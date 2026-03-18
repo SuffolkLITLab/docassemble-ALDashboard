@@ -131,7 +131,7 @@ def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
             _validate_upload_size(content)
             try:
                 upload.stream.seek(0)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             files_payload.append(
                 {
@@ -576,7 +576,7 @@ def dashboard_job(job_id: str):
             )
         try:
             workerapp.AsyncResult(id=task_info["id"]).forget()
-        except Exception:
+        except Exception:  # nosec B110
             pass
         r.delete(_job_key(job_id))
         return jsonify(

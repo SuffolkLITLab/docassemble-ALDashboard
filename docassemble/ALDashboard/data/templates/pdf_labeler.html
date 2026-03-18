@@ -765,7 +765,7 @@
                 <div class="mb-3">
                     <label for="ai-model" class="form-label fw-medium">AI model</label>
                     <input id="ai-model" type="text" class="model-input form-control form-control-sm font-monospace" placeholder="Type model name">
-                    <p class="form-text mb-1">Starts with the configured recommendations. Type to search all available models.</p>
+                    <p class="form-text mb-1">Type to filter available models.</p>
                     <div id="ai-model-suggestions" class="model-suggestions hidden"></div>
                 </div>
                 <div class="mb-3">
@@ -2537,7 +2537,7 @@
     async function fetchPdfInstalledPackages() {
         if (!state.auth.isAuthenticated) { state.installed.packages = []; return; }
         try {
-            var response = await fetch(apiUrl('/docx-labeler/api/installed-packages'), { method: 'GET', credentials: 'same-origin' });
+            var response = await fetch(apiUrl('/labeler/api/installed-packages'), { method: 'GET', credentials: 'same-origin' });
             var data = await response.json();
             state.installed.packages = data && data.success && data.data && Array.isArray(data.data.packages) ? data.data.packages : [];
             if (state.installed.packages.indexOf(state.installed.selectedPackage) === -1)
@@ -2552,7 +2552,7 @@
     async function fetchPdfInstalledFiles() {
         if (!state.installed.selectedPackage) { state.installed.files = []; renderPdfInterviewPicker(); return; }
         try {
-            var response = await fetch(apiUrl('/docx-labeler/api/installed-files?package=' + encodeURIComponent(state.installed.selectedPackage)), { method: 'GET', credentials: 'same-origin' });
+            var response = await fetch(apiUrl('/labeler/api/installed-files?package=' + encodeURIComponent(state.installed.selectedPackage)), { method: 'GET', credentials: 'same-origin' });
             var data = await response.json();
             var files = data && data.success && data.data && Array.isArray(data.data.files) ? data.data.files : [];
             state.installed.files = files;
@@ -2569,7 +2569,7 @@
         }
         try {
             var path = state.installed.selectedPackage + ':' + state.installed.selectedFile;
-            var response = await fetch(apiUrl('/docx-labeler/api/installed-variables?interview_path=' + encodeURIComponent(path)), { method: 'GET', credentials: 'same-origin' });
+            var response = await fetch(apiUrl('/labeler/api/installed-variables?interview_path=' + encodeURIComponent(path)), { method: 'GET', credentials: 'same-origin' });
             var data = await response.json();
             state.installed.variables = data && data.success && data.data && Array.isArray(data.data.all_names) ? data.data.all_names : [];
             state.installed.topLevelNames = data && data.success && data.data && Array.isArray(data.data.top_level_names) ? data.data.top_level_names : [];

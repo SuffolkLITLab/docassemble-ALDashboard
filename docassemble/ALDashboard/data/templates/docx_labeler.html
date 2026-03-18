@@ -196,7 +196,7 @@
                     <div class="mb-4">
                         <label class="form-label fw-medium" for="context-text">Add Context (Optional)</label>
                         <textarea id="context-text" rows="5" placeholder="Paste any optional background context that helps explain the template, source material, or domain." class="form-control"></textarea>
-                        <div class="form-text">Leave blank to use the normal prompt. Context is only added to the AI prompt when you provide it.</div>
+                        <div class="form-text">Optional context for the AI prompt.</div>
                     </div>
                     <div class="mb-4">
                         <label class="form-label fw-medium" for="custom-people">Custom People Names</label>
@@ -217,7 +217,7 @@
                             <option value="multi_run" selected>Merge multiple runs (3 fixed runs)</option>
                             <option value="multi_model">Multi-model ensemble</option>
                         </select>
-                        <div class="form-text">Choose one pass, merge three runs of one model, or generate candidates from multiple models and judge them down.</div>
+                        <div class="form-text">Single pass, multiple runs of one model, or multi-model ensemble with judge review.</div>
                     </div>
                     <div id="generator-models-group" class="mb-4 hidden">
                         <label class="form-label fw-medium" for="generator-models">Generator Models</label>
@@ -234,7 +234,7 @@
                         <label class="form-check-label fw-medium" for="defragment-runs">
                             Consolidate fragmented runs before labeling and download
                         </label>
-                        <div class="form-text">Recommended for Word files where placeholder text is split across multiple runs.</div>
+                        <div class="form-text">Recommended when placeholder text is split across multiple runs.</div>
                     </div>
                     <div id="use-playground-vars-group" class="mb-4 hidden">
                         <div class="d-flex align-items-start justify-content-between gap-3">
@@ -244,7 +244,7 @@
                                     Prefer variables from selected interview
                                 </label>
                                 <div id="playground-settings-summary" class="form-text">
-                                    Choose a Playground or installed interview from the sidebar to use its actual variable list in the labeling prompt.
+                                    Select a Playground or installed interview from the sidebar to use its variable list in the prompt.
                                 </div>
                             </div>
                             <button type="button" id="change-interview-source-btn" class="btn btn-sm btn-outline-secondary hidden">
@@ -256,7 +256,7 @@
                     <div>
                         <label class="form-label fw-medium" for="ai-model">AI Model</label>
                         <input id="ai-model" type="text" class="form-control font-monospace small" placeholder="Type to find a model">
-                        <p class="form-text mb-1">Starts with a curated set for your configured provider. Type to filter the full list.</p>
+                        <p class="form-text mb-1">Type to filter available models.</p>
                         <div id="ai-model-suggestions" class="d-flex flex-wrap gap-1"></div>
                     </div>
                 </div>
@@ -781,7 +781,7 @@
             } else {
                 interviewVariableSummary.classList.add('hidden');
                 playgroundSettingsSummary.textContent =
-                    'Choose a Playground or installed interview from the sidebar to use its actual variable list in the labeling prompt.';
+                    'Select a Playground or installed interview from the sidebar to use its variable list in the prompt.';
             }
         }
 
@@ -941,7 +941,7 @@
                 return;
             }
             try {
-                var data = await fetchJsonOrThrow('/al/docx-labeler/api/playground-projects');
+                var data = await fetchJsonOrThrow('/al/labeler/api/playground-projects');
                 state.playground.projects =
                     data && data.success && data.data && Array.isArray(data.data.projects)
                         ? data.data.projects
@@ -971,7 +971,7 @@
             }
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/docx-labeler/api/playground-files?project='
+                    '/al/labeler/api/playground-files?project='
                     + encodeURIComponent(state.playground.selectedProject)
                 );
                 var files =
@@ -1001,7 +1001,7 @@
             }
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/docx-labeler/api/playground-variables?project='
+                    '/al/labeler/api/playground-variables?project='
                     + encodeURIComponent(state.playground.selectedProject)
                     + '&filename=' + encodeURIComponent(state.playground.selectedFile)
                 );
@@ -1032,7 +1032,7 @@
                 return;
             }
             try {
-                var data = await fetchJsonOrThrow('/al/docx-labeler/api/installed-packages');
+                var data = await fetchJsonOrThrow('/al/labeler/api/installed-packages');
                 state.installed.packages =
                     data && data.success && data.data && Array.isArray(data.data.packages)
                         ? data.data.packages
@@ -1063,7 +1063,7 @@
             }
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/docx-labeler/api/installed-files?package='
+                    '/al/labeler/api/installed-files?package='
                     + encodeURIComponent(state.installed.selectedPackage)
                 );
                 var files =
@@ -1094,7 +1094,7 @@
             try {
                 var interviewPath = state.installed.selectedPackage + ':' + state.installed.selectedFile;
                 var data = await fetchJsonOrThrow(
-                    '/al/docx-labeler/api/installed-variables?interview_path='
+                    '/al/labeler/api/installed-variables?interview_path='
                     + encodeURIComponent(interviewPath)
                 );
                 state.installed.variables =

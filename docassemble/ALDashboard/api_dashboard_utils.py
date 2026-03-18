@@ -761,7 +761,10 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
                 _coerce_label_item(item, field_name="results") for item in raw_results
             ]
         else:
-            assert temp_path is not None
+            if temp_path is None:
+                raise DashboardAPIValidationError(
+                    "Either 'results' or a file upload is required."
+                )
             labels = [
                 list(item)
                 for item in get_labeled_docx_runs(

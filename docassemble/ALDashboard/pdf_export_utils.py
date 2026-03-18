@@ -122,7 +122,7 @@ def build_pdf_export_fields_per_page(
         ):
             try:
                 field_configs["fillColor"] = color_parser(background_color.strip())
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
         if field_type in (field_type_enum.CHOICE, field_type_enum.LIST_BOX):

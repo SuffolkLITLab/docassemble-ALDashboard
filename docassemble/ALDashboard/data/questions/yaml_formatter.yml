@@ -1,0 +1,154 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: YAML Formatter
+  temporary session: True
+  required privileges:
+    - admin
+    - developer
+---
+modules:
+  - .interview_linter
+  - .yaml_formatter
+---
+objects:
+  - formatted_yaml_download: DAFile
+---
+mandatory: True
+code: |
+  format_mode
+  if format_mode == "upload":
+    uploaded_yaml_file
+    upload_result
+  elif format_mode == "playground":
+    selected_playground_project
+    selected_playground_files
+    playground_result
+  show_results
+---
+question: |
+  Reformat YAML with `dayamlformatter-fmt`
+subquestion: |
+  Choose whether to upload a YAML file and download the reformatted result, or rewrite selected files in a playground project in place.
+
+  This tool only rewrites selected files in your playground. It does not rewrite installed package files.
+fields:
+  - Operation: format_mode
+    datatype: radio
+    choices:
+      - Upload YAML and download reformatted YAML: upload
+      - Rewrite YAML files in a playground project in place: playground
+  - Max line length: line_length
+    datatype: integer
+    default: 88
+    min: 1
+    help: |
+      Passed to DAYamlChecker's formatter (`black_line_length`).
+  - Convert indent 4 to 2?: convert_indent_4_to_2
+    datatype: yesno
+    default: True
+    help: |
+      If enabled, code blocks indented with 4 spaces are converted to 2-space indentation.
+---
+question: |
+  Upload YAML file
+fields:
+  - YAML file: uploaded_yaml_file
+    datatype: file
+---
+question: |
+  Select playground project
+fields:
+  - Playground project: selected_playground_project
+    code: |
+      list_playground_projects()
+---
+question: |
+  Select playground files to reformat
+subquestion: |
+  Only selected files will be rewritten.
+fields:
+  - Files: selected_playground_files
+    datatype: checkboxes
+    required: False
+    code: |
+      [
+        {item["token"]: item["label"]}
+        for item in list_playground_yaml_files(selected_playground_project)
+      ]
+---
+code: |
+  uploaded_yaml_path = uploaded_yaml_file.path()
+  uploaded_yaml_name = str(getattr(uploaded_yaml_file, "filename", "") or "uploaded.yml")
+  upload_result = format_uploaded_yaml_file(
+    uploaded_yaml_path,
+    uploaded_yaml_name,
+    line_length=line_length,
+    convert_indent_4_to_2=convert_indent_4_to_2,
+  )
+  del uploaded_yaml_path
+  del uploaded_yaml_name
+  if not upload_result.get("error"):
+    formatted_yaml_download.initialize(
+      filename=str(upload_result.get("output_filename") or "formatted.yml")
+    )
+    formatted_yaml_download.write(str(upload_result.get("formatted_yaml") or ""))
+    formatted_yaml_download.commit()
+    upload_result.pop("formatted_yaml", None)
+---
+code: |
+  playground_result = rewrite_playground_yaml_files(
+    selected_playground_files.true_values(),
+    selected_playground_project=selected_playground_project,
+    line_length=line_length,
+    convert_indent_4_to_2=convert_indent_4_to_2,
+  )
+---
+event: show_results
+question: |
+  YAML formatter results
+subquestion: |
+  % if format_mode == "upload":
+  % if upload_result["error"]:
+  Could not format `${ upload_result["input_filename"] }`.
+
+  ```
+  ${ upload_result["error"] }
+  ```
+  % else:
+  Input file: `${ upload_result["input_filename"] }`
+
+  Formatter changed file content: **${ "Yes" if upload_result["changed"] else "No" }**
+  Reformatted rows: **${ upload_result["reformatted_rows"] }**
+
+  **[Download reformatted YAML](${ formatted_yaml_download.url_for(attachment=True) })**
+  % endif
+  % else:
+  Playground project: `${ selected_playground_project }`
+
+  Selected files: **${ playground_result["selected_count"] }**  
+  Processed files: **${ playground_result["processed_count"] }**  
+  Rewritten files: **${ playground_result["changed_count"] }**  
+  Reformatted rows: **${ playground_result["reformatted_rows_total"] }**  
+  Errors: **${ playground_result["error_count"] }**
+
+  % if playground_result["selected_count"] == 0:
+  No files were selected.
+  % endif
+
+  % if playground_result["items"]:
+  #### File results
+  % for item in playground_result["items"]:
+  % if item["error"]:
+  - `${ item["name"] }`: error  
+    `${ item["error"] }`
+  % elif item["changed"]:
+  - `${ item["name"] }`: rewritten (${ item["reformatted_rows"] } rows)
+  % else:
+  - `${ item["name"] }`: no changes needed (${ item["reformatted_rows"] } rows)
+  % endif
+  % endfor
+  % endif
+  % endif

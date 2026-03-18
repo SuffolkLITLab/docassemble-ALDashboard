@@ -409,7 +409,7 @@ def translation_file(
                                 "question_id": "Unknown" + str(indexno),
                                 "index_num": transunit.attrib.get("id", str(indexno)),
                                 "hash": hashlib.md5(
-                                    orig_text.encode("utf-8")
+                                    orig_text.encode("utf-8"), usedforsecurity=False
                                 ).hexdigest(),
                                 "orig_lang": source_lang,
                                 "tr_lang": target_lang,
@@ -467,7 +467,7 @@ def translation_file(
                                     "question_id": question_id,
                                     "index_num": segment.attrib.get("id", str(indexno)),
                                     "hash": hashlib.md5(
-                                        orig_text.encode("utf-8")
+                                        orig_text.encode("utf-8"), usedforsecurity=False
                                     ).hexdigest(),
                                     "orig_lang": source_lang,
                                     "tr_lang": target_lang,
@@ -662,7 +662,7 @@ def translation_file(
                 worksheet.write_string(row, 1, question_id, text_format)
                 worksheet.write_number(row, 2, indexno, numb)
                 worksheet.write_string(
-                    row, 3, hashlib.md5(item.encode("utf-8")).hexdigest(), text_format
+                    row, 3, hashlib.md5(item.encode("utf-8"),usedforsecurity=False).hexdigest(), text_format
                 )
                 worksheet.write_string(row, 4, language, text_format)
                 worksheet.write_string(row, 5, tr_lang, text_format)

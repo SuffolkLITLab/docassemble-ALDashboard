@@ -53,5 +53,8 @@ setup(name='docassemble.ALDashboard',
       url='https://github.com/SuffolkLITLab/docassemble-ALDashboard',
       packages=find_namespace_packages(),
       zip_safe=False,
+      install_requires=[
+          'xmlschema>=4.3.1',
+      ],
       package_data=find_package_data(where='docassemble/ALDashboard/', package='docassemble.ALDashboard'),
      )

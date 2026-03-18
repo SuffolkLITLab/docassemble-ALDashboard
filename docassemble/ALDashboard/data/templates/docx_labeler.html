@@ -25,6 +25,12 @@
                 </div>
                 <div class="d-flex align-items-center gap-3">
                     <div id="auth-controls" class="position-relative"></div>
+                    <button id="utilities-btn" class="btn btn-outline-light btn-sm">
+                        Utilities
+                    </button>
+                    <button id="repair-btn" class="btn btn-outline-light btn-sm">
+                        Repair
+                    </button>
                     <button id="settings-btn" class="btn btn-outline-light btn-sm">
                         <svg class="me-1" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
@@ -40,10 +46,6 @@
         <main class="dl-main">
             <!-- Sidebar -->
             <aside id="sidebar-panel" class="dl-sidebar">
-                <!-- Upload Section -->
-                        <button id="tab-manual" class="dl-tab hidden">
-                            Manual Labels <span id="manual-count" class="dl-count-badge dl-count-badge-warning">0</span>
-                        </button>
                 <div class="dl-upload-section">
                     <label class="d-block">
                         <span class="visually-hidden">Choose DOCX file</span>
@@ -55,13 +57,6 @@
                     </button>
                     <p id="file-name" class="mt-2 small text-muted hidden"></p>
                     <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
-                    <!-- Manual Labels Panel -->
-                    <div id="manual-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
-                        <div class="dl-panel-toolbar d-flex align-items-center justify-content-between gap-2">
-                            <div class="small text-muted">Labels added from preview selections</div>
-                        </div>
-                        <div id="manual-labels-list" class="flex-fill overflow-auto p-3"></div>
-                    </div>
                     <div id="interview-picker-sidebar-host" class="hidden mt-3">
                         <div id="interview-picker-panel">
                             <div class="small fw-medium mb-2">Interview variables source</div>
@@ -127,6 +122,9 @@
                         <button id="tab-existing" class="dl-tab tab-active">
                             Existing Labels <span id="existing-count" class="dl-count-badge dl-count-badge-primary">0</span>
                         </button>
+                        <button id="tab-manual" class="dl-tab hidden">
+                            Manual Labels <span id="manual-count" class="dl-count-badge dl-count-badge-warning">0</span>
+                        </button>
                         <button id="tab-suggestions" class="dl-tab">
                             AI Suggestions <span id="suggestions-count" class="dl-count-badge dl-count-badge-warning">0</span>
                         </button>
@@ -139,6 +137,14 @@
                             <button id="ai-relabel-btn" class="btn btn-sm btn-primary">AI Relabel All</button>
                         </div>
                         <div id="existing-labels-tree" class="flex-fill overflow-auto p-3"></div>
+                    </div>
+
+                    <!-- Manual Labels Panel -->
+                    <div id="manual-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center justify-content-between gap-2">
+                            <div class="small text-muted">Labels added from preview selections</div>
+                        </div>
+                        <div id="manual-labels-list" class="flex-fill overflow-auto p-3"></div>
                     </div>
 
                     <!-- Suggestions Panel -->
@@ -398,6 +404,74 @@
             </div>
         </div>
 
+        <!-- Utilities Modal -->
+        <div id="utilities-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-lg">
+                <div class="dl-modal-header">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Utilities</h2>
+                        <p class="text-muted small mb-0">Run DOCX utilities on the active file or a separate upload.</p>
+                    </div>
+                    <button id="utilities-close" class="btn btn-sm btn-light rounded">Close</button>
+                </div>
+                <div class="dl-modal-body" style="max-height:65vh;overflow-y:auto">
+                    <div class="mb-3">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="utility-source" id="utility-source-active" checked>
+                            <label class="form-check-label" for="utility-source-active">Use active DOCX</label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="utility-source" id="utility-source-upload">
+                            <label class="form-check-label" for="utility-source-upload">Use a separate DOCX upload</label>
+                        </div>
+                        <input type="file" id="utility-file-input" accept=".docx" class="form-control form-control-sm hidden">
+                        <div id="utility-source-status" class="form-text">The active DOCX will be used when available.</div>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="validate">Validate</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="schema-validate">Validate with OOXML Schema</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="defragment-runs">Merge / Defragment Runs</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="cleanup-docx">Cleanup DOCX</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="highlight-jinja2">Highlight Jinja2</button>
+                    </div>
+                    <div id="utilities-result" class="mt-3 small"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Repair Modal -->
+        <div id="repair-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-lg">
+                <div class="dl-modal-header">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Repair</h2>
+                        <p class="text-muted small mb-0">Try increasingly aggressive rescue steps for broken DOCX files.</p>
+                    </div>
+                    <button id="repair-close" class="btn btn-sm btn-light rounded">Close</button>
+                </div>
+                <div class="dl-modal-body" style="max-height:65vh;overflow-y:auto">
+                    <div class="mb-3">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="repair-source" id="repair-source-active" checked>
+                            <label class="form-check-label" for="repair-source-active">Use active DOCX</label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="repair-source" id="repair-source-upload">
+                            <label class="form-check-label" for="repair-source-upload">Use a separate DOCX upload</label>
+                        </div>
+                        <input type="file" id="repair-file-input" accept=".docx" class="form-control form-control-sm hidden">
+                        <div id="repair-source-status" class="form-text">The active DOCX will be used when available.</div>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-outline-danger repair-action-btn" data-action="soffice-roundtrip">Roundtrip with LibreOffice</button>
+                        <button class="btn btn-outline-danger repair-action-btn" data-action="repair-xml">Conservative XML Repair</button>
+                        <button class="btn btn-outline-danger repair-action-btn" data-action="rescue-shell">Rebuild DOCX Shell from Extracted XML</button>
+                    </div>
+                    <div id="repair-result" class="mt-3 small"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Selection Popover (appears when text is highlighted in preview) -->
         <div id="sel-popover" class="dl-sel-popover hidden">
             <div class="dl-sel-popover-header">
@@ -641,10 +715,24 @@
         const usePlaygroundVarsGroup = document.getElementById('use-playground-vars-group');
         const playgroundSettingsSummary = document.getElementById('playground-settings-summary');
         const authControls = document.getElementById('auth-controls');
+        const utilitiesBtn = document.getElementById('utilities-btn');
+        const repairBtn = document.getElementById('repair-btn');
         const aiAuthNotice = document.getElementById('ai-auth-notice');
         const suggestionsValidation = document.getElementById('suggestions-validation');
         const toggleLowConfidence = document.getElementById('toggle-low-confidence');
         const lowConfidenceSummary = document.getElementById('low-confidence-summary');
+        const utilitiesModal = document.getElementById('utilities-modal');
+        const repairModal = document.getElementById('repair-modal');
+        const utilityFileInput = document.getElementById('utility-file-input');
+        const repairFileInput = document.getElementById('repair-file-input');
+        const utilitySourceActive = document.getElementById('utility-source-active');
+        const utilitySourceUpload = document.getElementById('utility-source-upload');
+        const repairSourceActive = document.getElementById('repair-source-active');
+        const repairSourceUpload = document.getElementById('repair-source-upload');
+        const utilitiesResult = document.getElementById('utilities-result');
+        const repairResult = document.getElementById('repair-result');
+        const utilitySourceStatus = document.getElementById('utility-source-status');
+        const repairSourceStatus = document.getElementById('repair-source-status');
 
         // ================================================================
         // Helpers
@@ -1133,6 +1221,122 @@
                 throw new Error((data && data.error && data.error.message) ? data.error.message : ('Request failed (' + response.status + ').'));
             }
             return data;
+        }
+
+        function updateModalSourceStatus() {
+            var hasActiveFile = !!state.file;
+            utilityFileInput.classList.toggle('hidden', utilitySourceActive.checked);
+            repairFileInput.classList.toggle('hidden', repairSourceActive.checked);
+            utilitySourceStatus.textContent = utilitySourceActive.checked
+                ? (hasActiveFile ? 'The active DOCX will be used.' : 'No active DOCX is loaded. Choose a separate DOCX upload instead.')
+                : (utilityFileInput.files[0] ? utilityFileInput.files[0].name : 'Choose a DOCX file for utilities.');
+            repairSourceStatus.textContent = repairSourceActive.checked
+                ? (hasActiveFile ? 'The active DOCX will be used.' : 'No active DOCX is loaded. Choose a separate DOCX upload instead.')
+                : (repairFileInput.files[0] ? repairFileInput.files[0].name : 'Choose a DOCX file for repair.');
+        }
+
+        function getModalSourceFile(kind) {
+            if (kind === 'utility') {
+                return utilitySourceActive.checked ? state.file : utilityFileInput.files[0];
+            }
+            return repairSourceActive.checked ? state.file : repairFileInput.files[0];
+        }
+
+        function downloadBase64Docx(docxBase64, filename) {
+            var binaryString = atob(docxBase64);
+            var bytes = new Uint8Array(binaryString.length);
+            for (var i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            var url = URL.createObjectURL(blob);
+            var link = document.createElement('a');
+            link.href = url;
+            link.download = filename || 'output.docx';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        function formatReportAsHtml(report) {
+            if (!report) return '<div class="text-muted">No report returned.</div>';
+            if (typeof report === 'string') return '<div>' + escapeHtml(report) + '</div>';
+            if (Array.isArray(report)) return '<pre class="bg-light rounded p-2 small mb-0">' + escapeHtml(JSON.stringify(report, null, 2)) + '</pre>';
+
+            var html = '';
+            if (Array.isArray(report.errors) && report.errors.length) {
+                html += '<div class="alert alert-danger small"><div class="fw-semibold mb-1">Errors</div>';
+                report.errors.forEach(function(issue) {
+                    html += '<div>' + escapeHtml(issue.message || issue.error || JSON.stringify(issue)) + '</div>';
+                });
+                html += '</div>';
+            }
+            if (Array.isArray(report.warning_details) && report.warning_details.length) {
+                html += '<div class="alert alert-warning small"><div class="fw-semibold mb-1">Warnings</div>';
+                report.warning_details.forEach(function(issue) {
+                    html += '<div>' + escapeHtml(issue.message || issue.code || JSON.stringify(issue)) + '</div>';
+                });
+                html += '</div>';
+            } else if (Array.isArray(report.warnings) && report.warnings.length) {
+                html += '<div class="alert alert-warning small"><div class="fw-semibold mb-1">Warnings</div>';
+                report.warnings.forEach(function(issue) {
+                    html += '<div>' + escapeHtml(typeof issue === 'string' ? issue : (issue.message || issue.code || JSON.stringify(issue))) + '</div>';
+                });
+                html += '</div>';
+            }
+            if (Array.isArray(report.xml_parse_errors) && report.xml_parse_errors.length) {
+                html += '<div class="alert alert-danger small"><div class="fw-semibold mb-1">XML Parse Errors</div>';
+                report.xml_parse_errors.forEach(function(issue) {
+                    html += '<div>' + escapeHtml((issue.part || 'part') + ': ' + (issue.error || 'Parse error')) + '</div>';
+                });
+                html += '</div>';
+            }
+            if (Array.isArray(report.schema_errors) && report.schema_errors.length) {
+                html += '<div class="alert alert-danger small"><div class="fw-semibold mb-1">Schema Errors</div>';
+                report.schema_errors.forEach(function(issue) {
+                    html += '<div>' + escapeHtml((issue.part || 'part') + ': ' + (issue.error || 'Schema error')) + '</div>';
+                });
+                html += '</div>';
+            }
+            if (report.message) {
+                html += '<div class="alert alert-info small">' + escapeHtml(report.message) + '</div>';
+            }
+            html += '<pre class="bg-light rounded p-2 small mb-0">' + escapeHtml(JSON.stringify(report, null, 2)) + '</pre>';
+            return html;
+        }
+
+        async function runDocxOperation(kind, action, progressMessage) {
+            var sourceFile = getModalSourceFile(kind);
+            if (!sourceFile) {
+                showError('Choose a DOCX file or load one into the editor first.');
+                return;
+            }
+
+            var resultContainer = kind === 'utility' ? utilitiesResult : repairResult;
+            var endpoint = kind === 'utility' ? '/al/docx-labeler/api/utilities' : '/al/docx-labeler/api/repair';
+            resultContainer.innerHTML = '<div class="text-muted">Running...</div>';
+            showLoading(progressMessage);
+            try {
+                var formData = new FormData();
+                formData.append('file', sourceFile);
+                formData.append('action', action);
+                var response = await fetch(endpoint, { method: 'POST', body: formData });
+                var payload = await parseApiResponse(response);
+                var data = payload.data || {};
+                var html = formatReportAsHtml(data.report);
+                if (data.docx_base64) {
+                    html += '<div class="mt-3"><button class="btn btn-primary btn-sm" id="' + kind + '-download-result">Download Result</button></div>';
+                }
+                resultContainer.innerHTML = html;
+                if (data.docx_base64) {
+                    document.getElementById(kind + '-download-result').addEventListener('click', function() {
+                        downloadBase64Docx(data.docx_base64, data.filename);
+                    });
+                }
+            } catch (error) {
+                resultContainer.innerHTML = '<div class="alert alert-danger small mb-0">' + escapeHtml(error.message || 'Operation failed.') + '</div>';
+            } finally {
+                hideLoading();
+            }
         }
 
         function sleep(milliseconds) {
@@ -1849,6 +2053,7 @@
         async function processFile(file) {
             if (!file) return;
             state.file = file;
+            updateModalSourceStatus();
             fileName.textContent = file.name;
             fileName.classList.remove('hidden');
             showLoading('Reading document...');
@@ -2624,6 +2829,33 @@
         [openPlaygroundModalEl, savePlaygroundModalEl].forEach(function(modal) {
             modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
         });
+        utilitiesBtn.addEventListener('click', function() {
+            updateModalSourceStatus();
+            utilitiesResult.innerHTML = '';
+            utilitiesModal.classList.remove('hidden');
+        });
+        repairBtn.addEventListener('click', function() {
+            updateModalSourceStatus();
+            repairResult.innerHTML = '';
+            repairModal.classList.remove('hidden');
+        });
+        document.getElementById('utilities-close').addEventListener('click', function() { utilitiesModal.classList.add('hidden'); });
+        document.getElementById('repair-close').addEventListener('click', function() { repairModal.classList.add('hidden'); });
+        [utilitySourceActive, utilitySourceUpload, repairSourceActive, repairSourceUpload].forEach(function(input) {
+            input.addEventListener('change', updateModalSourceStatus);
+        });
+        utilityFileInput.addEventListener('change', updateModalSourceStatus);
+        repairFileInput.addEventListener('change', updateModalSourceStatus);
+        document.querySelectorAll('.utility-action-btn').forEach(function(button) {
+            button.addEventListener('click', function() {
+                runDocxOperation('utility', button.dataset.action, 'Running DOCX utility...');
+            });
+        });
+        document.querySelectorAll('.repair-action-btn').forEach(function(button) {
+            button.addEventListener('click', function() {
+                runDocxOperation('repair', button.dataset.action, 'Running DOCX repair...');
+            });
+        });
         tabExisting.addEventListener('click', function() { switchTab('existing'); });
         tabManual.addEventListener('click', function() { switchTab('manual'); });
         tabSuggestions.addEventListener('click', function() { switchTab('suggestions'); });
@@ -2766,7 +2998,7 @@
             state.settings.showLowConfidence = !!toggleLowConfidence.checked;
             renderSuggestions();
         });
-        [settingsModal, bulkReplaceModal, editLabelModal].forEach(function(modal) {
+        [settingsModal, bulkReplaceModal, editLabelModal, utilitiesModal, repairModal].forEach(function(modal) {
             modal.addEventListener('click', function(e) {
                 if (e.target === modal) {
                     if (modal === settingsModal) {
@@ -2819,6 +3051,7 @@
         fetchModelCatalog();
         fetchAuthStatus();
         renderGenerationMethodFields();
+        updateModalSourceStatus();
     })();
     </script>
 </body>

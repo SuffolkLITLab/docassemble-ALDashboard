@@ -1306,6 +1306,7 @@ def validate_docx_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
     from .validate_docx import (
+        analyze_docx_template_markup,
         detect_docx_automation_features,
         get_jinja_errors,
         strip_docx_problem_controls,
@@ -1336,11 +1337,14 @@ def validate_docx_payload_from_options(
         temp_path = _write_temp_file(filename, content)
         try:
             findings = detect_docx_automation_features(temp_path)
+            markup_warnings = analyze_docx_template_markup(temp_path)
+            warning_details = findings.get("warning_details", []) + markup_warnings
             result: Dict[str, Any] = {
                 "file": filename,
                 "errors": get_jinja_errors(temp_path),
-                "warnings": findings.get("warnings", []),
-                "warning_details": findings.get("warning_details", []),
+                "warnings": findings.get("warnings", [])
+                + [str(item.get("message")) for item in markup_warnings],
+                "warning_details": warning_details,
             }
             if include_stripped_docx_base64 and result["warnings"]:
                 with tempfile.NamedTemporaryFile(

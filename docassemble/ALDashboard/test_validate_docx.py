@@ -2,11 +2,15 @@
 
 import unittest
 from typing import Optional
+import docx
+from unittest.mock import patch
 from .validate_docx import (
+    analyze_docx_template_markup,
     detect_docx_automation_features,
     get_jinja_errors,
     get_jinja_template_validation,
     strip_docx_problem_controls,
+    validate_docx_ooxml_schema,
 )
 from pathlib import Path
 import tempfile
@@ -176,6 +180,126 @@ class TestGetJinjaTemplateValidation(unittest.TestCase):
         self.assertTrue(result["valid"])
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["warnings"][0]["code"], "template_assertion_error")
+
+
+class TestDocxTemplateMarkupWarnings(unittest.TestCase):
+    def test_warns_when_special_docxtpl_tag_is_missing_space(self):
+        document = docx.Document()
+        document.add_paragraph("Hello {{p.user_name }}")
+
+        warnings = analyze_docx_template_markup(document)
+
+        self.assertTrue(
+            any(item["code"] == "docxtpl_special_tag_missing_space" for item in warnings)
+        )
+
+    def test_warns_when_paragraph_tag_shares_paragraph_with_other_text(self):
+        document = docx.Document()
+        document.add_paragraph("Prefix {{p user_name }} suffix")
+
+        warnings = analyze_docx_template_markup(document)
+
+        self.assertTrue(
+            any(
+                item["code"] == "docxtpl_paragraph_tag_with_surrounding_content"
+                for item in warnings
+            )
+        )
+
+    def test_strip_docx_problem_controls_cleans_track_changes_and_hidden_run_properties(self):
+        input_path = TestGetJinjaErrors()._build_docx(
+            {
+                "word/document.xml": """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:ins><w:r><w:t>Inserted</w:t></w:r></w:ins>
+      <w:del><w:r><w:t>Deleted</w:t></w:r></w:del>
+      <w:r><w:rPr><w:vanish/></w:rPr><w:t>Hidden</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>""",
+                "[Content_Types].xml": "<Types/>",
+                "_rels/.rels": "<Relationships/>",
+                "word/_rels/document.xml.rels": "<Relationships/>",
+            }
+        )
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp_out:
+            output_path = temp_out.name
+
+        try:
+            stats = strip_docx_problem_controls(input_path, output_path)
+            xml = TestGetJinjaErrors()._read_part(output_path, "word/document.xml")
+
+            self.assertEqual(stats["unwrapped_track_changes"], 1)
+            self.assertEqual(stats["removed_track_changes"], 1)
+            self.assertEqual(stats["removed_hidden_run_properties"], 1)
+            self.assertIn("Inserted", xml)
+            self.assertNotIn("Deleted", xml)
+            self.assertNotIn("vanish", xml)
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_validate_docx_ooxml_schema_uses_mapped_schemas(self):
+        docx_path = TestGetJinjaErrors()._build_docx(
+            {
+                "[Content_Types].xml": """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>""",
+                "_rels/.rels": """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>""",
+                "word/document.xml": """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body>
+</w:document>""",
+                "word/_rels/document.xml.rels": """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>""",
+            }
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            transitional = os.path.join(temp_dir, "transitional")
+            opc = os.path.join(temp_dir, "opc")
+            strict = os.path.join(temp_dir, "strict")
+            os.makedirs(transitional)
+            os.makedirs(opc)
+            os.makedirs(strict)
+            for path in [
+                os.path.join(transitional, "wml.xsd"),
+                os.path.join(opc, "opc-contentTypes.xsd"),
+                os.path.join(opc, "opc-relationships.xsd"),
+            ]:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("<xsd:schema xmlns:xsd='http://www.w3.org/2001/XMLSchema'/>")
+
+            class _FakeSchema:
+                def validate(self, _xml_bytes):
+                    return None
+
+            with patch(
+                "docassemble.ALDashboard.validate_docx.ensure_ooxml_schema_cache",
+                return_value={
+                    "transitional": transitional,
+                    "strict": strict,
+                    "opc": opc,
+                },
+            ), patch(
+                "docassemble.ALDashboard.validate_docx._load_xmlschema",
+                return_value=_FakeSchema(),
+            ):
+                report = validate_docx_ooxml_schema(docx_path)
+
+        try:
+            self.assertTrue(report["available"])
+            self.assertEqual(report["xml_parse_errors"], [])
+            self.assertEqual(report["schema_errors"], [])
+            self.assertIn("word/document.xml", report["validated_parts"])
+            self.assertIn("[Content_Types].xml", report["validated_parts"])
+            self.assertIn("word/_rels/document.xml.rels", report["validated_parts"])
+        finally:
+            if os.path.exists(docx_path):
+                os.remove(docx_path)
 
 
 if __name__ == "__main__":

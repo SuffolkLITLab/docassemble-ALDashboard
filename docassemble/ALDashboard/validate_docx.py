@@ -1,26 +1,63 @@
 # mypy: disable-error-code="override, assignment"
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from jinja2 import Undefined, DebugUndefined, ChainableUndefined
 from jinja2.utils import missing
 from docxtpl import DocxTemplate
+import docx
 from jinja2 import Environment, BaseLoader
 from jinja2.ext import Extension
 from jinja2.lexer import Token
 import jinja2.exceptions
+import os
+from pathlib import Path
 import re
+import shutil
+import tempfile
 import xml.etree.ElementTree as ET
+from urllib.request import urlopen
 import zipfile
 from lxml import etree as LET
 
+try:
+    import xmlschema
+except ImportError:  # pragma: no cover - dependency may be optional in some envs
+    xmlschema = None  # type: ignore[assignment]
+
 __all__ = [
     "CallAndDebugUndefined",
+    "analyze_docx_template_markup",
     "get_jinja_errors",
     "get_jinja_template_validation",
     "detect_docx_automation_features",
     "strip_docx_problem_controls",
+    "validate_docx_ooxml_schema",
     "Environment",
     "BaseLoader",
 ]
+
+
+_SPECIAL_DOCXTPL_PREFIX_PATTERN = re.compile(r"\{\{\s*(tr|tc|p|r)(?=[^\s\}])")
+_SPECIAL_PARAGRAPH_TAG_PATTERN = re.compile(
+    r"(\{\{\s*p(?=\s).*?\}\}|\{%\s*p(?=\s).*?%\})",
+    re.DOTALL,
+)
+_OOXML_TRANSITIONAL_NS_PREFIX = "http://schemas.openxmlformats.org/"
+_OOXML_STRICT_NS_PREFIX = "http://purl.oclc.org/ooxml/"
+_OOXML_SCHEMA_DOWNLOADS = {
+    "transitional": (
+        "https://ecma-international.org/wp-content/uploads/ECMA-376-4_5th_edition_december_2016.zip",
+        "OfficeOpenXML-XMLSchema-Transitional.zip",
+    ),
+    "strict": (
+        "https://ecma-international.org/wp-content/uploads/ECMA-376-1_5th_edition_december_2016.zip",
+        "OfficeOpenXML-XMLSchema-Strict.zip",
+    ),
+    "opc": (
+        "https://ecma-international.org/wp-content/uploads/ECMA-376-2_5th_edition_december_2021.zip",
+        "OpenPackagingConventions-XMLSchema.zip",
+    ),
+}
+_OOXML_SCHEMA_CACHE: Dict[str, Any] = {}
 
 
 class DAIndexError(IndexError):
@@ -270,6 +307,344 @@ def get_jinja_errors(the_file: str) -> Optional[str]:
         return errmess
     except jinja2.exceptions.TemplateError as the_error:
         return str(the_error)
+
+
+def _collect_paragraphs_from_table(table: Any, collected: List[Any], seen: Set[int]) -> None:
+    for row in getattr(table, "rows", []):
+        for cell in getattr(row, "cells", []):
+            _collect_paragraphs_from_container(cell, collected, seen)
+
+
+def _collect_paragraphs_from_container(
+    container: Any, collected: List[Any], seen: Set[int]
+) -> None:
+    for paragraph in getattr(container, "paragraphs", []):
+        paragraph_element_id = id(getattr(paragraph, "_p", paragraph))
+        if paragraph_element_id in seen:
+            continue
+        seen.add(paragraph_element_id)
+        collected.append(paragraph)
+
+    for table in getattr(container, "tables", []):
+        _collect_paragraphs_from_table(table, collected, seen)
+
+
+def _collect_docx_paragraphs(document: Any) -> List[Any]:
+    collected: List[Any] = []
+    seen: Set[int] = set()
+    _collect_paragraphs_from_container(document, collected, seen)
+    for section in getattr(document, "sections", []):
+        for part in (
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        ):
+            _collect_paragraphs_from_container(part, collected, seen)
+    return collected
+
+
+def _build_markup_warning(
+    *,
+    code: str,
+    message: str,
+    paragraph: int,
+    paragraph_text: str,
+    match_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    warning: Dict[str, Any] = {
+        "code": code,
+        "severity": "low",
+        "message": message,
+        "paragraph": paragraph,
+        "paragraph_text": paragraph_text,
+    }
+    if match_text:
+        warning["match_text"] = match_text
+    return warning
+
+
+def analyze_docx_template_markup(
+    document: Union[docx.document.Document, str],
+) -> List[Dict[str, Any]]:
+    """Warn about likely-accidental docxtpl paragraph-tag usage patterns."""
+    if isinstance(document, str):
+        document = docx.Document(document)
+
+    warnings: List[Dict[str, Any]] = []
+    for paragraph_number, paragraph in enumerate(_collect_docx_paragraphs(document)):
+        paragraph_text = paragraph.text or ""
+        for match in _SPECIAL_DOCXTPL_PREFIX_PATTERN.finditer(paragraph_text):
+            prefix = match.group(1)
+            warnings.append(
+                _build_markup_warning(
+                    code="docxtpl_special_tag_missing_space",
+                    message=(
+                        f"docxtpl special tag '{{{{ {prefix} ... }}}}' should include a space after '{prefix}'. "
+                        "Without that space, python-docx-template may treat it as a special structural tag by accident."
+                    ),
+                    paragraph=paragraph_number,
+                    paragraph_text=paragraph_text,
+                    match_text=match.group(0),
+                )
+            )
+
+        paragraph_tags = _SPECIAL_PARAGRAPH_TAG_PATTERN.findall(paragraph_text)
+        if paragraph_tags:
+            remaining_text = paragraph_text
+            for tag in paragraph_tags:
+                remaining_text = remaining_text.replace(tag, " ")
+            if remaining_text.strip():
+                warnings.append(
+                    _build_markup_warning(
+                        code="docxtpl_paragraph_tag_with_surrounding_content",
+                        message=(
+                            "Paragraph-level docxtpl tags like '{{p ...}}' and '{%p ... %}' should usually be the only content in their paragraph. "
+                            "Any surrounding text in that paragraph will be removed when the template renders."
+                        ),
+                        paragraph=paragraph_number,
+                        paragraph_text=paragraph_text,
+                    )
+                )
+
+    deduped: List[Dict[str, Any]] = []
+    seen_keys: Set[str] = set()
+    for warning in warnings:
+        key = "|".join(
+            [
+                str(warning.get("code")),
+                str(warning.get("paragraph")),
+                str(warning.get("match_text") or ""),
+            ]
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(warning)
+    return deduped
+
+
+def _discover_ooxml_schema_dir() -> Optional[str]:
+    package_dir = Path(__file__).resolve().parent / "data" / "ooxml-schemas"
+    candidates = [
+        os.environ.get("ALDASHBOARD_OOXML_SCHEMA_DIR"),
+        str(package_dir),
+        "/usr/local/share/ooxml-schemas",
+        "/usr/share/ooxml-schemas",
+        "/opt/ooxml-schemas",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def _directory_supports_writes(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path, delete=True):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def _package_ooxml_schema_cache_dir() -> Path:
+    return Path(__file__).resolve().parent / "data" / "ooxml-schemas"
+
+
+def _default_ooxml_schema_cache_dir() -> Path:
+    configured = os.environ.get("ALDASHBOARD_OOXML_SCHEMA_DIR")
+    if configured:
+        return Path(configured)
+
+    package_dir = _package_ooxml_schema_cache_dir()
+    if package_dir.exists() or _directory_supports_writes(package_dir):
+        return package_dir
+
+    return Path(tempfile.gettempdir()) / "aldashboard-ooxml-schemas"
+
+
+def _download_extract_nested_zip(
+    outer_url: str, nested_zip_name: str, target_dir: Path
+) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        outer_zip_path = Path(temp_dir) / "outer.zip"
+        with urlopen(outer_url) as response, open(outer_zip_path, "wb") as out_handle:
+            shutil.copyfileobj(response, out_handle)
+        with zipfile.ZipFile(outer_zip_path, "r") as outer_zip:
+            nested_bytes = outer_zip.read(nested_zip_name)
+        nested_zip_path = Path(temp_dir) / "nested.zip"
+        nested_zip_path.write_bytes(nested_bytes)
+        with zipfile.ZipFile(nested_zip_path, "r") as nested_zip:
+            nested_zip.extractall(target_dir)
+
+
+def ensure_ooxml_schema_cache() -> Dict[str, str]:
+    base_dir = _default_ooxml_schema_cache_dir()
+    schema_dirs = {
+        "transitional": str(base_dir / "transitional"),
+        "strict": str(base_dir / "strict"),
+        "opc": str(base_dir / "opc"),
+    }
+    required_files = {
+        "transitional": "wml.xsd",
+        "strict": "wml.xsd",
+        "opc": "opc-relationships.xsd",
+    }
+
+    for key, (outer_url, nested_name) in _OOXML_SCHEMA_DOWNLOADS.items():
+        target_dir = Path(schema_dirs[key])
+        marker = target_dir / required_files[key]
+        if marker.exists():
+            continue
+
+        try:
+            _download_extract_nested_zip(outer_url, nested_name, target_dir)
+        except OSError:
+            fallback_base_dir = Path(tempfile.gettempdir()) / "aldashboard-ooxml-schemas"
+            if fallback_base_dir == base_dir:
+                raise
+            base_dir = fallback_base_dir
+            schema_dirs = {
+                "transitional": str(base_dir / "transitional"),
+                "strict": str(base_dir / "strict"),
+                "opc": str(base_dir / "opc"),
+            }
+            target_dir = Path(schema_dirs[key])
+            marker = target_dir / required_files[key]
+            if marker.exists():
+                continue
+            _download_extract_nested_zip(outer_url, nested_name, target_dir)
+
+    return schema_dirs
+
+
+def _local_name_from_root_tag(tag: str) -> Tuple[str, str]:
+    if tag.startswith("{") and "}" in tag:
+        namespace, local = tag[1:].split("}", 1)
+        return namespace, local
+    return "", tag
+
+
+def _get_schema_entry_for_part(part_name: str, root: LET._Element, schema_dirs: Dict[str, str]) -> Optional[str]:
+    namespace, local_name = _local_name_from_root_tag(str(root.tag))
+    lower_name = part_name.lower()
+
+    if lower_name == "[content_types].xml":
+        return str(Path(schema_dirs["opc"]) / "opc-contentTypes.xsd")
+    if lower_name.endswith(".rels"):
+        return str(Path(schema_dirs["opc"]) / "opc-relationships.xsd")
+    if lower_name == "docprops/core.xml":
+        return str(Path(schema_dirs["opc"]) / "opc-coreProperties.xsd")
+    if lower_name == "docprops/app.xml":
+        return str(Path(schema_dirs["transitional"]) / "shared-documentPropertiesExtended.xsd")
+    if lower_name == "docprops/custom.xml":
+        return str(Path(schema_dirs["transitional"]) / "shared-documentPropertiesCustom.xsd")
+
+    schema_family = None
+    if namespace.startswith(_OOXML_TRANSITIONAL_NS_PREFIX):
+        schema_family = "transitional"
+    elif namespace.startswith(_OOXML_STRICT_NS_PREFIX):
+        schema_family = "strict"
+    if schema_family is None:
+        return None
+
+    family_dir = Path(schema_dirs[schema_family])
+    if "wordprocessingml" in namespace:
+        return str(family_dir / "wml.xsd")
+    if "drawingml/chart" in namespace:
+        return str(family_dir / "dml-chart.xsd")
+    if "drawingml/spreadsheetDrawing" in namespace:
+        return str(family_dir / "dml-spreadsheetDrawing.xsd")
+    if "drawingml/wordprocessingDrawing" in namespace:
+        return str(family_dir / "dml-wordprocessingDrawing.xsd")
+    if "drawingml" in namespace or local_name == "theme":
+        return str(family_dir / "dml-main.xsd")
+    if "presentationml" in namespace:
+        return str(family_dir / "pml.xsd")
+    if "spreadsheetml" in namespace:
+        return str(family_dir / "sml.xsd")
+    if local_name == "Properties":
+        return str(family_dir / "shared-customXmlDataProperties.xsd")
+    return None
+
+
+def _load_xmlschema(schema_path: str) -> Any:
+    if schema_path not in _OOXML_SCHEMA_CACHE:
+        if xmlschema is None:
+            raise RuntimeError("xmlschema is not installed.")
+        _OOXML_SCHEMA_CACHE[schema_path] = xmlschema.XMLSchema(schema_path)
+    return _OOXML_SCHEMA_CACHE[schema_path]
+
+
+def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
+    """Run strict XML checks and, when configured, OOXML schema validation."""
+    report: Dict[str, Any] = {
+        "available": False,
+        "schema_dir": None,
+        "validated_parts": [],
+        "xml_parse_errors": [],
+        "schema_errors": [],
+        "skipped_parts": [],
+    }
+
+    if xmlschema is None:
+        report["message"] = "xmlschema is not installed in the active Python environment."
+        return report
+
+    try:
+        schema_dirs = ensure_ooxml_schema_cache()
+    except Exception as err:
+        report["message"] = f"Failed to prepare OOXML schemas: {err}"
+        return report
+
+    report["available"] = True
+    report["schema_dir"] = str(Path(schema_dirs["transitional"]).parent)
+
+    with zipfile.ZipFile(the_file, "r") as archive:
+        xml_parts = [
+            name for name in archive.namelist() if name.endswith(".xml") or name.endswith(".rels")
+        ]
+        for part_name in xml_parts:
+            try:
+                xml_bytes = archive.read(part_name)
+                root = LET.fromstring(xml_bytes)
+            except LET.XMLSyntaxError as err:
+                report["xml_parse_errors"].append(
+                    {"part": part_name, "error": str(err)}
+                )
+                continue
+
+            schema_path = _get_schema_entry_for_part(part_name, root, schema_dirs)
+            if not schema_path or not Path(schema_path).exists():
+                report["skipped_parts"].append(
+                    {"part": part_name, "reason": "no_schema_mapping"}
+                )
+                continue
+
+            try:
+                schema = _load_xmlschema(schema_path)
+                schema.validate(xml_bytes)
+                report["validated_parts"].append(part_name)
+            except Exception as err:
+                report["schema_errors"].append(
+                    {
+                        "part": part_name,
+                        "schema": os.path.basename(schema_path),
+                        "error": str(err),
+                    }
+                )
+
+    report["message"] = (
+        "Validated OOXML parts against cached ECMA-376 schemas."
+        if not report["xml_parse_errors"] and not report["schema_errors"]
+        else "OOXML validation found parse or schema issues."
+    )
+    return report
 
 
 def _local_name(tag: str) -> str:
@@ -805,6 +1180,28 @@ def _strip_controls_from_parent(parent: ET.Element, counts: Dict[str, int]) -> b
         child = parent[i]
         name = _local_name(child.tag)
 
+        if name in {"ins", "moveTo"}:
+            _replace_element_with_children(parent, i, child, list(child))
+            counts["unwrapped_track_changes"] += 1
+            changed = True
+            continue
+
+        if name in {"del", "moveFrom"}:
+            parent.remove(child)
+            counts["removed_track_changes"] += 1
+            changed = True
+            continue
+
+        if name == "rPr":
+            removed_hidden = False
+            for prop in list(child):
+                if _local_name(prop.tag) in {"vanish", "webHidden"}:
+                    child.remove(prop)
+                    counts["removed_hidden_run_properties"] += 1
+                    removed_hidden = True
+            if removed_hidden:
+                changed = True
+
         if name == "sdt":
             if _is_page_number_docpart_sdt(child):
                 if _strip_controls_from_parent(child, counts):
@@ -851,6 +1248,28 @@ def _strip_controls_from_parent_lxml(
         child = parent[i]
         name = _local_name(str(child.tag))
 
+        if name in {"ins", "moveTo"}:
+            _replace_element_with_children_lxml(parent, i, child, list(child))
+            counts["unwrapped_track_changes"] += 1
+            changed = True
+            continue
+
+        if name in {"del", "moveFrom"}:
+            parent.remove(child)
+            counts["removed_track_changes"] += 1
+            changed = True
+            continue
+
+        if name == "rPr":
+            removed_hidden = False
+            for prop in list(child):
+                if _local_name(str(prop.tag)) in {"vanish", "webHidden"}:
+                    child.remove(prop)
+                    counts["removed_hidden_run_properties"] += 1
+                    removed_hidden = True
+            if removed_hidden:
+                changed = True
+
         if name == "sdt":
             if _is_page_number_docpart_sdt(child):  # type: ignore[arg-type]
                 if _strip_controls_from_parent_lxml(child, counts):
@@ -893,7 +1312,13 @@ def strip_docx_problem_controls(input_file: str, output_file: str) -> Dict[str, 
 
     Keeps page-number docpart SDTs and simple fields for page numbers/cross-references.
     """
-    counts: Dict[str, int] = {"removed_sdt": 0, "removed_fldSimple": 0}
+    counts: Dict[str, int] = {
+        "removed_sdt": 0,
+        "removed_fldSimple": 0,
+        "removed_track_changes": 0,
+        "unwrapped_track_changes": 0,
+        "removed_hidden_run_properties": 0,
+    }
     modified_parts: Dict[str, bytes] = {}
 
     with zipfile.ZipFile(input_file, "r") as archive:

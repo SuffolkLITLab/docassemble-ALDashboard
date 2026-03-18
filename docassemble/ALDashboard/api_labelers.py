@@ -41,6 +41,7 @@ from .api_dashboard_utils import (
     docx_labeler_suggest_payload_from_options,
     merge_raw_options,
     parse_bool,
+    validate_docx_payload_from_options,
 )
 from .pdf_export_utils import build_pdf_export_fields_per_page
 
@@ -1394,6 +1395,40 @@ def docx_labeler_page() -> Response:
     return Response(html_content, mimetype="text/html")
 
 
+def _read_docx_labeler_file_request() -> tuple[str, bytes, Dict[str, Any]]:
+    if "file" in request.files:
+        upload = request.files["file"]
+        filename = upload.filename or "upload.docx"
+        content = upload.read()
+        post_data = dict(request.form)
+    else:
+        post_data = request.get_json(silent=True) or {}
+        filename = str(post_data.get("filename") or "upload.docx")
+        content = decode_base64_content(post_data.get("file_content_base64"))
+
+    _validate_upload_size(content)
+    if not filename.lower().endswith(".docx"):
+        raise DashboardAPIValidationError(
+            "Only DOCX files are supported.", status_code=415
+        )
+    return filename, content, post_data
+
+
+def _docx_output_payload(output_path: str, output_filename: str) -> Dict[str, Any]:
+    with open(output_path, "rb") as handle:
+        output_bytes = handle.read()
+    return {
+        "filename": output_filename,
+        "docx_base64": base64.b64encode(output_bytes).decode("ascii"),
+    }
+
+
+def _write_temp_docx(content: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        tmp.write(content)
+        return tmp.name
+
+
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/models", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
@@ -2019,6 +2054,189 @@ def docx_labeler_validate_syntax() -> Response:
             f"ALDashboard: validate-docx-syntax {request_id} server error: {exc!r}",
             "error",
         )
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/utilities", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def docx_labeler_run_utility() -> Response:
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: docx utility request {request_id}", "info")
+    try:
+        from .docx_wrangling import apply_jinja2_highlights, defragment_docx_runs
+        from .validate_docx import strip_docx_problem_controls, validate_docx_ooxml_schema
+        import docx
+
+        filename, content, post_data = _read_docx_labeler_file_request()
+        action = str(post_data.get("action") or "").strip().lower()
+        if action not in {
+            "validate",
+            "schema-validate",
+            "defragment-runs",
+            "cleanup-docx",
+            "highlight-jinja2",
+        }:
+            raise DashboardAPIValidationError("Unknown DOCX utility action.")
+
+        temp_path = _write_temp_docx(content)
+        try:
+            if action == "validate":
+                data = validate_docx_payload_from_options(
+                    {
+                        "files": [
+                            {
+                                "filename": filename,
+                                "file_content_base64": base64.b64encode(content).decode("ascii"),
+                            }
+                        ]
+                    }
+                )
+                return jsonify(
+                    {
+                        "success": True,
+                        "request_id": request_id,
+                        "data": {"action": action, "report": data["files"][0]},
+                    }
+                )
+
+            if action == "schema-validate":
+                report = validate_docx_ooxml_schema(temp_path)
+                return jsonify(
+                    {
+                        "success": True,
+                        "request_id": request_id,
+                        "data": {"action": action, "report": report},
+                    }
+                )
+
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as output_file:
+                output_path = output_file.name
+
+            try:
+                if action == "cleanup-docx":
+                    report = strip_docx_problem_controls(temp_path, output_path)
+                    payload = _docx_output_payload(
+                        output_path,
+                        filename.replace(".docx", "-cleaned.docx"),
+                    )
+                else:
+                    utility_doc = docx.Document(temp_path)
+                    report: Dict[str, Any] = {}
+                    if action == "defragment-runs":
+                        utility_doc, report = defragment_docx_runs(utility_doc)
+                    elif action == "highlight-jinja2":
+                        utility_doc = apply_jinja2_highlights(utility_doc)
+                        report = {"highlighted": True}
+                    utility_doc.save(output_path)
+                    suffix = "-defragmented.docx" if action == "defragment-runs" else "-highlighted.docx"
+                    payload = _docx_output_payload(output_path, filename.replace(".docx", suffix))
+
+                return jsonify(
+                    {
+                        "success": True,
+                        "request_id": request_id,
+                        "data": {
+                            "action": action,
+                            "report": report,
+                            **payload,
+                        },
+                    }
+                )
+            finally:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: docx utility {request_id} server error: {exc!r}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/repair", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def docx_labeler_repair_docx() -> Response:
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: docx repair request {request_id}", "info")
+    try:
+        from .docx_repair import (
+            repair_docx_xml_conservatively,
+            rescue_docx_to_shell,
+            roundtrip_docx_via_soffice,
+        )
+
+        filename, content, post_data = _read_docx_labeler_file_request()
+        action = str(post_data.get("action") or "").strip().lower()
+        if action not in {"soffice-roundtrip", "repair-xml", "rescue-shell"}:
+            raise DashboardAPIValidationError("Unknown DOCX repair action.")
+
+        temp_path = _write_temp_docx(content)
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as output_file:
+            output_path = output_file.name
+        try:
+            if action == "soffice-roundtrip":
+                report = roundtrip_docx_via_soffice(temp_path, output_path)
+                output_name = filename.replace(".docx", "-roundtripped.docx")
+            elif action == "repair-xml":
+                report = repair_docx_xml_conservatively(temp_path, output_path)
+                output_name = filename.replace(".docx", "-repaired.docx")
+            else:
+                report = rescue_docx_to_shell(temp_path, output_path)
+                output_name = filename.replace(".docx", "-rescued.docx")
+
+            data: Dict[str, Any] = {"action": action, "report": report}
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0 and report.get("available", True):
+                data.update(_docx_output_payload(output_path, output_name))
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": data,
+                }
+            )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: docx repair {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
             {
                 "success": False,

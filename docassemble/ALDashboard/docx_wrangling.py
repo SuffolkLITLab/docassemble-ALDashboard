@@ -16,7 +16,7 @@ from docassemble.ALToolbox.llms import chat_completion
 from typing import Any, Dict, List, Tuple, Optional, Union, Sequence
 
 from .labeler_config import get_docx_prompt_profile
-from .validate_docx import get_jinja_template_validation
+from .validate_docx import analyze_docx_template_markup, get_jinja_template_validation
 
 __all__ = [
     "apply_docx_label_renames",
@@ -840,6 +840,7 @@ def validate_docx_template_syntax(
         for paragraph in paragraphs
     )
     validation = get_jinja_template_validation(template_source)
+    validation["warnings"].extend(analyze_docx_template_markup(working_document))
 
     for issue_group in (validation["errors"], validation["warnings"]):
         for issue in issue_group:

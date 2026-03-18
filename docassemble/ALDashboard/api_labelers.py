@@ -81,12 +81,28 @@ ASYNC_CELERY_MODULE = "docassemble.ALDashboard.api_dashboard_worker"
 
 
 def _sanitize_checkbox_export_value(raw_value: Any) -> str:
+    """Normalize a checkbox export value into a safe PDF name token.
+
+    Args:
+        raw_value: Raw export value supplied by the browser UI.
+
+    Returns:
+        str: A sanitized export token suitable for pikepdf ``Name`` objects.
+    """
     token = str(raw_value or "").strip() or "Yes"
     token = re.sub(r"[^A-Za-z0-9_.-]+", "_", token).strip("_")
     return token or "Yes"
 
 
 def _get_named_pdf_parent(field_obj: Any) -> Optional[Any]:
+    """Walk up a PDF widget tree until a named field container is found.
+
+    Args:
+        field_obj: The current pikepdf annotation or parent object.
+
+    Returns:
+        Optional[Any]: The nearest object exposing ``T``, or ``None`` if missing.
+    """
     if hasattr(field_obj, "T"):
         return field_obj
     if hasattr(field_obj, "Parent"):
@@ -97,6 +113,13 @@ def _get_named_pdf_parent(field_obj: Any) -> Optional[Any]:
 def _rename_checkbox_export_state(
     field_obj: Any, export_value: str, pikepdf_module: Any
 ) -> None:
+    """Rename checkbox appearance states to match a custom export value.
+
+    Args:
+        field_obj: The widget or parent field object to update.
+        export_value: The desired export token for checked state.
+        pikepdf_module: Imported ``pikepdf`` module used to create ``Name`` values.
+    """
     desired_state = pikepdf_module.Name(
         "/" + _sanitize_checkbox_export_value(export_value)
     )
@@ -123,6 +146,12 @@ def _rename_checkbox_export_state(
 def _apply_checkbox_export_values(
     pdf_path: str, value_by_field_name: Dict[str, str]
 ) -> None:
+    """Apply custom checkbox export values to a written PDF in place.
+
+    Args:
+        pdf_path: Path to the PDF file to modify.
+        value_by_field_name: Mapping of field names to export values.
+    """
     desired = {
         str(name): _sanitize_checkbox_export_value(value)
         for name, value in value_by_field_name.items()
@@ -137,7 +166,7 @@ def _apply_checkbox_export_values(
         for page in pdf.pages:
             if "/Annots" not in page:
                 continue
-            for annot in page.Annots:
+            for annot in page.Annots:  # type: ignore[attr-defined]
                 try:
                     if annot.Type != "/Annot" or annot.Subtype != "/Widget":
                         continue
@@ -157,6 +186,14 @@ def _apply_checkbox_export_values(
 
 
 def _normalize_provider_family(family_name: Optional[str]) -> str:
+    """Normalize model provider aliases into the labeler provider keys.
+
+    Args:
+        family_name: Raw provider family name.
+
+    Returns:
+        str: One of ``openai``, ``gemini``, or ``claude``.
+    """
     family = str(family_name or "").strip().lower()
     if family in {"google", "gemini"}:
         return "gemini"
@@ -173,7 +210,7 @@ def _build_labeler_model_catalog() -> Dict[str, Any]:
     available_models: List[str] = []
 
     try:
-        from docassemble.ALToolbox.llms import (  # type: ignore[import-untyped]
+        from docassemble.ALToolbox.llms import (
             detect_model_family,
             get_default_model,
             get_first_available_model_set,
@@ -285,6 +322,11 @@ def _labeler_auth_return_target() -> str:
 
 
 def _labeler_playground_auth_check() -> bool:
+    """Check whether the current browser session can access playground data.
+
+    Returns:
+        bool: ``True`` when the current user is authenticated.
+    """
     try:
         return bool(current_user.is_authenticated)
     except Exception:
@@ -292,6 +334,14 @@ def _labeler_playground_auth_check() -> bool:
 
 
 def _playground_auth_fail(request_id: str):
+    """Build the standard JSON auth failure for playground endpoints.
+
+    Args:
+        request_id: Correlation ID for the current request.
+
+    Returns:
+        Response: A 401 JSON response describing the auth error.
+    """
     return jsonify_with_status(
         {
             "success": False,
@@ -306,6 +356,14 @@ def _playground_auth_fail(request_id: str):
 
 
 def _normalize_playground_project(project: Optional[str]) -> str:
+    """Validate and normalize a Playground project name.
+
+    Args:
+        project: Raw project name from the request.
+
+    Returns:
+        str: A normalized Playground project name.
+    """
     value = str(project or "default").strip() or "default"
     if "/" in value or "\\" in value or value.startswith("."):
         raise DashboardAPIValidationError(
@@ -315,6 +373,14 @@ def _normalize_playground_project(project: Optional[str]) -> str:
 
 
 def _normalize_playground_filename(filename: Optional[str]) -> str:
+    """Validate and normalize a Playground YAML filename.
+
+    Args:
+        filename: Raw filename from the request.
+
+    Returns:
+        str: A sanitized YAML filename.
+    """
     value = os.path.basename(str(filename or "").strip())
     if not value or value in {".", ".."}:
         raise DashboardAPIValidationError(
@@ -329,6 +395,14 @@ def _normalize_playground_filename(filename: Optional[str]) -> str:
 
 @contextmanager
 def _playground_user_context(user_id: int):
+    """Temporarily impersonate a Playground user in docassemble thread state.
+
+    Args:
+        user_id: The authenticated user ID to expose to Playground helpers.
+
+    Yields:
+        None: Control returns to the caller while thread context is overridden.
+    """
     original_info = copy.deepcopy(
         getattr(docassemble.base.functions.this_thread, "current_info", {}) or {}
     )
@@ -343,6 +417,11 @@ def _playground_user_context(user_id: int):
 
 
 def _list_playground_projects() -> List[str]:
+    """List available Playground projects for the current user.
+
+    Returns:
+        List[str]: Sorted Playground project names, always including ``default``.
+    """
     from docassemble.webapp.files import SavedFile
 
     uid = getattr(current_user, "id", None)
@@ -357,6 +436,14 @@ def _list_playground_projects() -> List[str]:
 
 
 def _list_playground_yaml_files(project: str) -> List[Dict[str, str]]:
+    """List YAML interviews available in a Playground project.
+
+    Args:
+        project: Playground project name.
+
+    Returns:
+        List[Dict[str, str]]: Label/value entries for YAML files in the project.
+    """
     from docassemble.webapp.playground import Playground
 
     uid = getattr(current_user, "id", None)
@@ -373,6 +460,15 @@ def _list_playground_yaml_files(project: str) -> List[Dict[str, str]]:
 
 
 def _get_playground_variable_info(project: str, filename: str) -> Dict[str, Any]:
+    """Extract variable names from a Playground YAML interview.
+
+    Args:
+        project: Playground project containing the YAML file.
+        filename: YAML filename to inspect.
+
+    Returns:
+        Dict[str, Any]: Variable metadata including all and top-level names.
+    """
     from docassemble.webapp.playground import Playground
 
     uid = getattr(current_user, "id", None)
@@ -406,6 +502,14 @@ def _get_playground_variable_info(project: str, filename: str) -> Dict[str, Any]
 
 
 def _normalize_installed_package_name(package_name: Optional[str]) -> str:
+    """Validate a docassemble package name used for installed interviews.
+
+    Args:
+        package_name: Raw package name from the request.
+
+    Returns:
+        str: A validated ``docassemble.*`` package name.
+    """
     value = str(package_name or "").strip()
     if not value or "/" in value or "\\" in value or ":" in value:
         raise DashboardAPIValidationError(
@@ -420,6 +524,14 @@ def _normalize_installed_package_name(package_name: Optional[str]) -> str:
 
 
 def _normalize_installed_interview_path(interview_path: Optional[str]) -> str:
+    """Validate a ``package:file`` interview reference for installed YAML.
+
+    Args:
+        interview_path: Raw installed interview path from the request.
+
+    Returns:
+        str: A normalized ``package:file`` reference.
+    """
     value = str(interview_path or "").strip()
     if ":" not in value:
         raise DashboardAPIValidationError(
@@ -433,6 +545,14 @@ def _normalize_installed_interview_path(interview_path: Optional[str]) -> str:
 
 
 def _extract_variable_names_from_var_json(variable_json: Any) -> Dict[str, List[str]]:
+    """Normalize docassemble variable-inspection JSON into flat name lists.
+
+    Args:
+        variable_json: Raw variable metadata returned by docassemble helpers.
+
+    Returns:
+        Dict[str, List[str]]: All variable names and their top-level roots.
+    """
     if not isinstance(variable_json, dict):
         variable_json = {}
 
@@ -440,6 +560,11 @@ def _extract_variable_names_from_var_json(variable_json: Any) -> Dict[str, List[
     seen = set()
 
     def add_name(entry: Any) -> None:
+        """Extract one candidate variable name from a heterogeneous JSON entry.
+
+        Args:
+            entry: A raw item from the variable-inspection payload.
+        """
         candidate = None
         if isinstance(entry, str):
             candidate = entry
@@ -475,6 +600,11 @@ def _extract_variable_names_from_var_json(variable_json: Any) -> Dict[str, List[
 
 
 def _list_installed_interview_packages() -> List[str]:
+    """List installed docassemble packages that contain YAML interviews.
+
+    Returns:
+        List[str]: Sorted package names that expose question files.
+    """
     from .aldashboard import list_question_files_in_docassemble_packages
 
     package_map = list_question_files_in_docassemble_packages()
@@ -486,6 +616,14 @@ def _list_installed_interview_packages() -> List[str]:
 
 
 def _list_installed_interview_files(package_name: str) -> List[Dict[str, str]]:
+    """List YAML interview files for an installed docassemble package.
+
+    Args:
+        package_name: Installed package name.
+
+    Returns:
+        List[Dict[str, str]]: Label/value entries for YAML interviews.
+    """
     from .aldashboard import list_question_files_in_docassemble_packages
 
     package_map = list_question_files_in_docassemble_packages()
@@ -502,6 +640,14 @@ def _list_installed_interview_files(package_name: str) -> List[Dict[str, str]]:
 
 
 def _get_installed_interview_variable_info(interview_path: str) -> Dict[str, Any]:
+    """Inspect an installed interview and return its discovered variable names.
+
+    Args:
+        interview_path: Normalized ``package:file`` interview reference.
+
+    Returns:
+        Dict[str, Any]: Variable metadata including all and top-level names.
+    """
     from docassemble.base.parse import InterviewStatus, interview_source_from_string
     from docassemble.webapp.server import current_info, get_vars_in_use
 
@@ -613,6 +759,14 @@ def _build_pdf_labeler_bootstrap() -> Dict[str, Any]:
 
 
 def _auth_fail(request_id: str):
+    """Build the standard JSON auth failure for labeler API endpoints.
+
+    Args:
+        request_id: Correlation ID for the current request.
+
+    Returns:
+        Response: A 403 JSON response describing the auth failure.
+    """
     return jsonify_with_status(
         {
             "success": False,
@@ -624,6 +778,14 @@ def _auth_fail(request_id: str):
 
 
 def _ai_auth_fail(request_id: str):
+    """Build the standard JSON auth failure for AI-enabled labeler endpoints.
+
+    Args:
+        request_id: Correlation ID for the current request.
+
+    Returns:
+        Response: A 401 JSON response describing the AI auth requirement.
+    """
     return jsonify_with_status(
         {
             "success": False,
@@ -638,17 +800,37 @@ def _ai_auth_fail(request_id: str):
 
 
 def _labeler_async_is_configured() -> bool:
+    """Check whether the labeler Celery worker module is configured.
+
+    Returns:
+        bool: ``True`` when async labeler jobs are enabled in docassemble config.
+    """
     celery_modules = daconfig.get("celery modules", []) or []
     return ASYNC_CELERY_MODULE in celery_modules
 
 
 def _labeler_job_key(job_id: str) -> str:
+    """Build the Redis key used to store labeler job metadata.
+
+    Args:
+        job_id: Public labeler job identifier.
+
+    Returns:
+        str: Redis key for the job mapping.
+    """
     return LABELER_JOB_KEY_PREFIX + job_id
 
 
 def _store_labeler_job_mapping(
     job_id: str, task_id: str, extra: Optional[Dict[str, Any]] = None
 ) -> None:
+    """Persist a labeler job-to-task mapping in Redis.
+
+    Args:
+        job_id: Public labeler job identifier.
+        task_id: Celery task ID backing the job.
+        extra: Optional extra metadata to store alongside the mapping.
+    """
     payload = {"id": task_id, "created_at": time.time()}
     if extra:
         payload.update(extra)
@@ -659,6 +841,14 @@ def _store_labeler_job_mapping(
 
 
 def _fetch_labeler_job_mapping(job_id: str) -> Optional[Dict[str, Any]]:
+    """Load stored labeler job metadata from Redis.
+
+    Args:
+        job_id: Public labeler job identifier.
+
+    Returns:
+        Optional[Dict[str, Any]]: Stored job metadata, or ``None`` if unavailable.
+    """
     raw = r.get(_labeler_job_key(job_id))
     if raw is None:
         return None
@@ -669,6 +859,14 @@ def _fetch_labeler_job_mapping(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _normalize_labeler_result_for_json(value: Any) -> Any:
+    """Convert async task result objects into JSON-serializable structures.
+
+    Args:
+        value: Raw task result value.
+
+    Returns:
+        Any: A JSON-safe version of the result.
+    """
     if isinstance(value, dict):
         return {
             str(key): _normalize_labeler_result_for_json(item)
@@ -690,6 +888,16 @@ def _normalize_labeler_result_for_json(value: Any) -> Any:
 
 
 def _queue_labeler_async_job(task: Any, *, kind: str, request_id: str):
+    """Store async labeler metadata and return the queued-job response.
+
+    Args:
+        task: Celery task object returned by ``delay``.
+        kind: Short label describing the queued job kind.
+        request_id: Correlation ID for the current request.
+
+    Returns:
+        Response: A 202 JSON response describing the queued job.
+    """
     job_id = str(uuid.uuid4())
     _store_labeler_job_mapping(job_id, task.id, extra={"kind": kind})
     return jsonify_with_status(
@@ -716,6 +924,15 @@ _TEMPLATE_EXTENSIONS_ALL = _TEMPLATE_EXTENSIONS_DOCX + _TEMPLATE_EXTENSIONS_PDF
 def _normalize_template_filename(
     filename: Optional[str], *, allowed_extensions: tuple = _TEMPLATE_EXTENSIONS_ALL
 ) -> str:
+    """Validate a Playground template filename against allowed extensions.
+
+    Args:
+        filename: Raw filename from the request.
+        allowed_extensions: Allowed file extensions for the current operation.
+
+    Returns:
+        str: A normalized template filename.
+    """
     value = os.path.basename(str(filename or "").strip())
     if not value or value in {".", ".."}:
         raise DashboardAPIValidationError(
@@ -732,6 +949,15 @@ def _normalize_template_filename(
 def _list_playground_template_files(
     project: str, *, extensions: tuple = _TEMPLATE_EXTENSIONS_ALL
 ) -> List[Dict[str, str]]:
+    """List uploaded DOCX or PDF templates in a Playground project.
+
+    Args:
+        project: Playground project name.
+        extensions: File extensions to include.
+
+    Returns:
+        List[Dict[str, str]]: Template metadata for files in the template folder.
+    """
     from docassemble.webapp.backend import directory_for
     from docassemble.webapp.files import SavedFile
 
@@ -759,6 +985,15 @@ def _list_playground_template_files(
 
 
 def _load_playground_template_file(project: str, filename: str) -> bytes:
+    """Load raw bytes for a Playground template file.
+
+    Args:
+        project: Playground project name.
+        filename: Template filename to load.
+
+    Returns:
+        bytes: File contents for the requested template.
+    """
     from docassemble.webapp.backend import directory_for
     from docassemble.webapp.files import SavedFile
 
@@ -784,6 +1019,16 @@ def _load_playground_template_file(project: str, filename: str) -> bytes:
 def _save_playground_template_file(
     project: str, filename: str, content: bytes
 ) -> Dict[str, Any]:
+    """Save a DOCX or PDF template into a Playground project.
+
+    Args:
+        project: Playground project name.
+        filename: Template filename to write.
+        content: Raw file bytes to persist.
+
+    Returns:
+        Dict[str, Any]: Metadata about the saved template file.
+    """
     from docassemble.webapp.backend import directory_for
     from docassemble.webapp.files import SavedFile
 
@@ -813,8 +1058,12 @@ def _save_playground_template_file(
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-projects", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_playground_projects():
-    """Shared endpoint: list playground projects for both labelers."""
+def labeler_playground_projects() -> Response:
+    """Shared endpoint: list playground projects for both labelers.
+
+    Returns:
+        Response: A JSON response containing available Playground projects.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -853,8 +1102,12 @@ def labeler_playground_projects():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-files", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_playground_files():
-    """Shared endpoint: list YAML files in a playground project."""
+def labeler_playground_files() -> Response:
+    """Shared endpoint: list YAML files in a playground project.
+
+    Returns:
+        Response: A JSON response containing YAML files for the selected project.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -897,8 +1150,12 @@ def labeler_playground_files():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-variables", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_playground_variables():
-    """Shared endpoint: get variables from a playground YAML file."""
+def labeler_playground_variables() -> Response:
+    """Shared endpoint: get variables from a playground YAML file.
+
+    Returns:
+        Response: A JSON response containing extracted variable metadata.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -939,8 +1196,12 @@ def labeler_playground_variables():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-templates", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_playground_templates():
-    """List template files (DOCX/PDF) in a playground project's template folder."""
+def labeler_playground_templates() -> Response:
+    """List template files (DOCX/PDF) in a playground project's template folder.
+
+    Returns:
+        Response: A JSON response containing template metadata for the project.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -991,8 +1252,12 @@ def labeler_playground_templates():
 )
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_playground_template_load():
-    """Load a template file from a playground project's template folder."""
+def labeler_playground_template_load() -> Response:
+    """Load a template file from a playground project's template folder.
+
+    Returns:
+        Response: A JSON response containing the requested template as base64.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1041,8 +1306,12 @@ def labeler_playground_template_load():
 )
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def labeler_playground_template_save():
-    """Save a template file back to a playground project's template folder."""
+def labeler_playground_template_save() -> Response:
+    """Save a template file back to a playground project's template folder.
+
+    Returns:
+        Response: A JSON response describing the saved template file.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1106,8 +1375,12 @@ def labeler_playground_template_save():
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def docx_labeler_page():
-    """Serve the DOCX labeler interactive UI."""
+def docx_labeler_page() -> Response:
+    """Serve the DOCX labeler interactive UI.
+
+    Returns:
+        Response: The rendered DOCX labeler HTML page.
+    """
     log("ALDashboard: Serving DOCX labeler page", "info")
     html_content = _get_template_content("docx_labeler.html")
     if not html_content:
@@ -1121,8 +1394,12 @@ def docx_labeler_page():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/models", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_models():
-    """Return AI model metadata for DOCX/PDF labeler settings UIs."""
+def labeler_models() -> Response:
+    """Return AI model metadata for DOCX/PDF labeler settings UIs.
+
+    Returns:
+        Response: A JSON response containing labeler model metadata.
+    """
     request_id = str(uuid.uuid4())
     return jsonify(
         {
@@ -1136,8 +1413,12 @@ def labeler_models():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/auth-status", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_auth_status():
-    """Return browser-session auth status for labeler UI controls."""
+def labeler_auth_status() -> Response:
+    """Return browser-session auth status for labeler UI controls.
+
+    Returns:
+        Response: A JSON response describing auth and AI availability.
+    """
     request_id = str(uuid.uuid4())
     identity = _labeler_session_identity()
     next_target = _labeler_auth_return_target()
@@ -1162,8 +1443,12 @@ def labeler_auth_status():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/installed-packages", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_installed_packages():
-    """Shared endpoint: list installed interview packages for both labelers."""
+def labeler_installed_packages() -> Response:
+    """Shared endpoint: list installed interview packages for both labelers.
+
+    Returns:
+        Response: A JSON response containing installed interview packages.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1202,8 +1487,12 @@ def labeler_installed_packages():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/installed-files", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_installed_files():
-    """Shared endpoint: list YAML files in an installed interview package."""
+def labeler_installed_files() -> Response:
+    """Shared endpoint: list YAML files in an installed interview package.
+
+    Returns:
+        Response: A JSON response containing YAML files for the package.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1243,8 +1532,12 @@ def labeler_installed_files():
 @app.route(f"{LABELER_BASE_PATH}/labeler/api/installed-variables", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def labeler_installed_variables():
-    """Shared endpoint: get variables from an installed interview."""
+def labeler_installed_variables() -> Response:
+    """Shared endpoint: get variables from an installed interview.
+
+    Returns:
+        Response: A JSON response containing extracted variable metadata.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
@@ -1286,8 +1579,12 @@ def labeler_installed_variables():
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/extract-runs", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def docx_labeler_extract_runs():
-    """Extract paragraph runs from a DOCX file for labeling."""
+def docx_labeler_extract_runs() -> Response:
+    """Extract paragraph runs from a DOCX file for labeling.
+
+    Returns:
+        Response: A JSON response containing extracted DOCX run coordinates.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: extract-runs request {request_id}", "info")
     try:
@@ -1379,8 +1676,12 @@ def docx_labeler_extract_runs():
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/suggest-labels", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def docx_labeler_suggest_labels():
-    """Use AI to suggest Jinja2 labels for a DOCX file."""
+def docx_labeler_suggest_labels() -> Response:
+    """Use AI to suggest Jinja2 labels for a DOCX file.
+
+    Returns:
+        Response: A JSON response containing generated DOCX label suggestions.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: suggest-labels request {request_id}", "info")
     if not _labeler_ai_auth_check():
@@ -1689,12 +1990,15 @@ def docx_labeler_suggest_labels():
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/apply-labels", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def docx_labeler_apply_labels():
+def docx_labeler_apply_labels() -> Response:
     """Apply accepted labels and/or renames to a DOCX file and return the modified file.
 
     Supports two types of modifications:
     - labels: New AI-suggested labels to insert (paragraph, run, text, new_paragraph)
     - renames: Find/replace operations on existing labels (original, replacement)
+
+    Returns:
+        Response: A JSON response containing the modified DOCX as base64.
     """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: apply-labels request {request_id}", "info")
@@ -1877,8 +2181,12 @@ def docx_labeler_apply_labels():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def pdf_labeler_page():
-    """Serve the PDF labeler interactive UI."""
+def pdf_labeler_page() -> Response:
+    """Serve the PDF labeler interactive UI.
+
+    Returns:
+        Response: The rendered PDF labeler HTML page.
+    """
     log("ALDashboard: Serving PDF labeler page", "info")
     html_content = _render_template_content(
         "pdf_labeler.html", bootstrap_data=_build_pdf_labeler_bootstrap()
@@ -1895,7 +2203,15 @@ def pdf_labeler_page():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/jobs/<job_id>", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
-def pdf_labeler_job(job_id: str):
+def pdf_labeler_job(job_id: str) -> Response:
+    """Return status or result data for an async PDF labeler job.
+
+    Args:
+        job_id: Public labeler job identifier.
+
+    Returns:
+        Response: A JSON response describing job state and any available result.
+    """
     request_id = str(uuid.uuid4())
     if not _labeler_ai_auth_check():
         return _ai_auth_fail(request_id)
@@ -1946,8 +2262,12 @@ def pdf_labeler_job(job_id: str):
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/detect-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_detect_fields():
-    """Detect existing form fields in a PDF."""
+def pdf_labeler_detect_fields() -> Response:
+    """Detect existing form fields in a PDF.
+
+    Returns:
+        Response: A JSON response containing detected PDF field metadata.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: detect-fields request {request_id}", "info")
 
@@ -2036,8 +2356,12 @@ def pdf_labeler_detect_fields():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/auto-detect", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_auto_detect():
-    """Use AI to automatically detect and add fields to a PDF."""
+def pdf_labeler_auto_detect() -> Response:
+    """Use AI to automatically detect and add fields to a PDF.
+
+    Returns:
+        Response: A JSON response containing normalized PDF field results.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: auto-detect request {request_id}", "info")
     if not _labeler_ai_auth_check():
@@ -2297,8 +2621,12 @@ def pdf_labeler_auto_detect():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/relabel", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_relabel():
-    """Relabel PDF fields using AI suggestions."""
+def pdf_labeler_relabel() -> Response:
+    """Relabel PDF fields using AI suggestions.
+
+    Returns:
+        Response: A JSON response containing the relabeled PDF and stats.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: pdf-relabel request {request_id}", "info")
     if not _labeler_ai_auth_check():
@@ -2427,8 +2755,12 @@ def pdf_labeler_relabel():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/apply-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_apply_fields():
-    """Apply field definitions to a PDF and return the modified file."""
+def pdf_labeler_apply_fields() -> Response:
+    """Apply field definitions to a PDF and return the modified file.
+
+    Returns:
+        Response: A JSON response containing the updated PDF as base64.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: apply-fields request {request_id}", "info")
 
@@ -2546,8 +2878,12 @@ def pdf_labeler_apply_fields():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/rename-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_rename_fields():
-    """Rename fields in an existing PDF."""
+def pdf_labeler_rename_fields() -> Response:
+    """Rename fields in an existing PDF.
+
+    Returns:
+        Response: A JSON response containing the renamed PDF as base64.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: rename-fields request {request_id}", "info")
 
@@ -2646,8 +2982,12 @@ def pdf_labeler_rename_fields():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/repair", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_repair():
-    """Run a single PDF repair action and return the repaired file."""
+def pdf_labeler_repair() -> Response:
+    """Run a single PDF repair action and return the repaired file.
+
+    Returns:
+        Response: A JSON response containing repair metadata and repaired PDF bytes.
+    """
     from .pdf_repair import PDFRepairError, list_repair_actions, run_repair
 
     request_id = str(uuid.uuid4())
@@ -2752,8 +3092,12 @@ def pdf_labeler_repair():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/copy-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_copy_fields():
-    """Copy form field positions from a source PDF onto a destination PDF."""
+def pdf_labeler_copy_fields() -> Response:
+    """Copy form field positions from a source PDF onto a destination PDF.
+
+    Returns:
+        Response: A JSON response containing the destination PDF with copied fields.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: copy-fields request {request_id}", "info")
 
@@ -2842,8 +3186,12 @@ def pdf_labeler_copy_fields():
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/strip-fonts", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def pdf_labeler_strip_fonts():
-    """Remove embedded font programs from a PDF."""
+def pdf_labeler_strip_fonts() -> Response:
+    """Remove embedded font programs from a PDF.
+
+    Returns:
+        Response: A JSON response containing the stripped PDF and removal stats.
+    """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: strip-fonts request {request_id}", "info")
 

@@ -154,6 +154,11 @@ DEFAULT_LITIGATION_RULES_ADDENDUM = """
 
 
 def _default_person_attributes() -> Dict[str, Any]:
+    """Return the shared variable-tree schema used for person-like objects.
+
+    Returns:
+        Dict[str, Any]: Nested prompt-library metadata for common person fields.
+    """
     return {
         "name": {
             "_description": "Name components",
@@ -195,6 +200,11 @@ def _default_person_attributes() -> Dict[str, Any]:
 
 
 def build_default_prompt_library() -> Dict[str, Any]:
+    """Build the default prompt, branding, and variable configuration.
+
+    Returns:
+        Dict[str, Any]: The complete default labeler prompt library.
+    """
     person_attributes = _default_person_attributes()
     attorney_attributes = copy.deepcopy(person_attributes)
     attorney_attributes["bar_number"] = "Bar/License number"
@@ -351,6 +361,15 @@ def build_default_prompt_library() -> Dict[str, Any]:
 def _deep_merge(
     base: Mapping[str, Any], overrides: Mapping[str, Any]
 ) -> Dict[str, Any]:
+    """Recursively merge prompt-library overrides onto a default mapping.
+
+    Args:
+        base: The default mapping to merge into.
+        overrides: User-provided override values.
+
+    Returns:
+        Dict[str, Any]: A deep-copied merged mapping.
+    """
     merged: Dict[str, Any] = copy.deepcopy(dict(base))
     for key, value in overrides.items():
         if (
@@ -370,6 +389,16 @@ def read_package_text_resource(
     default_package: str = "docassemble.ALDashboard",
     default_folder: str,
 ) -> str:
+    """Read text from an absolute path or package resource reference.
+
+    Args:
+        resource_path: Absolute path or ``package:path`` resource reference.
+        default_package: Package name to use when no package prefix is supplied.
+        default_folder: Default package folder prepended to relative paths.
+
+    Returns:
+        str: Resource text, or an empty string when it cannot be read.
+    """
     raw_path = str(resource_path or "").strip()
     if not raw_path:
         return ""
@@ -404,6 +433,14 @@ def read_package_text_resource(
 def load_labeler_prompt_library(
     prompt_library_path: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Load the prompt library and merge any configured overrides.
+
+    Args:
+        prompt_library_path: Optional override path for the prompt library YAML.
+
+    Returns:
+        Dict[str, Any]: The merged prompt library configuration.
+    """
     library = build_default_prompt_library()
     resolved_path = prompt_library_path or DEFAULT_LABELER_PROMPT_LIBRARY_PATH
     raw_yaml = read_package_text_resource(
@@ -429,6 +466,15 @@ def get_docx_prompt_profile(
     *,
     prompt_library_path: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Resolve the requested DOCX prompt profile with sane fallbacks.
+
+    Args:
+        prompt_profile: Requested profile name.
+        prompt_library_path: Optional override path for the prompt library YAML.
+
+    Returns:
+        Dict[str, Any]: The resolved prompt profile configuration.
+    """
     library = load_labeler_prompt_library(prompt_library_path)
     docx_config = library.get("docx", {})
     if not isinstance(docx_config, Mapping):

@@ -123,6 +123,14 @@ def _request_payload_without_files() -> Dict[str, Any]:
 
 
 def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Add uploaded file content to an async-safe payload.
+
+    Args:
+        base_payload: Request options collected before reading uploaded files.
+
+    Returns:
+        Dict[str, Any]: A payload that includes base64-encoded file content.
+    """
     payload: Dict[str, Any] = dict(base_payload)
     if request.files:
         files_payload = []
@@ -538,7 +546,12 @@ def dashboard_pdf_fields_detect():
 @app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/fields/relabel", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def dashboard_pdf_fields_relabel():
+def dashboard_pdf_fields_relabel() -> Response:
+    """Handle synchronous or asynchronous PDF field relabeling requests.
+
+    Returns:
+        Response: A JSON response containing relabel results or queued job details.
+    """
     return _run_endpoint(
         pdf_fields_relabel_payload_from_request,
         dashboard_pdf_fields_relabel_task,
@@ -548,7 +561,12 @@ def dashboard_pdf_fields_relabel():
 @app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/repair", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def dashboard_pdf_repair():
+def dashboard_pdf_repair() -> Response:
+    """Handle synchronous or asynchronous PDF repair requests.
+
+    Returns:
+        Response: A JSON response containing repair results or queued job details.
+    """
     return _run_endpoint(
         pdf_repair_payload_from_request,
         dashboard_pdf_repair_task,
@@ -558,7 +576,15 @@ def dashboard_pdf_repair():
 @app.route(f"{DASHBOARD_API_BASE_PATH}/jobs/<job_id>", methods=["GET", "DELETE"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "DELETE", "HEAD"], automatic_options=True)
-def dashboard_job(job_id: str):
+def dashboard_job(job_id: str) -> Response:
+    """Return or delete async job state for an ALDashboard API task.
+
+    Args:
+        job_id: The public job identifier returned when the task was queued.
+
+    Returns:
+        Response: A JSON response describing job state, result data, or deletion.
+    """
     request_id = str(uuid.uuid4())
     if not api_verify():
         return _auth_fail(request_id)

@@ -130,3 +130,71 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module="spellchecker.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="docassemble.ALToolbox.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="dayamlchecker.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="flask_login"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="jinja2"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="jinja2.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="lxml"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="lxml.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="pdfrw"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="pikepdf"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="reportlab"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="reportlab.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="requests"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="sqlalchemy"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="sqlalchemy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="textstat"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="werkzeug"
+ignore_missing_imports = true

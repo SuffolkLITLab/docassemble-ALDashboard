@@ -109,5 +109,13 @@ def dashboard_yaml_reformat_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @workerapp.task
 def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute PDF repair work inside a background docassemble context.
+
+    Args:
+        payload: Serialized request options for the repair operation.
+
+    Returns:
+        Dict[str, Any]: The PDF repair payload returned by the repair helper.
+    """
     with bg_context():
         return pdf_repair_payload_from_options(payload)

@@ -2,6 +2,18 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 
 def _parse_bool(value: Any, *, default: bool = False) -> bool:
+    """Coerce common serialized boolean values used by the PDF labeler UI.
+
+    Args:
+        value: The raw value to interpret.
+        default: The fallback value when ``value`` is ``None``.
+
+    Returns:
+        bool: The parsed boolean value.
+
+    Raises:
+        ValueError: If ``value`` cannot be interpreted as a boolean.
+    """
     if value is None:
         return default
     if isinstance(value, bool):
@@ -25,7 +37,18 @@ def build_pdf_export_fields_per_page(
     field_type_enum: Any,
     color_parser: Optional[Callable[[str], Any]] = None,
 ) -> List[List[Any]]:
-    """Convert browser field definitions into FormFyxer/ReportLab field objects."""
+    """Convert browser field definitions into FormFyxer/ReportLab field objects.
+
+    Args:
+        fields_data: Browser field definitions to convert.
+        page_count: Number of pages in the target PDF.
+        form_field_cls: FormFyxer field class to instantiate.
+        field_type_enum: Enum-like container for FormFyxer field type constants.
+        color_parser: Optional parser for CSS-like color strings.
+
+    Returns:
+        List[List[Any]]: Form field objects grouped by page index.
+    """
     fields_per_page: List[List[Any]] = [[] for _ in range(page_count)]
 
     for field_data in fields_data:

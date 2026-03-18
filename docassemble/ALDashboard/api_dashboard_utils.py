@@ -686,6 +686,14 @@ def _apply_add_label_rules(
 
 
 def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    """Apply relabeling edits to DOCX suggestions and optionally build output DOCX.
+
+    Args:
+        raw_options: Request options containing source labels, edits, and file data.
+
+    Returns:
+        Dict[str, Any]: A payload with updated labels and optional labeled DOCX bytes.
+    """
     from .docx_wrangling import get_labeled_docx_runs, update_docx
 
     raw = merge_raw_options(raw_options)
@@ -1228,7 +1236,7 @@ def _dayaml_issue_severity(message: str) -> str:
 
 def _run_dayaml_checker(yaml_text: str, *, input_file: str) -> List[Any]:
     try:
-        from dayamlchecker.yaml_structure import (  # type: ignore[import-untyped]
+        from dayamlchecker.yaml_structure import (
             find_errors_from_string,
         )
     except Exception as exc:
@@ -1248,7 +1256,7 @@ def _run_dayaml_reformat(
     yaml_text: str, *, line_length: int, convert_indent_4_to_2: bool
 ) -> Any:
     try:
-        from dayamlchecker.code_formatter import (  # type: ignore[import-untyped]
+        from dayamlchecker.code_formatter import (
             FormatterConfig,
             format_yaml_string,
         )
@@ -1460,6 +1468,14 @@ def pdf_fields_detect_payload_from_request() -> Dict[str, Any]:
 def pdf_fields_detect_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Detect PDF fields and optionally relabel them before returning artifacts.
+
+    Args:
+        raw_options: Request options containing upload data and relabel settings.
+
+    Returns:
+        Dict[str, Any]: Serialized field metadata and optional output PDF content.
+    """
     from .pdf_field_labeler import (
         PDFLabelingError,
         detect_pdf_fields_and_optionally_relabel,
@@ -1537,6 +1553,14 @@ def pdf_fields_relabel_payload_from_request() -> Dict[str, Any]:
 def pdf_fields_relabel_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Relabel existing PDF fields and package the resulting PDF artifacts.
+
+    Args:
+        raw_options: Request options containing upload data and rename settings.
+
+    Returns:
+        Dict[str, Any]: Serialized rename statistics and optional PDF output data.
+    """
     from .pdf_field_labeler import PDFLabelingError, relabel_existing_pdf_fields
 
     prepared = _prepare_pdf_upload(raw_options)
@@ -1634,6 +1658,11 @@ def _extract_repair_options(raw: Mapping[str, Any], action: str) -> Dict[str, An
 
 
 def pdf_repair_payload_from_request() -> Dict[str, Any]:
+    """Build PDF repair options from a multipart request.
+
+    Returns:
+        Dict[str, Any]: Normalized repair options including base64-encoded PDF data.
+    """
     upload = _read_single_upload(field_name="file")
     raw = merge_raw_options(_request_dict())
     return pdf_repair_payload_from_options(
@@ -1648,6 +1677,14 @@ def pdf_repair_payload_from_request() -> Dict[str, Any]:
 def pdf_repair_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Run a PDF repair action and package the result for the API response.
+
+    Args:
+        raw_options: Request options containing repair action, file data, and flags.
+
+    Returns:
+        Dict[str, Any]: Repair metadata and optional repaired PDF bytes.
+    """
     from .pdf_repair import PDFRepairError, list_repair_actions, run_repair
 
     raw = merge_raw_options(raw_options)
@@ -1697,6 +1734,11 @@ def pdf_repair_payload_from_options(
 
 
 def build_openapi_spec() -> Dict[str, Any]:
+    """Construct the OpenAPI document for the ALDashboard REST API.
+
+    Returns:
+        Dict[str, Any]: An OpenAPI 3.1 document describing supported endpoints.
+    """
     return {
         "openapi": "3.1.0",
         "info": {
@@ -1849,6 +1891,11 @@ def build_openapi_spec() -> Dict[str, Any]:
 
 
 def build_docs_html() -> str:
+    """Render the lightweight human-readable API documentation page.
+
+    Returns:
+        str: HTML content for the API docs page.
+    """
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>

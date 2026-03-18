@@ -15,6 +15,15 @@ class PDFLabelingError(RuntimeError):
 
 
 def _assert_valid_pdf_output(pdf_path: str, *, action_label: str) -> None:
+    """Validate that an action produced a readable PDF file.
+
+    Args:
+        pdf_path: Path to the PDF file that should have been written.
+        action_label: Human-readable label describing the action being validated.
+
+    Raises:
+        PDFLabelingError: If the file is missing or does not start with a PDF header.
+    """
     path = Path(pdf_path)
     if not path.is_file():
         raise PDFLabelingError(f"{action_label} did not produce an output PDF.")
@@ -35,6 +44,21 @@ def _parse_form_with_optional_model(
     openai_base_url: Optional[str],
     model: Optional[str],
 ) -> Any:
+    """Call ``formfyxer.parse_form`` with optional arguments when supported.
+
+    Args:
+        formfyxer_module: Imported ``formfyxer`` module.
+        in_file: Path to the input PDF to parse.
+        title: Title passed through to FormFyxer.
+        jur: Jurisdiction code used for labeling heuristics.
+        tools_token: API token for tools.suffolklitlab.org, if available.
+        openai_api: OpenAI API key override, if available.
+        openai_base_url: Optional OpenAI-compatible base URL.
+        model: Optional model name to request when FormFyxer supports it.
+
+    Returns:
+        Any: The raw response returned by ``formfyxer.parse_form``.
+    """
     parse_kwargs: Dict[str, Any] = {
         "title": title,
         "jur": jur,
@@ -61,6 +85,14 @@ def _parse_form_with_optional_model(
 
 
 def _flatten_field_names(fields_per_page: List[List[Any]]) -> List[str]:
+    """Flatten field names from FormFyxer's per-page field structure.
+
+    Args:
+        fields_per_page: Field objects grouped by page.
+
+    Returns:
+        List[str]: All non-empty field names in traversal order.
+    """
     names: List[str] = []
     for fields in fields_per_page:
         for field in fields:
@@ -76,6 +108,16 @@ def _resolve_formfyxer_credentials(
     openai_api: Optional[str],
     openai_base_url: Optional[str],
 ) -> Dict[str, Optional[str]]:
+    """Resolve FormFyxer credentials from request values, config, and environment.
+
+    Args:
+        tools_token: Optional tools token supplied by the caller.
+        openai_api: Optional OpenAI API key supplied by the caller.
+        openai_base_url: Optional OpenAI base URL supplied by the caller.
+
+    Returns:
+        Dict[str, Optional[str]]: Resolved credentials and source labels for logging.
+    """
     resolved_tools_token = tools_token
     tools_token_source = "request" if resolved_tools_token else None
     if not resolved_tools_token:
@@ -152,6 +194,14 @@ def _log_formfyxer_resolution(
     model: Optional[str],
     jur: str,
 ) -> None:
+    """Log how FormFyxer credentials were resolved for a request.
+
+    Args:
+        action: Short label describing the current labeling action.
+        resolved: Resolved credential values and their sources.
+        model: Requested model name, if any.
+        jur: Jurisdiction code used for the request.
+    """
     log(
         "ALDashboard: "
         + action
@@ -167,6 +217,18 @@ def _log_formfyxer_resolution(
 def _build_mapping_from_target_list(
     current_names: List[str], target_names: List[str]
 ) -> Dict[str, str]:
+    """Pair detected field names with a caller-supplied ordered target list.
+
+    Args:
+        current_names: Field names currently detected in the PDF.
+        target_names: Replacement names in the same order.
+
+    Returns:
+        Dict[str, str]: Mapping from existing field names to replacement names.
+
+    Raises:
+        PDFLabelingError: If the supplied target list length does not match.
+    """
     if len(current_names) != len(target_names):
         raise PDFLabelingError(
             f"target_field_names count ({len(target_names)}) does not match detected fields ({len(current_names)})."
@@ -175,6 +237,14 @@ def _build_mapping_from_target_list(
 
 
 def list_existing_field_names(pdf_path: str) -> List[str]:
+    """Read current field names from an existing PDF.
+
+    Args:
+        pdf_path: Path to the PDF to inspect.
+
+    Returns:
+        List[str]: Field names discovered in the PDF.
+    """
     import formfyxer  # type: ignore[import-not-found]
 
     fields_per_page = formfyxer.get_existing_pdf_fields(pdf_path)
@@ -194,6 +264,23 @@ def relabel_existing_pdf_fields(
     openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Rename existing PDF fields using explicit mappings or FormFyxer AI relabeling.
+
+    Args:
+        input_pdf_path: Path to the source PDF.
+        output_pdf_path: Path where the relabeled PDF should be written.
+        field_name_mapping: Explicit old-to-new field name mapping.
+        target_field_names: Ordered replacement names aligned with detected fields.
+        relabel_with_ai: Whether to ask FormFyxer to relabel with AI.
+        jur: Jurisdiction code used for FormFyxer heuristics.
+        tools_token: Optional tools.suffolklitlab.org token override.
+        openai_api: Optional OpenAI API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: Optional model override for FormFyxer.
+
+    Returns:
+        Dict[str, Any]: Relabeling statistics including old and new field names.
+    """
     import formfyxer  # type: ignore[import-not-found]
 
     current_names = list_existing_field_names(input_pdf_path)
@@ -275,6 +362,22 @@ def apply_formfyxer_pdf_labeling(
     openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Add PDF fields and optionally normalize them with FormFyxer.
+
+    Args:
+        input_pdf_path: Path to the source PDF.
+        output_pdf_path: Path where the labeled PDF should be written.
+        add_fields: Whether to detect and add new fields before normalization.
+        normalize_fields: Whether to run FormFyxer normalization after field creation.
+        jur: Jurisdiction code used for FormFyxer heuristics.
+        tools_token: Optional tools.suffolklitlab.org token override.
+        openai_api: Optional OpenAI API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: Optional model override for FormFyxer.
+
+    Returns:
+        Dict[str, Any]: FormFyxer parsing statistics for the output PDF.
+    """
     import formfyxer  # type: ignore[import-not-found]
 
     resolved = _resolve_formfyxer_credentials(
@@ -327,6 +430,22 @@ def detect_pdf_fields_and_optionally_relabel(
     openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Detect PDF fields, optionally relabel them, and return aggregate stats.
+
+    Args:
+        input_pdf_path: Path to the source PDF.
+        output_pdf_path: Path where the processed PDF should be written.
+        relabel_with_ai: Whether to run FormFyxer AI relabeling.
+        target_field_names: Optional ordered field names to apply after detection.
+        jur: Jurisdiction code used for FormFyxer heuristics.
+        tools_token: Optional tools.suffolklitlab.org token override.
+        openai_api: Optional OpenAI API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: Optional model override for FormFyxer.
+
+    Returns:
+        Dict[str, Any]: Detection and optional relabeling statistics.
+    """
     stats = apply_formfyxer_pdf_labeling(
         input_pdf_path=input_pdf_path,
         output_pdf_path=output_pdf_path,

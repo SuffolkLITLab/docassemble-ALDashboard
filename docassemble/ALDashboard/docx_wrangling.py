@@ -39,6 +39,16 @@ def _get_docx_label_role_description(
     custom_prompt: Optional[str] = None,
     prompt_library_path: Optional[str] = None,
 ) -> str:
+    """Resolve the DOCX labeler role description for the active prompt profile.
+
+    Args:
+        prompt_profile: Prompt profile name to resolve.
+        custom_prompt: Optional caller-supplied prompt override.
+        prompt_library_path: Optional prompt library override path.
+
+    Returns:
+        str: The role description sent to the labeling model.
+    """
     if custom_prompt:
         return custom_prompt
     profile_config = get_docx_prompt_profile(
@@ -53,6 +63,15 @@ def _get_docx_label_rules_addendum(
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
     prompt_library_path: Optional[str] = None,
 ) -> str:
+    """Resolve extra prompt rules for the active DOCX prompt profile.
+
+    Args:
+        prompt_profile: Prompt profile name to resolve.
+        prompt_library_path: Optional prompt library override path.
+
+    Returns:
+        str: Additional labeling rules appended to the base prompt.
+    """
     profile_config = get_docx_prompt_profile(
         prompt_profile,
         prompt_library_path=prompt_library_path,
@@ -65,6 +84,15 @@ def _get_docx_label_temperature(
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
     prompt_library_path: Optional[str] = None,
 ) -> float:
+    """Resolve the model temperature for the active DOCX prompt profile.
+
+    Args:
+        prompt_profile: Prompt profile name to resolve.
+        prompt_library_path: Optional prompt library override path.
+
+    Returns:
+        float: Temperature value for model calls.
+    """
     profile_config = get_docx_prompt_profile(
         prompt_profile,
         prompt_library_path=prompt_library_path,
@@ -142,6 +170,14 @@ def _coerce_modified_run_item(
 def _normalize_modified_runs(
     modified_runs: Sequence[Any],
 ) -> List[Tuple[int, int, str, int]]:
+    """Normalize a heterogeneous suggestion list into docx update tuples.
+
+    Args:
+        modified_runs: Raw model or API suggestion items.
+
+    Returns:
+        List[Tuple[int, int, str, int]]: Valid normalized run modifications.
+    """
     normalized: List[Tuple[int, int, str, int]] = []
     for item in modified_runs:
         coerced = _coerce_modified_run_item(item)
@@ -289,6 +325,13 @@ def _collect_paragraphs_from_table(
 def _collect_paragraphs_from_container(
     container: Any, collected: List[Any], seen_elements: set
 ) -> None:
+    """Collect unique paragraphs from a container and any nested tables.
+
+    Args:
+        container: Document, cell, header, or footer-like object to inspect.
+        collected: Output list receiving paragraph objects.
+        seen_elements: Set of paragraph element IDs already collected.
+    """
     for paragraph in getattr(container, "paragraphs", []):
         paragraph_element_id = id(paragraph._element)
         if paragraph_element_id not in seen_elements:
@@ -327,8 +370,12 @@ def defragment_docx_runs(
 ) -> Tuple[docx.document.Document, dict]:
     """Merge text-only runs within target paragraphs.
 
-    This preserves paragraph text and the formatting of the first run, while skipping
-    paragraphs that contain complex run XML such as fields or drawings.
+    Args:
+        document: A loaded ``python-docx`` document or a path to a DOCX file.
+        paragraph_numbers: Optional paragraph indexes to limit defragmentation.
+
+    Returns:
+        Tuple[docx.document.Document, dict]: The updated document and summary stats.
     """
     if isinstance(document, str):
         document = docx.Document(document)
@@ -366,6 +413,14 @@ def defragment_docx_runs(
 
 
 def _clone_document(document: docx.document.Document) -> docx.document.Document:
+    """Create an in-memory clone of a ``python-docx`` document.
+
+    Args:
+        document: Source document to copy.
+
+    Returns:
+        docx.document.Document: A detached copy of the input document.
+    """
     buffer = io.BytesIO()
     document.save(buffer)
     buffer.seek(0)
@@ -373,18 +428,50 @@ def _clone_document(document: docx.document.Document) -> docx.document.Document:
 
 
 def _contains_template_markup(text: str) -> bool:
+    """Check whether text contains Jinja-style template delimiters.
+
+    Args:
+        text: Text to inspect.
+
+    Returns:
+        bool: ``True`` when template delimiters are present.
+    """
     return "{{" in text or "{%" in text
 
 
 def _has_balanced_template_delimiters(text: str) -> bool:
+    """Check whether Jinja delimiter pairs are balanced in a text snippet.
+
+    Args:
+        text: Text to inspect.
+
+    Returns:
+        bool: ``True`` when opening and closing delimiters are balanced.
+    """
     return text.count("{{") == text.count("}}") and text.count("{%") == text.count("%}")
 
 
 def _has_placeholder_markers(text: str) -> bool:
+    """Detect obvious placeholder markers such as long underscores or tab runs.
+
+    Args:
+        text: Text to inspect.
+
+    Returns:
+        bool: ``True`` when placeholder markers are present.
+    """
     return bool(re.search(r"_{3,}", text) or re.search(r"\t{2,}", text))
 
 
 def _has_adjacent_word_fragments(text: str) -> bool:
+    """Detect template markup that is glued directly to surrounding letters.
+
+    Args:
+        text: Text to inspect.
+
+    Returns:
+        bool: ``True`` when markup appears attached to word fragments.
+    """
     return bool(
         re.search(r"(\}\}|\%\})[A-Za-z]", text)
         or re.search(r"[A-Za-z](\{\{|\{%)", text)
@@ -392,6 +479,15 @@ def _has_adjacent_word_fragments(text: str) -> bool:
 
 
 def _looks_inline_placeholder(source_run_text: str, source_paragraph_text: str) -> bool:
+    """Decide whether the source text looks like an inline placeholder target.
+
+    Args:
+        source_run_text: Original text from the targeted run.
+        source_paragraph_text: Original paragraph text containing the run.
+
+    Returns:
+        bool: ``True`` when the text should likely be replaced in place.
+    """
     stripped_run = source_run_text.strip()
     if not stripped_run:
         return True
@@ -427,6 +523,15 @@ def _filter_noop_suggestions(
 
 
 def _run_has_fragmented_word_boundary(paragraph: Any, run_number: int) -> bool:
+    """Check whether a run is embedded inside a split alphabetical word.
+
+    Args:
+        paragraph: Paragraph containing the run.
+        run_number: Index of the run to inspect.
+
+    Returns:
+        bool: ``True`` when neighboring runs split a word around the target run.
+    """
     if run_number < 0 or run_number >= len(paragraph.runs):
         return False
 
@@ -451,7 +556,15 @@ def validate_docx_label_suggestions(
     document: Union[docx.document.Document, str],
     suggestions: Sequence[Any],
 ) -> Dict[str, Any]:
-    """Run deterministic checks over model suggestions and the simulated output."""
+    """Run deterministic checks over model suggestions and the simulated output.
+
+    Args:
+        document: A loaded ``python-docx`` document or a path to a DOCX file.
+        suggestions: Raw suggestion items returned by labeling helpers or models.
+
+    Returns:
+        Dict[str, Any]: Per-suggestion validation results and aggregate counts.
+    """
     if isinstance(document, str):
         document = docx.Document(document)
 
@@ -584,7 +697,21 @@ def review_flagged_docx_label_suggestions(
     model: str = "gpt-5-mini",
     max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Ask an LLM to review only deterministic-validator flagged suggestions."""
+    """Ask an LLM to review only deterministic-validator flagged suggestions.
+
+    Args:
+        document: A loaded ``python-docx`` document or a path to a DOCX file.
+        suggestions: Raw suggestion items returned by a model or API.
+        deterministic_validation: Validator output describing flagged suggestions.
+        openai_client: Optional initialized OpenAI client.
+        openai_api: Optional API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: Model name to use for the review step.
+        max_output_tokens: Optional token limit for the review call.
+
+    Returns:
+        Dict[str, Any]: Review status, any error text, and normalized review items.
+    """
     openai_base_url = _normalize_openai_base_url(openai_base_url)
 
     if isinstance(document, str):
@@ -651,7 +778,7 @@ def review_flagged_docx_label_suggestions(
         if not isinstance(review, dict):
             continue
         try:
-            review_index = int(review.get("index"))
+            review_index = int(review.get("index"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         verdict = str(review.get("verdict") or "revise").strip().lower()
@@ -669,6 +796,15 @@ def review_flagged_docx_label_suggestions(
 
 
 def _suggestion_confidence_tier(clean_vote_count: int, total_generations: int) -> str:
+    """Classify suggestion confidence from clean votes across generations.
+
+    Args:
+        clean_vote_count: Number of generations that agreed without validation flags.
+        total_generations: Total number of candidate generations considered.
+
+    Returns:
+        str: ``high``, ``medium``, or ``low`` confidence.
+    """
     if clean_vote_count >= min(3, total_generations):
         return "high"
     if clean_vote_count >= 2:
@@ -677,6 +813,14 @@ def _suggestion_confidence_tier(clean_vote_count: int, total_generations: int) -
 
 
 def _litigation_template_paragraph_likely_templated(text: str) -> bool:
+    """Heuristically detect pleading text that likely needs templating.
+
+    Args:
+        text: Paragraph text to inspect.
+
+    Returns:
+        bool: ``True`` when the paragraph looks like drafting or placeholder text.
+    """
     paragraph_text = str(text or "")
     stripped = paragraph_text.strip()
     lowered = stripped.lower()
@@ -706,11 +850,27 @@ def _litigation_template_paragraph_likely_templated(text: str) -> bool:
 
 
 def _litigation_alignment_heavy_line(text: str) -> bool:
+    """Detect caption-style lines where tabs and parentheticals drive layout.
+
+    Args:
+        text: Paragraph text to inspect.
+
+    Returns:
+        bool: ``True`` when the line is alignment-heavy.
+    """
     line_text = str(text or "")
     return "\t" in line_text or line_text.count(")") >= 2
 
 
 def _candidate_flag_codes(candidate: Dict[str, Any]) -> set[str]:
+    """Extract validation flag codes from an aggregated candidate record.
+
+    Args:
+        candidate: Candidate suggestion metadata.
+
+    Returns:
+        set[str]: Unique flag codes present on the candidate.
+    """
     return {
         str(flag.get("code") or "").strip()
         for flag in candidate.get("validation_flags", [])
@@ -724,6 +884,16 @@ def _effective_candidate_flags(
     *,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
 ) -> List[Dict[str, Any]]:
+    """Adjust candidate validation flags for prompt-profile-specific heuristics.
+
+    Args:
+        candidate: Candidate suggestion metadata.
+        group: Aggregated source-group metadata.
+        prompt_profile: Prompt profile name driving validation behavior.
+
+    Returns:
+        List[Dict[str, Any]]: The effective validation flags to use for ranking.
+    """
     flags = list(candidate.get("validation_flags") or [])
     normalized_profile = (
         str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
@@ -746,6 +916,16 @@ def _effective_clean_vote_count(
     *,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
 ) -> int:
+    """Compute the effective clean-vote count after profile-specific adjustments.
+
+    Args:
+        candidate: Candidate suggestion metadata.
+        group: Aggregated source-group metadata.
+        prompt_profile: Prompt profile name driving validation behavior.
+
+    Returns:
+        int: Effective count of clean votes for candidate ranking.
+    """
     if not _effective_candidate_flags(candidate, group, prompt_profile=prompt_profile):
         raw_clean_count = int(candidate.get("clean_vote_count", 0))
         if raw_clean_count > 0:
@@ -755,6 +935,14 @@ def _effective_clean_vote_count(
 
 
 def _candidate_priority_key(candidate: Dict[str, Any]) -> Tuple[int, int, int, int]:
+    """Build a sort key that favors consensus, cleanliness, and concise labels.
+
+    Args:
+        candidate: Candidate suggestion metadata.
+
+    Returns:
+        Tuple[int, int, int, int]: Sort key used to rank competing candidates.
+    """
     return (
         int(
             candidate.get(
@@ -781,7 +969,20 @@ def review_docx_label_candidate_groups(
     max_output_tokens: Optional[int] = None,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
 ) -> Dict[str, Any]:
-    """Ask an LLM judge to choose the best candidate per ambiguous position."""
+    """Ask an LLM judge to choose the best candidate per ambiguous position.
+
+    Args:
+        candidate_groups: Candidate groups requiring judge review.
+        openai_client: Optional initialized OpenAI client.
+        openai_api: Optional API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: Model name to use for judge review.
+        max_output_tokens: Optional token limit for the judge call.
+        prompt_profile: Prompt profile name used for litigation-specific heuristics.
+
+    Returns:
+        Dict[str, Any]: Judge review status and normalized review items.
+    """
     openai_base_url = _normalize_openai_base_url(openai_base_url)
     if not candidate_groups:
         return {"performed": False, "reviews": []}
@@ -870,7 +1071,7 @@ def review_docx_label_candidate_groups(
         if not isinstance(review, dict):
             continue
         try:
-            group_index = int(review.get("group_index"))
+            group_index = int(review.get("group_index"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         decision = str(review.get("decision") or "reject").strip().lower()
@@ -879,7 +1080,7 @@ def review_docx_label_candidate_groups(
         candidate_index = review.get("candidate_index")
         if decision == "choose":
             try:
-                candidate_index = int(candidate_index)
+                candidate_index = int(candidate_index)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 decision = "reject"
                 candidate_index = None
@@ -908,7 +1109,21 @@ def aggregate_docx_label_suggestion_runs(
     judge_max_output_tokens: Optional[int] = None,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
 ) -> Dict[str, Any]:
-    """Combine repeated suggestion runs into one ranked set with alternates."""
+    """Combine repeated suggestion runs into one ranked set with alternates.
+
+    Args:
+        document: A loaded ``python-docx`` document or a path to a DOCX file.
+        suggestion_runs: Multiple labeling result sets to combine.
+        judge_model: Optional model override for ambiguous-group judging.
+        openai_client: Optional initialized OpenAI client for judge review.
+        openai_api: Optional API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        judge_max_output_tokens: Optional token limit for judge calls.
+        prompt_profile: Prompt profile name used for ranking heuristics.
+
+    Returns:
+        Dict[str, Any]: Aggregated suggestions, vote data, and judge metadata.
+    """
     if isinstance(document, str):
         document = docx.Document(document)
 
@@ -1055,6 +1270,7 @@ def aggregate_docx_label_suggestion_runs(
                 for candidate in candidates
                 if candidate is not chosen_candidate
             ]
+            assert chosen_candidate is not None
             selected_suggestions.append(
                 {
                     "paragraph": chosen_candidate["paragraph"],
@@ -1087,43 +1303,42 @@ def aggregate_docx_label_suggestion_runs(
 
     for group in ambiguous_groups:
         review = judge_reviews_by_index.get(group["group_index"], {})
-        chosen_candidate: Optional[Dict[str, Any]] = None
+        judge_chosen: Optional[Dict[str, Any]] = None
         if review.get("decision") == "choose":
             candidate_index = review.get("candidate_index")
             for candidate in group["candidates"]:
                 if candidate["candidate_index"] == candidate_index:
-                    chosen_candidate = candidate
+                    judge_chosen = candidate
                     break
-        if chosen_candidate is None:
+        if judge_chosen is None:
             discarded_groups += 1
             continue
         alternates = [
             candidate
             for candidate in group["candidates"]
-            if candidate["candidate_index"] != chosen_candidate["candidate_index"]
+            if candidate["candidate_index"] != judge_chosen["candidate_index"]
         ]
         selected_suggestions.append(
             {
-                "paragraph": chosen_candidate["paragraph"],
-                "run": chosen_candidate["run"],
-                "text": chosen_candidate["text"],
-                "new_paragraph": chosen_candidate["new_paragraph"],
-                "validation_flags": chosen_candidate["effective_validation_flags"],
+                "paragraph": judge_chosen["paragraph"],
+                "run": judge_chosen["run"],
+                "text": judge_chosen["text"],
+                "new_paragraph": judge_chosen["new_paragraph"],
+                "validation_flags": judge_chosen["effective_validation_flags"],
                 "judge_review": review,
-                "confidence": chosen_candidate["confidence"],
-                "vote_count": chosen_candidate["vote_count"],
-                "clean_vote_count": chosen_candidate["effective_clean_vote_count"],
+                "confidence": judge_chosen["confidence"],
+                "vote_count": judge_chosen["vote_count"],
+                "clean_vote_count": judge_chosen["effective_clean_vote_count"],
                 "vote_total": total_generations,
-                "sources": chosen_candidate["sources"],
+                "sources": judge_chosen["sources"],
                 "alternates": alternates,
             }
         )
 
-    confidence_counts = {"high": 0, "medium": 0, "low": 0}
-    for suggestion in selected_suggestions:
-        confidence_counts[suggestion["confidence"]] = (
-            confidence_counts.get(suggestion["confidence"], 0) + 1
-        )
+    confidence_counts: Dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    for suggestion in selected_suggestions:  # type: ignore[assignment]
+        key = suggestion["confidence"]  # type: ignore[call-overload]
+        confidence_counts[key] = confidence_counts.get(key, 0) + 1  # type: ignore[arg-type,index]
 
     selected_suggestions.sort(
         key=lambda item: (
@@ -1170,7 +1385,30 @@ def get_voted_docx_label_suggestions(
     judge_max_output_tokens: Optional[int] = None,
     defragment_runs: bool = False,
 ) -> Dict[str, Any]:
-    """Run repeated generations and aggregate them into one ranked suggestion set."""
+    """Run repeated generations and aggregate them into one ranked suggestion set.
+
+    Args:
+        docx_path: Path to the DOCX file to label.
+        custom_people_names: Optional list of custom people-variable descriptions.
+        preferred_variable_names: Optional preferred variable names to bias prompts.
+        openai_client: Optional initialized OpenAI client.
+        openai_api: Optional API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: Default generator model to use.
+        generator_models: Optional explicit sequence of generator models.
+        judge_model: Optional model override for ambiguous-group judging.
+        prompt_profile: Prompt profile name used for prompt/ranking heuristics.
+        prompt_library_path: Optional prompt library override path.
+        optional_context: Optional extra source context for the prompt.
+        custom_prompt: Optional full prompt override.
+        additional_instructions: Optional prompt suffix for extra guidance.
+        max_output_tokens: Optional token limit for generation calls.
+        judge_max_output_tokens: Optional token limit for judge calls.
+        defragment_runs: Whether to merge safe split runs before labeling.
+
+    Returns:
+        Dict[str, Any]: Aggregated suggestions and generation metadata.
+    """
     if generator_models:
         generation_models = [
             str(item).strip() for item in generator_models if str(item).strip()
@@ -1225,6 +1463,15 @@ def get_voted_docx_label_suggestions(
 
 
 def _build_paragraph_with_text(source_paragraph: Any, text: str) -> Any:
+    """Build a new paragraph element that mirrors a source paragraph's style.
+
+    Args:
+        source_paragraph: Existing paragraph used as a formatting reference.
+        text: Text content for the new paragraph.
+
+    Returns:
+        Any: A ``w:p`` XML element ready to insert into the document.
+    """
     paragraph_element = OxmlElement("w:p")
 
     # Carry paragraph-level style/formatting so inserted tags don't look out of place.
@@ -1238,17 +1485,38 @@ def _build_paragraph_with_text(source_paragraph: Any, text: str) -> Any:
 
 
 def add_paragraph_after(paragraph: Any, text: str) -> None:
+    """Insert a new paragraph after an existing paragraph.
+
+    Args:
+        paragraph: Existing paragraph that should receive a successor.
+        text: Text content for the inserted paragraph.
+    """
     paragraph._element.addnext(_build_paragraph_with_text(paragraph, text))
 
 
 def add_paragraph_before(paragraph: Any, text: str) -> None:
+    """Insert a new paragraph before an existing paragraph.
+
+    Args:
+        paragraph: Existing paragraph that should receive a predecessor.
+        text: Text content for the inserted paragraph.
+    """
     paragraph._element.addprevious(_build_paragraph_with_text(paragraph, text))
 
 
 def get_docx_run_text(
     document: Union[docx.document.Document, str], paragraph_number: int, run_number: int
 ) -> str:
-    """Get run text by unified paragraph index across body/tables/headers/footers."""
+    """Get run text by unified paragraph index across body, tables, headers, and footers.
+
+    Args:
+        document: A loaded ``python-docx`` document or a path to a DOCX file.
+        paragraph_number: Unified paragraph index in the flattened traversal.
+        run_number: Run index within the selected paragraph.
+
+    Returns:
+        str: The run text, or an empty string when the coordinates are invalid.
+    """
     if isinstance(document, str):
         document = docx.Document(document)
 
@@ -1266,7 +1534,15 @@ def get_docx_run_items(
     document: Union[docx.document.Document, str],
     defragment_runs: bool = False,
 ) -> List[List[Any]]:
-    """Return [paragraph_index, run_index, run_text] across body/tables/headers/footers."""
+    """Return ``[paragraph_index, run_index, run_text]`` across all document parts.
+
+    Args:
+        document: A loaded ``python-docx`` document or a path to a DOCX file.
+        defragment_runs: Whether to merge safe split runs before traversal.
+
+    Returns:
+        List[List[Any]]: Flattened run coordinates and text for the document.
+    """
     if isinstance(document, str):
         document = docx.Document(document)
     if defragment_runs:
@@ -1287,13 +1563,13 @@ def update_docx(
     """Update the document with modified runs.
 
     Args:
-        document: the docx.Document object, or the path to the DOCX file
-        modified_runs: a tuple of paragraph number, run number, the modified text, and
-            a number from -1 to 1 indicating whether a new paragraph should be inserted
-            before or after the current paragraph.
+        document: The ``python-docx`` document object, or the path to the DOCX file.
+        modified_runs: Tuples of paragraph number, run number, modified text, and
+            paragraph insertion indicator.
+        defragment_runs: Whether to merge safe split runs before applying edits.
 
     Returns:
-        The modified document.
+        docx.document.Document: The modified document.
     """
     normalized_runs = _normalize_modified_runs(modified_runs)
     normalized_runs.sort(key=lambda x: (x[0], x[1]), reverse=True)
@@ -1356,13 +1632,23 @@ def get_labeled_docx_runs(
     """Scan the DOCX and return a list of modified text with Jinja2 variable names inserted.
 
     Args:
-        docx_path: path to the DOCX file
-        custom_people_names: optional list of custom (name, description) pairs, e.g.
-            [("clients", "the person benefiting from the form")]
-        openai_api: optional API key override. If omitted, ALToolbox default resolution is used.
+        docx_path: Path to the DOCX file.
+        custom_people_names: Optional list of custom ``(name, description)`` pairs.
+        preferred_variable_names: Optional preferred variable names to bias prompts.
+        openai_client: Optional preconfigured OpenAI client.
+        openai_api: Optional API key override.
+        openai_base_url: Optional OpenAI-compatible base URL override.
+        model: OpenAI model to use.
+        prompt_profile: Prompt profile name used to select prompt text and rules.
+        prompt_library_path: Optional prompt library override path.
+        optional_context: Optional extra source context included in the prompt.
+        custom_prompt: Optional full prompt override.
+        additional_instructions: Optional extra instructions appended to the prompt.
+        max_output_tokens: Optional token limit passed to the chat completion helper.
+        defragment_runs: Whether to merge safe split runs before labeling.
 
     Returns:
-        A list of tuples, each containing a paragraph number, run number, and the modified text of the run.
+        List[Tuple[int, int, str, int]]: Suggested DOCX run replacements.
     """
     openai_base_url = _normalize_openai_base_url(openai_base_url)
 

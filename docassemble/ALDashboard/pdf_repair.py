@@ -37,6 +37,15 @@ def _require_executable(name: str) -> str:
 
 
 def _assert_pdf(path: str, *, label: str = "output") -> None:
+    """Validate that a repair step wrote a file with a PDF header.
+
+    Args:
+        path: Path to the output file to validate.
+        label: Human-readable label for the repair step.
+
+    Raises:
+        PDFRepairError: If the output file is missing or not a valid PDF.
+    """
     p = Path(path)
     if not p.is_file():
         raise PDFRepairError(f"Repair ({label}) did not produce an output file.")
@@ -59,7 +68,7 @@ def _copy_if_same(src: str, dst: str) -> None:
 
 def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
     """Extract field metadata (name, rect, type, page, appearance, value) with pikepdf."""
-    import pikepdf  # type: ignore[import-untyped]
+    import pikepdf
 
     fields: List[Dict[str, Any]] = []
     with pikepdf.open(pdf_path) as pdf:
@@ -102,7 +111,7 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
 
 def _restore_fields_pikepdf(pdf_path: str, fields: List[Dict[str, Any]]) -> None:
     """Re-add stripped fields to a flat PDF using pikepdf."""
-    import pikepdf  # type: ignore[import-untyped]
+    import pikepdf
 
     if not fields:
         return
@@ -183,12 +192,14 @@ def ghostscript_reprint(
 ) -> Dict[str, Any]:
     """Re-distill the PDF through Ghostscript.
 
-    When *preserve_fields* is ``True`` field metadata (name, rect, type)
-    is extracted first and re-applied to the reprinted file.
+    Args:
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the repaired PDF.
+        preserve_fields: Whether to restore AcroForm fields after re-distilling.
+        pdf_optimization: Ghostscript ``PDFSETTINGS`` profile to apply.
 
-    *pdf_optimization* controls the ``-dPDFSETTINGS`` Ghostscript option.
-    Accepted values: ``"screen"``, ``"ebook"``, ``"printer"``,
-    ``"prepress"`` (default), ``"default"``.
+    Returns:
+        Dict[str, Any]: Metadata describing the repair result and any warnings.
     """
     gs = _require_executable("gs")
 
@@ -259,12 +270,16 @@ def qpdf_repair(
     input_pdf_path: str,
     output_pdf_path: str,
 ) -> Dict[str, Any]:
-    """Open the PDF with pikepdf in repair mode (``fix=True``).
+    """Open the PDF with pikepdf in repair mode and rebuild page structure.
 
-    This invokes qpdf's ``--fix`` internally, then rebuilds the page
-    tree by re-writing through pikepdf.
+    Args:
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the repaired PDF.
+
+    Returns:
+        Dict[str, Any]: Metadata describing the repair result and page counts.
     """
-    import pikepdf  # type: ignore[import-untyped]
+    import pikepdf
 
     warnings: List[str] = []
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -320,8 +335,17 @@ def unlock_pdf(
     *,
     password: str = "",
 ) -> Dict[str, Any]:
-    """Remove encryption and permission restrictions with pikepdf."""
-    import pikepdf  # type: ignore[import-untyped]
+    """Remove encryption and permission restrictions with pikepdf.
+
+    Args:
+        input_pdf_path: Source encrypted PDF path.
+        output_pdf_path: Destination path for the unlocked PDF.
+        password: Password to use when opening the PDF.
+
+    Returns:
+        Dict[str, Any]: Metadata describing the unlock result.
+    """
+    import pikepdf
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
@@ -362,7 +386,7 @@ def unlock_pdf(
 
 def _repair_metadata_pikepdf(input_path: str, output_path: str) -> Dict[str, Any]:
     """Try to fix metadata and catalog entries with pikepdf."""
-    import pikepdf  # type: ignore[import-untyped]
+    import pikepdf
 
     fixes: List[str] = []
     with pikepdf.open(input_path) as pdf:
@@ -395,7 +419,7 @@ def _repair_metadata_pikepdf(input_path: str, output_path: str) -> Dict[str, Any
 
 def _repair_metadata_pdfrw(input_path: str, output_path: str) -> Dict[str, Any]:
     """Fallback metadata/catalog repair using pdfrw."""
-    import pdfrw  # type: ignore[import-untyped]
+    import pdfrw
 
     fixes: List[str] = []
     reader = pdfrw.PdfReader(input_path)
@@ -438,8 +462,12 @@ def repair_metadata(
 ) -> Dict[str, Any]:
     """Repair PDF metadata and catalog structure.
 
-    Tries pikepdf first; falls back to pdfrw if pikepdf cannot handle
-    the file.
+    Args:
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the repaired PDF.
+
+    Returns:
+        Dict[str, Any]: Metadata describing the repair method and fixes applied.
     """
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
@@ -484,8 +512,14 @@ def ocr_pdf(
 ) -> Dict[str, Any]:
     """Add an OCR text layer using ocrmypdf.
 
-    *skip_text* (default ``True``) tells ocrmypdf to skip pages that
-    already contain text, avoiding double-OCR.
+    Args:
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the OCR'd PDF.
+        language: OCR language code passed to ocrmypdf.
+        skip_text: Whether to skip pages that already contain text.
+
+    Returns:
+        Dict[str, Any]: Metadata describing the OCR operation.
     """
     _require_executable("ocrmypdf")
 
@@ -549,10 +583,14 @@ def auto_repair(
 ) -> Dict[str, Any]:
     """Try multiple repair strategies in sequence until one produces a valid PDF.
 
-    The cascade order is: qpdf → ghostscript → metadata repair.
-    The first strategy that produces a file openable by pikepdf wins.
+    Args:
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the repaired PDF.
+
+    Returns:
+        Dict[str, Any]: The winning repair result plus attempted-strategy errors.
     """
-    import pikepdf  # type: ignore[import-untyped]
+    import pikepdf
 
     errors: List[Dict[str, str]] = []
 
@@ -634,8 +672,14 @@ def run_repair(
 ) -> Dict[str, Any]:
     """Execute a single repair *action*.
 
-    *options* is forwarded as keyword arguments to the action function
-    (e.g. ``preserve_fields``, ``password``, ``language``).
+    Args:
+        action: Repair action name from ``REPAIR_ACTIONS``.
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the repaired PDF.
+        options: Optional keyword arguments forwarded to the repair action.
+
+    Returns:
+        Dict[str, Any]: Metadata returned by the selected repair function.
     """
     func = REPAIR_ACTIONS.get(action)
     if func is None:
@@ -647,7 +691,11 @@ def run_repair(
 
 
 def list_repair_actions() -> List[Dict[str, str]]:
-    """Return a JSON-friendly list of available repair actions with help text."""
+    """Return a JSON-friendly list of available repair actions with help text.
+
+    Returns:
+        List[Dict[str, str]]: Available repair action metadata.
+    """
     return [
         {"action": key, "description": REPAIR_ACTION_HELP.get(key, "")}
         for key in REPAIR_ACTIONS
@@ -660,13 +708,12 @@ def strip_embedded_fonts(
 ) -> Dict[str, Any]:
     """Remove embedded font programs from a PDF.
 
-    This deletes ``/FontFile``, ``/FontFile2``, and ``/FontFile3`` streams
-    from every font descriptor in the PDF.  The font *metrics* (name, widths,
-    encoding) are kept so that viewers can still substitute a similar system
-    font, but the file size drops significantly when large fonts were
-    embedded.
+    Args:
+        input_pdf_path: Source PDF path.
+        output_pdf_path: Destination path for the stripped PDF.
 
-    Returns a dict with ``fonts_removed`` (int) and ``status``.
+    Returns:
+        Dict[str, Any]: Metadata describing how many embedded fonts were removed.
     """
     _assert_pdf(input_pdf_path)
     import pikepdf

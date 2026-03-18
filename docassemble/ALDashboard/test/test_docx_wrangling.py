@@ -1,13 +1,17 @@
 import unittest
 from pathlib import Path
 import tempfile
+import threading
+import time
 from unittest.mock import patch
 
 import docx
 
 from docassemble.ALDashboard.docx_wrangling import (
+    apply_docx_label_renames,
     _get_docx_label_role_description,
     _normalize_openai_base_url,
+    DEFAULT_TEMPLATE_HIGHLIGHT_FILL,
     aggregate_docx_label_suggestion_runs,
     defragment_docx_runs,
     get_labeled_docx_runs,
@@ -15,6 +19,7 @@ from docassemble.ALDashboard.docx_wrangling import (
     review_flagged_docx_label_suggestions,
     update_docx,
     validate_docx_label_suggestions,
+    validate_docx_template_syntax,
 )
 
 
@@ -92,6 +97,48 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         updated = update_docx(document, [(0, 99, "Fallback run", 0)])
 
         self.assertEqual(updated.paragraphs[0].runs[-1].text, "Fallback run")
+
+    def test_update_docx_can_split_and_highlight_jinja_runs(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Name: ____")
+
+        updated = update_docx(
+            document,
+            [(0, 0, "Name: {{ users[0].name.first }}", 0)],
+            apply_jinja_highlights=True,
+        )
+
+        self.assertEqual(updated.paragraphs[0].text, "Name: {{ users[0].name.first }}")
+        self.assertEqual(
+            [run.text for run in updated.paragraphs[0].runs],
+            ["Name: ", "{{", " users[0].name.first ", "}}"],
+        )
+        self.assertIn(
+            'w:fill="' + DEFAULT_TEMPLATE_HIGHLIGHT_FILL + '"',
+            updated.paragraphs[0].runs[2]._r.xml,
+        )
+        self.assertNotIn("w:shd", updated.paragraphs[0].runs[1]._r.xml)
+        self.assertNotIn("w:shd", updated.paragraphs[0].runs[3]._r.xml)
+
+    def test_update_docx_uses_nested_if_stack_for_highlight_colors(self):
+        document = docx.Document()
+        document.add_paragraph("{% if outer %}")
+        document.add_paragraph("{%p if inner %}")
+        document.add_paragraph("{%p endif %}")
+        document.add_paragraph("{% endif %}")
+
+        updated = update_docx(document, [], apply_jinja_highlights=True)
+
+        outer_open_fill = updated.paragraphs[0].runs[1]._r.xml
+        inner_open_fill = updated.paragraphs[1].runs[1]._r.xml
+        inner_close_fill = updated.paragraphs[2].runs[1]._r.xml
+        outer_close_fill = updated.paragraphs[3].runs[1]._r.xml
+
+        self.assertIn('w:fill="C7E1DD"', outer_open_fill)
+        self.assertIn('w:fill="B8D7D3"', inner_open_fill)
+        self.assertIn('w:fill="B8D7D3"', inner_close_fill)
+        self.assertIn('w:fill="C7E1DD"', outer_close_fill)
 
     def test_update_docx_ignores_invalid_items_and_accepts_dict_items(self):
         document = docx.Document()
@@ -213,6 +260,58 @@ docx:
         codes = {flag["code"] for flag in validation["results"][0]["flags"]}
         self.assertIn("fragmented_word_boundary", codes)
         self.assertIn("leftover_word_fragments", codes)
+
+    def test_validator_flags_mismatched_paragraph_conditional_style(self):
+        document = docx.Document()
+        document.add_paragraph("Optional section")
+
+        validation = validate_docx_label_suggestions(
+            document,
+            [
+                (0, 0, "{%p if show_section %}", -1),
+                (0, 0, "{% endif %}", 0),
+            ],
+        )
+
+        self.assertEqual(validation["flagged_count"], 2)
+        open_codes = {flag["code"] for flag in validation["results"][0]["flags"]}
+        close_codes = {flag["code"] for flag in validation["results"][1]["flags"]}
+        self.assertIn("mismatched_conditional_control_tag_style", open_codes)
+        self.assertIn("mismatched_conditional_control_tag_style", close_codes)
+
+    def test_validate_docx_template_syntax_maps_paragraph_error(self):
+        document = docx.Document()
+        document.add_paragraph("{%p if user.name %}")
+        document.add_paragraph("Hello")
+
+        validation = validate_docx_template_syntax(document)
+
+        self.assertFalse(validation["valid"])
+        self.assertEqual(validation["errors"][0]["paragraph"], 0)
+
+    def test_validate_docx_template_syntax_keeps_unknown_filter_as_warning(self):
+        document = docx.Document()
+        document.add_paragraph("{{ user.name | custom_filter }}")
+
+        validation = validate_docx_template_syntax(document)
+
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["errors"], [])
+        self.assertEqual(validation["warning_count"], 1)
+
+    def test_apply_docx_label_renames_updates_headers_and_body(self):
+        document = docx.Document()
+        document.add_paragraph("{{ old_name }}")
+        document.sections[0].header.add_paragraph("{{ old_name }}")
+
+        rename_count = apply_docx_label_renames(
+            document,
+            [{"original": "{{ old_name }}", "replacement": "{{ new_name }}"}],
+        )
+
+        self.assertEqual(rename_count, 2)
+        self.assertEqual(document.paragraphs[0].text, "{{ new_name }}")
+        self.assertIn("{{ new_name }}", document.sections[0].header.paragraphs[-1].text)
 
     @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
     def test_ai_review_only_reviews_flagged_suggestions(self, mock_chat_completion):
@@ -653,6 +752,153 @@ docx:
         self.assertEqual(
             mock_get_labeled_docx_runs.call_args.kwargs["optional_context"],
             "Helpful background about this template.",
+        )
+
+    @patch("docassemble.ALDashboard.docx_wrangling.aggregate_docx_label_suggestion_runs")
+    @patch("docassemble.ALDashboard.docx_wrangling.validate_docx_label_suggestions")
+    @patch("docassemble.ALDashboard.docx_wrangling.get_labeled_docx_runs")
+    def test_get_voted_docx_label_suggestions_parallelizes_generation_and_orders_validation_before_aggregation(
+        self,
+        mock_get_labeled_docx_runs,
+        mock_validate_docx_label_suggestions,
+        mock_aggregate_docx_label_suggestion_runs,
+    ):
+        document = docx.Document()
+        document.add_paragraph("Name: ____")
+
+        active_calls = 0
+        max_active_calls = 0
+        active_lock = threading.Lock()
+        started_event = threading.Event()
+        validation_order = []
+
+        def fake_get_labeled(*args, **kwargs):
+            nonlocal active_calls, max_active_calls
+            model_name = kwargs["model"]
+            with active_lock:
+                active_calls += 1
+                max_active_calls = max(max_active_calls, active_calls)
+                if active_calls >= 2:
+                    started_event.set()
+            started_event.wait(timeout=0.25)
+            time.sleep(0.01)
+            with active_lock:
+                active_calls -= 1
+            return [(0, 0, f"Name: {{{{ {model_name} }}}}", 0)]
+
+        def fake_validate(review_document, suggestions):
+            text = suggestions[0][2]
+            validation_order.append(text)
+            return {"results": [], "flagged_count": 0}
+
+        def fake_aggregate(review_document, generation_runs, **kwargs):
+            self.assertEqual(
+                validation_order,
+                [
+                    "Name: {{ model-a }}",
+                    "Name: {{ model-b }}",
+                    "Name: {{ model-c }}",
+                ],
+            )
+            self.assertEqual(
+                [run["generation_index"] for run in generation_runs], [0, 1, 2]
+            )
+            self.assertEqual(
+                [run["model"] for run in generation_runs],
+                ["model-a", "model-b", "model-c"],
+            )
+            self.assertTrue(all("validation" in run for run in generation_runs))
+            return {
+                "suggestions": [],
+                "aggregation": {},
+                "judge_review": {"performed": False, "reviews": []},
+            }
+
+        mock_get_labeled_docx_runs.side_effect = fake_get_labeled
+        mock_validate_docx_label_suggestions.side_effect = fake_validate
+        mock_aggregate_docx_label_suggestion_runs.side_effect = fake_aggregate
+
+        with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
+            document.save(tmp.name)
+            result = get_voted_docx_label_suggestions(
+                tmp.name,
+                model="gpt-5-mini",
+                generator_models=["model-a", "model-b", "model-c"],
+            )
+
+        self.assertGreaterEqual(max_active_calls, 2)
+        self.assertEqual(result["generation_runs"][0]["model"], "model-a")
+        self.assertEqual(result["generation_runs"][1]["model"], "model-b")
+        self.assertEqual(result["generation_runs"][2]["model"], "model-c")
+
+    @patch("docassemble.ALDashboard.docx_wrangling.review_docx_label_candidate_groups")
+    def test_aggregate_docx_label_suggestion_runs_prepares_candidates_before_judge(
+        self, mock_review_docx_label_candidate_groups
+    ):
+        document = docx.Document()
+        document.add_paragraph("Name: ____")
+
+        run_a = [(0, 0, "Name: {{ users[0].name.full() }}", 0)]
+        run_b = [(0, 0, "Name: {{ users[0].name.first }}", 0)]
+        run_c = [(0, 0, "Name: {{ users[0].name.last }}", 0)]
+
+        def fake_review(candidate_groups, **kwargs):
+            self.assertEqual(len(candidate_groups), 1)
+            candidates = candidate_groups[0]["candidates"]
+            self.assertTrue(all("candidate_index" in candidate for candidate in candidates))
+            self.assertTrue(all("confidence" in candidate for candidate in candidates))
+            self.assertTrue(
+                all("effective_validation_flags" in candidate for candidate in candidates)
+            )
+            chosen_candidate = next(
+                candidate
+                for candidate in candidates
+                if candidate["text"] == "Name: {{ users[0].name.full() }}"
+            )
+            return {
+                "performed": True,
+                "reviews": [
+                    {
+                        "group_index": 0,
+                        "decision": "choose",
+                        "candidate_index": chosen_candidate["candidate_index"],
+                        "reason": "Prepared candidates reach the judge after aggregation.",
+                    }
+                ],
+            }
+
+        mock_review_docx_label_candidate_groups.side_effect = fake_review
+
+        aggregated = aggregate_docx_label_suggestion_runs(
+            document,
+            [
+                {
+                    "model": "gpt-5-mini",
+                    "generation_index": 0,
+                    "suggestions": run_a,
+                    "validation": validate_docx_label_suggestions(document, run_a),
+                },
+                {
+                    "model": "gpt-5-mini",
+                    "generation_index": 1,
+                    "suggestions": run_b,
+                    "validation": validate_docx_label_suggestions(document, run_b),
+                },
+                {
+                    "model": "gpt-5-mini",
+                    "generation_index": 2,
+                    "suggestions": run_c,
+                    "validation": validate_docx_label_suggestions(document, run_c),
+                },
+            ],
+            judge_model="gpt-5-mini",
+        )
+
+        self.assertTrue(aggregated["judge_review"]["performed"])
+        self.assertEqual(len(aggregated["suggestions"]), 1)
+        self.assertEqual(
+            aggregated["suggestions"][0]["text"],
+            "Name: {{ users[0].name.full() }}",
         )
 
 

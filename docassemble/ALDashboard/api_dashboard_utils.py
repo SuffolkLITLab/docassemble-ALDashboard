@@ -5,10 +5,13 @@ import json
 import os
 import re
 import tempfile
+import time
+import uuid
 from typing import Any, Dict, List, Mapping, Optional, cast
 
 from flask import request
 from docassemble.base.error import DAError
+from docassemble.base.util import log
 
 DASHBOARD_API_BASE_PATH = "/al/api/v1/dashboard"
 
@@ -86,6 +89,14 @@ def _load_json_field(
             f"{field_name} must be a {expected_type.__name__}."
         )
     return value
+
+
+def _load_string_list_field(raw_value: Any, *, field_name: str) -> Optional[List[str]]:
+    parsed = _load_json_field(raw_value, field_name=field_name, expected_type=list)
+    if parsed is None:
+        return None
+    output = [str(item).strip() for item in parsed if str(item).strip()]
+    return output or None
 
 
 def merge_raw_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
@@ -368,6 +379,236 @@ def docx_runs_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             "paragraph_count": paragraph_count,
             "run_count": len(runs),
             "results": runs,
+        }
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def docx_labeler_suggest_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    import docx
+
+    from .docx_wrangling import defragment_docx_runs, get_voted_docx_label_suggestions
+    from .validate_docx import detect_docx_automation_features
+
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.docx")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError("file_content_base64 is required.")
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+
+    if not filename.lower().endswith(".docx"):
+        raise DashboardAPIValidationError(
+            "Only DOCX uploads are supported.", status_code=415
+        )
+
+    prompt_profile = str(raw.get("prompt_profile") or "standard").strip() or "standard"
+    optional_context = raw.get("context_text")
+    custom_prompt = raw.get("custom_prompt")
+    additional_instructions = raw.get("additional_instructions")
+    defragment_runs = parse_bool(raw.get("defragment_runs"), default=True)
+    model = str(raw.get("model") or "gpt-5-mini").strip() or "gpt-5-mini"
+
+    judge_model_raw = raw.get("judge_model")
+    judge_model = None
+    if judge_model_raw is not None:
+        judge_model = str(judge_model_raw).strip() or None
+
+    openai_api = raw.get("openai_api")
+    if openai_api is not None:
+        openai_api = str(openai_api)
+    openai_base_url = raw.get("openai_base_url")
+    if openai_base_url is not None:
+        openai_base_url = str(openai_base_url)
+
+    generator_models = _load_string_list_field(
+        raw.get("generator_models"), field_name="generator_models"
+    )
+    custom_people_names = _load_json_field(
+        raw.get("custom_people_names"),
+        field_name="custom_people_names",
+        expected_type=list,
+    )
+    preferred_variable_names = _load_string_list_field(
+        raw.get("preferred_variable_names"),
+        field_name="preferred_variable_names",
+    )
+
+    interview_source_mode = (
+        str(raw.get("interview_source_mode") or "playground").strip().lower()
+        or "playground"
+    )
+    selected_playground_project = raw.get("playground_project")
+    selected_playground_filename = raw.get("playground_yaml_file")
+    selected_installed_interview_path = raw.get("installed_interview_path")
+
+    temp_path = _write_temp_file(filename, content)
+    started_at = time.perf_counter()
+    try:
+        prep_started_at = time.perf_counter()
+        review_document = docx.Document(temp_path)
+        if defragment_runs:
+            review_document, _ = defragment_docx_runs(review_document)
+        prep_elapsed = time.perf_counter() - prep_started_at
+
+        automation_started_at = time.perf_counter()
+        automation_findings = detect_docx_automation_features(temp_path)
+        document_warnings = [
+            finding
+            for finding in automation_findings.get("findings", [])
+            if finding.get("code")
+            in {
+                "track_changes",
+                "structured_document_tags",
+                "sdt_specialized_controls",
+                "sdt_plain_text_control",
+                "sdt_group_control",
+                "sdt_docpart_non_page_numbers",
+                "sdt_metadata",
+                "sdt_bound_or_locked",
+                "data_binding",
+                "custom_xml_parts",
+                "custom_xml_relationships",
+            }
+        ]
+        automation_elapsed = time.perf_counter() - automation_started_at
+
+        suggestion_started_at = time.perf_counter()
+        aggregated = get_voted_docx_label_suggestions(
+            docx_path=temp_path,
+            custom_people_names=cast(Any, custom_people_names),
+            preferred_variable_names=preferred_variable_names,
+            openai_api=cast(Optional[str], openai_api),
+            openai_base_url=cast(Optional[str], openai_base_url),
+            model=model,
+            generator_models=generator_models,
+            judge_model=judge_model,
+            prompt_profile=prompt_profile,
+            optional_context=(
+                str(optional_context) if optional_context is not None else None
+            ),
+            custom_prompt=str(custom_prompt) if custom_prompt is not None else None,
+            additional_instructions=(
+                str(additional_instructions)
+                if additional_instructions is not None
+                else None
+            ),
+            defragment_runs=defragment_runs,
+            judge_max_output_tokens=2000,
+        )
+        suggestion_elapsed = time.perf_counter() - suggestion_started_at
+
+        format_started_at = time.perf_counter()
+        suggestions = aggregated.get("suggestions", [])
+        aggregation_summary = aggregated.get("aggregation", {})
+        judge_review = aggregated.get("judge_review", {})
+        generation_runs = aggregated.get("generation_runs", [])
+        flagged_selected_count = sum(
+            1 for suggestion in suggestions if suggestion.get("validation_flags")
+        )
+
+        formatted_suggestions = []
+        for suggestion in suggestions:
+            alternates = []
+            for alternate in suggestion.get("alternates", []):
+                alternates.append(
+                    {
+                        "text": alternate.get("text", ""),
+                        "paragraph": alternate.get("paragraph"),
+                        "run": alternate.get("run"),
+                        "new_paragraph": alternate.get("new_paragraph", 0),
+                        "validation_flags": alternate.get("validation_flags", []),
+                        "confidence": alternate.get("confidence", "low"),
+                        "vote_count": alternate.get("vote_count", 0),
+                        "clean_vote_count": alternate.get("clean_vote_count", 0),
+                        "vote_total": suggestion.get(
+                            "vote_total", len(generation_runs)
+                        ),
+                        "sources": alternate.get("sources", []),
+                    }
+                )
+            formatted_suggestions.append(
+                {
+                    "paragraph": suggestion.get("paragraph"),
+                    "run": suggestion.get("run"),
+                    "text": suggestion.get("text", ""),
+                    "new_paragraph": suggestion.get("new_paragraph", 0),
+                    "id": str(uuid.uuid4()),
+                    "validation_flags": suggestion.get("validation_flags", []),
+                    "judge_review": suggestion.get("judge_review"),
+                    "confidence": suggestion.get("confidence", "low"),
+                    "vote_count": suggestion.get("vote_count", 0),
+                    "clean_vote_count": suggestion.get("clean_vote_count", 0),
+                    "vote_total": suggestion.get("vote_total", len(generation_runs)),
+                    "sources": suggestion.get("sources", []),
+                    "alternates": alternates,
+                }
+            )
+        format_elapsed = time.perf_counter() - format_started_at
+
+        total_elapsed = time.perf_counter() - started_at
+        timings = {
+            "document_prep_seconds": round(prep_elapsed, 3),
+            "automation_scan_seconds": round(automation_elapsed, 3),
+            "label_generation_seconds": round(suggestion_elapsed, 3),
+            "response_format_seconds": round(format_elapsed, 3),
+            "total_seconds": round(total_elapsed, 3),
+            "generator_run_count": len(generation_runs),
+            "generator_models": [
+                str(item.get("model") or "")
+                for item in generation_runs
+                if str(item.get("model") or "")
+            ],
+            "ambiguous_group_count": int(
+                aggregation_summary.get("ambiguous_group_count") or 0
+            ),
+            "judge_review_count": len(judge_review.get("reviews", []) or []),
+        }
+        log(
+            "ALDashboard: DOCX suggest-labels timings for "
+            + repr(filename)
+            + ": "
+            + json.dumps(timings, sort_keys=True),
+            "info",
+        )
+
+        return {
+            "filename": filename,
+            "suggestions": formatted_suggestions,
+            "defragment_runs": defragment_runs,
+            "interview_source_mode": interview_source_mode,
+            "playground_project": (
+                str(selected_playground_project)
+                if selected_playground_project is not None
+                else None
+            ),
+            "playground_yaml_file": (
+                str(selected_playground_filename)
+                if selected_playground_filename is not None
+                else None
+            ),
+            "installed_interview_path": (
+                str(selected_installed_interview_path)
+                if selected_installed_interview_path is not None
+                else None
+            ),
+            "playground_variable_count": len(preferred_variable_names or []),
+            "validation": {
+                "deterministic": {
+                    "flagged_count": flagged_selected_count,
+                    "ai_review_recommended": bool(
+                        aggregation_summary.get("ambiguous_group_count")
+                    ),
+                },
+                "ai_review": judge_review,
+                "document_warnings": document_warnings,
+                "aggregation": aggregation_summary,
+                "timings": timings,
+            },
         }
     finally:
         if os.path.exists(temp_path):

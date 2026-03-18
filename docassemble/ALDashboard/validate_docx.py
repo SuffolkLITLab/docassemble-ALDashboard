@@ -15,6 +15,7 @@ from lxml import etree as LET
 __all__ = [
     "CallAndDebugUndefined",
     "get_jinja_errors",
+    "get_jinja_template_validation",
     "detect_docx_automation_features",
     "strip_docx_problem_controls",
     "Environment",
@@ -176,13 +177,84 @@ class DAExtension(Extension):
             yield token
 
 
+def _build_da_environment() -> DAEnvironment:
+    env = DAEnvironment(undefined=CallAndDebugUndefined, extensions=[DAExtension])
+    env.filters.update(registered_jinja_filters)
+    env.filters.update(builtin_jinja_filters)
+    return env
+
+
+def _normalize_jinja_source(source: str) -> str:
+    return re.sub(r"({[%\{].*?[%\}]})", fix_quotes, source)
+
+
+def _build_template_issue(
+    code: str,
+    message: str,
+    exception: Optional[BaseException] = None,
+) -> Dict[str, Any]:
+    issue: Dict[str, Any] = {
+        "code": code,
+        "message": message,
+    }
+    lineno = getattr(exception, "lineno", None)
+    if lineno is not None:
+        issue["line"] = int(lineno)
+    name = getattr(exception, "name", None)
+    if name:
+        issue["name"] = str(name)
+    return issue
+
+
+def _is_nonblocking_template_assertion(message: str) -> bool:
+    return "No filter named" in message or "No test named" in message
+
+
+def get_jinja_template_validation(source: str) -> Dict[str, Any]:
+    """Parse Jinja source and return blocking errors and non-blocking warnings.
+
+    The validation reuses the docx validator's custom environment so AssemblyLine's
+    common filters behave the same here as they do during DOCX validation.
+    Unknown filters/tests are returned as warnings so callers can warn without
+    blocking a save.
+    """
+    env = _build_da_environment()
+    normalized_source = _normalize_jinja_source(source)
+    errors: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+
+    try:
+        parsed = env.parse(normalized_source)
+    except jinja2.exceptions.TemplateSyntaxError as err:
+        errors.append(_build_template_issue("template_syntax_error", str(err), err))
+        return {
+            "valid": False,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    try:
+        env.compile(parsed)
+    except jinja2.exceptions.TemplateAssertionError as err:
+        message = str(err)
+        issue = _build_template_issue("template_assertion_error", message, err)
+        if _is_nonblocking_template_assertion(message):
+            warnings.append(issue)
+        else:
+            errors.append(issue)
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
 def get_jinja_errors(the_file: str) -> Optional[str]:
     """Just try rendering the DOCX file as a Jinja2 template and catch any errors.
     Returns a string with the errors, if any.
     """
-    env = DAEnvironment(undefined=CallAndDebugUndefined, extensions=[DAExtension])
-    env.filters.update(registered_jinja_filters)
-    env.filters.update(builtin_jinja_filters)
+    env = _build_da_environment()
 
     doc = DocxTemplate(the_file)
     try:

@@ -1,0 +1,45 @@
+/* Header */
+.navbar.bg-dark {
+  background-color: var(--suffolk-blue) !important;
+}
+
+.al-title {
+  color: var(--white);
+  
+  .title-row-1 {
+    color: var(--suffolk-gold);
+  }
+}
+
+.nav-link {
+  color: var(--bs-nav-link-color);
+
+  &:hover {
+    color: var(--bs-nav-link-hover-color);
+  }
+}
+
+/* Navigation */
+
+.nav-pills .nav-link.active, {
+  border-radius: var(--bs-btn-border-radius);
+  color: revert;
+  background-color: rgba(var(--bs-primary-rgb), .1);
+}
+
+/* datatype: file */
+
+.input-group > :not(:first-child):not(.dropdown-menu):not(.valid-tooltip):not(.valid-feedback):not(.invalid-tooltip):not(.invalid-feedback) {
+  border-radius: 0;
+}
+
+/* Elements */
+
+a {
+  text-decoration: underline;
+}
+
+.btn.focus,
+.btn:focus {
+    box-shadow: 0 0 0 1px rgba(21, 40, 75, .25);
+}

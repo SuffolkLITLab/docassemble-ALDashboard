@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AssemblyLine DOCX Labeler</title>
-    <link rel="icon" type="image/png" href="/packagestatic/docassemble.LITLabTheme/dal-favicon.png">
-    <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/bootstrap-theme.css">
-    <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/variables.css">
-    <link rel="stylesheet" href="/packagestatic/docassemble.LITLabTheme/custom.css">
+    <link rel="icon" type="image/png" href="/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/bootstrap-theme.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/variables.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/custom.css">
     <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/docx_labeler.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 </head>
@@ -17,7 +17,7 @@
         <header class="dl-header navbar bg-dark px-4 py-3">
             <div class="container-fluid d-flex align-items-center justify-content-between">
                 <div class="d-flex align-items-center gap-3">
-                    <img src="/packagestatic/docassemble.LITLabTheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
+                    <img src="/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
                     <div class="al-title">
                         <h1 class="h4 fw-bold mb-0 text-white">AssemblyLine DOCX Labeler</h1>
                         <p class="small mt-1 mb-0 text-white">Add or edit Jinja2 template variables</p>
@@ -150,6 +150,10 @@
 
                     <!-- Download Button -->
                     <div class="dl-download-bar">
+                        <div id="syntax-validation" class="hidden alert small mb-2"></div>
+                        <button id="apply-highlights-btn" class="btn btn-outline-secondary w-100 py-2 fw-semibold mb-2" disabled>
+                            Apply Highlights
+                        </button>
                         <button id="download-btn" class="btn btn-primary w-100 py-2 fw-semibold" disabled>
                             Download Updated DOCX
                         </button>
@@ -553,7 +557,11 @@
             },
             activeTab: 'existing',
             editingLabelId: null,
-            validation: null
+            validation: null,
+            syntaxValidation: null,
+            syntaxValidationPending: false,
+            syntaxValidationTimer: null,
+            syntaxValidationRequestToken: 0
         };
 
         // ================================================================
@@ -585,8 +593,10 @@
         const mainPanel = document.getElementById('main-panel');
         const previewEmpty = document.getElementById('preview-empty');
         const previewContent = document.getElementById('preview-content');
+        const applyHighlightsBtn = document.getElementById('apply-highlights-btn');
         const downloadBtn = document.getElementById('download-btn');
         const downloadStatus = document.getElementById('download-status');
+        const syntaxValidationBanner = document.getElementById('syntax-validation');
         const existingPanel = document.getElementById('existing-panel');
         const suggestionsPanel = document.getElementById('suggestions-panel');
         const suggestionsList = document.getElementById('suggestions-list');
@@ -654,6 +664,143 @@
                 }
             });
             return models.join(', ');
+        }
+
+        function collectRenamePayload() {
+            var renames = [];
+            Object.entries(state.labelRenames).forEach(function(entry) {
+                var original = entry[0], newValue = entry[1];
+                if (original !== newValue) {
+                    renames.push({ original: original, replacement: newValue });
+                }
+            });
+            return renames;
+        }
+
+        function collectAcceptedLabels() {
+            return state.suggestions.filter(function(s) { return s.status === 'accepted'; }).map(function(s) {
+                return { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
+            });
+        }
+
+        function renderSyntaxValidation() {
+            if (!syntaxValidationBanner) return;
+            var validation = state.syntaxValidation;
+            var errors = validation && Array.isArray(validation.errors) ? validation.errors : [];
+            var warnings = validation && Array.isArray(validation.warnings) ? validation.warnings : [];
+
+            if (!state.syntaxValidationPending && errors.length === 0 && warnings.length === 0) {
+                syntaxValidationBanner.className = 'hidden alert small mb-2';
+                syntaxValidationBanner.textContent = '';
+                return;
+            }
+
+            var className = 'alert small mb-2';
+            var html = '';
+            if (errors.length > 0) {
+                className += ' alert-danger';
+                html += '<div class="fw-semibold">Jinja syntax errors detected</div>';
+                errors.forEach(function(issue) {
+                    var label = issue.paragraph !== undefined ? 'Paragraph ' + (issue.paragraph + 1) : 'Template';
+                    html += '<div>' + escapeHtml(label + ': ' + (issue.message || issue.code || 'Syntax error')) + '</div>';
+                });
+            } else if (warnings.length > 0) {
+                className += ' alert-warning';
+                html += '<div class="fw-semibold">Jinja validation warnings</div>';
+                warnings.forEach(function(issue) {
+                    html += '<div>' + escapeHtml(issue.message || issue.code || 'Warning') + '</div>';
+                });
+            } else {
+                className += ' alert-info';
+                html = '<div>Checking Jinja syntax...</div>';
+            }
+
+            if (state.syntaxValidationPending && (errors.length > 0 || warnings.length > 0)) {
+                html += '<div class="mt-1 text-muted">Rechecking...</div>';
+            }
+
+            syntaxValidationBanner.className = className;
+            syntaxValidationBanner.innerHTML = html;
+        }
+
+        async function validateCurrentSyntax(options) {
+            options = options || {};
+            if (!state.file) {
+                state.syntaxValidation = null;
+                state.syntaxValidationPending = false;
+                renderSyntaxValidation();
+                return null;
+            }
+
+            var renames = collectRenamePayload();
+            var acceptedLabels = collectAcceptedLabels();
+            if (!options.force && renames.length === 0 && acceptedLabels.length === 0) {
+                state.syntaxValidation = null;
+                state.syntaxValidationPending = false;
+                renderSyntaxValidation();
+                return null;
+            }
+
+            var requestToken = state.syntaxValidationRequestToken + 1;
+            state.syntaxValidationRequestToken = requestToken;
+            state.syntaxValidationPending = true;
+            renderSyntaxValidation();
+
+            try {
+                var formData = new FormData();
+                formData.append('file', state.file);
+                formData.append('defragment_runs', state.settings.defragmentRuns ? 'true' : 'false');
+                if (renames.length > 0) formData.append('renames', JSON.stringify(renames));
+                if (acceptedLabels.length > 0) formData.append('labels', JSON.stringify(acceptedLabels));
+                var response = await fetch('/al/docx-labeler/api/validate-syntax', { method: 'POST', body: formData });
+                var data = await parseApiResponse(response);
+                if (requestToken === state.syntaxValidationRequestToken) {
+                    state.syntaxValidation = data.data && data.data.validation ? data.data.validation : null;
+                }
+            } catch (error) {
+                if (requestToken === state.syntaxValidationRequestToken) {
+                    state.syntaxValidation = {
+                        valid: false,
+                        errors: [{ code: 'validation_request_failed', message: error.message || 'Syntax validation failed.' }],
+                        warnings: []
+                    };
+                }
+            } finally {
+                if (requestToken === state.syntaxValidationRequestToken) {
+                    state.syntaxValidationPending = false;
+                    renderSyntaxValidation();
+                    updateDownloadButton();
+                }
+            }
+
+            return state.syntaxValidation;
+        }
+
+        function scheduleSyntaxValidation(delay) {
+            if (state.syntaxValidationTimer) {
+                window.clearTimeout(state.syntaxValidationTimer);
+            }
+            state.syntaxValidationTimer = window.setTimeout(function() {
+                validateCurrentSyntax();
+            }, typeof delay === 'number' ? delay : 400);
+        }
+
+        async function ensureSyntaxValidationBeforeWrite(actionLabel) {
+            var validation = await validateCurrentSyntax({ force: true });
+            var errors = validation && Array.isArray(validation.errors) ? validation.errors : [];
+            if (errors.length === 0) {
+                return { allowed: true, validation: validation, allowInvalidSyntax: false };
+            }
+
+            var summary = errors.slice(0, 3).map(function(issue) {
+                return '- ' + (issue.message || issue.code || 'Syntax error');
+            }).join('\n');
+            var proceed = window.confirm(
+                'The Jinja syntax validator found errors before ' + actionLabel + ':\n\n'
+                + summary
+                + '\n\nSave anyway?'
+            );
+            return { allowed: proceed, validation: validation, allowInvalidSyntax: proceed };
         }
 
         function swapSuggestionWithAlternate(suggestion, alternateIndex) {
@@ -928,6 +1075,70 @@
                 throw new Error('Request failed with status ' + response.status);
             }
             return response.json();
+        }
+
+        async function parseApiResponse(response) {
+            var contentType = response.headers.get('content-type') || '';
+            var data;
+            if (contentType.indexOf('application/json') !== -1) {
+                data = await response.json();
+            } else {
+                var text = await response.text();
+                if (!response.ok) {
+                    throw new Error(text || ('Request failed (' + response.status + ').'));
+                }
+                throw new Error('The server returned a non-JSON response.');
+            }
+            if (!response.ok) {
+                throw new Error((data && data.error && data.error.message) ? data.error.message : ('Request failed (' + response.status + ').'));
+            }
+            return data;
+        }
+
+        function sleep(milliseconds) {
+            return new Promise(function(resolve) {
+                window.setTimeout(resolve, milliseconds);
+            });
+        }
+
+        async function pollLabelerJob(jobUrl, progressMessage) {
+            var startedAt = Date.now();
+            var timeoutMs = 15 * 60 * 1000;
+            while ((Date.now() - startedAt) < timeoutMs) {
+                await sleep(1500);
+                var response = await fetch(jobUrl, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                var payload = await parseApiResponse(response);
+                if (payload.status === 'queued' || payload.status === 'running') {
+                    showLoading(progressMessage);
+                    continue;
+                }
+                if (payload.status === 'failed') {
+                    throw new Error((payload.error && payload.error.message) || 'Background job failed.');
+                }
+                if (payload.status === 'succeeded') {
+                    return payload.data || {};
+                }
+                throw new Error('Unexpected background job status.');
+            }
+            throw new Error('The background job timed out before it completed.');
+        }
+
+        async function requestAsyncLabelerAction(endpointPath, formData, progressMessage) {
+            formData.append('mode', 'async');
+            var response = await fetch(endpointPath, {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+                body: formData
+            });
+            var payload = await parseApiResponse(response);
+            if (payload.status === 'queued' && payload.job_url) {
+                showLoading(progressMessage);
+                return pollLabelerJob(payload.job_url, progressMessage);
+            }
+            return (payload && payload.data) ? payload.data : {};
         }
 
         async function fetchPlaygroundProjects() {
@@ -1620,6 +1831,9 @@
                 state.labelRenames = {};
                 state.suggestions = [];
                 state.validation = null;
+                state.syntaxValidation = null;
+                state.syntaxValidationPending = false;
+                renderSyntaxValidation();
 
                 hideLoading();
                 showMainPanel();
@@ -1688,6 +1902,7 @@
             state.editingLabelId = null;
             renderExistingLabelsTree();
             updatePreview();
+            scheduleSyntaxValidation();
         }
 
         // ================================================================
@@ -1741,6 +1956,7 @@
                 bulkReplaceModal.classList.add('hidden');
                 renderExistingLabelsTree();
                 updatePreview();
+                scheduleSyntaxValidation();
             } catch (e) { alert('Invalid regex: ' + e.message); }
         }
 
@@ -1791,16 +2007,15 @@
                 formData.append('generator_models', JSON.stringify(generatorModels));
             }
             try {
-                var response = await fetch('/al/docx-labeler/api/suggest-labels', { method: 'POST', body: formData });
-                var data = await response.json();
-                if (response.status === 401) {
-                    throw new Error('AI suggestions require login.');
-                }
-                if (!data.success) throw new Error(data.error?.message || 'Failed to get suggestions');
-                state.suggestions = data.data.suggestions.map(function(s) {
+                var data = await requestAsyncLabelerAction(
+                    '/al/docx-labeler/api/suggest-labels',
+                    formData,
+                    'AI labeling is running in the background...'
+                );
+                state.suggestions = (data.suggestions || []).map(function(s) {
                     return Object.assign({}, s, { id: s.id || generateId(), status: 'pending' });
                 });
-                state.validation = data.data.validation || null;
+                state.validation = data.validation || null;
                 suggestionsCount.textContent = state.suggestions.length;
                 renderSuggestions();
             } catch (error) {
@@ -1813,9 +2028,11 @@
         function renderSuggestions() {
             suggestionsList.innerHTML = '';
             var deterministic = state.validation && state.validation.deterministic ? state.validation.deterministic : null;
+            var syntaxValidation = deterministic && deterministic.syntax_validation ? deterministic.syntax_validation : null;
             var documentWarnings = state.validation && Array.isArray(state.validation.document_warnings) ? state.validation.document_warnings : [];
             var aggregation = state.validation && state.validation.aggregation ? state.validation.aggregation : null;
-            if ((deterministic && deterministic.flagged_count > 0) || documentWarnings.length > 0 || aggregation) {
+            var timings = state.validation && state.validation.timings ? state.validation.timings : null;
+            if ((deterministic && deterministic.flagged_count > 0) || documentWarnings.length > 0 || aggregation || (syntaxValidation && ((syntaxValidation.error_count || 0) > 0 || (syntaxValidation.warning_count || 0) > 0))) {
                 var aiReview = state.validation && state.validation.ai_review ? state.validation.ai_review : {};
                 var reviewedCount = Array.isArray(aiReview.reviews) ? aiReview.reviews.length : 0;
                 suggestionsValidation.classList.remove('hidden');
@@ -1838,12 +2055,23 @@
                     summaryHtml +=
                         '<div class="mt-1"><strong>Validator flagged ' + deterministic.flagged_count + '</strong> selected suggestion' + (deterministic.flagged_count === 1 ? '' : 's') + '.</div>';
                 }
+                if (syntaxValidation && (syntaxValidation.error_count || 0) > 0) {
+                    summaryHtml += '<div class="mt-1"><strong>Final template syntax errors:</strong></div>';
+                    syntaxValidation.errors.forEach(function(issue) {
+                        summaryHtml += '<div>' + escapeHtml(issue.message || issue.code || 'Syntax error') + '</div>';
+                    });
+                } else if (syntaxValidation && (syntaxValidation.warning_count || 0) > 0) {
+                    summaryHtml += '<div class="mt-1"><strong>Final template warnings:</strong></div>';
+                    syntaxValidation.warnings.forEach(function(issue) {
+                        summaryHtml += '<div>' + escapeHtml(issue.message || issue.code || 'Warning') + '</div>';
+                    });
+                }
                 if (documentWarnings.length > 0) {
                     summaryHtml += '<div class="mt-1"><strong>Source document warnings:</strong></div>';
                     documentWarnings.forEach(function(warning) {
                         summaryHtml += '<div>' + escapeHtml(warning.message || warning.code || 'Document warning') + '</div>';
                     });
-                }
+                }                
                 suggestionsValidation.innerHTML = summaryHtml;
             } else {
                 suggestionsValidation.classList.add('hidden');
@@ -1970,6 +2198,7 @@
                     renderSuggestions();
                     updatePreview();
                     updateDownloadButton();
+                    scheduleSyntaxValidation();
                 });
             });
             suggestionsList.querySelectorAll('.reject-btn').forEach(function(btn) {
@@ -1986,6 +2215,7 @@
                     renderSuggestions();
                     updatePreview();
                     updateDownloadButton();
+                    scheduleSyntaxValidation();
                 });
             });
             // Remove button deletes grouped selection labels entirely
@@ -2001,13 +2231,15 @@
                     renderSuggestions();
                     updatePreview();
                     updateDownloadButton();
+                    scheduleSyntaxValidation();
                 });
             });
             suggestionsList.querySelectorAll('.edit-input').forEach(function(input) {
-                input.addEventListener('change', function() {
+                input.addEventListener('input', function() {
                     var index = parseInt(input.dataset.index);
                     state.suggestions[index].text = input.value;
                     updatePreview();
+                    scheduleSyntaxValidation(500);
                 });
             });
             suggestionsList.querySelectorAll('.use-alternate-btn').forEach(function(btn) {
@@ -2018,6 +2250,7 @@
                     renderSuggestions();
                     updatePreview();
                     updateDownloadButton();
+                    scheduleSyntaxValidation();
                 });
             });
             updateDownloadButton();
@@ -2152,28 +2385,27 @@
             savePlaygroundModalEl.classList.add('hidden');
             showLoading('Saving to Playground...');
             try {
+                var syntaxCheck = await ensureSyntaxValidationBeforeWrite('saving to Playground');
+                if (!syntaxCheck.allowed) {
+                    hideLoading();
+                    return;
+                }
                 // First apply any pending changes via the apply-labels endpoint
-                var renames = [];
-                Object.entries(state.labelRenames).forEach(function(entry) {
-                    var original = entry[0], newValue = entry[1];
-                    if (original !== newValue) renames.push({ original: original, replacement: newValue });
-                });
-                var acceptedLabels = state.suggestions.filter(function(s) { return s.status === 'accepted'; }).map(function(s) {
-                    return { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
-                });
+                var renames = collectRenamePayload();
+                var acceptedLabels = collectAcceptedLabels();
 
                 var docxBase64;
+                var applyHighlights = acceptedLabels.length > 0;
                 if (renames.length > 0 || acceptedLabels.length > 0) {
                     var formData = new FormData();
                     formData.append('file', state.file);
                     formData.append('defragment_runs', state.settings.defragmentRuns ? 'true' : 'false');
                     if (renames.length > 0) formData.append('renames', JSON.stringify(renames));
                     if (acceptedLabels.length > 0) formData.append('labels', JSON.stringify(acceptedLabels));
+                    if (applyHighlights) formData.append('apply_highlights', 'true');
+                    if (syntaxCheck.allowInvalidSyntax) formData.append('allow_invalid_syntax', 'true');
                     var applyResponse = await fetch('/al/docx-labeler/api/apply-labels', { method: 'POST', body: formData });
-                    var applyData = await applyResponse.json();
-                    if (!applyData.success || !applyData.data || !applyData.data.docx_base64) {
-                        throw new Error('Failed to apply changes before saving.');
-                    }
+                    var applyData = await parseApiResponse(applyResponse);
                     docxBase64 = applyData.data.docx_base64;
                 } else {
                     // No changes - send the original file as base64
@@ -2205,35 +2437,39 @@
         // Download
         // ================================================================
         function updateDownloadButton() {
-            var hasChanges = Object.keys(state.labelRenames).length > 0 || state.suggestions.some(function(s) { return s.status === 'accepted'; });
+            var hasChanges = collectRenamePayload().length > 0 || collectAcceptedLabels().length > 0;
             downloadBtn.disabled = !hasChanges;
+            applyHighlightsBtn.disabled = !state.file;
             // Save to Playground is enabled when a file is loaded (changes or not, the user may want to save the original)
             savePlaygroundBtn.disabled = !state.file;
         }
 
-        async function downloadDocument() {
+        async function downloadDocument(options) {
+            options = options || {};
             if (!state.file) return;
-            var renames = [];
-            Object.entries(state.labelRenames).forEach(function(entry) {
-                var original = entry[0], newValue = entry[1];
-                if (original !== newValue) renames.push({ original: original, replacement: newValue });
-            });
-            var acceptedLabels = state.suggestions.filter(function(s) { return s.status === 'accepted'; }).map(function(s) {
-                return { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
-            });
-            if (renames.length === 0 && acceptedLabels.length === 0) { alert('No changes to apply.'); return; }
+            var renames = collectRenamePayload();
+            var acceptedLabels = collectAcceptedLabels();
+            var applyHighlights = !!options.forceHighlights || acceptedLabels.length > 0;
+            if (renames.length === 0 && acceptedLabels.length === 0 && !applyHighlights) { alert('No changes to apply.'); return; }
             downloadStatus.textContent = 'Processing...';
             downloadStatus.classList.remove('hidden');
             downloadBtn.disabled = true;
+            applyHighlightsBtn.disabled = true;
             try {
+                var syntaxCheck = await ensureSyntaxValidationBeforeWrite('downloading this DOCX');
+                if (!syntaxCheck.allowed) {
+                    downloadStatus.classList.add('hidden');
+                    return;
+                }
                 var formData = new FormData();
                 formData.append('file', state.file);
                 formData.append('defragment_runs', state.settings.defragmentRuns ? 'true' : 'false');
                 if (renames.length > 0) formData.append('renames', JSON.stringify(renames));
                 if (acceptedLabels.length > 0) formData.append('labels', JSON.stringify(acceptedLabels));
+                if (applyHighlights) formData.append('apply_highlights', 'true');
+                if (syntaxCheck.allowInvalidSyntax) formData.append('allow_invalid_syntax', 'true');
                 var response = await fetch('/al/docx-labeler/api/apply-labels', { method: 'POST', body: formData });
-                var data = await response.json();
-                if (!data.success) throw new Error(data.error?.message || 'Failed to apply changes');
+                var data = await parseApiResponse(response);
                 var binaryString = atob(data.data.docx_base64);
                 var bytes = new Uint8Array(binaryString.length);
                 for (var i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
@@ -2250,6 +2486,8 @@
                     var paragraphCount = data.data.defragmentation.paragraphs_defragmented || 0;
                     var runsRemoved = data.data.defragmentation.runs_removed || 0;
                     downloadStatus.textContent = 'Download complete. Consolidated fragmented runs in ' + paragraphCount + ' paragraph' + (paragraphCount === 1 ? '' : 's') + ' before applying labels (' + runsRemoved + ' runs merged).';
+                } else if (data.data.apply_highlights) {
+                    downloadStatus.textContent = 'Download complete with Jinja highlights.';
                 } else {
                     downloadStatus.textContent = 'Download complete!';
                     setTimeout(function() { downloadStatus.classList.add('hidden'); }, 2000);
@@ -2309,7 +2547,8 @@
         document.getElementById('edit-cancel').addEventListener('click', function() { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
         document.getElementById('edit-close').addEventListener('click', function() { editLabelModal.classList.add('hidden'); state.editingLabelId = null; });
         variableSearch.addEventListener('input', function(e) { renderVariableTree(getEffectiveVariableTree(), '', variableTree, e.target.value); });
-        downloadBtn.addEventListener('click', downloadDocument);
+        downloadBtn.addEventListener('click', function() { downloadDocument(); });
+        applyHighlightsBtn.addEventListener('click', function() { downloadDocument({ forceHighlights: true }); });
         document.getElementById('settings-btn').addEventListener('click', function() {
             document.getElementById('additional-instructions').value = state.settings.additionalInstructions;
             document.getElementById('context-text').value = state.settings.contextText || '';

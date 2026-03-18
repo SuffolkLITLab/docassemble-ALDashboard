@@ -10,8 +10,8 @@ from ruamel.yaml import YAML
 DEFAULT_LABELER_PROMPT_LIBRARY_PATH = "labeler_prompt_library.yml"
 
 DEFAULT_LABELER_BRANDING: Dict[str, str] = {
-    "favicon_url": "/packagestatic/docassemble.LITLabTheme/dal-favicon.png",
-    "logo_url": "/packagestatic/docassemble.LITLabTheme/dal-favicon.png",
+    "favicon_url": "/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png",
+    "logo_url": "/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png",
     "logo_alt": "LIT Lab logo",
     "docx_page_title": "AssemblyLine DOCX Labeler",
     "docx_header_title": "AssemblyLine DOCX Labeler",

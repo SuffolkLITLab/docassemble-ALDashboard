@@ -38,6 +38,7 @@ from .api_dashboard_utils import (
     _validate_upload_size,
     coerce_async_flag,
     decode_base64_content,
+    docx_labeler_suggest_payload_from_options,
     merge_raw_options,
     parse_bool,
 )
@@ -887,7 +888,9 @@ def _normalize_labeler_result_for_json(value: Any) -> Any:
     return str(value)
 
 
-def _queue_labeler_async_job(task: Any, *, kind: str, request_id: str):
+def _queue_labeler_async_job(
+    task: Any, *, kind: str, request_id: str, job_path: str = "/pdf-labeler/api/jobs"
+):
     """Store async labeler metadata and return the queued-job response.
 
     Args:
@@ -906,7 +909,7 @@ def _queue_labeler_async_job(task: Any, *, kind: str, request_id: str):
             "request_id": request_id,
             "status": "queued",
             "job_id": job_id,
-            "job_url": f"{LABELER_BASE_PATH}/pdf-labeler/api/jobs/{job_id}",
+            "job_url": f"{LABELER_BASE_PATH}{job_path}/{job_id}",
         },
         202,
     )
@@ -1692,14 +1695,6 @@ def docx_labeler_suggest_labels() -> Response:
         return _ai_auth_fail(request_id)
 
     try:
-        import docx
-
-        from .docx_wrangling import (
-            defragment_docx_runs,
-            get_voted_docx_label_suggestions,
-        )
-        from .validate_docx import detect_docx_automation_features
-
         # Handle both multipart and JSON uploads
         if "file" in request.files:
             upload = request.files["file"]
@@ -1710,6 +1705,8 @@ def docx_labeler_suggest_labels() -> Response:
             post_data = request.get_json(silent=True) or {}
             filename = str(post_data.get("filename") or "upload.docx")
             content = decode_base64_content(post_data.get("file_content_base64"))
+
+        post_data = merge_raw_options(post_data)
 
         _validate_upload_size(content)
 
@@ -1831,136 +1828,68 @@ def docx_labeler_suggest_labels() -> Response:
                         selected_playground_project, selected_playground_filename
                     )["all_names"]
 
-        # Write to temp file for processing
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-            tmp.write(content)
-            temp_path = tmp.name
+        task_payload = {
+            "request_id": request_id,
+            "filename": filename,
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "prompt_profile": prompt_profile,
+            "context_text": optional_context,
+            "custom_prompt": custom_prompt,
+            "additional_instructions": additional_instructions,
+            "defragment_runs": defragment_runs,
+            "model": model,
+            "judge_model": judge_model,
+            "openai_api": openai_api,
+            "openai_base_url": openai_base_url,
+            "generator_models": generator_models,
+            "custom_people_names": custom_people_names,
+            "preferred_variable_names": preferred_variable_names,
+            "interview_source_mode": interview_source_mode,
+            "playground_project": selected_playground_project,
+            "playground_yaml_file": selected_playground_filename,
+            "installed_interview_path": selected_installed_interview_path,
+        }
 
-        try:
-            review_document = docx.Document(temp_path)
-            if defragment_runs:
-                review_document, _ = defragment_docx_runs(review_document)
-            automation_findings = detect_docx_automation_features(temp_path)
-            document_warnings = [
-                finding
-                for finding in automation_findings.get("findings", [])
-                if finding.get("code")
-                in {
-                    "track_changes",
-                    "structured_document_tags",
-                    "sdt_specialized_controls",
-                    "sdt_plain_text_control",
-                    "sdt_group_control",
-                    "sdt_docpart_non_page_numbers",
-                    "sdt_metadata",
-                    "sdt_bound_or_locked",
-                    "data_binding",
-                    "custom_xml_parts",
-                    "custom_xml_relationships",
-                }
-            ]
-
-            aggregated = get_voted_docx_label_suggestions(
-                docx_path=temp_path,
-                custom_people_names=custom_people_names,
-                preferred_variable_names=preferred_variable_names,
-                openai_api=openai_api,
-                openai_base_url=openai_base_url,
-                model=model,
-                generator_models=generator_models,
-                judge_model=judge_model,
-                prompt_profile=prompt_profile,
-                optional_context=optional_context,
-                custom_prompt=custom_prompt,
-                additional_instructions=additional_instructions,
-                defragment_runs=defragment_runs,
-                judge_max_output_tokens=2000,
-            )
-            suggestions = aggregated.get("suggestions", [])
-            aggregation_summary = aggregated.get("aggregation", {})
-            judge_review = aggregated.get("judge_review", {})
-            generation_runs = aggregated.get("generation_runs", [])
-            flagged_selected_count = sum(
-                1 for suggestion in suggestions if suggestion.get("validation_flags")
-            )
-
-            # Convert to a more friendly format for the UI
-            formatted_suggestions = []
-            for suggestion in suggestions:
-                alternates = []
-                for alternate in suggestion.get("alternates", []):
-                    alternates.append(
-                        {
-                            "text": alternate.get("text", ""),
-                            "paragraph": alternate.get("paragraph"),
-                            "run": alternate.get("run"),
-                            "new_paragraph": alternate.get("new_paragraph", 0),
-                            "validation_flags": alternate.get("validation_flags", []),
-                            "confidence": alternate.get("confidence", "low"),
-                            "vote_count": alternate.get("vote_count", 0),
-                            "clean_vote_count": alternate.get("clean_vote_count", 0),
-                            "vote_total": suggestion.get(
-                                "vote_total", len(generation_runs)
-                            ),
-                            "sources": alternate.get("sources", []),
-                        }
-                    )
-                formatted_suggestions.append(
+        if coerce_async_flag(post_data):
+            if not _labeler_async_is_configured():
+                return jsonify_with_status(
                     {
-                        "paragraph": suggestion.get("paragraph"),
-                        "run": suggestion.get("run"),
-                        "text": suggestion.get("text", ""),
-                        "new_paragraph": suggestion.get("new_paragraph", 0),
-                        "id": str(uuid.uuid4()),
-                        "validation_flags": suggestion.get("validation_flags", []),
-                        "judge_review": suggestion.get("judge_review"),
-                        "confidence": suggestion.get("confidence", "low"),
-                        "vote_count": suggestion.get("vote_count", 0),
-                        "clean_vote_count": suggestion.get("clean_vote_count", 0),
-                        "vote_total": suggestion.get(
-                            "vote_total", len(generation_runs)
-                        ),
-                        "sources": suggestion.get("sources", []),
-                        "alternates": alternates,
-                    }
-                )
-
-            log(
-                f"ALDashboard: suggest-labels {request_id} generated {len(formatted_suggestions)} suggestions for '{filename}'",
-                "info",
-            )
-            return jsonify(
-                {
-                    "success": True,
-                    "request_id": request_id,
-                    "data": {
-                        "filename": filename,
-                        "suggestions": formatted_suggestions,
-                        "defragment_runs": defragment_runs,
-                        "interview_source_mode": interview_source_mode,
-                        "playground_project": selected_playground_project,
-                        "playground_yaml_file": selected_playground_filename,
-                        "installed_interview_path": selected_installed_interview_path,
-                        "playground_variable_count": len(
-                            preferred_variable_names or []
-                        ),
-                        "validation": {
-                            "deterministic": {
-                                "flagged_count": flagged_selected_count,
-                                "ai_review_recommended": bool(
-                                    aggregation_summary.get("ambiguous_group_count")
-                                ),
-                            },
-                            "ai_review": judge_review,
-                            "document_warnings": document_warnings,
-                            "aggregation": aggregation_summary,
+                        "success": False,
+                        "request_id": request_id,
+                        "error": {
+                            "type": "async_not_configured",
+                            "message": (
+                                "Async mode is not configured. Add "
+                                f"{ASYNC_CELERY_MODULE!r} to the docassemble "
+                                "'celery modules' configuration list."
+                            ),
                         },
                     },
-                }
+                    503,
+                )
+
+            from .api_dashboard_worker import dashboard_docx_labeler_suggest_task
+
+            task = dashboard_docx_labeler_suggest_task.delay(payload=task_payload)
+            return _queue_labeler_async_job(
+                task,
+                kind="docx_suggest",
+                request_id=request_id,
+                job_path="/docx-labeler/api/jobs",
             )
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+
+        data = docx_labeler_suggest_payload_from_options(task_payload)
+        log(
+            f"ALDashboard: suggest-labels {request_id} generated {len(data.get('suggestions', []))} suggestions for '{filename}'",
+            "info",
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": data,
+            }
+        )
 
     except DashboardAPIValidationError as exc:
         log(
@@ -1987,6 +1916,119 @@ def docx_labeler_suggest_labels() -> Response:
         )
 
 
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/validate-syntax", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def docx_labeler_validate_syntax() -> Response:
+    """Validate DOCX Jinja syntax after simulated label and rename edits."""
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: validate-docx-syntax request {request_id}", "info")
+    try:
+        from .docx_wrangling import validate_docx_template_syntax
+
+        if "file" in request.files:
+            upload = request.files["file"]
+            filename = upload.filename or "upload.docx"
+            content = upload.read()
+            post_data = dict(request.form)
+            labels_raw = post_data.get("labels")
+            renames_raw = post_data.get("renames")
+        else:
+            post_data = request.get_json(silent=True) or {}
+            filename = str(post_data.get("filename") or "upload.docx")
+            content = decode_base64_content(post_data.get("file_content_base64"))
+            labels_raw = post_data.get("labels")
+            renames_raw = post_data.get("renames")
+
+        _validate_upload_size(content)
+
+        if not filename.lower().endswith(".docx"):
+            raise DashboardAPIValidationError(
+                "Only DOCX files are supported.", status_code=415
+            )
+
+        defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
+
+        labels = []
+        if labels_raw:
+            if isinstance(labels_raw, str):
+                labels = json.loads(labels_raw)
+            elif isinstance(labels_raw, list):
+                labels = labels_raw
+
+        renames = []
+        if renames_raw:
+            if isinstance(renames_raw, str):
+                renames = json.loads(renames_raw)
+            elif isinstance(renames_raw, list):
+                renames = renames_raw
+
+        modified_runs = []
+        for label in labels:
+            para = int(label.get("paragraph", 0))
+            run = int(label.get("run", 0))
+            text = str(label.get("text", ""))
+            new_para = int(label.get("new_paragraph", 0))
+            modified_runs.append((para, run, text, new_para))
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp.write(content)
+            temp_path = tmp.name
+
+        try:
+            validation = validate_docx_template_syntax(
+                temp_path,
+                suggestions=modified_runs,
+                renames=renames,
+                defragment_runs=defragment_runs,
+            )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        log(
+            f"ALDashboard: validate-docx-syntax {request_id} completed with {validation.get('error_count', 0)} errors and {validation.get('warning_count', 0)} warnings for '{filename}'",
+            "info",
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "filename": filename,
+                    "validation": validation,
+                },
+            }
+        )
+
+    except DashboardAPIValidationError as exc:
+        log(
+            f"ALDashboard: validate-docx-syntax {request_id} validation error: {exc.message}",
+            "warning",
+        )
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(
+            f"ALDashboard: validate-docx-syntax {request_id} server error: {exc!r}",
+            "error",
+        )
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
 @app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/apply-labels", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -2003,7 +2045,13 @@ def docx_labeler_apply_labels() -> Response:
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: apply-labels request {request_id}", "info")
     try:
-        from .docx_wrangling import defragment_docx_runs, update_docx
+        from .docx_wrangling import (
+            apply_docx_label_renames,
+            apply_jinja2_highlights,
+            defragment_docx_runs,
+            update_docx,
+            validate_docx_template_syntax,
+        )
         import docx
 
         # Handle both multipart and JSON uploads
@@ -2028,6 +2076,12 @@ def docx_labeler_apply_labels() -> Response:
                 "Only DOCX files are supported.", status_code=415
             )
         defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
+        apply_highlights = parse_bool(
+            post_data.get("apply_highlights"), default=False
+        )
+        allow_invalid_syntax = parse_bool(
+            post_data.get("allow_invalid_syntax"), default=False
+        )
 
         # Parse labels (new insertions)
         labels = []
@@ -2045,13 +2099,13 @@ def docx_labeler_apply_labels() -> Response:
             elif isinstance(renames_raw, list):
                 renames = renames_raw
 
-        if not labels and not renames:
+        if not labels and not renames and not apply_highlights:
             raise DashboardAPIValidationError(
-                "Either labels or renames must be provided."
+                "Labels, renames, or apply_highlights must be provided."
             )
 
         log(
-            f"ALDashboard: apply-labels {request_id} processing {len(labels)} label insertions and {len(renames)} renames for '{filename}'",
+            f"ALDashboard: apply-labels {request_id} processing {len(labels)} label insertions, {len(renames)} renames, apply_highlights={apply_highlights} for '{filename}'",
             "info",
         )
 
@@ -2071,6 +2125,31 @@ def docx_labeler_apply_labels() -> Response:
 
         try:
             doc = docx.Document(temp_path)
+            syntax_validation = validate_docx_template_syntax(
+                doc,
+                suggestions=modified_runs,
+                renames=renames,
+                defragment_runs=defragment_runs,
+            )
+            if not syntax_validation.get("valid") and not allow_invalid_syntax:
+                message = "DOCX contains invalid Jinja syntax."
+                if syntax_validation.get("errors"):
+                    message = str(syntax_validation["errors"][0].get("message") or message)
+                return jsonify_with_status(
+                    {
+                        "success": False,
+                        "request_id": request_id,
+                        "error": {
+                            "type": "validation_error",
+                            "message": message,
+                        },
+                        "data": {
+                            "validation": syntax_validation,
+                        },
+                    },
+                    409,
+                )
+
             defragmentation = {"paragraphs_defragmented": 0, "runs_removed": 0}
 
             if defragment_runs and modified_runs:
@@ -2088,32 +2167,17 @@ def docx_labeler_apply_labels() -> Response:
 
             # Apply renames first (find/replace existing Jinja2 labels)
             if renames:
-                rename_count = 0
-                for rename in renames:
-                    original = str(rename.get("original", ""))
-                    replacement = str(rename.get("replacement", ""))
-                    if original and replacement and original != replacement:
-                        # Search through all paragraphs and runs
-                        for para in doc.paragraphs:
-                            for run in para.runs:
-                                if original in run.text:
-                                    run.text = run.text.replace(original, replacement)
-                                    rename_count += 1
-                        # Also search tables
-                        for table in doc.tables:
-                            for row in table.rows:
-                                for cell in row.cells:
-                                    for para in cell.paragraphs:
-                                        for run in para.runs:
-                                            if original in run.text:
-                                                run.text = run.text.replace(
-                                                    original, replacement
-                                                )
-                                                rename_count += 1
+                apply_docx_label_renames(doc, renames)
 
             # Apply new label insertions
             if modified_runs:
-                doc = update_docx(doc, modified_runs)
+                doc = update_docx(
+                    doc,
+                    modified_runs,
+                    apply_jinja_highlights=apply_highlights,
+                )
+            elif apply_highlights:
+                doc = apply_jinja2_highlights(doc)
 
             # Save to bytes
             output_buffer = io.BytesIO()
@@ -2121,7 +2185,15 @@ def docx_labeler_apply_labels() -> Response:
             output_buffer.seek(0)
             output_bytes = output_buffer.read()
 
-            output_filename = filename.replace(".docx", "-labeled.docx")
+            if labels or renames:
+                output_suffix = "-labeled"
+                if apply_highlights:
+                    output_suffix += "-highlighted"
+            elif apply_highlights:
+                output_suffix = "-highlighted"
+            else:
+                output_suffix = "-updated"
+            output_filename = filename.replace(".docx", f"{output_suffix}.docx")
 
             log(
                 f"ALDashboard: apply-labels {request_id} successfully produced '{output_filename}'",
@@ -2140,6 +2212,8 @@ def docx_labeler_apply_labels() -> Response:
                             or defragmentation["runs_removed"]
                         ),
                         "defragmentation": defragmentation,
+                        "apply_highlights": apply_highlights,
+                        "validation": syntax_validation,
                     },
                 }
             )
@@ -2200,7 +2274,9 @@ def pdf_labeler_page() -> Response:
 
 
 @app.route("/pdf-labeler/api/jobs/<job_id>", methods=["GET"])
+@app.route("/docx-labeler/api/jobs/<job_id>", methods=["GET"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/jobs/<job_id>", methods=["GET"])
+@app.route(f"{LABELER_BASE_PATH}/docx-labeler/api/jobs/<job_id>", methods=["GET"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
 def pdf_labeler_job(job_id: str) -> Response:

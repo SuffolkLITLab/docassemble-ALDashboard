@@ -5,6 +5,7 @@ from typing import Optional
 from .validate_docx import (
     detect_docx_automation_features,
     get_jinja_errors,
+    get_jinja_template_validation,
     strip_docx_problem_controls,
 )
 from pathlib import Path
@@ -154,6 +155,27 @@ class TestGetJinjaErrors(unittest.TestCase):
                 os.remove(input_path)
             if os.path.exists(output_path):
                 os.remove(output_path)
+
+
+class TestGetJinjaTemplateValidation(unittest.TestCase):
+    def test_accepts_valid_template_source(self):
+        result = get_jinja_template_validation("Hello {{ user.name.first }}")
+
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["errors"], [])
+
+    def test_reports_template_syntax_errors(self):
+        result = get_jinja_template_validation("{% if user.name %}Hello")
+
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["errors"][0]["code"], "template_syntax_error")
+
+    def test_unknown_filter_is_warning_not_error(self):
+        result = get_jinja_template_validation("{{ user.name | custom_filter }}")
+
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["warnings"][0]["code"], "template_assertion_error")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import docx
 import io
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 import tiktoken
@@ -15,8 +16,10 @@ from docassemble.ALToolbox.llms import chat_completion
 from typing import Any, Dict, List, Tuple, Optional, Union, Sequence
 
 from .labeler_config import get_docx_prompt_profile
+from .validate_docx import get_jinja_template_validation
 
 __all__ = [
+    "apply_docx_label_renames",
     "aggregate_docx_label_suggestion_runs",
     "defragment_docx_runs",
     "get_labeled_docx_runs",
@@ -26,11 +29,24 @@ __all__ = [
     "review_flagged_docx_label_suggestions",
     "update_docx",
     "validate_docx_label_suggestions",
+    "validate_docx_template_syntax",
     "modify_docx_with_openai_guesses",
 ]
 
 
 DEFAULT_DOCX_PROMPT_PROFILE = "standard"
+DEFAULT_TEMPLATE_HIGHLIGHT_FILL = "C7E1DD"
+NESTED_IF_TEMPLATE_HIGHLIGHT_FILLS = [
+    DEFAULT_TEMPLATE_HIGHLIGHT_FILL,
+    "B8D7D3",
+    "A8CDCB",
+    "D7E7E4",
+    "C5DEDA",
+]
+_JINJA_TAG_PATTERN = re.compile(r"(\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})")
+_IF_OPEN_PATTERN = re.compile(r"^(?:p\s+)?if\b", re.IGNORECASE)
+_IF_BRANCH_PATTERN = re.compile(r"^(?:p\s+)?(?:elif\b|else\b)", re.IGNORECASE)
+_IF_CLOSE_PATTERN = re.compile(r"^(?:p\s+)?endif\b", re.IGNORECASE)
 
 
 def _get_docx_label_role_description(
@@ -295,6 +311,176 @@ def _append_text_content(run_element: Any, text: str) -> None:
         run_element.append(text_element)
 
 
+def _copy_run_properties(source_run: Any) -> Optional[Any]:
+    """Clone run properties while clearing existing highlight/shading markup."""
+    source_properties = source_run._element.rPr
+    if source_properties is None:
+        return None
+
+    copied_properties = copy.deepcopy(source_properties)
+    for child in list(copied_properties):
+        if child.tag in {qn("w:highlight"), qn("w:shd")}:
+            copied_properties.remove(child)
+    return copied_properties
+
+
+def _build_run_element(
+    source_run: Any,
+    text: str,
+    *,
+    shading_fill: Optional[str] = None,
+) -> Any:
+    """Create a ``w:r`` element mirroring a source run's formatting."""
+    run_element = OxmlElement("w:r")
+    copied_properties = _copy_run_properties(source_run)
+
+    if copied_properties is not None:
+        if shading_fill:
+            shading = OxmlElement("w:shd")
+            shading.set(qn("w:val"), "clear")
+            shading.set(qn("w:color"), "auto")
+            shading.set(qn("w:fill"), shading_fill)
+            copied_properties.append(shading)
+        run_element.append(copied_properties)
+    elif shading_fill:
+        properties = OxmlElement("w:rPr")
+        shading = OxmlElement("w:shd")
+        shading.set(qn("w:val"), "clear")
+        shading.set(qn("w:color"), "auto")
+        shading.set(qn("w:fill"), shading_fill)
+        properties.append(shading)
+        run_element.append(properties)
+
+    _append_text_content(run_element, text)
+    return run_element
+
+
+def _if_highlight_fill_for_depth(depth: int) -> str:
+    """Return a low-saturation teal-family fill for the nesting depth."""
+    return NESTED_IF_TEMPLATE_HIGHLIGHT_FILLS[
+        depth % len(NESTED_IF_TEMPLATE_HIGHLIGHT_FILLS)
+    ]
+
+
+def _template_tag_highlight_fill(tag_text: str, if_stack: List[str]) -> str:
+    """Choose the highlight color for one Jinja tag and update nesting state."""
+    if tag_text.startswith("{{"):
+        return DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+
+    control_body = tag_text[2:-2].strip()
+    if _IF_OPEN_PATTERN.match(control_body):
+        fill = _if_highlight_fill_for_depth(len(if_stack))
+        if_stack.append(fill)
+        return fill
+    if _IF_BRANCH_PATTERN.match(control_body):
+        return if_stack[-1] if if_stack else DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+    if _IF_CLOSE_PATTERN.match(control_body):
+        fill = if_stack[-1] if if_stack else DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+        if if_stack:
+            if_stack.pop()
+        return fill
+    return DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+
+
+def _split_template_run_segments(
+    text: str, if_stack: List[str]
+) -> List[Tuple[str, Optional[str]]]:
+    """Split one run into literal text and separately highlightable Jinja segments."""
+    segments: List[Tuple[str, Optional[str]]] = []
+    last_index = 0
+
+    for match in _JINJA_TAG_PATTERN.finditer(text):
+        if match.start() > last_index:
+            literal = text[last_index : match.start()]
+            if literal:
+                segments.append((literal, None))
+
+        tag_text = match.group(0)
+        opening = tag_text[:2]
+        closing = tag_text[-2:]
+        body = tag_text[2:-2]
+        fill = _template_tag_highlight_fill(tag_text, if_stack)
+
+        segments.append((opening, None))
+        if body:
+            segments.append((body, fill))
+        segments.append((closing, None))
+        last_index = match.end()
+
+    if last_index < len(text):
+        trailing = text[last_index:]
+        if trailing:
+            segments.append((trailing, None))
+
+    return segments or [(text, None)]
+
+
+def _replace_run_with_segments(
+    run: Any, segments: Sequence[Tuple[str, Optional[str]]]
+) -> None:
+    """Replace one run with multiple runs that preserve formatting and split tags."""
+    parent = run._element.getparent()
+    if parent is None:
+        return
+
+    non_empty_segments = [segment for segment in segments if segment[0]]
+    if not non_empty_segments:
+        parent.remove(run._element)
+        return
+
+    for segment_text, shading_fill in non_empty_segments:
+        parent.insert(
+            parent.index(run._element),
+            _build_run_element(run, segment_text, shading_fill=shading_fill),
+        )
+
+    parent.remove(run._element)
+
+
+def apply_jinja2_highlights(
+    document: Union[docx.document.Document, str],
+) -> docx.document.Document:
+    """Split Jinja tags into separate runs and shade the tag body text.
+
+    The inner Jinja code is placed in its own run between the opening and closing
+    delimiters so python-docx-template can still consume the rendered text safely.
+    Nested ``if`` and ``%p if`` control blocks receive depth-based colors.
+    """
+    if isinstance(document, str):
+        document = docx.Document(document)
+
+    initial_paragraphs = _collect_target_paragraphs(document)
+    target_paragraph_numbers = [
+        paragraph_number
+        for paragraph_number, paragraph in enumerate(initial_paragraphs)
+        if _contains_template_markup(paragraph.text)
+    ]
+    if not target_paragraph_numbers:
+        return document
+
+    document, _ = defragment_docx_runs(
+        document, paragraph_numbers=target_paragraph_numbers
+    )
+    paragraphs = _collect_target_paragraphs(document)
+    target_numbers_set = set(target_paragraph_numbers)
+    if_stack: List[str] = []
+
+    for paragraph_number, paragraph in enumerate(paragraphs):
+        if paragraph_number not in target_numbers_set:
+            continue
+        for run in list(paragraph.runs):
+            if run._element.getparent() is None:
+                continue
+            if not _contains_template_markup(run.text):
+                continue
+            segments = _split_template_run_segments(run.text, if_stack)
+            if len(segments) == 1 and segments[0] == (run.text, None):
+                continue
+            _replace_run_with_segments(run, segments)
+
+    return document
+
+
 _SAFE_RUN_CHILD_TAGS = {
     qn("w:rPr"),
     qn("w:t"),
@@ -451,6 +637,222 @@ def _has_balanced_template_delimiters(text: str) -> bool:
     return text.count("{{") == text.count("}}") and text.count("{%") == text.count("%}")
 
 
+def _normalize_docassemble_template_source(text: str) -> str:
+    """Convert docassemble paragraph tags into plain Jinja tags for AST parsing."""
+    return re.sub(r"\{%\s*p\s+", "{% ", text)
+
+
+def _classify_if_control_tag(raw_tag: str) -> Optional[Dict[str, Any]]:
+    if not raw_tag.startswith("{%"):
+        return None
+
+    statement = raw_tag[2:-2].strip()
+    is_paragraph = False
+    if statement.lower().startswith("p "):
+        is_paragraph = True
+        statement = statement[1:].strip()
+
+    lowered = statement.lower()
+    if lowered.startswith("if ") or lowered == "if":
+        kind = "open"
+    elif lowered.startswith("elif ") or lowered == "else":
+        kind = "branch"
+    elif lowered == "endif":
+        kind = "close"
+    else:
+        return None
+
+    return {
+        "kind": kind,
+        "is_paragraph": is_paragraph,
+        "raw_tag": raw_tag,
+    }
+
+
+def _append_validation_flag(
+    flags_by_index: Dict[int, List[Dict[str, str]]],
+    index: int,
+    code: str,
+    message: str,
+) -> None:
+    existing = flags_by_index.setdefault(index, [])
+    if any(flag.get("code") == code and flag.get("message") == message for flag in existing):
+        return
+    existing.append({"code": code, "message": message})
+
+
+def _validate_if_control_tag_parity(
+    suggestions: Sequence[Tuple[int, int, str, int]],
+) -> Dict[int, List[Dict[str, str]]]:
+    flags_by_index: Dict[int, List[Dict[str, str]]] = {}
+    ordered = sorted(
+        enumerate(suggestions),
+        key=lambda item: (
+            item[1][0],
+            {-1: 0, 0: 1, 1: 2}.get(item[1][3], 1),
+            item[1][1],
+            item[0],
+        ),
+    )
+    stack: List[Dict[str, Any]] = []
+
+    for index, (_paragraph_number, _run_number, text, _new_paragraph) in ordered:
+        for raw_tag in _JINJA_TAG_PATTERN.findall(text):
+            control = _classify_if_control_tag(raw_tag)
+            if control is None:
+                continue
+
+            if control["kind"] == "open":
+                stack.append({"index": index, **control})
+                continue
+
+            if control["kind"] == "branch":
+                if not stack:
+                    _append_validation_flag(
+                        flags_by_index,
+                        index,
+                        "unmatched_conditional_branch",
+                        "Conditional branch tag must follow a matching if tag.",
+                    )
+                    continue
+                opener = stack[-1]
+                if opener["is_paragraph"] != control["is_paragraph"]:
+                    _append_validation_flag(
+                        flags_by_index,
+                        index,
+                        "mismatched_conditional_control_tag_style",
+                        "Paragraph conditional tags must keep using %p for elif/else branches.",
+                    )
+                    _append_validation_flag(
+                        flags_by_index,
+                        opener["index"],
+                        "mismatched_conditional_control_tag_style",
+                        "Paragraph conditional tags must keep using %p for elif/else branches.",
+                    )
+                continue
+
+            if not stack:
+                _append_validation_flag(
+                    flags_by_index,
+                    index,
+                    "unmatched_endif_control_tag",
+                    "Conditional tags must be balanced: found endif without a matching if.",
+                )
+                continue
+
+            opener = stack.pop()
+            if opener["is_paragraph"] != control["is_paragraph"]:
+                message = (
+                    "Paragraph conditional tags must close with %p endif, not plain endif."
+                    if opener["is_paragraph"]
+                    else "Plain if tags must close with plain endif, not %p endif."
+                )
+                _append_validation_flag(
+                    flags_by_index,
+                    opener["index"],
+                    "mismatched_conditional_control_tag_style",
+                    message,
+                )
+                _append_validation_flag(
+                    flags_by_index,
+                    index,
+                    "mismatched_conditional_control_tag_style",
+                    message,
+                )
+
+    for opener in stack:
+        _append_validation_flag(
+            flags_by_index,
+            opener["index"],
+            "unmatched_if_control_tag",
+            "Conditional tags must be balanced: found if without a matching endif.",
+        )
+
+    return flags_by_index
+
+
+def _should_validate_snippet_as_template(text: str) -> bool:
+    controls = []
+    for raw_tag in _JINJA_TAG_PATTERN.findall(text):
+        control = _classify_if_control_tag(raw_tag)
+        if control is not None:
+            controls.append(control)
+
+    if not controls:
+        return True
+
+    if any(control["kind"] == "branch" for control in controls):
+        return False
+
+    opens = sum(1 for control in controls if control["kind"] == "open")
+    closes = sum(1 for control in controls if control["kind"] == "close")
+    return opens == closes
+
+
+def apply_docx_label_renames(
+    document: docx.document.Document,
+    renames: Sequence[Dict[str, Any]],
+) -> int:
+    """Apply label find/replace operations across all paragraphs in the DOCX."""
+    rename_count = 0
+    for rename in renames:
+        original = str(rename.get("original", ""))
+        replacement = str(rename.get("replacement", ""))
+        if not original or not replacement or original == replacement:
+            continue
+
+        for paragraph in _collect_target_paragraphs(document):
+            for run in paragraph.runs:
+                if original in run.text:
+                    run.text = run.text.replace(original, replacement)
+                    rename_count += 1
+
+    return rename_count
+
+
+def validate_docx_template_syntax(
+    document: Union[docx.document.Document, str],
+    *,
+    suggestions: Sequence[Any] = (),
+    renames: Sequence[Dict[str, Any]] = (),
+    defragment_runs: bool = False,
+) -> Dict[str, Any]:
+    """Validate the Jinja syntax of a DOCX after simulated edits are applied."""
+    if isinstance(document, str):
+        document = docx.Document(document)
+
+    working_document = _clone_document(document)
+    normalized_suggestions = _normalize_modified_runs(suggestions)
+
+    if renames:
+        apply_docx_label_renames(working_document, renames)
+
+    if normalized_suggestions:
+        working_document = update_docx(
+            working_document,
+            normalized_suggestions,
+            defragment_runs=defragment_runs,
+        )
+
+    paragraphs = _collect_target_paragraphs(working_document)
+    template_source = "\n".join(
+        _normalize_docassemble_template_source(paragraph.text)
+        for paragraph in paragraphs
+    )
+    validation = get_jinja_template_validation(template_source)
+
+    for issue_group in (validation["errors"], validation["warnings"]):
+        for issue in issue_group:
+            line_number = issue.get("line")
+            if isinstance(line_number, int) and 1 <= line_number <= len(paragraphs):
+                issue["paragraph"] = line_number - 1
+                issue["paragraph_text"] = paragraphs[line_number - 1].text
+
+    validation["error_count"] = len(validation["errors"])
+    validation["warning_count"] = len(validation["warnings"])
+    return validation
+
+
 def _has_placeholder_markers(text: str) -> bool:
     """Detect obvious placeholder markers such as long underscores or tab runs.
 
@@ -572,6 +974,8 @@ def validate_docx_label_suggestions(
     paragraphs = _collect_target_paragraphs(document)
     simulated_document = update_docx(_clone_document(document), normalized)
     simulated_paragraphs = _collect_target_paragraphs(simulated_document)
+    parity_flags = _validate_if_control_tag_parity(normalized)
+    syntax_validation = validate_docx_template_syntax(simulated_document)
 
     results: List[Dict[str, Any]] = []
     flagged_count = 0
@@ -597,6 +1001,7 @@ def validate_docx_label_suggestions(
         )
 
         flags: List[Dict[str, str]] = []
+        flags.extend(parity_flags.get(index, []))
 
         if not _contains_template_markup(text):
             flags.append(
@@ -662,6 +1067,19 @@ def validate_docx_label_suggestions(
                     }
                 )
 
+        if _should_validate_snippet_as_template(text):
+            snippet_validation = get_jinja_template_validation(
+                _normalize_docassemble_template_source(text)
+            )
+            for issue in snippet_validation["errors"]:
+                flags.append(
+                    {
+                        "code": "invalid_jinja_syntax",
+                        "message": issue.get("message")
+                        or "Suggestion does not parse as valid Jinja syntax.",
+                    }
+                )
+
         if flags:
             flagged_count += 1
 
@@ -683,6 +1101,7 @@ def validate_docx_label_suggestions(
         "results": results,
         "flagged_count": flagged_count,
         "ai_review_recommended": flagged_count > 0,
+        "syntax_validation": syntax_validation,
     }
 
 
@@ -1420,8 +1839,9 @@ def get_voted_docx_label_suggestions(
     if defragment_runs:
         review_document, _ = defragment_docx_runs(review_document)
 
-    generation_runs: List[Dict[str, Any]] = []
-    for generation_index, generation_model in enumerate(generation_models):
+    def _run_generation_pass(
+        generation_index: int, generation_model: str
+    ) -> Dict[str, Any]:
         suggestions = get_labeled_docx_runs(
             docx_path=docx_path,
             custom_people_names=custom_people_names,
@@ -1438,11 +1858,31 @@ def get_voted_docx_label_suggestions(
             max_output_tokens=max_output_tokens,
             defragment_runs=defragment_runs,
         )
+        return {
+            "model": generation_model,
+            "generation_index": generation_index,
+            "suggestions": suggestions,
+        }
+
+    if len(generation_models) == 1:
+        generated_runs = [_run_generation_pass(0, generation_models[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(generation_models)) as executor:
+            generated_runs = list(
+                executor.map(
+                    lambda item: _run_generation_pass(item[0], item[1]),
+                    enumerate(generation_models),
+                )
+            )
+
+    generation_runs: List[Dict[str, Any]] = []
+    for run_info in generated_runs:
+        suggestions = run_info["suggestions"]
         validation = validate_docx_label_suggestions(review_document, suggestions)
         generation_runs.append(
             {
-                "model": generation_model,
-                "generation_index": generation_index,
+                "model": run_info["model"],
+                "generation_index": run_info["generation_index"],
                 "suggestions": suggestions,
                 "validation": validation,
             }
@@ -1559,6 +1999,7 @@ def update_docx(
     document: Union[docx.document.Document, str],
     modified_runs: List[Tuple[int, int, str, int]],
     defragment_runs: bool = False,
+    apply_jinja_highlights: bool = False,
 ) -> docx.document.Document:
     """Update the document with modified runs.
 
@@ -1567,6 +2008,8 @@ def update_docx(
         modified_runs: Tuples of paragraph number, run number, modified text, and
             paragraph insertion indicator.
         defragment_runs: Whether to merge safe split runs before applying edits.
+        apply_jinja_highlights: Whether to split and shade all Jinja tags after
+            edits are applied.
 
     Returns:
         docx.document.Document: The modified document.
@@ -1609,6 +2052,9 @@ def update_docx(
             # Empty or run-mismatched paragraphs are common in legal forms.
             # Fall back to appending a run so we do not silently drop a valid label.
             paragraph.add_run(modified_text)
+
+    if apply_jinja_highlights:
+        document = apply_jinja2_highlights(document)
 
     return document
 

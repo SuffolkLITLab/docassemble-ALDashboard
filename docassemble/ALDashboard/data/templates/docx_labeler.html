@@ -41,6 +41,9 @@
             <!-- Sidebar -->
             <aside id="sidebar-panel" class="dl-sidebar">
                 <!-- Upload Section -->
+                        <button id="tab-manual" class="dl-tab hidden">
+                            Manual Labels <span id="manual-count" class="dl-count-badge dl-count-badge-warning">0</span>
+                        </button>
                 <div class="dl-upload-section">
                     <label class="d-block">
                         <span class="visually-hidden">Choose DOCX file</span>
@@ -52,6 +55,13 @@
                     </button>
                     <p id="file-name" class="mt-2 small text-muted hidden"></p>
                     <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
+                    <!-- Manual Labels Panel -->
+                    <div id="manual-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center justify-content-between gap-2">
+                            <div class="small text-muted">Labels added from preview selections</div>
+                        </div>
+                        <div id="manual-labels-list" class="flex-fill overflow-auto p-3"></div>
+                    </div>
                     <div id="interview-picker-sidebar-host" class="hidden mt-3">
                         <div id="interview-picker-panel">
                             <div class="small fw-medium mb-2">Interview variables source</div>
@@ -598,12 +608,16 @@
         const downloadStatus = document.getElementById('download-status');
         const syntaxValidationBanner = document.getElementById('syntax-validation');
         const existingPanel = document.getElementById('existing-panel');
+        const manualPanel = document.getElementById('manual-panel');
         const suggestionsPanel = document.getElementById('suggestions-panel');
         const suggestionsList = document.getElementById('suggestions-list');
+        const manualLabelsList = document.getElementById('manual-labels-list');
         const existingLabelsTree = document.getElementById('existing-labels-tree');
         const existingCount = document.getElementById('existing-count');
+        const manualCount = document.getElementById('manual-count');
         const suggestionsCount = document.getElementById('suggestions-count');
         const tabExisting = document.getElementById('tab-existing');
+        const tabManual = document.getElementById('tab-manual');
         const tabSuggestions = document.getElementById('tab-suggestions');
         const variableTree = document.getElementById('variable-tree');
         const variableSearch = document.getElementById('variable-search');
@@ -664,6 +678,32 @@
                 }
             });
             return models.join(', ');
+        }
+
+        function isManualSuggestion(suggestion) {
+            return !!(suggestion && suggestion._isManual);
+        }
+
+        function getManualLabelGroups() {
+            return state.suggestions.filter(function(suggestion) {
+                return isManualSuggestion(suggestion) && !suggestion._isCompanion;
+            });
+        }
+
+        function applyManualLabelText(groupId, variableName) {
+            state.suggestions.forEach(function(suggestion) {
+                if (suggestion.group !== groupId) return;
+                suggestion._displayLabel = variableName;
+                if (suggestion._manualRole === 'single') {
+                    suggestion.text = (suggestion._manualPrefix || '') + variableName + (suggestion._manualSuffix || '');
+                } else if (suggestion._manualRole === 'first') {
+                    suggestion.text = (suggestion._manualPrefix || '') + variableName;
+                } else if (suggestion._manualRole === 'last') {
+                    suggestion.text = suggestion._manualSuffix || '';
+                } else if (suggestion._manualRole === 'middle') {
+                    suggestion.text = '';
+                }
+            });
         }
 
         function collectRenamePayload() {
@@ -1520,17 +1560,26 @@
             var labels = [];
             match.runs.forEach(function(r, i) {
                 var newText;
+                var manualRole;
+                var manualPrefix = '';
+                var manualSuffix = '';
                 if (match.runs.length === 1) {
                     // Only run: prefix + label + suffix
-                    var prefix = r.originalText.substring(0, r.selStart);
-                    var suffix = r.originalText.substring(r.selEnd);
-                    newText = prefix + variableName + suffix;
+                    manualPrefix = r.originalText.substring(0, r.selStart);
+                    manualSuffix = r.originalText.substring(r.selEnd);
+                    newText = manualPrefix + variableName + manualSuffix;
+                    manualRole = 'single';
                 } else if (i === 0) {
-                    newText = r.originalText.substring(0, r.selStart) + variableName;
+                    manualPrefix = r.originalText.substring(0, r.selStart);
+                    newText = manualPrefix + variableName;
+                    manualRole = 'first';
                 } else if (i === match.runs.length - 1) {
-                    newText = r.originalText.substring(r.selEnd);
+                    manualSuffix = r.originalText.substring(r.selEnd);
+                    newText = manualSuffix;
+                    manualRole = 'last';
                 } else {
                     newText = '';
+                    manualRole = 'middle';
                 }
                 labels.push({
                     paragraph: r.paragraph,
@@ -1541,8 +1590,12 @@
                     status: 'accepted',
                     group: groupId,
                     _isCompanion: i > 0,
+                    _isManual: true,
                     _selectedText: match.selectedText,
-                    _displayLabel: variableName
+                    _displayLabel: variableName,
+                    _manualRole: manualRole,
+                    _manualPrefix: manualPrefix,
+                    _manualSuffix: manualSuffix
                 });
             });
             return labels;
@@ -1591,8 +1644,7 @@
             renderSuggestions();
             updatePreview();
             updateDownloadButton();
-            // Switch to the suggestions tab so the user sees what they added
-            switchTab('suggestions');
+            switchTab('manual');
         }
 
         function onPreviewMouseUp(e) {
@@ -1866,17 +1918,66 @@
         // ================================================================
         function switchTab(tab) {
             state.activeTab = tab;
-            if (tab === 'existing') {
-                tabExisting.classList.add('tab-active');
-                tabSuggestions.classList.remove('tab-active');
-                existingPanel.classList.remove('hidden');
-                suggestionsPanel.classList.add('hidden');
-            } else {
-                tabSuggestions.classList.add('tab-active');
-                tabExisting.classList.remove('tab-active');
-                suggestionsPanel.classList.remove('hidden');
-                existingPanel.classList.add('hidden');
+            tabExisting.classList.toggle('tab-active', tab === 'existing');
+            tabManual.classList.toggle('tab-active', tab === 'manual');
+            tabSuggestions.classList.toggle('tab-active', tab === 'suggestions');
+            existingPanel.classList.toggle('hidden', tab !== 'existing');
+            manualPanel.classList.toggle('hidden', tab !== 'manual');
+            suggestionsPanel.classList.toggle('hidden', tab !== 'suggestions');
+        }
+
+        function renderManualLabels() {
+            var manualLabels = getManualLabelGroups();
+            var hasManualLabels = manualLabels.length > 0;
+            tabManual.classList.toggle('hidden', !hasManualLabels);
+            manualCount.textContent = manualLabels.length;
+
+            if (!hasManualLabels) {
+                manualLabelsList.innerHTML = '<div class="text-center py-5 text-muted"><p>No manual labels yet.</p><p class="small mt-1">Select text in the preview to add one.</p></div>';
+                if (state.activeTab === 'manual') {
+                    switchTab(state.existingLabels.length > 0 ? 'existing' : 'suggestions');
+                }
+                return;
             }
+
+            manualLabelsList.innerHTML = '';
+            manualLabels.forEach(function(label) {
+                var div = document.createElement('div');
+                div.className = 'p-3 rounded border border-2 mb-2 suggestion-accepted';
+                div.innerHTML =
+                    '<div class="d-flex align-items-start justify-content-between gap-2 mb-2">' +
+                        '<span class="small text-muted">Selection</span>' +
+                        '<button class="manual-remove-btn btn btn-sm btn-outline-danger" data-group="' + escapeHtml(label.group) + '" title="Remove">\u2716</button>' +
+                    '</div>' +
+                    '<div class="small text-muted mb-2">\u201C' + escapeHtml(label._selectedText || '') + '\u201D</div>' +
+                    '<label class="form-label small fw-medium mb-1">Label</label>' +
+                    '<input type="text" class="manual-edit-input form-control form-control-sm font-monospace mb-2" value="' + escapeHtml(label._displayLabel || label.text || '') + '" data-group="' + escapeHtml(label.group) + '">' +
+                    '<div class="small text-muted">Para ' + escapeHtml(String(label.paragraph)) + ', Run ' + escapeHtml(String(label.run)) + '</div>';
+                manualLabelsList.appendChild(div);
+            });
+
+            manualLabelsList.querySelectorAll('.manual-edit-input').forEach(function(input) {
+                input.addEventListener('input', function() {
+                    var value = input.value.trim();
+                    if (!value) return;
+                    applyManualLabelText(input.dataset.group, value);
+                    updatePreview();
+                    scheduleSyntaxValidation(500);
+                });
+            });
+
+            manualLabelsList.querySelectorAll('.manual-remove-btn').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    var groupId = button.dataset.group;
+                    state.suggestions = state.suggestions.filter(function(suggestion) {
+                        return suggestion.group !== groupId;
+                    });
+                    renderSuggestions();
+                    updatePreview();
+                    updateDownloadButton();
+                    scheduleSyntaxValidation();
+                });
+            });
         }
 
         // ================================================================
@@ -2007,14 +2108,17 @@
                 formData.append('generator_models', JSON.stringify(generatorModels));
             }
             try {
+                var manualSuggestions = state.suggestions.filter(function(suggestion) {
+                    return isManualSuggestion(suggestion);
+                });
                 var data = await requestAsyncLabelerAction(
                     '/al/docx-labeler/api/suggest-labels',
                     formData,
                     'AI labeling is running in the background...'
                 );
-                state.suggestions = (data.suggestions || []).map(function(s) {
+                state.suggestions = manualSuggestions.concat((data.suggestions || []).map(function(s) {
                     return Object.assign({}, s, { id: s.id || generateId(), status: 'pending' });
-                });
+                }));
                 state.validation = data.validation || null;
                 suggestionsCount.textContent = state.suggestions.length;
                 renderSuggestions();
@@ -2027,11 +2131,13 @@
 
         function renderSuggestions() {
             suggestionsList.innerHTML = '';
+            renderManualLabels();
             var deterministic = state.validation && state.validation.deterministic ? state.validation.deterministic : null;
             var syntaxValidation = deterministic && deterministic.syntax_validation ? deterministic.syntax_validation : null;
             var documentWarnings = state.validation && Array.isArray(state.validation.document_warnings) ? state.validation.document_warnings : [];
             var aggregation = state.validation && state.validation.aggregation ? state.validation.aggregation : null;
             var timings = state.validation && state.validation.timings ? state.validation.timings : null;
+            var aiSuggestions = state.suggestions.filter(function(suggestion) { return !isManualSuggestion(suggestion); });
             if ((deterministic && deterministic.flagged_count > 0) || documentWarnings.length > 0 || aggregation || (syntaxValidation && ((syntaxValidation.error_count || 0) > 0 || (syntaxValidation.warning_count || 0) > 0))) {
                 var aiReview = state.validation && state.validation.ai_review ? state.validation.ai_review : {};
                 var reviewedCount = Array.isArray(aiReview.reviews) ? aiReview.reviews.length : 0;
@@ -2040,7 +2146,7 @@
                 if (aggregation) {
                     var confidenceCounts = aggregation.confidence_counts || {};
                     summaryHtml +=
-                        '<div><strong>Aggregated ' + state.suggestions.length + '</strong> ranked suggestion' + (state.suggestions.length === 1 ? '' : 's') +
+                        '<div><strong>Aggregated ' + aiSuggestions.length + '</strong> ranked suggestion' + (aiSuggestions.length === 1 ? '' : 's') +
                         ' from ' + escapeHtml(String(aggregation.generator_runs || 0)) + ' generation run' + ((aggregation.generator_runs || 0) === 1 ? '' : 's') + '.</div>' +
                         '<div class="mt-1">Confidence tiers: ' +
                         '<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle me-1">High ' + escapeHtml(String(confidenceCounts.high || 0)) + '</span>' +
@@ -2079,7 +2185,7 @@
             }
             var hiddenLowConfidenceCount = 0;
             // Count only visible (non-companion) suggestions
-            var visibleCount = state.suggestions.filter(function(s) {
+            var visibleCount = aiSuggestions.filter(function(s) {
                 if (s._isCompanion) return false;
                 if (!state.settings.showLowConfidence && (s.confidence || 'low') === 'low') {
                     hiddenLowConfidenceCount += 1;
@@ -2100,6 +2206,7 @@
             state.suggestions.forEach(function(suggestion, index) {
                 // Skip companion entries – they’re part of a multi-run group
                 if (suggestion._isCompanion) return;
+                if (isManualSuggestion(suggestion)) return;
                 if (!state.settings.showLowConfidence && (suggestion.confidence || 'low') === 'low') return;
 
                 var div = document.createElement('div');
@@ -2518,6 +2625,7 @@
             modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
         });
         tabExisting.addEventListener('click', function() { switchTab('existing'); });
+        tabManual.addEventListener('click', function() { switchTab('manual'); });
         tabSuggestions.addEventListener('click', function() { switchTab('suggestions'); });
         document.getElementById('accept-all-btn').addEventListener('click', function() {
             state.suggestions.forEach(function(s) { if (s.status === 'pending') s.status = 'accepted'; });

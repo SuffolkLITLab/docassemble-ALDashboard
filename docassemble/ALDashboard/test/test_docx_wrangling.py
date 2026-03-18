@@ -151,7 +151,9 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         self.assertNotIn("immigration habeas petition practice advisory", litigation)
 
     @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
-    def test_get_labeled_docx_runs_uses_custom_prompt_library(self, mock_chat_completion):
+    def test_get_labeled_docx_runs_uses_custom_prompt_library(
+        self, mock_chat_completion
+    ):
         document = docx.Document()
         document.add_paragraph("Name: ____")
         mock_chat_completion.return_value = {"results": []}
@@ -277,7 +279,9 @@ docx:
         )
 
     @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
-    def test_get_labeled_docx_runs_normalizes_azure_base_url(self, mock_chat_completion):
+    def test_get_labeled_docx_runs_normalizes_azure_base_url(
+        self, mock_chat_completion
+    ):
         document = docx.Document()
         document.add_paragraph("Name: ____")
         with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
@@ -333,18 +337,24 @@ docx:
                 prompt_profile="litigation_template",
                 optional_context="This template is based on an immigration habeas guide.",
             )
-            with_context = mock_chat_completion.call_args.kwargs["messages"][0]["content"]
+            with_context = mock_chat_completion.call_args.kwargs["messages"][0][
+                "content"
+            ]
 
             get_labeled_docx_runs(
                 tmp.name,
                 model="gpt-5-mini",
                 prompt_profile="litigation_template",
             )
-            without_context = mock_chat_completion.call_args.kwargs["messages"][0]["content"]
+            without_context = mock_chat_completion.call_args.kwargs["messages"][0][
+                "content"
+            ]
 
         self.assertIn("Optional context for understanding this document", with_context)
         self.assertIn("immigration habeas guide", with_context)
-        self.assertNotIn("Optional context for understanding this document", without_context)
+        self.assertNotIn(
+            "Optional context for understanding this document", without_context
+        )
 
     @patch("docassemble.ALDashboard.docx_wrangling.chat_completion")
     def test_get_labeled_docx_runs_prefers_selected_interview_variable_names(
@@ -368,7 +378,10 @@ docx:
             )
 
         system_prompt = mock_chat_completion.call_args.kwargs["messages"][0]["content"]
-        self.assertIn("Existing variable names from the selected Playground interview", system_prompt)
+        self.assertIn(
+            "Existing variable names from the selected Playground interview",
+            system_prompt,
+        )
         self.assertIn("users", system_prompt)
         self.assertIn("trial_court", system_prompt)
         self.assertIn("docket_number", system_prompt)
@@ -467,7 +480,9 @@ docx:
         )
 
         self.assertEqual(len(aggregated["suggestions"]), 1)
-        self.assertEqual(aggregated["suggestions"][0]["text"], "Case No. {{ docket_number }}")
+        self.assertEqual(
+            aggregated["suggestions"][0]["text"], "Case No. {{ docket_number }}"
+        )
         self.assertEqual(aggregated["suggestions"][0]["confidence"], "low")
         self.assertFalse(aggregated["judge_review"]["performed"])
 

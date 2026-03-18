@@ -94,23 +94,35 @@ def _get_named_pdf_parent(field_obj: Any) -> Optional[Any]:
     return None
 
 
-def _rename_checkbox_export_state(field_obj: Any, export_value: str, pikepdf_module: Any) -> None:
-    desired_state = pikepdf_module.Name("/" + _sanitize_checkbox_export_value(export_value))
+def _rename_checkbox_export_state(
+    field_obj: Any, export_value: str, pikepdf_module: Any
+) -> None:
+    desired_state = pikepdf_module.Name(
+        "/" + _sanitize_checkbox_export_value(export_value)
+    )
     current_state = pikepdf_module.Name("/Yes")
     if hasattr(field_obj, "AP"):
         for appearance_key in ("/N", "/D", "/R"):
             if appearance_key not in field_obj.AP:
                 continue
             appearance_dict = field_obj.AP[appearance_key]
-            if current_state in appearance_dict and desired_state not in appearance_dict:
+            if (
+                current_state in appearance_dict
+                and desired_state not in appearance_dict
+            ):
                 appearance_dict[desired_state] = appearance_dict[current_state]
                 del appearance_dict[current_state]
     for attr_name in ("V", "AS", "DV"):
-        if hasattr(field_obj, attr_name) and getattr(field_obj, attr_name) == current_state:
+        if (
+            hasattr(field_obj, attr_name)
+            and getattr(field_obj, attr_name) == current_state
+        ):
             setattr(field_obj, attr_name, desired_state)
 
 
-def _apply_checkbox_export_values(pdf_path: str, value_by_field_name: Dict[str, str]) -> None:
+def _apply_checkbox_export_values(
+    pdf_path: str, value_by_field_name: Dict[str, str]
+) -> None:
     desired = {
         str(name): _sanitize_checkbox_export_value(value)
         for name, value in value_by_field_name.items()
@@ -296,7 +308,9 @@ def _playground_auth_fail(request_id: str):
 def _normalize_playground_project(project: Optional[str]) -> str:
     value = str(project or "default").strip() or "default"
     if "/" in value or "\\" in value or value.startswith("."):
-        raise DashboardAPIValidationError("Invalid Playground project.", status_code=400)
+        raise DashboardAPIValidationError(
+            "Invalid Playground project.", status_code=400
+        )
     return value
 
 
@@ -353,7 +367,8 @@ def _list_playground_yaml_files(project: str) -> List[Dict[str, str]]:
         return [
             {"filename": filename, "label": filename}
             for filename in playground.file_list
-            if isinstance(filename, str) and filename.lower().endswith((".yml", ".yaml"))
+            if isinstance(filename, str)
+            and filename.lower().endswith((".yml", ".yaml"))
         ]
 
 
@@ -506,13 +521,15 @@ def _get_installed_interview_variable_info(interview_path: str) -> Dict[str, Any
         )
     )
     try:
-        variable_json, vocab_list, vocab_dict, ac_list = get_vars_in_use(  # pylint: disable=unused-variable
-            interview,
-            interview_status,
-            debug_mode=False,
-            return_json=True,
-            use_playground=False,
-            current_project="default",
+        variable_json, vocab_list, vocab_dict, ac_list = (
+            get_vars_in_use(  # pylint: disable=unused-variable
+                interview,
+                interview_status,
+                debug_mode=False,
+                return_json=True,
+                use_playground=False,
+                current_project="default",
+            )
         )
     except Exception as exc:
         raise DashboardAPIValidationError(
@@ -533,7 +550,12 @@ def _get_static_content(filename: str) -> str:
     import importlib.resources
 
     try:
-        ref = importlib.resources.files("docassemble.ALDashboard") / "data" / "static" / filename
+        ref = (
+            importlib.resources.files("docassemble.ALDashboard")
+            / "data"
+            / "static"
+            / filename
+        )
         with importlib.resources.as_file(ref) as path:
             if path.exists():
                 return path.read_text(encoding="utf-8")
@@ -547,7 +569,12 @@ def _get_template_content(filename: str) -> str:
     import importlib.resources
 
     try:
-        ref = importlib.resources.files("docassemble.ALDashboard") / "data" / "templates" / filename
+        ref = (
+            importlib.resources.files("docassemble.ALDashboard")
+            / "data"
+            / "templates"
+            / filename
+        )
         with importlib.resources.as_file(ref) as path:
             if path.exists():
                 return path.read_text(encoding="utf-8")
@@ -686,7 +713,9 @@ _TEMPLATE_EXTENSIONS_PDF = (".pdf",)
 _TEMPLATE_EXTENSIONS_ALL = _TEMPLATE_EXTENSIONS_DOCX + _TEMPLATE_EXTENSIONS_PDF
 
 
-def _normalize_template_filename(filename: Optional[str], *, allowed_extensions: tuple = _TEMPLATE_EXTENSIONS_ALL) -> str:
+def _normalize_template_filename(
+    filename: Optional[str], *, allowed_extensions: tuple = _TEMPLATE_EXTENSIONS_ALL
+) -> str:
     value = os.path.basename(str(filename or "").strip())
     if not value or value in {".", ".."}:
         raise DashboardAPIValidationError(
@@ -694,12 +723,15 @@ def _normalize_template_filename(filename: Optional[str], *, allowed_extensions:
         )
     if not value.lower().endswith(allowed_extensions):
         raise DashboardAPIValidationError(
-            f"Template file must be one of: {', '.join(allowed_extensions)}", status_code=400
+            f"Template file must be one of: {', '.join(allowed_extensions)}",
+            status_code=400,
         )
     return value
 
 
-def _list_playground_template_files(project: str, *, extensions: tuple = _TEMPLATE_EXTENSIONS_ALL) -> List[Dict[str, str]]:
+def _list_playground_template_files(
+    project: str, *, extensions: tuple = _TEMPLATE_EXTENSIONS_ALL
+) -> List[Dict[str, str]]:
     from docassemble.webapp.backend import directory_for
     from docassemble.webapp.files import SavedFile
 
@@ -716,11 +748,13 @@ def _list_playground_template_files(project: str, *, extensions: tuple = _TEMPLA
             continue
         fpath = os.path.join(the_directory, fname)
         if os.path.isfile(fpath):
-            results.append({
-                "filename": fname,
-                "label": fname,
-                "size": os.path.getsize(fpath),
-            })
+            results.append(
+                {
+                    "filename": fname,
+                    "label": fname,
+                    "size": os.path.getsize(fpath),
+                }
+            )
     return results
 
 
@@ -730,18 +764,14 @@ def _load_playground_template_file(project: str, filename: str) -> bytes:
 
     uid = getattr(current_user, "id", None)
     if uid is None:
-        raise DashboardAPIValidationError(
-            "Login required.", status_code=401
-        )
+        raise DashboardAPIValidationError("Login required.", status_code=401)
     area = SavedFile(uid, fix=True, section="playgroundtemplate")
     the_directory = directory_for(area, project)
     filepath = os.path.join(the_directory, filename)
     real_dir = os.path.realpath(the_directory)
     real_file = os.path.realpath(filepath)
     if not real_file.startswith(real_dir + os.sep):
-        raise DashboardAPIValidationError(
-            "Invalid template path.", status_code=400
-        )
+        raise DashboardAPIValidationError("Invalid template path.", status_code=400)
     if not os.path.isfile(filepath):
         raise DashboardAPIValidationError(
             f"Template file '{filename}' not found in project '{project}'.",
@@ -751,24 +781,22 @@ def _load_playground_template_file(project: str, filename: str) -> bytes:
         return fh.read()
 
 
-def _save_playground_template_file(project: str, filename: str, content: bytes) -> Dict[str, Any]:
+def _save_playground_template_file(
+    project: str, filename: str, content: bytes
+) -> Dict[str, Any]:
     from docassemble.webapp.backend import directory_for
     from docassemble.webapp.files import SavedFile
 
     uid = getattr(current_user, "id", None)
     if uid is None:
-        raise DashboardAPIValidationError(
-            "Login required.", status_code=401
-        )
+        raise DashboardAPIValidationError("Login required.", status_code=401)
     area = SavedFile(uid, fix=True, section="playgroundtemplate")
     the_directory = directory_for(area, project)
     real_dir = os.path.realpath(the_directory)
     filepath = os.path.join(the_directory, filename)
     real_file = os.path.realpath(filepath)
     if not real_file.startswith(real_dir + os.sep):
-        raise DashboardAPIValidationError(
-            "Invalid template path.", status_code=400
-        )
+        raise DashboardAPIValidationError("Invalid template path.", status_code=400)
     os.makedirs(the_directory, exist_ok=True)
     is_new = not os.path.isfile(filepath)
     with open(filepath, "wb") as fh:
@@ -791,20 +819,33 @@ def labeler_playground_projects():
     if not _labeler_playground_auth_check():
         return _playground_auth_fail(request_id)
     try:
-        return jsonify({
-            "success": True,
-            "request_id": request_id,
-            "data": {"projects": _list_playground_projects()},
-        })
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"projects": _list_playground_projects()},
+            }
+        )
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: labeler playground-projects {request_id} error: {exc!r}", "error")
+        log(
+            f"ALDashboard: labeler playground-projects {request_id} error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -819,20 +860,36 @@ def labeler_playground_files():
         return _playground_auth_fail(request_id)
     try:
         project = _normalize_playground_project(request.args.get("project"))
-        return jsonify({
-            "success": True,
-            "request_id": request_id,
-            "data": {"project": project, "files": _list_playground_yaml_files(project)},
-        })
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "project": project,
+                    "files": _list_playground_yaml_files(project),
+                },
+            }
+        )
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: labeler playground-files {request_id} error: {exc!r}", "error")
+        log(
+            f"ALDashboard: labeler playground-files {request_id} error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -848,20 +905,33 @@ def labeler_playground_variables():
     try:
         project = _normalize_playground_project(request.args.get("project"))
         filename = _normalize_playground_filename(request.args.get("filename"))
-        return jsonify({
-            "success": True,
-            "request_id": request_id,
-            "data": _get_playground_variable_info(project, filename),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": _get_playground_variable_info(project, filename),
+            }
+        )
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: labeler playground-variables {request_id} error: {exc!r}", "error")
+        log(
+            f"ALDashboard: labeler playground-variables {request_id} error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -883,28 +953,42 @@ def labeler_playground_templates():
             extensions = _TEMPLATE_EXTENSIONS_PDF
         else:
             extensions = _TEMPLATE_EXTENSIONS_ALL
-        return jsonify({
-            "success": True,
-            "request_id": request_id,
-            "data": {
-                "project": project,
-                "templates": _list_playground_template_files(project, extensions=extensions),
-            },
-        })
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "project": project,
+                    "templates": _list_playground_template_files(
+                        project, extensions=extensions
+                    ),
+                },
+            }
+        )
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         log(f"ALDashboard: playground-templates {request_id} error: {exc!r}", "error")
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
 
-@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-templates/load", methods=["GET"])
+@app.route(
+    f"{LABELER_BASE_PATH}/labeler/api/playground-templates/load", methods=["GET"]
+)
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "HEAD"], automatic_options=True)
 def labeler_playground_template_load():
@@ -916,30 +1000,45 @@ def labeler_playground_template_load():
         project = _normalize_playground_project(request.args.get("project"))
         filename = _normalize_template_filename(request.args.get("filename"))
         content = _load_playground_template_file(project, filename)
-        return jsonify({
-            "success": True,
-            "request_id": request_id,
-            "data": {
-                "project": project,
-                "filename": filename,
-                "size": len(content),
-                "file_content_base64": base64.b64encode(content).decode("ascii"),
-            },
-        })
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "project": project,
+                    "filename": filename,
+                    "size": len(content),
+                    "file_content_base64": base64.b64encode(content).decode("ascii"),
+                },
+            }
+        )
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: playground-template-load {request_id} error: {exc!r}", "error")
+        log(
+            f"ALDashboard: playground-template-load {request_id} error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
 
-@app.route(f"{LABELER_BASE_PATH}/labeler/api/playground-templates/save", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/labeler/api/playground-templates/save", methods=["POST"]
+)
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def labeler_playground_template_save():
@@ -968,20 +1067,33 @@ def labeler_playground_template_save():
             f"ALDashboard: playground-template-save {request_id} {action} '{filename}' in project '{project}'",
             "info",
         )
-        return jsonify({
-            "success": True,
-            "request_id": request_id,
-            "data": result,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": result,
+            }
+        )
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: playground-template-save {request_id} error: {exc!r}", "error")
+        log(
+            f"ALDashboard: playground-template-save {request_id} error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -1000,7 +1112,9 @@ def docx_labeler_page():
     html_content = _get_template_content("docx_labeler.html")
     if not html_content:
         log("ALDashboard: DOCX labeler template not found", "error")
-        return Response("DOCX labeler template not found.", status=500, mimetype="text/plain")
+        return Response(
+            "DOCX labeler template not found.", status=500, mimetype="text/plain"
+        )
     return Response(html_content, mimetype="text/html")
 
 
@@ -1071,7 +1185,10 @@ def labeler_installed_packages():
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: installed-packages {request_id} server error: {exc!r}", "error")
+        log(
+            f"ALDashboard: installed-packages {request_id} server error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
             {
                 "success": False,
@@ -1152,7 +1269,10 @@ def labeler_installed_variables():
             exc.status_code,
         )
     except Exception as exc:
-        log(f"ALDashboard: installed-variables {request_id} server error: {exc!r}", "error")
+        log(
+            f"ALDashboard: installed-variables {request_id} server error: {exc!r}",
+            "error",
+        )
         return jsonify_with_status(
             {
                 "success": False,
@@ -1209,33 +1329,49 @@ def docx_labeler_extract_runs():
             if runs:
                 paragraph_count = max(int(item[0]) for item in runs) + 1
 
-            log(f"ALDashboard: extract-runs {request_id} extracted {len(runs)} runs from {paragraph_count} paragraphs in '{filename}'", "info")
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": filename,
-                    "paragraph_count": paragraph_count,
-                    "run_count": len(runs),
-                    "runs": runs,
-                    "defragment_runs": defragment_runs,
-                    "defragmentation": defragmentation,
+            log(
+                f"ALDashboard: extract-runs {request_id} extracted {len(runs)} runs from {paragraph_count} paragraphs in '{filename}'",
+                "info",
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename,
+                        "paragraph_count": paragraph_count,
+                        "run_count": len(runs),
+                        "runs": runs,
+                        "defragment_runs": defragment_runs,
+                        "defragmentation": defragmentation,
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
-        log(f"ALDashboard: extract-runs {request_id} validation error: {exc.message}", "warning")
+        log(
+            f"ALDashboard: extract-runs {request_id} validation error: {exc.message}",
+            "warning",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         log(f"ALDashboard: extract-runs {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -1248,7 +1384,10 @@ def docx_labeler_suggest_labels():
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: suggest-labels request {request_id}", "info")
     if not _labeler_ai_auth_check():
-        log(f"ALDashboard: suggest-labels auth failed for request {request_id}", "warning")
+        log(
+            f"ALDashboard: suggest-labels auth failed for request {request_id}",
+            "warning",
+        )
         return _ai_auth_fail(request_id)
 
     try:
@@ -1279,9 +1418,9 @@ def docx_labeler_suggest_labels():
             )
 
         # Extract options
-        prompt_profile = str(
-            post_data.get("prompt_profile") or "standard"
-        ).strip() or "standard"
+        prompt_profile = (
+            str(post_data.get("prompt_profile") or "standard").strip() or "standard"
+        )
         optional_context = post_data.get("context_text")
         custom_prompt = post_data.get("custom_prompt")
         additional_instructions = post_data.get("additional_instructions")
@@ -1465,62 +1604,84 @@ def docx_labeler_suggest_labels():
                             "sources": alternate.get("sources", []),
                         }
                     )
-                formatted_suggestions.append({
-                    "paragraph": suggestion.get("paragraph"),
-                    "run": suggestion.get("run"),
-                    "text": suggestion.get("text", ""),
-                    "new_paragraph": suggestion.get("new_paragraph", 0),
-                    "id": str(uuid.uuid4()),
-                    "validation_flags": suggestion.get("validation_flags", []),
-                    "judge_review": suggestion.get("judge_review"),
-                    "confidence": suggestion.get("confidence", "low"),
-                    "vote_count": suggestion.get("vote_count", 0),
-                    "clean_vote_count": suggestion.get("clean_vote_count", 0),
-                    "vote_total": suggestion.get("vote_total", len(generation_runs)),
-                    "sources": suggestion.get("sources", []),
-                    "alternates": alternates,
-                })
+                formatted_suggestions.append(
+                    {
+                        "paragraph": suggestion.get("paragraph"),
+                        "run": suggestion.get("run"),
+                        "text": suggestion.get("text", ""),
+                        "new_paragraph": suggestion.get("new_paragraph", 0),
+                        "id": str(uuid.uuid4()),
+                        "validation_flags": suggestion.get("validation_flags", []),
+                        "judge_review": suggestion.get("judge_review"),
+                        "confidence": suggestion.get("confidence", "low"),
+                        "vote_count": suggestion.get("vote_count", 0),
+                        "clean_vote_count": suggestion.get("clean_vote_count", 0),
+                        "vote_total": suggestion.get(
+                            "vote_total", len(generation_runs)
+                        ),
+                        "sources": suggestion.get("sources", []),
+                        "alternates": alternates,
+                    }
+                )
 
-            log(f"ALDashboard: suggest-labels {request_id} generated {len(formatted_suggestions)} suggestions for '{filename}'", "info")
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": filename,
-                    "suggestions": formatted_suggestions,
-                    "defragment_runs": defragment_runs,
-                    "interview_source_mode": interview_source_mode,
-                    "playground_project": selected_playground_project,
-                    "playground_yaml_file": selected_playground_filename,
-                    "installed_interview_path": selected_installed_interview_path,
-                    "playground_variable_count": len(preferred_variable_names or []),
-                    "validation": {
-                        "deterministic": {
-                            "flagged_count": flagged_selected_count,
-                            "ai_review_recommended": bool(
-                                aggregation_summary.get("ambiguous_group_count")
-                            ),
+            log(
+                f"ALDashboard: suggest-labels {request_id} generated {len(formatted_suggestions)} suggestions for '{filename}'",
+                "info",
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename,
+                        "suggestions": formatted_suggestions,
+                        "defragment_runs": defragment_runs,
+                        "interview_source_mode": interview_source_mode,
+                        "playground_project": selected_playground_project,
+                        "playground_yaml_file": selected_playground_filename,
+                        "installed_interview_path": selected_installed_interview_path,
+                        "playground_variable_count": len(
+                            preferred_variable_names or []
+                        ),
+                        "validation": {
+                            "deterministic": {
+                                "flagged_count": flagged_selected_count,
+                                "ai_review_recommended": bool(
+                                    aggregation_summary.get("ambiguous_group_count")
+                                ),
+                            },
+                            "ai_review": judge_review,
+                            "document_warnings": document_warnings,
+                            "aggregation": aggregation_summary,
                         },
-                        "ai_review": judge_review,
-                        "document_warnings": document_warnings,
-                        "aggregation": aggregation_summary,
                     },
                 }
-            })
+            )
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
-        log(f"ALDashboard: suggest-labels {request_id} validation error: {exc.message}", "warning")
+        log(
+            f"ALDashboard: suggest-labels {request_id} validation error: {exc.message}",
+            "warning",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         log(f"ALDashboard: suggest-labels {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -1530,7 +1691,7 @@ def docx_labeler_suggest_labels():
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def docx_labeler_apply_labels():
     """Apply accepted labels and/or renames to a DOCX file and return the modified file.
-    
+
     Supports two types of modifications:
     - labels: New AI-suggested labels to insert (paragraph, run, text, new_paragraph)
     - renames: Find/replace operations on existing labels (original, replacement)
@@ -1581,9 +1742,14 @@ def docx_labeler_apply_labels():
                 renames = renames_raw
 
         if not labels and not renames:
-            raise DashboardAPIValidationError("Either labels or renames must be provided.")
+            raise DashboardAPIValidationError(
+                "Either labels or renames must be provided."
+            )
 
-        log(f"ALDashboard: apply-labels {request_id} processing {len(labels)} label insertions and {len(renames)} renames for '{filename}'", "info")
+        log(
+            f"ALDashboard: apply-labels {request_id} processing {len(labels)} label insertions and {len(renames)} renames for '{filename}'",
+            "info",
+        )
 
         # Convert labels to the format expected by update_docx
         modified_runs = []
@@ -1636,7 +1802,9 @@ def docx_labeler_apply_labels():
                                     for para in cell.paragraphs:
                                         for run in para.runs:
                                             if original in run.text:
-                                                run.text = run.text.replace(original, replacement)
+                                                run.text = run.text.replace(
+                                                    original, replacement
+                                                )
                                                 rename_count += 1
 
             # Apply new label insertions
@@ -1651,35 +1819,51 @@ def docx_labeler_apply_labels():
 
             output_filename = filename.replace(".docx", "-labeled.docx")
 
-            log(f"ALDashboard: apply-labels {request_id} successfully produced '{output_filename}'", "info")
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": output_filename,
-                    "docx_base64": base64.b64encode(output_bytes).decode("ascii"),
-                    "defragment_runs": defragment_runs,
-                    "defragmented_before_apply": bool(
-                        defragmentation["paragraphs_defragmented"]
-                        or defragmentation["runs_removed"]
-                    ),
-                    "defragmentation": defragmentation,
+            log(
+                f"ALDashboard: apply-labels {request_id} successfully produced '{output_filename}'",
+                "info",
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": output_filename,
+                        "docx_base64": base64.b64encode(output_bytes).decode("ascii"),
+                        "defragment_runs": defragment_runs,
+                        "defragmented_before_apply": bool(
+                            defragmentation["paragraphs_defragmented"]
+                            or defragmentation["runs_removed"]
+                        ),
+                        "defragmentation": defragmentation,
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
-        log(f"ALDashboard: apply-labels {request_id} validation error: {exc.message}", "warning")
+        log(
+            f"ALDashboard: apply-labels {request_id} validation error: {exc.message}",
+            "warning",
+        )
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         log(f"ALDashboard: apply-labels {request_id} server error: {exc!r}", "error")
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -1701,7 +1885,9 @@ def pdf_labeler_page():
     )
     if not html_content:
         log("ALDashboard: PDF labeler template not found", "error")
-        return Response("PDF labeler template not found.", status=500, mimetype="text/plain")
+        return Response(
+            "PDF labeler template not found.", status=500, mimetype="text/plain"
+        )
     return Response(html_content, mimetype="text/html")
 
 
@@ -1811,27 +1997,37 @@ def pdf_labeler_detect_fields():
                     }
                     formatted_fields.append(field_data)
 
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": filename,
-                    "page_count": len(fields_per_page),
-                    "fields": formatted_fields,
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename,
+                        "page_count": len(fields_per_page),
+                        "fields": formatted_fields,
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -1977,7 +2173,9 @@ def pdf_labeler_auto_detect():
                     else None
                 )
                 if installed_path:
-                    normalized_path = _normalize_installed_interview_path(installed_path)
+                    normalized_path = _normalize_installed_interview_path(
+                        installed_path
+                    )
                     preferred_variable_names = _get_installed_interview_variable_info(
                         normalized_path
                     )["all_names"]
@@ -2003,7 +2201,8 @@ def pdf_labeler_auto_detect():
         try:
             # Auto-add fields using FormFyxer
             formfyxer.auto_add_fields(
-                input_path, output_path,
+                input_path,
+                output_path,
                 preferred_names=preferred_variable_names,
             )
 
@@ -2055,17 +2254,19 @@ def pdf_labeler_auto_detect():
                     }
                     formatted_fields.append(field_data)
 
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": filename,
-                    "page_count": len(fields_per_page),
-                    "fields": formatted_fields,
-                    "stats": stats if isinstance(stats, dict) else {},
-                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename,
+                        "page_count": len(fields_per_page),
+                        "fields": formatted_fields,
+                        "stats": stats if isinstance(stats, dict) else {},
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
@@ -2074,12 +2275,20 @@ def pdf_labeler_auto_detect():
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -2177,15 +2386,17 @@ def pdf_labeler_relabel():
 
             output_filename = filename.replace(".pdf", "-labeled.pdf")
 
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": output_filename,
-                    "stats": stats,
-                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": output_filename,
+                        "stats": stats,
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
@@ -2194,12 +2405,20 @@ def pdf_labeler_relabel():
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -2248,6 +2467,7 @@ def pdf_labeler_apply_fields():
 
         # Get page count from original PDF
         import pikepdf
+
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
             input_path = tmp_in.name
@@ -2257,9 +2477,12 @@ def pdf_labeler_apply_fields():
                 page_count = len(pdf.pages)
 
             checkbox_export_values = {
-                str(field.get("name", "")): str(field.get("checkboxExportValue", "")).strip()
+                str(field.get("name", "")): str(
+                    field.get("checkboxExportValue", "")
+                ).strip()
                 for field in fields_data
-                if str(field.get("type", "")).lower() == "checkbox" and str(field.get("checkboxExportValue", "")).strip()
+                if str(field.get("type", "")).lower() == "checkbox"
+                and str(field.get("checkboxExportValue", "")).strip()
             }
 
             fields_per_page = build_pdf_export_fields_per_page(
@@ -2283,14 +2506,16 @@ def pdf_labeler_apply_fields():
 
             output_filename = filename.replace(".pdf", "-with-fields.pdf")
 
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": output_filename,
-                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": output_filename,
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
@@ -2299,12 +2524,20 @@ def pdf_labeler_apply_fields():
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -2347,7 +2580,9 @@ def pdf_labeler_rename_fields():
         elif isinstance(mapping_raw, dict):
             mapping = mapping_raw
         else:
-            raise DashboardAPIValidationError("mapping is required and must be an object.")
+            raise DashboardAPIValidationError(
+                "mapping is required and must be an object."
+            )
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -2366,14 +2601,16 @@ def pdf_labeler_rename_fields():
 
             output_filename = filename.replace(".pdf", "-renamed.pdf")
 
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": output_filename,
-                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": output_filename,
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
@@ -2382,12 +2619,20 @@ def pdf_labeler_rename_fields():
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except Exception as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -2414,11 +2659,13 @@ def pdf_labeler_repair():
 
         action = str(merged.get("action") or "").strip()
         if not action:
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {"available_actions": list_repair_actions()},
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {"available_actions": list_repair_actions()},
+                }
+            )
 
         # Read PDF content
         if "file" in request.files:
@@ -2455,15 +2702,17 @@ def pdf_labeler_repair():
             with open(output_path, "rb") as fh:
                 output_bytes = fh.read()
             output_filename = f"repaired_{filename}"
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": output_filename,
-                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
-                    "repair_result": result,
-                },
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": output_filename,
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                        "repair_result": result,
+                    },
+                }
+            )
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
@@ -2472,17 +2721,29 @@ def pdf_labeler_repair():
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
             exc.status_code,
         )
     except PDFRepairError as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "repair_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "repair_error", "message": str(exc)},
+            },
             400,
         )
     except Exception as exc:
         return jsonify_with_status(
-            {"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}},
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
             500,
         )
 
@@ -2534,9 +2795,7 @@ def pdf_labeler_copy_fields():
             result_pdf = formfyxer.swap_pdf_page(
                 source_pdf=source_path, destination_pdf=dest_path
             )
-            with tempfile.NamedTemporaryFile(
-                suffix=".pdf", delete=False
-            ) as tmp_out:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
                 output_path = tmp_out.name
             result_pdf.save(output_path)
             with open(output_path, "rb") as fh:
@@ -2699,15 +2958,25 @@ def pdf_labeler_bulk_normalize():
 
         # Parse normalization options with defaults matching the UI
         norm_font = parse_bool(options.get("normalizeFont"), default=True)
-        norm_font_name = str(options.get("fontName") or "Helvetica").strip() or "Helvetica"
+        norm_font_name = (
+            str(options.get("fontName") or "Helvetica").strip() or "Helvetica"
+        )
         norm_font_size = parse_bool(options.get("normalizeFontSize"), default=True)
         font_size_pt = int(options.get("fontSizePt") or 10)
-        norm_checkbox_style = parse_bool(options.get("normalizeCheckboxStyle"), default=True)
+        norm_checkbox_style = parse_bool(
+            options.get("normalizeCheckboxStyle"), default=True
+        )
         checkbox_style = str(options.get("checkboxStyle") or "cross").strip() or "cross"
-        checkbox_export_value = str(options.get("checkboxExportValue") or "Yes").strip() or "Yes"
-        uniform_checkbox_size = parse_bool(options.get("uniformCheckboxSize"), default=True)
+        checkbox_export_value = (
+            str(options.get("checkboxExportValue") or "Yes").strip() or "Yes"
+        )
+        uniform_checkbox_size = parse_bool(
+            options.get("uniformCheckboxSize"), default=True
+        )
         checkbox_size_pt = int(options.get("checkboxSizePt") or 12)
-        remove_embedded_fonts_flag = parse_bool(options.get("removeEmbeddedFonts"), default=False)
+        remove_embedded_fonts_flag = parse_bool(
+            options.get("removeEmbeddedFonts"), default=False
+        )
 
         import zipfile as _zipfile
 
@@ -2720,7 +2989,9 @@ def pdf_labeler_bulk_normalize():
                 fname = entry["filename"]
                 content = entry["content"]
                 try:
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".pdf", delete=False
+                    ) as tmp_in:
                         tmp_in.write(content)
                         input_path = tmp_in.name
 
@@ -2734,7 +3005,10 @@ def pdf_labeler_bulk_normalize():
                                 if mbox:
                                     coords = [float(v) for v in mbox]
                                     page_sizes.append(
-                                        {"width": coords[2] - coords[0], "height": coords[3] - coords[1]}
+                                        {
+                                            "width": coords[2] - coords[0],
+                                            "height": coords[3] - coords[1],
+                                        }
                                     )
                                 else:
                                     page_sizes.append({"width": 612, "height": 792})
@@ -2747,7 +3021,9 @@ def pdf_labeler_bulk_normalize():
                         # Build normalized field definitions
                         normalized_fields: list[dict[str, Any]] = []
                         for field in detected:
-                            f: dict[str, Any] = dict(field) if isinstance(field, dict) else {}
+                            f: dict[str, Any] = (
+                                dict(field) if isinstance(field, dict) else {}
+                            )
                             field_name = str(f.get("name", f.get("var_name", "field")))
                             field_type_str = str(f.get("type", "text")).lower()
                             page_idx = int(f.get("page", f.get("pageIndex", 0)))
@@ -2762,8 +3038,16 @@ def pdf_labeler_bulk_normalize():
                                 "y": float(f.get("y", 0)),
                                 "width": float(f.get("width", 100)),
                                 "height": float(f.get("height", 20)),
-                                "font": norm_font_name if norm_font else str(f.get("font", "Helvetica")),
-                                "fontSize": font_size_pt if norm_font_size else int(f.get("fontSize", 12) or 12),
+                                "font": (
+                                    norm_font_name
+                                    if norm_font
+                                    else str(f.get("font", "Helvetica"))
+                                ),
+                                "fontSize": (
+                                    font_size_pt
+                                    if norm_font_size
+                                    else int(f.get("fontSize", 12) or 12)
+                                ),
                                 "autoSize": True,
                             }
 
@@ -2790,23 +3074,30 @@ def pdf_labeler_bulk_normalize():
                             color_parser=HexColor,
                         )
 
-                        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".pdf", delete=False
+                        ) as tmp_out:
                             output_path = tmp_out.name
 
-                        set_fields(input_path, output_path, fields_per_page, overwrite=True)
+                        set_fields(
+                            input_path, output_path, fields_per_page, overwrite=True
+                        )
 
                         # Apply checkbox export values
                         checkbox_values = {
                             nf["name"]: nf.get("checkboxExportValue", "")
                             for nf in normalized_fields
-                            if nf.get("type") == "checkbox" and nf.get("checkboxExportValue")
+                            if nf.get("type") == "checkbox"
+                            and nf.get("checkboxExportValue")
                         }
                         if checkbox_values:
                             _apply_checkbox_export_values(output_path, checkbox_values)
 
                         # Strip embedded fonts if requested
                         if remove_embedded_fonts_flag:
-                            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_stripped:
+                            with tempfile.NamedTemporaryFile(
+                                suffix=".pdf", delete=False
+                            ) as tmp_stripped:
                                 stripped_path = tmp_stripped.name
                             strip_embedded_fonts(output_path, stripped_path)
                             os.remove(output_path)

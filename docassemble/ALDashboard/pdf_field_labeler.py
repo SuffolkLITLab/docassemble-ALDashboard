@@ -79,11 +79,13 @@ def _resolve_formfyxer_credentials(
     resolved_tools_token = tools_token
     tools_token_source = "request" if resolved_tools_token else None
     if not resolved_tools_token:
-        resolved_tools_token = (
-            get_config("assembly line", {}).get("tools.suffolklitlab.org api key")
+        resolved_tools_token = get_config("assembly line", {}).get(
+            "tools.suffolklitlab.org api key"
         )
         if resolved_tools_token:
-            tools_token_source = "config:assembly line.tools.suffolklitlab.org api key"  # nosec B105
+            tools_token_source = (
+                "config:assembly line.tools.suffolklitlab.org api key"  # nosec B105
+            )
     if not resolved_tools_token:
         resolved_tools_token = os.getenv("TOOLS_TOKEN") or os.getenv("SPOT_TOKEN")
         if resolved_tools_token:
@@ -92,8 +94,8 @@ def _resolve_formfyxer_credentials(
     resolved_openai_api = openai_api
     openai_api_source = "request" if resolved_openai_api else None
     if not resolved_openai_api:
-        resolved_openai_api = (
-            get_config("open ai", {}).get("key") or get_config("openai api key")
+        resolved_openai_api = get_config("open ai", {}).get("key") or get_config(
+            "openai api key"
         )
         if resolved_openai_api:
             openai_api_source = (
@@ -115,7 +117,9 @@ def _resolve_formfyxer_credentials(
     if not resolved_openai_base_url:
         openai_config = get_config("open ai", {})
         if isinstance(openai_config, dict):
-            resolved_openai_base_url = openai_config.get("base url") or openai_config.get("base_url")
+            resolved_openai_base_url = openai_config.get(
+                "base url"
+            ) or openai_config.get("base_url")
             if resolved_openai_base_url:
                 openai_base_url_source = (
                     "config:open ai.base url"
@@ -128,11 +132,13 @@ def _resolve_formfyxer_credentials(
             openai_base_url_source = "env"
 
     return {
-        "tools_token": str(resolved_tools_token).strip() if resolved_tools_token else None,
+        "tools_token": (
+            str(resolved_tools_token).strip() if resolved_tools_token else None
+        ),
         "openai_api": str(resolved_openai_api).strip() if resolved_openai_api else None,
-        "openai_base_url": str(resolved_openai_base_url).strip()
-        if resolved_openai_base_url
-        else None,
+        "openai_base_url": (
+            str(resolved_openai_base_url).strip() if resolved_openai_base_url else None
+        ),
         "tools_token_source": tools_token_source,
         "openai_api_source": openai_api_source,
         "openai_base_url_source": openai_base_url_source,

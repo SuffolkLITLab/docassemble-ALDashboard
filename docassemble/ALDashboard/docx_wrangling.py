@@ -386,7 +386,8 @@ def _has_placeholder_markers(text: str) -> bool:
 
 def _has_adjacent_word_fragments(text: str) -> bool:
     return bool(
-        re.search(r"(\}\}|\%\})[A-Za-z]", text) or re.search(r"[A-Za-z](\{\{|\{%)", text)
+        re.search(r"(\}\}|\%\})[A-Za-z]", text)
+        or re.search(r"[A-Za-z](\{\{|\{%)", text)
     )
 
 
@@ -462,7 +463,9 @@ def validate_docx_label_suggestions(
     results: List[Dict[str, Any]] = []
     flagged_count = 0
 
-    for index, (paragraph_number, run_number, text, new_paragraph) in enumerate(normalized):
+    for index, (paragraph_number, run_number, text, new_paragraph) in enumerate(
+        normalized
+    ):
         paragraph = (
             paragraphs[paragraph_number]
             if 0 <= paragraph_number < len(paragraphs)
@@ -516,7 +519,9 @@ def validate_docx_label_suggestions(
                 }
             )
 
-        if paragraph is not None and _run_has_fragmented_word_boundary(paragraph, run_number):
+        if paragraph is not None and _run_has_fragmented_word_boundary(
+            paragraph, run_number
+        ):
             flags.append(
                 {
                     "code": "fragmented_word_boundary",
@@ -524,7 +529,11 @@ def validate_docx_label_suggestions(
                 }
             )
 
-        if new_paragraph == 0 and simulated_paragraph_text and _contains_template_markup(text):
+        if (
+            new_paragraph == 0
+            and simulated_paragraph_text
+            and _contains_template_markup(text)
+        ):
             if _has_placeholder_markers(simulated_paragraph_text):
                 flags.append(
                     {
@@ -659,9 +668,7 @@ def review_flagged_docx_label_suggestions(
     return {"performed": True, "reviews": normalized_reviews}
 
 
-def _suggestion_confidence_tier(
-    clean_vote_count: int, total_generations: int
-) -> str:
+def _suggestion_confidence_tier(clean_vote_count: int, total_generations: int) -> str:
     if clean_vote_count >= min(3, total_generations):
         return "high"
     if clean_vote_count >= 2:
@@ -718,16 +725,17 @@ def _effective_candidate_flags(
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
 ) -> List[Dict[str, Any]]:
     flags = list(candidate.get("validation_flags") or [])
-    normalized_profile = str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
+    normalized_profile = (
+        str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
+    )
     if normalized_profile != "litigation_template":
         return flags
 
     flag_codes = _candidate_flag_codes(candidate)
     source_paragraph_text = str(group.get("source_paragraph_text") or "")
-    if (
-        flag_codes == {"leftover_placeholder_markers"}
-        and _litigation_alignment_heavy_line(source_paragraph_text)
-    ):
+    if flag_codes == {
+        "leftover_placeholder_markers"
+    } and _litigation_alignment_heavy_line(source_paragraph_text):
         return []
     return flags
 
@@ -738,9 +746,7 @@ def _effective_clean_vote_count(
     *,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
 ) -> int:
-    if not _effective_candidate_flags(
-        candidate, group, prompt_profile=prompt_profile
-    ):
+    if not _effective_candidate_flags(candidate, group, prompt_profile=prompt_profile):
         raw_clean_count = int(candidate.get("clean_vote_count", 0))
         if raw_clean_count > 0:
             return raw_clean_count
@@ -750,9 +756,17 @@ def _effective_clean_vote_count(
 
 def _candidate_priority_key(candidate: Dict[str, Any]) -> Tuple[int, int, int, int]:
     return (
-        int(candidate.get("effective_clean_vote_count", candidate.get("clean_vote_count", 0))),
+        int(
+            candidate.get(
+                "effective_clean_vote_count", candidate.get("clean_vote_count", 0)
+            )
+        ),
         int(candidate.get("vote_count", 0)),
-        -len(candidate.get("effective_validation_flags", candidate.get("validation_flags", []))),
+        -len(
+            candidate.get(
+                "effective_validation_flags", candidate.get("validation_flags", [])
+            )
+        ),
         -len(str(candidate.get("text") or "")),
     )
 
@@ -774,7 +788,9 @@ def review_docx_label_candidate_groups(
 
     review_payload: List[Dict[str, Any]] = []
     for group in candidate_groups:
-        normalized_profile = str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
+        normalized_profile = (
+            str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
+        )
         instruction = (
             "Choose the best candidate when it safely improves the DOCX template. "
             "Prefer clean candidates with 2+ votes. Single-vote candidates are low confidence. "
@@ -1000,9 +1016,9 @@ def aggregate_docx_label_suggestion_runs(
         elif len(clean_consensus) > 1:
             judge_needed = True
         else:
-            normalized_profile = str(
-                prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE
-            ).strip().lower()
+            normalized_profile = (
+                str(prompt_profile or DEFAULT_DOCX_PROMPT_PROFILE).strip().lower()
+            )
             if normalized_profile == "litigation_template":
                 clean_singletons = [
                     candidate
@@ -1010,11 +1026,10 @@ def aggregate_docx_label_suggestion_runs(
                     if not candidate["effective_validation_flags"]
                     and candidate["effective_clean_vote_count"] == 1
                 ]
-                if (
-                    len(clean_singletons) == 1
-                    and _litigation_template_paragraph_likely_templated(
-                        group.get("source_paragraph_text", "")
-                    )
+                if len(
+                    clean_singletons
+                ) == 1 and _litigation_template_paragraph_likely_templated(
+                    group.get("source_paragraph_text", "")
                 ):
                     chosen_candidate = clean_singletons[0]
                 else:
@@ -1035,7 +1050,11 @@ def aggregate_docx_label_suggestion_runs(
                 }
             )
         else:
-            alternates = [candidate for candidate in candidates if candidate is not chosen_candidate]
+            alternates = [
+                candidate
+                for candidate in candidates
+                if candidate is not chosen_candidate
+            ]
             selected_suggestions.append(
                 {
                     "paragraph": chosen_candidate["paragraph"],
@@ -1119,7 +1138,9 @@ def aggregate_docx_label_suggestion_runs(
         "suggestions": selected_suggestions,
         "aggregation": {
             "generator_runs": total_generations,
-            "generator_models": [str(run.get("model") or "") for run in suggestion_runs],
+            "generator_models": [
+                str(run.get("model") or "") for run in suggestion_runs
+            ],
             "judge_model": judge_model or None,
             "total_candidate_groups": len(position_groups),
             "ambiguous_group_count": len(ambiguous_groups),
@@ -1151,7 +1172,9 @@ def get_voted_docx_label_suggestions(
 ) -> Dict[str, Any]:
     """Run repeated generations and aggregate them into one ranked suggestion set."""
     if generator_models:
-        generation_models = [str(item).strip() for item in generator_models if str(item).strip()]
+        generation_models = [
+            str(item).strip() for item in generator_models if str(item).strip()
+        ]
     else:
         generation_models = [str(model)] * 3
 

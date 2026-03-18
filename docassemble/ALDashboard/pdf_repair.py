@@ -100,9 +100,7 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
     return fields
 
 
-def _restore_fields_pikepdf(
-    pdf_path: str, fields: List[Dict[str, Any]]
-) -> None:
+def _restore_fields_pikepdf(pdf_path: str, fields: List[Dict[str, Any]]) -> None:
     """Re-add stripped fields to a flat PDF using pikepdf."""
     import pikepdf  # type: ignore[import-untyped]
 
@@ -294,9 +292,7 @@ def qpdf_repair(
         _assert_pdf(tmp_path, label="qpdf repair")
         _copy_if_same(tmp_path, output_pdf_path)
     except pikepdf.PasswordError:
-        raise PDFRepairError(
-            "PDF is encrypted. Use the 'unlock' repair action first."
-        )
+        raise PDFRepairError("PDF is encrypted. Use the 'unlock' repair action first.")
     except PDFRepairError:
         raise
     except Exception as exc:
@@ -508,7 +504,9 @@ def ocr_pdf(
             cmd.append("--skip-text")
         cmd += [input_pdf_path, tmp_path]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # nosec B603
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=300
+        )  # nosec B603
         if result.returncode not in (0, 6):
             # ocrmypdf exit code 6 = "no text found" (still produces output)
             stderr = (result.stderr or "").strip()
@@ -582,12 +580,8 @@ def auto_repair(
             if os.path.exists(candidate_path):
                 os.remove(candidate_path)
 
-    summary = "; ".join(
-        f"{e['strategy']}: {e['error']}" for e in errors
-    )
-    raise PDFRepairError(
-        f"Auto-repair failed — all strategies exhausted. {summary}"
-    )
+    summary = "; ".join(f"{e['strategy']}: {e['error']}" for e in errors)
+    raise PDFRepairError(f"Auto-repair failed — all strategies exhausted. {summary}")
 
 
 # ---------------------------------------------------------------------------
@@ -646,8 +640,7 @@ def run_repair(
     func = REPAIR_ACTIONS.get(action)
     if func is None:
         raise PDFRepairError(
-            f"Unknown repair action {action!r}. "
-            f"Available: {sorted(REPAIR_ACTIONS)}"
+            f"Unknown repair action {action!r}. " f"Available: {sorted(REPAIR_ACTIONS)}"
         )
     kwargs = dict(options or {})
     return func(input_pdf_path, output_pdf_path, **kwargs)  # type: ignore[operator]

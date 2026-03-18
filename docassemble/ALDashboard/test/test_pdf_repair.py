@@ -101,7 +101,14 @@ class TestListRepairActions(unittest.TestCase):
         names = {a["action"] for a in actions}
         self.assertEqual(
             names,
-            {"auto", "ghostscript_reprint", "qpdf_repair", "unlock", "repair_metadata", "ocr"},
+            {
+                "auto",
+                "ghostscript_reprint",
+                "qpdf_repair",
+                "unlock",
+                "repair_metadata",
+                "ocr",
+            },
         )
         for action in actions:
             self.assertIn("description", action)
@@ -218,7 +225,10 @@ class TestOCR(unittest.TestCase):
         "docassemble.ALDashboard.pdf_repair._require_executable",
         return_value="ocrmypdf",
     )
-    @mock.patch("subprocess.run", side_effect=__import__("subprocess").TimeoutExpired("ocrmypdf", 300))
+    @mock.patch(
+        "subprocess.run",
+        side_effect=__import__("subprocess").TimeoutExpired("ocrmypdf", 300),
+    )
     def test_ocr_timeout(self, _mock_run, _mock_req):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
             _make_minimal_pdf(inp.name)
@@ -329,6 +339,7 @@ class TestAutoRepair(unittest.TestCase):
             self.skipTest("test/corrupted.pdf fixture not present")
         try:
             import shutil
+
             if shutil.which("gs") is None:
                 self.skipTest("Ghostscript (gs) not on PATH")
         except Exception:
@@ -344,6 +355,7 @@ class TestAutoRepair(unittest.TestCase):
             self.assertTrue(os.path.isfile(out_path))
 
             import pikepdf
+
             with pikepdf.open(out_path) as pdf:
                 self.assertGreater(len(pdf.pages), 0)
         finally:
@@ -356,6 +368,7 @@ class TestAutoRepair(unittest.TestCase):
             self.skipTest("test/corrupted.pdf fixture not present")
         try:
             import shutil
+
             if shutil.which("gs") is None:
                 self.skipTest("Ghostscript (gs) not on PATH")
         except Exception:

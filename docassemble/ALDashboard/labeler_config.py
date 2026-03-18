@@ -348,7 +348,9 @@ def build_default_prompt_library() -> Dict[str, Any]:
     }
 
 
-def _deep_merge(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> Dict[str, Any]:
+def _deep_merge(
+    base: Mapping[str, Any], overrides: Mapping[str, Any]
+) -> Dict[str, Any]:
     merged: Dict[str, Any] = copy.deepcopy(dict(base))
     for key, value in overrides.items():
         if (
@@ -435,10 +437,13 @@ def get_docx_prompt_profile(
     if not isinstance(prompt_profiles, Mapping):
         prompt_profiles = {}
 
-    default_profile = str(
-        docx_config.get("default_prompt_profile") or "standard"
-    ).strip() or "standard"
-    requested_profile = str(prompt_profile or default_profile).strip() or default_profile
+    default_profile = (
+        str(docx_config.get("default_prompt_profile") or "standard").strip()
+        or "standard"
+    )
+    requested_profile = (
+        str(prompt_profile or default_profile).strip() or default_profile
+    )
 
     profile = prompt_profiles.get(requested_profile)
     if not isinstance(profile, Mapping):
@@ -456,7 +461,9 @@ def get_docx_prompt_profile(
         }
 
     resolved = dict(profile)
-    resolved["name"] = requested_profile if requested_profile in prompt_profiles else default_profile
+    resolved["name"] = (
+        requested_profile if requested_profile in prompt_profiles else default_profile
+    )
     return resolved
 
 

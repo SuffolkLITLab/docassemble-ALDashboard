@@ -37,7 +37,9 @@ pdf:
 
             library = load_labeler_prompt_library(str(config_path))
 
-        self.assertEqual(library["branding"]["docx_header_title"], "Alternate DOCX Labeler")
+        self.assertEqual(
+            library["branding"]["docx_header_title"], "Alternate DOCX Labeler"
+        )
         self.assertEqual(library["docx"]["default_prompt_profile"], "alternate")
         self.assertEqual(
             library["docx"]["prompt_profiles"]["alternate"]["role_description"],
@@ -95,9 +97,13 @@ pdf:
 
             config = get_pdf_labeler_ui_config(prompt_library_path=str(config_path))
 
-        self.assertEqual(config["branding"]["pdf_header_title"], "Alternate PDF Labeler")
+        self.assertEqual(
+            config["branding"]["pdf_header_title"], "Alternate PDF Labeler"
+        )
         self.assertEqual(config["field_name_library"]["text"], ["custom_pdf_name"])
-        self.assertEqual(config["field_name_library"]["signature"], ["users1_signature"])
+        self.assertEqual(
+            config["field_name_library"]["signature"], ["users1_signature"]
+        )
 
 
 if __name__ == "__main__":

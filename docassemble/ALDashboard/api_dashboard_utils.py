@@ -1609,9 +1609,7 @@ def pdf_fields_relabel_payload_from_options(
 # ---------------------------------------------------------------------------
 
 
-def _extract_repair_options(
-    raw: Mapping[str, Any], action: str
-) -> Dict[str, Any]:
+def _extract_repair_options(raw: Mapping[str, Any], action: str) -> Dict[str, Any]:
     """Build keyword arguments for ``pdf_repair.run_repair`` from raw request data."""
     options: Dict[str, Any] = {}
     if action == "ghostscript_reprint":
@@ -1679,9 +1677,7 @@ def pdf_repair_payload_from_options(
     repair_options = _extract_repair_options(raw, action)
 
     try:
-        result = run_repair(
-            action, input_path, output_path, options=repair_options
-        )
+        result = run_repair(action, input_path, output_path, options=repair_options)
         payload: Dict[str, Any] = {
             "input_filename": filename,
             "output_filename": f"repaired_{filename}",

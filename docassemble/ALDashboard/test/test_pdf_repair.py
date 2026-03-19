@@ -345,8 +345,8 @@ class TestAutoRepair(unittest.TestCase):
         except Exception:
             pass
 
-        out_path = tempfile.mktemp(suffix=".pdf")
-        try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = os.path.join(tmpdir, "auto_repair_output.pdf")
             result = auto_repair(CORRUPTED_PDF, out_path)
             self.assertEqual(result["action"], "auto")
             self.assertEqual(result["strategy_used"], "ghostscript_reprint")
@@ -358,9 +358,6 @@ class TestAutoRepair(unittest.TestCase):
 
             with pikepdf.open(out_path) as pdf:
                 self.assertGreater(len(pdf.pages), 0)
-        finally:
-            if os.path.exists(out_path):
-                os.remove(out_path)
 
     def test_auto_repair_via_run_repair(self):
         """run_repair('auto', ...) should dispatch to auto_repair."""
@@ -374,14 +371,11 @@ class TestAutoRepair(unittest.TestCase):
         except Exception:
             pass
 
-        out_path = tempfile.mktemp(suffix=".pdf")
-        try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = os.path.join(tmpdir, "run_repair_auto_output.pdf")
             result = run_repair("auto", CORRUPTED_PDF, out_path)
             self.assertEqual(result["action"], "auto")
             self.assertTrue(os.path.isfile(out_path))
-        finally:
-            if os.path.exists(out_path):
-                os.remove(out_path)
 
     def test_auto_in_repair_actions(self):
         """'auto' should be listed in REPAIR_ACTIONS."""

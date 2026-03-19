@@ -1,6 +1,9 @@
 import shutil
 import inspect
+import importlib
+import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -40,6 +43,7 @@ def _parse_form_with_optional_model(
     openai_api: Optional[str],
     openai_base_url: Optional[str],
     model: Optional[str],
+    rewrite: bool = True,
 ) -> Any:
     """Call ``formfyxer.parse_form`` with optional arguments when supported.
 
@@ -60,7 +64,7 @@ def _parse_form_with_optional_model(
         "title": title,
         "jur": jur,
         "normalize": True,
-        "rewrite": True,
+        "rewrite": rewrite,
         "tools_token": tools_token,
         "openai_api_key": openai_api,
     }
@@ -79,6 +83,179 @@ def _parse_form_with_optional_model(
         except (TypeError, ValueError):
             pass
     return formfyxer_module.parse_form(in_file, **parse_kwargs)
+
+
+def _load_formfyxer_prompt_text(formfyxer_module: Any, prompt_name: str) -> str:
+    """Load a bundled FormFyxer prompt by name."""
+    package_dir = Path(inspect.getfile(formfyxer_module)).resolve().parent
+    prompt_path = package_dir / "prompts" / f"{prompt_name}.txt"
+    return prompt_path.read_text(encoding="utf-8").strip()
+
+
+def _ensure_unique_field_names(field_names: List[str]) -> List[str]:
+    """Ensure field names remain unique while preserving order."""
+    result: List[str] = []
+    used: set[str] = set()
+    counters: Dict[str, int] = {}
+
+    for raw_name in field_names:
+        candidate = str(raw_name or "").strip() or "field"
+        if candidate not in used:
+            result.append(candidate)
+            used.add(candidate)
+            counters.setdefault(candidate, 1)
+            continue
+
+        base_name = candidate
+        if "__" in candidate:
+            maybe_base, maybe_suffix = candidate.rsplit("__", 1)
+            if maybe_suffix.isdigit():
+                base_name = maybe_base
+
+        counter = max(counters.get(base_name, 1) + 1, 2)
+        next_name = f"{base_name}__{counter}"
+        while next_name in used:
+            counter += 1
+            next_name = f"{base_name}__{counter}"
+
+        counters[base_name] = counter
+        result.append(next_name)
+        used.add(next_name)
+
+    return result
+
+
+def _fallback_target_field_names(
+    formfyxer_module: Any, current_names: List[str]
+) -> List[str]:
+    """Use FormFyxer's fallback renamer when AI output is unavailable."""
+    fallback = getattr(formfyxer_module, "fallback_rename_fields", None)
+    if callable(fallback):
+        result = fallback(current_names)
+        if (
+            isinstance(result, tuple)
+            and result
+            and isinstance(result[0], list)
+        ):
+            return _ensure_unique_field_names([str(name) for name in result[0]])
+        if isinstance(result, list):
+            return _ensure_unique_field_names([str(name) for name in result])
+    return _ensure_unique_field_names([str(name) for name in current_names])
+
+
+def _generate_ai_relabel_target_field_names(
+    formfyxer_module: Any,
+    *,
+    input_pdf_path: str,
+    current_names: List[str],
+    openai_api: Optional[str],
+    openai_base_url: Optional[str],
+    model: Optional[str],
+) -> List[str]:
+    """Request occurrence-aware target field names directly from FormFyxer's LLM helpers."""
+    try:
+        system_message = _load_formfyxer_prompt_text(formfyxer_module, "field_labeling")
+        system_message += """
+
+Important override for this request:
+- Original field names may repeat.
+- Return JSON only.
+- Do not return a field_mappings object.
+- Return a JSON object with a target_field_names array aligned exactly to the provided original field names list.
+- Preserve duplicates by occurrence order in the returned array.
+"""
+
+        with tempfile.NamedTemporaryFile(
+            mode="w+", suffix=".txt", delete=False
+        ) as temp_file:
+            temp_path = temp_file.name
+        try:
+            formfyxer_module.get_original_text_with_fields(input_pdf_path, temp_path)
+            pdf_text_with_fields = Path(temp_path).read_text(encoding="utf-8")
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+        if not pdf_text_with_fields.strip():
+            return _fallback_target_field_names(formfyxer_module, current_names)
+
+        user_message = f"""Here is the PDF form text with field markers:
+
+{pdf_text_with_fields[:300000]}
+
+Original field names in order (duplicates matter):
+{json.dumps(current_names, indent=2)}
+
+Return target_field_names as an ordered array aligned exactly with the original field names list."""
+
+        response = formfyxer_module.text_complete(
+            system_message=system_message,
+            user_message=user_message,
+            max_tokens=15000,
+            api_key=openai_api,
+            model=model or "gpt-5-nano",
+            openai_base_url=openai_base_url,
+        )
+
+        if isinstance(response, dict):
+            payload = response
+        elif isinstance(response, str):
+            payload = json.loads(response)
+        else:
+            raise ValueError(f"Unexpected response type: {type(response)}")
+
+        target_field_names = payload.get("target_field_names")
+        if not isinstance(target_field_names, list):
+            raise ValueError("target_field_names is not a list")
+        if len(target_field_names) != len(current_names):
+            raise ValueError(
+                "target_field_names length does not match the current field count"
+            )
+        return _ensure_unique_field_names([str(name) for name in target_field_names])
+    except Exception as exc:
+        log(
+            f"ALDashboard: pdf relabel falling back to deterministic renaming after AI target generation failure: {exc}",
+            "warning",
+        )
+        return _fallback_target_field_names(formfyxer_module, current_names)
+
+
+def _rewrite_pdf_fields_in_order(
+    formfyxer_module: Any,
+    *,
+    input_pdf_path: str,
+    output_pdf_path: str,
+    current_names: List[str],
+    target_field_names: List[str],
+) -> None:
+    """Rewrite PDF fields by occurrence order, including duplicate source names."""
+    normalized_targets = _ensure_unique_field_names([str(name) for name in target_field_names])
+    if len(current_names) != len(normalized_targets):
+        raise PDFLabelingError(
+            f"target_field_names count ({len(normalized_targets)}) does not match detected fields ({len(current_names)})."
+        )
+
+    if Path(input_pdf_path).resolve() != Path(output_pdf_path).resolve():
+        shutil.copyfile(input_pdf_path, output_pdf_path)
+
+    try:
+        lit_explorer = importlib.import_module("formfyxer.lit_explorer")
+        rewrite_helper = getattr(lit_explorer, "_rewrite_pdf_fields_in_place", None)
+        if callable(rewrite_helper):
+            rewrite_helper(output_pdf_path, current_names, normalized_targets)
+            return
+    except Exception as exc:
+        log(
+            f"ALDashboard: pdf relabel could not use ordered FormFyxer rewrite helper: {exc}",
+            "warning",
+        )
+
+    if len(set(current_names)) != len(current_names):
+        raise PDFLabelingError(
+            "This FormFyxer version cannot safely relabel duplicate source field names."
+        )
+
+    mapping = _build_mapping_from_target_list(current_names, normalized_targets)
+    formfyxer_module.rename_pdf_fields(output_pdf_path, output_pdf_path, mapping)
 
 
 def _flatten_field_names(fields_per_page: List[List[Any]]) -> List[str]:
@@ -294,10 +471,13 @@ def relabel_existing_pdf_fields(
             )
         formfyxer.rename_pdf_fields(input_pdf_path, output_pdf_path, mapping)
     elif target_field_names is not None:
-        mapping = _build_mapping_from_target_list(
-            current_names, [str(n) for n in target_field_names]
+        _rewrite_pdf_fields_in_order(
+            formfyxer,
+            input_pdf_path=input_pdf_path,
+            output_pdf_path=output_pdf_path,
+            current_names=current_names,
+            target_field_names=[str(n) for n in target_field_names],
         )
-        formfyxer.rename_pdf_fields(input_pdf_path, output_pdf_path, mapping)
     elif relabel_with_ai:
         resolved = _resolve_formfyxer_credentials(
             tools_token=tools_token,
@@ -310,23 +490,21 @@ def relabel_existing_pdf_fields(
             model=model,
             jur=jur,
         )
-        shutil.copyfile(input_pdf_path, output_pdf_path)
-        parsed = _parse_form_with_optional_model(
+        ai_target_field_names = _generate_ai_relabel_target_field_names(
             formfyxer,
-            in_file=output_pdf_path,
-            title=Path(output_pdf_path).stem,
-            jur=jur,
-            tools_token=resolved["tools_token"],
+            input_pdf_path=input_pdf_path,
+            current_names=current_names,
             openai_api=resolved["openai_api"],
             openai_base_url=resolved["openai_base_url"],
             model=model,
         )
-        if isinstance(parsed, dict):
-            stats = parsed
-        else:
-            raise PDFLabelingError(
-                "FormFyxer parse_form returned an unexpected response type."
-            )
+        _rewrite_pdf_fields_in_order(
+            formfyxer,
+            input_pdf_path=input_pdf_path,
+            output_pdf_path=output_pdf_path,
+            current_names=current_names,
+            target_field_names=ai_target_field_names,
+        )
     else:
         raise PDFLabelingError(
             "Provide one of: field_name_mapping, target_field_names, or relabel_with_ai=true."

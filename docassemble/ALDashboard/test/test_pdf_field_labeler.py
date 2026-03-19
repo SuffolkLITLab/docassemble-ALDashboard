@@ -147,6 +147,132 @@ class TestPDFFieldLabeler(unittest.TestCase):
                 )
             self.assertIn("post_relabel", result)
 
+    def test_relabel_existing_with_ai_applies_mapping_via_rename_helper(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = str(Path(tmpdir) / "input.pdf")
+            output_path = str(Path(tmpdir) / "output.pdf")
+            Path(input_path).write_bytes(b"%PDF-input")
+
+            state = {"renamed": False}
+
+            def fake_get_existing(in_file):
+                if str(in_file) == output_path and state["renamed"]:
+                    return [
+                        [
+                            SimpleNamespace(name="users[0].name.first"),
+                            SimpleNamespace(name="users[0].name.last"),
+                        ],
+                    ]
+                return [
+                    [
+                        SimpleNamespace(name="field_a"),
+                        SimpleNamespace(name="field_b"),
+                    ],
+                ]
+
+            def fake_rewrite(
+                _formfyxer_module,
+                *,
+                input_pdf_path,
+                output_pdf_path,
+                current_names,
+                target_field_names,
+            ):
+                self.assertEqual(input_pdf_path, input_path)
+                self.assertEqual(output_pdf_path, output_path)
+                self.assertEqual(current_names, ["field_a", "field_b"])
+                self.assertEqual(
+                    target_field_names,
+                    ["users[0].name.first", "users[0].name.last"],
+                )
+                state["renamed"] = True
+                Path(output_pdf_path).write_bytes(b"%PDF-relabeled")
+
+            fake_module = SimpleNamespace(
+                get_existing_pdf_fields=fake_get_existing,
+            )
+            with patch.dict("sys.modules", {"formfyxer": fake_module}), patch(
+                "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
+                return_value=["users[0].name.first", "users[0].name.last"],
+            ), patch(
+                "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
+                side_effect=fake_rewrite,
+            ):
+                result = relabel_existing_pdf_fields(
+                    input_pdf_path=input_path,
+                    output_pdf_path=output_path,
+                    relabel_with_ai=True,
+                )
+
+            self.assertEqual(
+                result["fields"],
+                ["users[0].name.first", "users[0].name.last"],
+            )
+            self.assertEqual(result["renamed fields"], 2)
+
+    def test_relabel_existing_with_ai_handles_duplicate_source_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = str(Path(tmpdir) / "input.pdf")
+            output_path = str(Path(tmpdir) / "output.pdf")
+            Path(input_path).write_bytes(b"%PDF-input")
+
+            state = {"renamed": False}
+
+            def fake_get_existing(in_file):
+                if str(in_file) == output_path and state["renamed"]:
+                    return [
+                        [
+                            SimpleNamespace(name="docket_number"),
+                            SimpleNamespace(name="docket_number__2"),
+                        ],
+                    ]
+                return [
+                    [
+                        SimpleNamespace(name="field_dup"),
+                        SimpleNamespace(name="field_dup"),
+                    ],
+                ]
+
+            def fake_rewrite(
+                _formfyxer_module,
+                *,
+                input_pdf_path,
+                output_pdf_path,
+                current_names,
+                target_field_names,
+            ):
+                self.assertEqual(input_pdf_path, input_path)
+                self.assertEqual(output_pdf_path, output_path)
+                self.assertEqual(current_names, ["field_dup", "field_dup"])
+                self.assertEqual(
+                    target_field_names,
+                    ["docket_number", "docket_number__2"],
+                )
+                state["renamed"] = True
+                Path(output_pdf_path).write_bytes(b"%PDF-relabeled")
+
+            fake_module = SimpleNamespace(
+                get_existing_pdf_fields=fake_get_existing,
+            )
+            with patch.dict("sys.modules", {"formfyxer": fake_module}), patch(
+                "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
+                return_value=["docket_number", "docket_number__2"],
+            ), patch(
+                "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
+                side_effect=fake_rewrite,
+            ):
+                result = relabel_existing_pdf_fields(
+                    input_pdf_path=input_path,
+                    output_pdf_path=output_path,
+                    relabel_with_ai=True,
+                )
+
+            self.assertEqual(
+                result["fields"],
+                ["docket_number", "docket_number__2"],
+            )
+            self.assertEqual(result["renamed fields"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

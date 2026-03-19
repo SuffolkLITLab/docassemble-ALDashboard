@@ -11,6 +11,7 @@ Both tools use AI to suggest labels and follow AssemblyLine conventions.
 import base64
 import copy
 import io
+import inspect
 import json
 import os
 import re
@@ -920,13 +921,17 @@ def _queue_labeler_async_job(
 # Playground Template Management (shared by DOCX and PDF labelers)
 # =============================================================================
 
-_TEMPLATE_EXTENSIONS_DOCX = (".docx",)
-_TEMPLATE_EXTENSIONS_PDF = (".pdf",)
-_TEMPLATE_EXTENSIONS_ALL = _TEMPLATE_EXTENSIONS_DOCX + _TEMPLATE_EXTENSIONS_PDF
+_TEMPLATE_EXTENSIONS_DOCX: tuple[str, ...] = (".docx",)
+_TEMPLATE_EXTENSIONS_PDF: tuple[str, ...] = (".pdf",)
+_TEMPLATE_EXTENSIONS_ALL: tuple[str, ...] = (
+    _TEMPLATE_EXTENSIONS_DOCX + _TEMPLATE_EXTENSIONS_PDF
+)
 
 
 def _normalize_template_filename(
-    filename: Optional[str], *, allowed_extensions: tuple = _TEMPLATE_EXTENSIONS_ALL
+    filename: Optional[str],
+    *,
+    allowed_extensions: tuple[str, ...] = _TEMPLATE_EXTENSIONS_ALL,
 ) -> str:
     """Validate a Playground template filename against allowed extensions.
 
@@ -951,7 +956,7 @@ def _normalize_template_filename(
 
 
 def _list_playground_template_files(
-    project: str, *, extensions: tuple = _TEMPLATE_EXTENSIONS_ALL
+    project: str, *, extensions: tuple[str, ...] = _TEMPLATE_EXTENSIONS_ALL
 ) -> List[Dict[str, str]]:
     """List uploaded DOCX or PDF templates in a Playground project.
 
@@ -1212,6 +1217,7 @@ def labeler_playground_templates() -> Response:
     try:
         project = _normalize_playground_project(request.args.get("project"))
         file_type = str(request.args.get("type") or "").strip().lower()
+        extensions: tuple[str, ...]
         if file_type == "docx":
             extensions = _TEMPLATE_EXTENSIONS_DOCX
         elif file_type == "pdf":
@@ -2129,7 +2135,7 @@ def docx_labeler_run_utility() -> Response:
                     )
                 else:
                     utility_doc = docx.Document(temp_path)
-                    report: Dict[str, Any] = {}
+                    report = {}
                     if action == "defragment-runs":
                         utility_doc, report = defragment_docx_runs(utility_doc)
                     elif action == "highlight-jinja2":
@@ -2818,11 +2824,15 @@ def pdf_labeler_auto_detect() -> Response:
 
         try:
             # Auto-add fields using FormFyxer
-            formfyxer.auto_add_fields(
-                input_path,
-                output_path,
-                preferred_names=preferred_variable_names,
-            )
+            auto_add_kwargs: Dict[str, Any] = {}
+            if preferred_variable_names:
+                try:
+                    auto_add_signature = inspect.signature(formfyxer.auto_add_fields)
+                    if "preferred_names" in auto_add_signature.parameters:
+                        auto_add_kwargs["preferred_names"] = preferred_variable_names
+                except (TypeError, ValueError):
+                    pass
+            formfyxer.auto_add_fields(input_path, output_path, **auto_add_kwargs)
 
             # Optionally normalize with AI
             stats = {}

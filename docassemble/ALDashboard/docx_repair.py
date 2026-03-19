@@ -348,7 +348,9 @@ def rescue_docx_to_shell(src: str, dst: str) -> Dict[str, Any]:
         rescued = docx.Document()
         if len(rescued.paragraphs) == 1 and not rescued.paragraphs[0].text:
             paragraph_element = rescued.paragraphs[0]._element
-            paragraph_element.getparent().remove(paragraph_element)
+            parent = paragraph_element.getparent()
+            if parent is not None:
+                parent.remove(paragraph_element)
 
         for child in body:
             name = _local_name(child.tag)

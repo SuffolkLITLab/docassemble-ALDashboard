@@ -283,6 +283,9 @@ class TestDocxTemplateMarkupWarnings(unittest.TestCase):
                 def validate(self, _xml_bytes):
                     return None
 
+                def iter_errors(self, _xml_bytes):
+                    return iter([])
+
             with patch(
                 "docassemble.ALDashboard.validate_docx.ensure_ooxml_schema_cache",
                 return_value={

@@ -59,6 +59,29 @@ _OOXML_SCHEMA_DOWNLOADS = {
 }
 _OOXML_SCHEMA_CACHE: Dict[str, Any] = {}
 
+# Markup Compatibility (mc:Ignorable) and Dublin Core Terms (dcterms:) appear in
+# almost every Word-generated OOXML document but are absent from the raw ECMA-376
+# schema bundle.  They are valid per the OOXML specification, so we suppress
+# these well-known false-positive validation errors.
+_MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_DCTERMS_NS = "http://purl.org/dc/terms/"
+
+
+def _is_markup_compat_false_positive(err: Any) -> bool:
+    """Return True for known-valid OOXML patterns rejected by the raw schemas."""
+    err_str = str(err)
+    # mc:Ignorable is a standard Markup Compatibility attribute defined in
+    # ECMA-376 Annex L.  The WML/SML/PML schemas do not declare it, but its
+    # presence on root elements is valid in Transitional conformance documents.
+    if f"{{{_MC_NS}}}Ignorable" in err_str and "attribute not allowed" in err_str:
+        return True
+    # Dublin Core Terms elements (dcterms:created, dcterms:modified) are
+    # referenced by opc-coreProperties.xsd but the schema bundle does not
+    # always resolve the external DC namespace, producing spurious errors.
+    if f"{{{_DCTERMS_NS}}}" in err_str and "unknown element" in err_str:
+        return True
+    return False
+
 
 class DAIndexError(IndexError):
     pass
@@ -642,8 +665,11 @@ def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
 
             try:
                 schema = _load_xmlschema(schema_path)
-                schema.validate(xml_bytes)
-                report["validated_parts"].append(part_name)
+                real_errors = [
+                    e
+                    for e in schema.iter_errors(xml_bytes)
+                    if not _is_markup_compat_false_positive(e)
+                ]
             except Exception as err:
                 report["schema_errors"].append(
                     {
@@ -652,6 +678,18 @@ def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
                         "error": str(err),
                     }
                 )
+                continue
+            if real_errors:
+                for e in real_errors:
+                    report["schema_errors"].append(
+                        {
+                            "part": part_name,
+                            "schema": os.path.basename(schema_path),
+                            "error": str(e),
+                        }
+                    )
+            else:
+                report["validated_parts"].append(part_name)
 
     report["message"] = (
         "Validated OOXML parts against cached ECMA-376 schemas."

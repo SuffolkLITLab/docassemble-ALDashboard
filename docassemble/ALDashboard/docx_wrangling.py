@@ -35,14 +35,17 @@ __all__ = [
 
 
 DEFAULT_DOCX_PROMPT_PROFILE = "standard"
-DEFAULT_TEMPLATE_HIGHLIGHT_FILL = "C7E1DD"  # your teal anchor
 
+# Primary / base highlight (teal anchor)
+DEFAULT_TEMPLATE_HIGHLIGHT_FILL = "C7E1DD"
+
+# Nested levels: distinct hues + increasing intensity
 NESTED_IF_TEMPLATE_HIGHLIGHT_FILLS = [
-    DEFAULT_TEMPLATE_HIGHLIGHT_FILL,  # level 0 (teal)
-    "FFE3A3",  # soft yellow
-    "F8C8A6",  # soft orange/peach
-    "E6D5F7",  # soft lavender (purple)
-    "EDEDED",  # neutral gray (reset / contrast break)
+    DEFAULT_TEMPLATE_HIGHLIGHT_FILL,  # level 0 - teal (anchor)
+    "FFD966",  # level 1 - warm yellow (boosted for visibility in Word)
+    "F6C177",  # level 2 - soft but richer orange
+    "D4A5E8",  # level 3 - lavender / purple (strong separation)
+    "B8E0B4",  # level 4 - soft green (final depth)
 ]
 
 _JINJA_TAG_PATTERN = re.compile(r"(\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})")

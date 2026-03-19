@@ -1,12 +1,9 @@
 import shutil
 import inspect
-import docassemble.base.config
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-if not docassemble.base.config.loaded:
-    docassemble.base.config.load()
 from docassemble.base.util import get_config, log
 
 

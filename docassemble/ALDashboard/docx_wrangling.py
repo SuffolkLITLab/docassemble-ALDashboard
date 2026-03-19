@@ -35,14 +35,16 @@ __all__ = [
 
 
 DEFAULT_DOCX_PROMPT_PROFILE = "standard"
-DEFAULT_TEMPLATE_HIGHLIGHT_FILL = "C7E1DD"
+DEFAULT_TEMPLATE_HIGHLIGHT_FILL = "C7E1DD"  # your teal anchor
+
 NESTED_IF_TEMPLATE_HIGHLIGHT_FILLS = [
-    DEFAULT_TEMPLATE_HIGHLIGHT_FILL,
-    "B8D7D3",
-    "A8CDCB",
-    "D7E7E4",
-    "C5DEDA",
+    DEFAULT_TEMPLATE_HIGHLIGHT_FILL,  # level 0 (teal)
+    "FFE3A3",  # soft yellow
+    "F8C8A6",  # soft orange/peach
+    "E6D5F7",  # soft lavender (purple)
+    "EDEDED",  # neutral gray (reset / contrast break)
 ]
+
 _JINJA_TAG_PATTERN = re.compile(r"(\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})")
 _IF_OPEN_PATTERN = re.compile(r"^(?:p\s+)?if\b", re.IGNORECASE)
 _IF_BRANCH_PATTERN = re.compile(r"^(?:p\s+)?(?:elif\b|else\b)", re.IGNORECASE)

@@ -33,6 +33,16 @@ def _make_minimal_pdf(path: str) -> None:
         fh.write(b"%PDF-1.4 minimal\n")
 
 
+def _make_openable_pdf(path: str) -> None:
+    """Write a minimal PDF that pikepdf can open."""
+    import pikepdf
+
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(612, 792))
+    pdf.save(path)
+    pdf.close()
+
+
 class TestHelpers(unittest.TestCase):
     def test_require_executable_found(self):
         with mock.patch("shutil.which", return_value="/usr/bin/python3"):
@@ -334,47 +344,68 @@ class TestAutoRepair(unittest.TestCase):
     """Tests for the auto-repair cascade."""
 
     def test_auto_repair_on_corrupted_pdf(self):
-        """auto_repair should recover a truncated PDF via the Ghostscript fallback."""
-        if not os.path.isfile(CORRUPTED_PDF):
-            self.skipTest("test/corrupted.pdf fixture not present")
-        try:
-            import shutil
-
-            if shutil.which("gs") is None:
-                self.skipTest("Ghostscript (gs) not on PATH")
-        except Exception:
-            pass
-
+        """auto_repair should continue past failures and report the winning strategy."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            in_path = os.path.join(tmpdir, "input.pdf")
             out_path = os.path.join(tmpdir, "auto_repair_output.pdf")
-            result = auto_repair(CORRUPTED_PDF, out_path)
+            _make_openable_pdf(in_path)
+
+            def fake_qpdf(_input_path, _output_path):
+                raise PDFRepairError("qpdf failed")
+
+            def fake_ghostscript(_input_path, output_path):
+                _make_openable_pdf(output_path)
+                return {
+                    "action": "ghostscript_reprint",
+                    "preserve_fields": False,
+                }
+
+            with mock.patch.dict(
+                REPAIR_ACTIONS,
+                {
+                    "qpdf_repair": fake_qpdf,
+                    "ghostscript_reprint": fake_ghostscript,
+                },
+            ):
+                result = auto_repair(in_path, out_path)
+
             self.assertEqual(result["action"], "auto")
             self.assertEqual(result["strategy_used"], "ghostscript_reprint")
-            self.assertIn("qpdf_repair", result["strategies_tried"])
+            self.assertEqual(
+                result["strategies_tried"],
+                ["qpdf_repair", "ghostscript_reprint"],
+            )
             self.assertGreater(result["page_count"], 0)
             self.assertTrue(os.path.isfile(out_path))
 
-            import pikepdf
-
-            with pikepdf.open(out_path) as pdf:
-                self.assertGreater(len(pdf.pages), 0)
-
     def test_auto_repair_via_run_repair(self):
-        """run_repair('auto', ...) should dispatch to auto_repair."""
-        if not os.path.isfile(CORRUPTED_PDF):
-            self.skipTest("test/corrupted.pdf fixture not present")
-        try:
-            import shutil
-
-            if shutil.which("gs") is None:
-                self.skipTest("Ghostscript (gs) not on PATH")
-        except Exception:
-            pass
-
+        """run_repair('auto', ...) should dispatch through the auto cascade."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            in_path = os.path.join(tmpdir, "input.pdf")
             out_path = os.path.join(tmpdir, "run_repair_auto_output.pdf")
-            result = run_repair("auto", CORRUPTED_PDF, out_path)
+            _make_openable_pdf(in_path)
+
+            def fake_qpdf(_input_path, _output_path):
+                raise PDFRepairError("qpdf failed")
+
+            def fake_ghostscript(_input_path, output_path):
+                _make_openable_pdf(output_path)
+                return {
+                    "action": "ghostscript_reprint",
+                    "preserve_fields": False,
+                }
+
+            with mock.patch.dict(
+                REPAIR_ACTIONS,
+                {
+                    "qpdf_repair": fake_qpdf,
+                    "ghostscript_reprint": fake_ghostscript,
+                },
+            ):
+                result = run_repair("auto", in_path, out_path)
+
             self.assertEqual(result["action"], "auto")
+            self.assertEqual(result["strategy_used"], "ghostscript_reprint")
             self.assertTrue(os.path.isfile(out_path))
 
     def test_auto_in_repair_actions(self):

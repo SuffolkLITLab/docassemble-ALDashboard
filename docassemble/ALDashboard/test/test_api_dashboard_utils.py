@@ -328,9 +328,13 @@ class TestDashboardAPIUtils(unittest.TestCase):
             ],
         },
     )
+    @patch(
+        "docassemble.ALDashboard.validate_docx.analyze_docx_template_markup",
+        return_value=[],
+    )
     @patch("docassemble.ALDashboard.validate_docx.get_jinja_errors", return_value=None)
     def test_validate_docx_payload_returns_warnings(
-        self, _mock_jinja_errors, _mock_findings
+        self, _mock_jinja_errors, _mock_markup, _mock_findings
     ):
         payload = validate_docx_payload_from_options(
             {
@@ -369,10 +373,14 @@ class TestDashboardAPIUtils(unittest.TestCase):
             ],
         },
     )
+    @patch(
+        "docassemble.ALDashboard.validate_docx.analyze_docx_template_markup",
+        return_value=[],
+    )
     @patch("docassemble.ALDashboard.validate_docx.get_jinja_errors", return_value=None)
     @patch("docassemble.ALDashboard.validate_docx.strip_docx_problem_controls")
     def test_validate_docx_payload_can_include_stripped_docx(
-        self, mock_strip, _mock_jinja_errors, _mock_findings
+        self, mock_strip, _mock_jinja_errors, _mock_markup, _mock_findings
     ):
         def _fake_strip(_input_path, output_path):
             with open(output_path, "wb") as handle:

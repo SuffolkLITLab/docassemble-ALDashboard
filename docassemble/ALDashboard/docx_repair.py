@@ -104,9 +104,7 @@ def repair_docx_xml_conservatively(src: str, dst: str) -> Dict[str, Any]:
                 tree = ET.parse(path)
                 root = tree.getroot()
             except ET.ParseError as err:
-                report["xml_parse_errors"].append(
-                    {"part": rel_name, "error": str(err)}
-                )
+                report["xml_parse_errors"].append({"part": rel_name, "error": str(err)})
                 continue
 
             before = ET.tostring(root, encoding="utf-8")
@@ -306,10 +304,16 @@ def _append_paragraph_from_xml(
 
 
 def _paragraph_text_from_xml(paragraph_element: ET.Element) -> str:
-    return "".join(_extract_run_text(run) for run in paragraph_element.findall(".//w:r", NS))
+    return "".join(
+        _extract_run_text(run) for run in paragraph_element.findall(".//w:r", NS)
+    )
 
 
-def _append_table_from_xml(target_doc: docx.document.Document, table_element: ET.Element, report: Dict[str, Any]) -> None:
+def _append_table_from_xml(
+    target_doc: docx.document.Document,
+    table_element: ET.Element,
+    report: Dict[str, Any],
+) -> None:
     row_elements = table_element.findall("w:tr", NS)
     if not row_elements:
         return

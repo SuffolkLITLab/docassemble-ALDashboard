@@ -190,7 +190,9 @@ class TestDocxTemplateMarkupWarnings(unittest.TestCase):
         warnings = analyze_docx_template_markup(document)
 
         self.assertTrue(
-            any(item["code"] == "docxtpl_special_tag_missing_space" for item in warnings)
+            any(
+                item["code"] == "docxtpl_special_tag_missing_space" for item in warnings
+            )
         )
 
     def test_warns_when_paragraph_tag_shares_paragraph_with_other_text(self):
@@ -206,7 +208,9 @@ class TestDocxTemplateMarkupWarnings(unittest.TestCase):
             )
         )
 
-    def test_strip_docx_problem_controls_cleans_track_changes_and_hidden_run_properties(self):
+    def test_strip_docx_problem_controls_cleans_track_changes_and_hidden_run_properties(
+        self,
+    ):
         input_path = TestGetJinjaErrors()._build_docx(
             {
                 "word/document.xml": """<?xml version="1.0" encoding="UTF-8"?>
@@ -271,7 +275,9 @@ class TestDocxTemplateMarkupWarnings(unittest.TestCase):
                 os.path.join(opc, "opc-relationships.xsd"),
             ]:
                 with open(path, "w", encoding="utf-8") as handle:
-                    handle.write("<xsd:schema xmlns:xsd='http://www.w3.org/2001/XMLSchema'/>")
+                    handle.write(
+                        "<xsd:schema xmlns:xsd='http://www.w3.org/2001/XMLSchema'/>"
+                    )
 
             class _FakeSchema:
                 def validate(self, _xml_bytes):

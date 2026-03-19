@@ -236,9 +236,7 @@ class TestDashboardAPIUtils(unittest.TestCase):
         self.assertEqual(payload["filename"], "sample.docx")
         self.assertEqual(len(payload["suggestions"]), 1)
         self.assertIn("timings", payload["validation"])
-        self.assertEqual(
-            payload["validation"]["timings"]["generator_run_count"], 3
-        )
+        self.assertEqual(payload["validation"]["timings"]["generator_run_count"], 3)
         self.assertEqual(len(payload["validation"]["document_warnings"]), 1)
         self.assertTrue(mock_get_voted.called)
 

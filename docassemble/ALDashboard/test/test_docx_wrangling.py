@@ -754,7 +754,9 @@ docx:
             "Helpful background about this template.",
         )
 
-    @patch("docassemble.ALDashboard.docx_wrangling.aggregate_docx_label_suggestion_runs")
+    @patch(
+        "docassemble.ALDashboard.docx_wrangling.aggregate_docx_label_suggestion_runs"
+    )
     @patch("docassemble.ALDashboard.docx_wrangling.validate_docx_label_suggestions")
     @patch("docassemble.ALDashboard.docx_wrangling.get_labeled_docx_runs")
     def test_get_voted_docx_label_suggestions_parallelizes_generation_and_orders_validation_before_aggregation(
@@ -845,10 +847,15 @@ docx:
         def fake_review(candidate_groups, **kwargs):
             self.assertEqual(len(candidate_groups), 1)
             candidates = candidate_groups[0]["candidates"]
-            self.assertTrue(all("candidate_index" in candidate for candidate in candidates))
+            self.assertTrue(
+                all("candidate_index" in candidate for candidate in candidates)
+            )
             self.assertTrue(all("confidence" in candidate for candidate in candidates))
             self.assertTrue(
-                all("effective_validation_flags" in candidate for candidate in candidates)
+                all(
+                    "effective_validation_flags" in candidate
+                    for candidate in candidates
+                )
             )
             chosen_candidate = next(
                 candidate

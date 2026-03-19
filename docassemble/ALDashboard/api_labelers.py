@@ -1401,23 +1401,126 @@ def docx_labeler_page() -> Response:
     return Response(html_content, mimetype="text/html")
 
 
-def _read_docx_labeler_file_request() -> tuple[str, bytes, Dict[str, Any]]:
+def _read_file_upload(
+    default_filename: str, required_ext: str
+) -> tuple[str, bytes, Dict[str, Any]]:
+    """Read a file from a multipart upload or JSON body with base64 content.
+
+    Args:
+        default_filename: Fallback filename when none is provided.
+        required_ext: Required file extension (e.g. ".docx", ".pdf").
+
+    Returns:
+        A (filename, content_bytes, post_data) tuple.
+    """
     if "file" in request.files:
         upload = request.files["file"]
-        filename = upload.filename or "upload.docx"
+        filename = upload.filename or default_filename
         content = upload.read()
         post_data = dict(request.form)
     else:
         post_data = request.get_json(silent=True) or {}
-        filename = str(post_data.get("filename") or "upload.docx")
+        filename = str(post_data.get("filename") or default_filename)
         content = decode_base64_content(post_data.get("file_content_base64"))
 
     _validate_upload_size(content)
-    if not filename.lower().endswith(".docx"):
+    if not filename.lower().endswith(required_ext):
+        ext_label = required_ext.lstrip(".").upper()
         raise DashboardAPIValidationError(
-            "Only DOCX files are supported.", status_code=415
+            f"Only {ext_label} files are supported.", status_code=415
         )
     return filename, content, post_data
+
+
+def _read_docx_labeler_file_request() -> tuple[str, bytes, Dict[str, Any]]:
+    return _read_file_upload("upload.docx", ".docx")
+
+
+def _read_pdf_labeler_file_request() -> tuple[str, bytes, Dict[str, Any]]:
+    return _read_file_upload("upload.pdf", ".pdf")
+
+
+def _resolve_interview_variables(
+    post_data: Dict[str, Any],
+) -> tuple[Optional[List[str]], str, Optional[str], Optional[str], Optional[str]]:
+    """Parse preferred variable names and resolve from playground/installed interview.
+
+    Returns:
+        A tuple of (preferred_variable_names, interview_source_mode,
+        selected_playground_project, selected_playground_filename,
+        selected_installed_interview_path).
+    """
+    preferred_variable_names: Optional[List[str]] = None
+    interview_source_mode = (
+        str(post_data.get("interview_source_mode") or "playground").strip().lower()
+        or "playground"
+    )
+    selected_playground_project: Optional[str] = None
+    selected_playground_filename: Optional[str] = None
+    selected_installed_interview_path: Optional[str] = None
+
+    preferred_variable_names_raw = post_data.get("preferred_variable_names")
+    if preferred_variable_names_raw:
+        if isinstance(preferred_variable_names_raw, str):
+            try:
+                parsed_preferred_names = json.loads(preferred_variable_names_raw)
+            except json.JSONDecodeError:
+                parsed_preferred_names = [
+                    item.strip()
+                    for item in preferred_variable_names_raw.split(",")
+                    if item.strip()
+                ]
+        elif isinstance(preferred_variable_names_raw, list):
+            parsed_preferred_names = preferred_variable_names_raw
+        else:
+            parsed_preferred_names = []
+        preferred_variable_names = [
+            str(item).strip() for item in parsed_preferred_names if str(item).strip()
+        ] or None
+
+    use_playground_variables = parse_bool(
+        post_data.get("use_playground_variables"), default=False
+    )
+    if use_playground_variables:
+        if interview_source_mode == "installed":
+            selected_installed_interview_path = _normalize_installed_interview_path(
+                post_data.get("installed_interview_path")
+                or (
+                    (
+                        str(post_data.get("installed_package") or "").strip()
+                        + ":"
+                        + str(post_data.get("installed_yaml_file") or "").strip()
+                    )
+                    if (
+                        str(post_data.get("installed_package") or "").strip()
+                        and str(post_data.get("installed_yaml_file") or "").strip()
+                    )
+                    else None
+                )
+            )
+            if preferred_variable_names is None:
+                preferred_variable_names = _get_installed_interview_variable_info(
+                    selected_installed_interview_path
+                )["all_names"]
+        else:
+            selected_playground_project = _normalize_playground_project(
+                post_data.get("playground_project")
+            )
+            selected_playground_filename = _normalize_playground_filename(
+                post_data.get("playground_yaml_file")
+            )
+            if preferred_variable_names is None:
+                preferred_variable_names = _get_playground_variable_info(
+                    selected_playground_project, selected_playground_filename
+                )["all_names"]
+
+    return (
+        preferred_variable_names,
+        interview_source_mode,
+        selected_playground_project,
+        selected_playground_filename,
+        selected_installed_interview_path,
+    )
 
 
 def _docx_output_payload(output_path: str, output_filename: str) -> Dict[str, Any]:
@@ -1636,23 +1739,7 @@ def docx_labeler_extract_runs() -> Response:
 
         from .docx_wrangling import defragment_docx_runs, get_docx_run_items
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.docx"
-            content = upload.read()
-            post_data = dict(request.form)
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.docx")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".docx"):
-            raise DashboardAPIValidationError(
-                "Only DOCX files are supported.", status_code=415
-            )
+        filename, content, post_data = _read_docx_labeler_file_request()
         defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
 
         # Write to temp file for processing
@@ -1736,25 +1823,8 @@ def docx_labeler_suggest_labels() -> Response:
         return _ai_auth_fail(request_id)
 
     try:
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.docx"
-            content = upload.read()
-            post_data = dict(request.form)
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.docx")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-
+        filename, content, post_data = _read_docx_labeler_file_request()
         post_data = merge_raw_options(post_data)
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".docx"):
-            raise DashboardAPIValidationError(
-                "Only DOCX files are supported.", status_code=415
-            )
 
         # Extract options
         prompt_profile = (
@@ -1805,69 +1875,13 @@ def docx_labeler_suggest_labels() -> Response:
             elif isinstance(custom_people_raw, list):
                 custom_people_names = custom_people_raw
 
-        preferred_variable_names = None
-        interview_source_mode = (
-            str(post_data.get("interview_source_mode") or "playground").strip().lower()
-            or "playground"
-        )
-        selected_playground_project = None
-        selected_playground_filename = None
-        selected_installed_interview_path = None
-        preferred_variable_names_raw = post_data.get("preferred_variable_names")
-        if preferred_variable_names_raw:
-            if isinstance(preferred_variable_names_raw, str):
-                try:
-                    parsed_preferred_names = json.loads(preferred_variable_names_raw)
-                except json.JSONDecodeError:
-                    parsed_preferred_names = [
-                        item.strip()
-                        for item in preferred_variable_names_raw.split(",")
-                        if item.strip()
-                    ]
-            elif isinstance(preferred_variable_names_raw, list):
-                parsed_preferred_names = preferred_variable_names_raw
-            else:
-                parsed_preferred_names = []
-            preferred_variable_names = [
-                str(item).strip()
-                for item in parsed_preferred_names
-                if str(item).strip()
-            ] or None
-        use_playground_variables = parse_bool(
-            post_data.get("use_playground_variables"), default=False
-        )
-        if use_playground_variables:
-            if interview_source_mode == "installed":
-                selected_installed_interview_path = _normalize_installed_interview_path(
-                    post_data.get("installed_interview_path")
-                    or (
-                        (
-                            str(post_data.get("installed_package") or "").strip()
-                            + ":"
-                            + str(post_data.get("installed_yaml_file") or "").strip()
-                        )
-                        if (
-                            str(post_data.get("installed_package") or "").strip()
-                            and str(post_data.get("installed_yaml_file") or "").strip()
-                        )
-                        else None
-                    )
-                )
-                if preferred_variable_names is None:
-                    preferred_variable_names = _get_installed_interview_variable_info(
-                        selected_installed_interview_path
-                    )["all_names"]
-            else:
-                selected_playground_project = _normalize_playground_project(
-                    post_data.get("playground_project")
-                )
-                selected_playground_filename = _normalize_playground_filename(
-                    post_data.get("playground_yaml_file")
-                )
-                if preferred_variable_names is None:
-                    preferred_variable_names = _get_playground_variable_info(
-                        selected_playground_project, selected_playground_filename
-                    )["all_names"]
+        (
+            preferred_variable_names,
+            interview_source_mode,
+            selected_playground_project,
+            selected_playground_filename,
+            selected_installed_interview_path,
+        ) = _resolve_interview_variables(post_data)
 
         task_payload = {
             "request_id": request_id,
@@ -1967,26 +1981,9 @@ def docx_labeler_validate_syntax() -> Response:
     try:
         from .docx_wrangling import validate_docx_template_syntax
 
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.docx"
-            content = upload.read()
-            post_data = dict(request.form)
-            labels_raw = post_data.get("labels")
-            renames_raw = post_data.get("renames")
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.docx")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-            labels_raw = post_data.get("labels")
-            renames_raw = post_data.get("renames")
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".docx"):
-            raise DashboardAPIValidationError(
-                "Only DOCX files are supported.", status_code=415
-            )
+        filename, content, post_data = _read_docx_labeler_file_request()
+        labels_raw = post_data.get("labels")
+        renames_raw = post_data.get("renames")
 
         defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
 
@@ -2078,7 +2075,10 @@ def docx_labeler_run_utility() -> Response:
     log(f"ALDashboard: docx utility request {request_id}", "info")
     try:
         from .docx_wrangling import apply_jinja2_highlights, defragment_docx_runs
-        from .validate_docx import strip_docx_problem_controls, validate_docx_ooxml_schema
+        from .validate_docx import (
+            strip_docx_problem_controls,
+            validate_docx_ooxml_schema,
+        )
         import docx
 
         filename, content, post_data = _read_docx_labeler_file_request()
@@ -2100,7 +2100,9 @@ def docx_labeler_run_utility() -> Response:
                         "files": [
                             {
                                 "filename": filename,
-                                "file_content_base64": base64.b64encode(content).decode("ascii"),
+                                "file_content_base64": base64.b64encode(content).decode(
+                                    "ascii"
+                                ),
                             }
                         ]
                     }
@@ -2123,7 +2125,9 @@ def docx_labeler_run_utility() -> Response:
                     }
                 )
 
-            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as output_file:
+            with tempfile.NamedTemporaryFile(
+                suffix=".docx", delete=False
+            ) as output_file:
                 output_path = output_file.name
 
             try:
@@ -2142,8 +2146,14 @@ def docx_labeler_run_utility() -> Response:
                         utility_doc = apply_jinja2_highlights(utility_doc)
                         report = {"highlighted": True}
                     utility_doc.save(output_path)
-                    suffix = "-defragmented.docx" if action == "defragment-runs" else "-highlighted.docx"
-                    payload = _docx_output_payload(output_path, filename.replace(".docx", suffix))
+                    suffix = (
+                        "-defragmented.docx"
+                        if action == "defragment-runs"
+                        else "-highlighted.docx"
+                    )
+                    payload = _docx_output_payload(
+                        output_path, filename.replace(".docx", suffix)
+                    )
 
                 return jsonify(
                     {
@@ -2217,7 +2227,11 @@ def docx_labeler_repair_docx() -> Response:
                 output_name = filename.replace(".docx", "-rescued.docx")
 
             data: Dict[str, Any] = {"action": action, "report": report}
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0 and report.get("available", True):
+            if (
+                os.path.exists(output_path)
+                and os.path.getsize(output_path) > 0
+                and report.get("available", True)
+            ):
                 data.update(_docx_output_payload(output_path, output_name))
             return jsonify(
                 {
@@ -2278,31 +2292,11 @@ def docx_labeler_apply_labels() -> Response:
         )
         import docx
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.docx"
-            content = upload.read()
-            post_data = dict(request.form)
-            labels_raw = post_data.get("labels")
-            renames_raw = post_data.get("renames")
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.docx")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-            labels_raw = post_data.get("labels")
-            renames_raw = post_data.get("renames")
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".docx"):
-            raise DashboardAPIValidationError(
-                "Only DOCX files are supported.", status_code=415
-            )
+        filename, content, post_data = _read_docx_labeler_file_request()
+        labels_raw = post_data.get("labels")
+        renames_raw = post_data.get("renames")
         defragment_runs = parse_bool(post_data.get("defragment_runs"), default=True)
-        apply_highlights = parse_bool(
-            post_data.get("apply_highlights"), default=False
-        )
+        apply_highlights = parse_bool(post_data.get("apply_highlights"), default=False)
         allow_invalid_syntax = parse_bool(
             post_data.get("allow_invalid_syntax"), default=False
         )
@@ -2358,7 +2352,9 @@ def docx_labeler_apply_labels() -> Response:
             if not syntax_validation.get("valid") and not allow_invalid_syntax:
                 message = "DOCX contains invalid Jinja syntax."
                 if syntax_validation.get("errors"):
-                    message = str(syntax_validation["errors"][0].get("message") or message)
+                    message = str(
+                        syntax_validation["errors"][0].get("message") or message
+                    )
                 return jsonify_with_status(
                     {
                         "success": False,
@@ -2574,22 +2570,7 @@ def pdf_labeler_detect_fields() -> Response:
     try:
         import formfyxer  # type: ignore[import-not-found]
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.pdf"
-            content = upload.read()
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.pdf")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".pdf"):
-            raise DashboardAPIValidationError(
-                "Only PDF files are supported.", status_code=415
-            )
+        filename, content, _post_data = _read_pdf_labeler_file_request()
 
         # Write to temp file for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -2671,24 +2652,8 @@ def pdf_labeler_auto_detect() -> Response:
     try:
         import formfyxer  # type: ignore[import-not-found]
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.pdf"
-            content = upload.read()
-            post_data = dict(request.form)
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.pdf")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-
+        filename, content, post_data = _read_pdf_labeler_file_request()
         post_data = merge_raw_options(post_data)
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".pdf"):
-            raise DashboardAPIValidationError(
-                "Only PDF files are supported.", status_code=415
-            )
 
         if coerce_async_flag(post_data):
             if not _labeler_async_is_configured():
@@ -2754,65 +2719,13 @@ def pdf_labeler_auto_detect() -> Response:
         )
 
         # Resolve preferred variable names from Playground/installed interview
-        preferred_variable_names: Optional[List[str]] = None
-        preferred_variable_names_raw = post_data.get("preferred_variable_names")
-        if preferred_variable_names_raw:
-            if isinstance(preferred_variable_names_raw, str):
-                try:
-                    parsed_preferred_names = json.loads(preferred_variable_names_raw)
-                except json.JSONDecodeError:
-                    parsed_preferred_names = [
-                        item.strip()
-                        for item in preferred_variable_names_raw.split(",")
-                        if item.strip()
-                    ]
-            elif isinstance(preferred_variable_names_raw, list):
-                parsed_preferred_names = preferred_variable_names_raw
-            else:
-                parsed_preferred_names = []
-            preferred_variable_names = [
-                str(item).strip()
-                for item in parsed_preferred_names
-                if str(item).strip()
-            ] or None
-        use_playground_variables = parse_bool(
-            post_data.get("use_playground_variables"), default=False
-        )
-        interview_source_mode = (
-            str(post_data.get("interview_source_mode") or "playground").strip().lower()
-            or "playground"
-        )
-        if use_playground_variables and preferred_variable_names is None:
-            if interview_source_mode == "installed":
-                installed_path = post_data.get("installed_interview_path") or (
-                    (
-                        str(post_data.get("installed_package") or "").strip()
-                        + ":"
-                        + str(post_data.get("installed_yaml_file") or "").strip()
-                    )
-                    if (
-                        str(post_data.get("installed_package") or "").strip()
-                        and str(post_data.get("installed_yaml_file") or "").strip()
-                    )
-                    else None
-                )
-                if installed_path:
-                    normalized_path = _normalize_installed_interview_path(
-                        installed_path
-                    )
-                    preferred_variable_names = _get_installed_interview_variable_info(
-                        normalized_path
-                    )["all_names"]
-            else:
-                pg_project = _normalize_playground_project(
-                    post_data.get("playground_project")
-                )
-                pg_yaml = post_data.get("playground_yaml_file")
-                if pg_yaml:
-                    pg_yaml = _normalize_playground_filename(pg_yaml)
-                    preferred_variable_names = _get_playground_variable_info(
-                        pg_project, pg_yaml
-                    )["all_names"]
+        (
+            preferred_variable_names,
+            _interview_source_mode,
+            _selected_playground_project,
+            _selected_playground_filename,
+            _selected_installed_interview_path,
+        ) = _resolve_interview_variables(post_data)
 
         # Write to temp files for processing
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -2940,24 +2853,8 @@ def pdf_labeler_relabel() -> Response:
     try:
         from .pdf_field_labeler import relabel_existing_pdf_fields
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.pdf"
-            content = upload.read()
-            post_data = dict(request.form)
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.pdf")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-
+        filename, content, post_data = _read_pdf_labeler_file_request()
         post_data = merge_raw_options(post_data)
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".pdf"):
-            raise DashboardAPIValidationError(
-                "Only PDF files are supported.", status_code=415
-            )
 
         if coerce_async_flag(post_data):
             if not _labeler_async_is_configured():
@@ -3073,25 +2970,8 @@ def pdf_labeler_apply_fields() -> Response:
         from formfyxer.pdf_wrangling import FormField, FieldType, set_fields
         from reportlab.lib.colors import HexColor
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.pdf"
-            content = upload.read()
-            post_data = dict(request.form)
-            fields_raw = post_data.get("fields")
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.pdf")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-            fields_raw = post_data.get("fields")
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".pdf"):
-            raise DashboardAPIValidationError(
-                "Only PDF files are supported.", status_code=415
-            )
+        filename, content, post_data = _read_pdf_labeler_file_request()
+        fields_raw = post_data.get("fields")
 
         # Parse fields
         if isinstance(fields_raw, str):
@@ -3194,25 +3074,8 @@ def pdf_labeler_rename_fields() -> Response:
     try:
         import formfyxer  # type: ignore[import-not-found]
 
-        # Handle both multipart and JSON uploads
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.pdf"
-            content = upload.read()
-            post_data = dict(request.form)
-            mapping_raw = post_data.get("mapping")
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.pdf")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-            mapping_raw = post_data.get("mapping")
-
-        _validate_upload_size(content)
-
-        if not filename.lower().endswith(".pdf"):
-            raise DashboardAPIValidationError(
-                "Only PDF files are supported.", status_code=415
-            )
+        filename, content, post_data = _read_pdf_labeler_file_request()
+        mapping_raw = post_data.get("mapping")
 
         # Parse mapping
         if isinstance(mapping_raw, str):
@@ -3502,20 +3365,7 @@ def pdf_labeler_strip_fonts() -> Response:
     try:
         from .pdf_repair import strip_embedded_fonts
 
-        if "file" in request.files:
-            upload = request.files["file"]
-            filename = upload.filename or "upload.pdf"
-            content = upload.read()
-        else:
-            post_data = request.get_json(silent=True) or {}
-            filename = str(post_data.get("filename") or "upload.pdf")
-            content = decode_base64_content(post_data.get("file_content_base64"))
-
-        _validate_upload_size(content)
-        if not filename.lower().endswith(".pdf"):
-            raise DashboardAPIValidationError(
-                "Only PDF files are supported.", status_code=415
-            )
+        filename, content, _post_data = _read_pdf_labeler_file_request()
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)

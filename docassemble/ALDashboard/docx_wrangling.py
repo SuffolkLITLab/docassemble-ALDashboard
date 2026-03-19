@@ -676,7 +676,9 @@ def _append_validation_flag(
     message: str,
 ) -> None:
     existing = flags_by_index.setdefault(index, [])
-    if any(flag.get("code") == code and flag.get("message") == message for flag in existing):
+    if any(
+        flag.get("code") == code and flag.get("message") == message for flag in existing
+    ):
         return
     existing.append({"code": code, "message": message})
 

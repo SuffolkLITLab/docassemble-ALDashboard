@@ -309,7 +309,9 @@ def get_jinja_errors(the_file: str) -> Optional[str]:
         return str(the_error)
 
 
-def _collect_paragraphs_from_table(table: Any, collected: List[Any], seen: Set[int]) -> None:
+def _collect_paragraphs_from_table(
+    table: Any, collected: List[Any], seen: Set[int]
+) -> None:
     for row in getattr(table, "rows", []):
         for cell in getattr(row, "cells", []):
             _collect_paragraphs_from_container(cell, collected, seen)
@@ -505,7 +507,9 @@ def ensure_ooxml_schema_cache() -> Dict[str, str]:
         try:
             _download_extract_nested_zip(outer_url, nested_name, target_dir)
         except OSError:
-            fallback_base_dir = Path(tempfile.gettempdir()) / "aldashboard-ooxml-schemas"
+            fallback_base_dir = (
+                Path(tempfile.gettempdir()) / "aldashboard-ooxml-schemas"
+            )
             if fallback_base_dir == base_dir:
                 raise
             base_dir = fallback_base_dir
@@ -530,7 +534,9 @@ def _local_name_from_root_tag(tag: str) -> Tuple[str, str]:
     return "", tag
 
 
-def _get_schema_entry_for_part(part_name: str, root: LET._Element, schema_dirs: Dict[str, str]) -> Optional[str]:
+def _get_schema_entry_for_part(
+    part_name: str, root: LET._Element, schema_dirs: Dict[str, str]
+) -> Optional[str]:
     namespace, local_name = _local_name_from_root_tag(str(root.tag))
     lower_name = part_name.lower()
 
@@ -541,9 +547,13 @@ def _get_schema_entry_for_part(part_name: str, root: LET._Element, schema_dirs: 
     if lower_name == "docprops/core.xml":
         return str(Path(schema_dirs["opc"]) / "opc-coreProperties.xsd")
     if lower_name == "docprops/app.xml":
-        return str(Path(schema_dirs["transitional"]) / "shared-documentPropertiesExtended.xsd")
+        return str(
+            Path(schema_dirs["transitional"]) / "shared-documentPropertiesExtended.xsd"
+        )
     if lower_name == "docprops/custom.xml":
-        return str(Path(schema_dirs["transitional"]) / "shared-documentPropertiesCustom.xsd")
+        return str(
+            Path(schema_dirs["transitional"]) / "shared-documentPropertiesCustom.xsd"
+        )
 
     schema_family = None
     if namespace.startswith(_OOXML_TRANSITIONAL_NS_PREFIX):
@@ -593,7 +603,9 @@ def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
     }
 
     if xmlschema is None:
-        report["message"] = "xmlschema is not installed in the active Python environment."
+        report["message"] = (
+            "xmlschema is not installed in the active Python environment."
+        )
         return report
 
     try:
@@ -607,7 +619,9 @@ def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
 
     with zipfile.ZipFile(the_file, "r") as archive:
         xml_parts = [
-            name for name in archive.namelist() if name.endswith(".xml") or name.endswith(".rels")
+            name
+            for name in archive.namelist()
+            if name.endswith(".xml") or name.endswith(".rels")
         ]
         for part_name in xml_parts:
             try:

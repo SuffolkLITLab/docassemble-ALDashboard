@@ -1692,7 +1692,9 @@ def aggregate_docx_label_suggestion_runs(
                 for candidate in candidates
                 if candidate is not chosen_candidate
             ]
-            if chosen_candidate is None:  # unreachable by logic, but guards against optimised-bytecode assert removal
+            if (
+                chosen_candidate is None
+            ):  # unreachable by logic, but guards against optimised-bytecode assert removal
                 continue
             selected_suggestions.append(
                 {

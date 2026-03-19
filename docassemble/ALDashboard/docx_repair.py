@@ -10,7 +10,10 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import defusedxml.ElementTree as ET  # safe XML parsing for user-supplied docx content
-from xml.etree.ElementTree import Element, ElementTree as _ETTree  # nosec B405 – used only for type annotations and serialisation, never for parsing untrusted data
+from xml.etree.ElementTree import (
+    Element,
+    ElementTree as _ETTree,
+)  # nosec B405 – used only for type annotations and serialisation, never for parsing untrusted data
 
 import docx
 
@@ -108,6 +111,8 @@ def repair_docx_xml_conservatively(src: str, dst: str) -> Dict[str, Any]:
                 report["xml_parse_errors"].append({"part": rel_name, "error": str(err)})
                 continue
 
+            if root is None:
+                continue
             before = ET.tostring(root, encoding="utf-8")
             root = choose_alternate_content(root)
             after = ET.tostring(root, encoding="utf-8")
@@ -124,6 +129,8 @@ def repair_docx_xml_conservatively(src: str, dst: str) -> Dict[str, Any]:
             except ET.ParseError:
                 continue
 
+            if root is None:
+                continue
             changed = False
             for rel in list(root):
                 if _local_name(rel.tag) != "Relationship":

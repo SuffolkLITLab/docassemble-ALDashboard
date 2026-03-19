@@ -13,7 +13,8 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET  # safe parsing of user-uploaded docx XML parts
+from xml.etree.ElementTree import Element as _ETElement  # nosec B405 – used for type annotations only, never parses data
 from urllib.request import urlopen
 import zipfile
 from lxml import etree as LET
@@ -498,7 +499,7 @@ def _download_extract_nested_zip(
     target_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temp_dir:
         outer_zip_path = Path(temp_dir) / "outer.zip"
-        with urlopen(outer_url) as response, open(outer_zip_path, "wb") as out_handle:
+        with urlopen(outer_url) as response, open(outer_zip_path, "wb") as out_handle:  # nosec B310 – outer_url is always a hardcoded https:// address from _OOXML_SCHEMA_DOWNLOADS
             shutil.copyfileobj(response, out_handle)
         with zipfile.ZipFile(outer_zip_path, "r") as outer_zip:
             nested_bytes = outer_zip.read(nested_zip_name)
@@ -705,7 +706,7 @@ def _local_name(tag: str) -> str:
     return tag
 
 
-def _get_attr(element: ET.Element, attr_name: str) -> Optional[str]:
+def _get_attr(element: _ETElement, attr_name: str) -> Optional[str]:
     for key, value in element.attrib.items():
         if key == attr_name or key.endswith("}" + attr_name):
             return str(value)
@@ -1187,7 +1188,7 @@ def detect_docx_automation_features(the_file: str) -> Dict[str, Any]:
     }
 
 
-def _is_page_number_docpart_sdt(sdt_element: ET.Element) -> bool:
+def _is_page_number_docpart_sdt(sdt_element: _ETElement) -> bool:
     is_docpart = False
     for desc in sdt_element.iter():
         desc_name = _local_name(desc.tag)
@@ -1207,7 +1208,7 @@ def _is_allowed_simple_field(instr: str) -> bool:
 
 
 def _replace_element_with_children(
-    parent: ET.Element, index: int, element: ET.Element, children: List[ET.Element]
+    parent: _ETElement, index: int, element: _ETElement, children: List[_ETElement]
 ) -> None:
     parent.remove(element)
     for offset, child in enumerate(children):
@@ -1225,7 +1226,7 @@ def _replace_element_with_children_lxml(
         parent.insert(index + offset, child)
 
 
-def _strip_controls_from_parent(parent: ET.Element, counts: Dict[str, int]) -> bool:
+def _strip_controls_from_parent(parent: _ETElement, counts: Dict[str, int]) -> bool:
     changed = False
     i = 0
     while i < len(parent):

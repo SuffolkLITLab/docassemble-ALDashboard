@@ -4,12 +4,13 @@ import io
 import os
 import posixpath
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from xml.etree import ElementTree as ET
+import defusedxml.ElementTree as ET  # safe XML parsing for user-supplied docx content
+from xml.etree.ElementTree import Element, ElementTree as _ETTree  # nosec B405 – used only for type annotations and serialisation, never for parsing untrusted data
 
 import docx
 
@@ -49,7 +50,7 @@ def norm_part_path(base_part: str, target: str) -> str:
     return joined.lstrip("/")
 
 
-def choose_alternate_content(root: ET.Element) -> ET.Element:
+def choose_alternate_content(root: Element) -> Element:
     parent_map = {child: parent for parent in root.iter() for child in parent}
 
     for ac in list(root.findall(".//mc:AlternateContent", NS)):
@@ -57,7 +58,7 @@ def choose_alternate_content(root: ET.Element) -> ET.Element:
         if parent is None:
             continue
 
-        replacement_children: List[ET.Element] = []
+        replacement_children: List[Element] = []
         fallback = ac.find("mc:Fallback", NS)
         if fallback is not None:
             replacement_children = list(fallback)
@@ -111,7 +112,7 @@ def repair_docx_xml_conservatively(src: str, dst: str) -> Dict[str, Any]:
             root = choose_alternate_content(root)
             after = ET.tostring(root, encoding="utf-8")
             if before != after:
-                tree = ET.ElementTree(root)
+                tree = _ETTree(root)
                 tree.write(path, encoding="utf-8", xml_declaration=True)
                 report["alternatecontent_rewritten"].append(rel_name)
 
@@ -174,7 +175,7 @@ def roundtrip_docx_via_soffice(src: str, dst: str) -> Dict[str, Any]:
     dst_path = Path(dst)
     with tempfile.TemporaryDirectory() as td:
         temp_dir = Path(td)
-        subprocess.run(
+        subprocess.run(  # nosec B603 – soffice_path is from shutil.which(), never user input
             [
                 soffice_path,
                 "--headless",
@@ -192,7 +193,7 @@ def roundtrip_docx_via_soffice(src: str, dst: str) -> Dict[str, Any]:
         if not rtf_path.exists():
             raise RuntimeError("LibreOffice did not produce an intermediate RTF file.")
 
-        subprocess.run(
+        subprocess.run(  # nosec B603 – soffice_path is from shutil.which(), never user input
             [
                 soffice_path,
                 "--headless",
@@ -235,7 +236,7 @@ def _read_relationship_targets(archive: zipfile.ZipFile) -> Dict[str, str]:
     return mapping
 
 
-def _apply_run_formatting(new_run: Any, run_element: ET.Element) -> None:
+def _apply_run_formatting(new_run: Any, run_element: Element) -> None:
     properties = run_element.find("w:rPr", NS)
     if properties is None:
         return
@@ -244,7 +245,7 @@ def _apply_run_formatting(new_run: Any, run_element: ET.Element) -> None:
     new_run.underline = properties.find("w:u", NS) is not None
 
 
-def _extract_run_text(run_element: ET.Element) -> str:
+def _extract_run_text(run_element: Element) -> str:
     chunks: List[str] = []
     for child in run_element:
         name = _local_name(child.tag)
@@ -259,7 +260,7 @@ def _extract_run_text(run_element: ET.Element) -> str:
 
 def _append_images_from_run(
     new_run: Any,
-    run_element: ET.Element,
+    run_element: Element,
     archive: zipfile.ZipFile,
     rel_targets: Dict[str, str],
     report: Dict[str, Any],
@@ -289,7 +290,7 @@ def _append_images_from_run(
 
 def _append_paragraph_from_xml(
     target_doc: docx.document.Document,
-    paragraph_element: ET.Element,
+    paragraph_element: Element,
     archive: zipfile.ZipFile,
     rel_targets: Dict[str, str],
     report: Dict[str, Any],
@@ -303,7 +304,7 @@ def _append_paragraph_from_xml(
     report["paragraphs"] += 1
 
 
-def _paragraph_text_from_xml(paragraph_element: ET.Element) -> str:
+def _paragraph_text_from_xml(paragraph_element: Element) -> str:
     return "".join(
         _extract_run_text(run) for run in paragraph_element.findall(".//w:r", NS)
     )
@@ -311,7 +312,7 @@ def _paragraph_text_from_xml(paragraph_element: ET.Element) -> str:
 
 def _append_table_from_xml(
     target_doc: docx.document.Document,
-    table_element: ET.Element,
+    table_element: Element,
     report: Dict[str, Any],
 ) -> None:
     row_elements = table_element.findall("w:tr", NS)

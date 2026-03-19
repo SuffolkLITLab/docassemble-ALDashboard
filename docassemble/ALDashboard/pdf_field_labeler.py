@@ -3,7 +3,9 @@ import inspect
 import importlib
 import json
 import os
+import re
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -92,6 +94,41 @@ def _load_formfyxer_prompt_text(formfyxer_module: Any, prompt_name: str) -> str:
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
+def _load_pdf_text_with_fields(formfyxer_module: Any, input_pdf_path: str) -> str:
+    """Extract PDF text with inline field markers using FormFyxer."""
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as temp_file:
+        temp_path = temp_file.name
+    try:
+        formfyxer_module.get_original_text_with_fields(input_pdf_path, temp_path)
+        return Path(temp_path).read_text(encoding="utf-8")
+    finally:
+        Path(temp_path).unlink(missing_ok=True)
+
+
+def _field_names_in_prompt_order(
+    pdf_text_with_fields: str, fallback_names: List[str]
+) -> List[str]:
+    """Return field names in the same order they appear in the AI prompt text."""
+    marker_names = [
+        match.group(1).strip()
+        for match in re.finditer(r"\{\{(.*?)\}\}", pdf_text_with_fields, flags=re.DOTALL)
+        if match.group(1).strip()
+    ]
+    if (
+        marker_names
+        and len(marker_names) == len(fallback_names)
+        and Counter(marker_names) == Counter(fallback_names)
+    ):
+        return marker_names
+
+    if marker_names:
+        log(
+            "ALDashboard: pdf relabel prompt marker order did not match detected field names; falling back to detected field order",
+            "warning",
+        )
+    return fallback_names
+
+
 def _ensure_unique_field_names(field_names: List[str]) -> List[str]:
     """Ensure field names remain unique while preserving order."""
     result: List[str] = []
@@ -148,6 +185,7 @@ def _generate_ai_relabel_target_field_names(
     *,
     input_pdf_path: str,
     current_names: List[str],
+    pdf_text_with_fields: Optional[str] = None,
     openai_api: Optional[str],
     openai_base_url: Optional[str],
     model: Optional[str],
@@ -165,15 +203,10 @@ Important override for this request:
 - Preserve duplicates by occurrence order in the returned array.
 """
 
-        with tempfile.NamedTemporaryFile(
-            mode="w+", suffix=".txt", delete=False
-        ) as temp_file:
-            temp_path = temp_file.name
-        try:
-            formfyxer_module.get_original_text_with_fields(input_pdf_path, temp_path)
-            pdf_text_with_fields = Path(temp_path).read_text(encoding="utf-8")
-        finally:
-            Path(temp_path).unlink(missing_ok=True)
+        if pdf_text_with_fields is None:
+            pdf_text_with_fields = _load_pdf_text_with_fields(
+                formfyxer_module, input_pdf_path
+            )
 
         if not pdf_text_with_fields.strip():
             return _fallback_target_field_names(formfyxer_module, current_names)
@@ -217,6 +250,46 @@ Return target_field_names as an ordered array aligned exactly with the original 
             "warning",
         )
         return _fallback_target_field_names(formfyxer_module, current_names)
+
+
+def _generate_ai_relabel_mapping_for_unique_fields(
+    formfyxer_module: Any,
+    *,
+    input_pdf_path: str,
+    current_names: List[str],
+    openai_api: Optional[str],
+    openai_base_url: Optional[str],
+    model: Optional[str],
+) -> Optional[Dict[str, str]]:
+    """Request direct old-to-new mappings when source field names are unique."""
+    rename_with_context = getattr(
+        formfyxer_module, "rename_pdf_fields_with_context", None
+    )
+    if not callable(rename_with_context):
+        return None
+
+    mapping = rename_with_context(
+        pdf_path=input_pdf_path,
+        original_field_names=current_names,
+        api_key=openai_api,
+        model=model or "gpt-5-nano",
+        openai_base_url=openai_base_url,
+    )
+    if not isinstance(mapping, dict):
+        raise PDFLabelingError(
+            "FormFyxer rename_pdf_fields_with_context returned an unexpected response type."
+        )
+
+    ordered_targets = _ensure_unique_field_names(
+        [
+            re.sub(r"^\*", "", str(mapping.get(name, name) or name))
+            for name in current_names
+        ]
+    )
+    return {
+        original_name: target_name
+        for original_name, target_name in zip(current_names, ordered_targets)
+    }
 
 
 def _rewrite_pdf_fields_in_order(
@@ -490,21 +563,61 @@ def relabel_existing_pdf_fields(
             model=model,
             jur=jur,
         )
-        ai_target_field_names = _generate_ai_relabel_target_field_names(
-            formfyxer,
-            input_pdf_path=input_pdf_path,
-            current_names=current_names,
-            openai_api=resolved["openai_api"],
-            openai_base_url=resolved["openai_base_url"],
-            model=model,
-        )
-        _rewrite_pdf_fields_in_order(
-            formfyxer,
-            input_pdf_path=input_pdf_path,
-            output_pdf_path=output_pdf_path,
-            current_names=current_names,
-            target_field_names=ai_target_field_names,
-        )
+        if len(set(current_names)) == len(current_names):
+            ai_mapping = _generate_ai_relabel_mapping_for_unique_fields(
+                formfyxer,
+                input_pdf_path=input_pdf_path,
+                current_names=current_names,
+                openai_api=resolved["openai_api"],
+                openai_base_url=resolved["openai_base_url"],
+                model=model,
+            )
+            if ai_mapping is not None:
+                formfyxer.rename_pdf_fields(input_pdf_path, output_pdf_path, ai_mapping)
+            else:
+                pdf_text_with_fields = _load_pdf_text_with_fields(
+                    formfyxer, input_pdf_path
+                )
+                ai_current_names = _field_names_in_prompt_order(
+                    pdf_text_with_fields, current_names
+                )
+                ai_target_field_names = _generate_ai_relabel_target_field_names(
+                    formfyxer,
+                    input_pdf_path=input_pdf_path,
+                    current_names=ai_current_names,
+                    pdf_text_with_fields=pdf_text_with_fields,
+                    openai_api=resolved["openai_api"],
+                    openai_base_url=resolved["openai_base_url"],
+                    model=model,
+                )
+                _rewrite_pdf_fields_in_order(
+                    formfyxer,
+                    input_pdf_path=input_pdf_path,
+                    output_pdf_path=output_pdf_path,
+                    current_names=ai_current_names,
+                    target_field_names=ai_target_field_names,
+                )
+        else:
+            pdf_text_with_fields = _load_pdf_text_with_fields(formfyxer, input_pdf_path)
+            ai_current_names = _field_names_in_prompt_order(
+                pdf_text_with_fields, current_names
+            )
+            ai_target_field_names = _generate_ai_relabel_target_field_names(
+                formfyxer,
+                input_pdf_path=input_pdf_path,
+                current_names=ai_current_names,
+                pdf_text_with_fields=pdf_text_with_fields,
+                openai_api=resolved["openai_api"],
+                openai_base_url=resolved["openai_base_url"],
+                model=model,
+            )
+            _rewrite_pdf_fields_in_order(
+                formfyxer,
+                input_pdf_path=input_pdf_path,
+                output_pdf_path=output_pdf_path,
+                current_names=ai_current_names,
+                target_field_names=ai_target_field_names,
+            )
     else:
         raise PDFLabelingError(
             "Provide one of: field_name_mapping, target_field_names, or relabel_with_ai=true."
@@ -531,6 +644,7 @@ def apply_formfyxer_pdf_labeling(
     output_pdf_path: str,
     add_fields: bool = True,
     normalize_fields: bool = True,
+    preferred_variable_names: Optional[List[str]] = None,
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
@@ -568,7 +682,15 @@ def apply_formfyxer_pdf_labeling(
     )
 
     if add_fields:
-        formfyxer.auto_add_fields(input_pdf_path, output_pdf_path)
+        auto_add_kwargs: Dict[str, Any] = {}
+        if preferred_variable_names:
+            try:
+                signature = inspect.signature(formfyxer.auto_add_fields)
+                if "preferred_names" in signature.parameters:
+                    auto_add_kwargs["preferred_names"] = preferred_variable_names
+            except (TypeError, ValueError):
+                pass
+        formfyxer.auto_add_fields(input_pdf_path, output_pdf_path, **auto_add_kwargs)
     else:
         shutil.copyfile(input_pdf_path, output_pdf_path)
 
@@ -599,6 +721,7 @@ def detect_pdf_fields_and_optionally_relabel(
     output_pdf_path: str,
     relabel_with_ai: bool = False,
     target_field_names: Optional[List[str]] = None,
+    preferred_variable_names: Optional[List[str]] = None,
     jur: str = "MA",
     tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
@@ -626,6 +749,7 @@ def detect_pdf_fields_and_optionally_relabel(
         output_pdf_path=output_pdf_path,
         add_fields=True,
         normalize_fields=relabel_with_ai,
+        preferred_variable_names=preferred_variable_names,
         jur=jur,
         tools_token=tools_token,
         openai_api=openai_api,

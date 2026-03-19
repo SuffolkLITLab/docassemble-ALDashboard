@@ -11,7 +11,6 @@ Both tools use AI to suggest labels and follow AssemblyLine conventions.
 import base64
 import copy
 import io
-import inspect
 import json
 import os
 import re
@@ -28,7 +27,7 @@ from flask_login import current_user
 
 from docassemble.base.config import daconfig
 import docassemble.base.functions
-from docassemble.base.util import get_config, log
+from docassemble.base.util import log
 from docassemble.webapp.app_object import app, csrf
 from docassemble.webapp.server import api_verify, jsonify_with_status, r
 from docassemble.webapp.worker_common import workerapp
@@ -36,11 +35,14 @@ from docassemble.webapp.worker_common import workerapp
 from .api_dashboard_utils import (
     DashboardAPIValidationError,
     _extract_repair_options,
+    _format_pdf_fields_for_ui_payload,
     _validate_upload_size,
     coerce_async_flag,
     decode_base64_content,
     docx_labeler_suggest_payload_from_options,
     merge_raw_options,
+    pdf_fields_detect_payload_from_options,
+    pdf_fields_relabel_payload_from_options,
     parse_bool,
     validate_docx_payload_from_options,
 )
@@ -888,6 +890,34 @@ def _normalize_labeler_result_for_json(value: Any) -> Any:
     if hasattr(value, "__dict__"):
         return _normalize_labeler_result_for_json(vars(value))
     return str(value)
+
+
+def _format_pdf_auto_detect_labeler_data(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize shared PDF detect payloads into the labeler UI response shape."""
+    fields = payload.get("positioned_fields")
+    if not isinstance(fields, list):
+        fields = []
+    return {
+        "filename": str(payload.get("input_filename") or "upload.pdf"),
+        "page_count": payload.get("page_count"),
+        "fields": fields,
+        "pdf_base64": payload.get("pdf_base64"),
+    }
+
+
+def _format_pdf_relabel_labeler_data(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize shared PDF relabel payloads into the labeler UI response shape."""
+    return {
+        "filename": str(
+            payload.get("output_filename")
+            or payload.get("input_filename")
+            or "upload.pdf"
+        ),
+        "output_filename": payload.get("output_filename"),
+        "fields": payload.get("fields", []),
+        "fields_old": payload.get("fields_old", []),
+        "pdf_base64": payload.get("pdf_base64"),
+    }
 
 
 def _queue_labeler_async_job(
@@ -2544,7 +2574,12 @@ def pdf_labeler_job(job_id: str) -> Response:
         "created_at": task_info.get("created_at"),
     }
     if state == "SUCCESS":
-        body["data"] = _normalize_labeler_result_for_json(result.get())
+        data = _normalize_labeler_result_for_json(result.get())
+        if task_info.get("kind") == "pdf_auto_detect" and isinstance(data, dict):
+            data = _format_pdf_auto_detect_labeler_data(data)
+        elif task_info.get("kind") == "pdf_relabel" and isinstance(data, dict):
+            data = _format_pdf_relabel_labeler_data(data)
+        body["data"] = data
     elif state == "FAILURE":
         error_obj = result.result
         body["error"] = {
@@ -2581,23 +2616,6 @@ def pdf_labeler_detect_fields() -> Response:
             # Get existing fields with positions
             fields_per_page = formfyxer.get_existing_pdf_fields(temp_path)
 
-            # Format for the UI
-            formatted_fields = []
-            for page_idx, page_fields in enumerate(fields_per_page):
-                for field in page_fields:
-                    field_data = {
-                        "id": str(uuid.uuid4()),
-                        "name": field.name,
-                        "type": str(field.type).lower().replace("fieldtype.", ""),
-                        "pageIndex": page_idx,
-                        "x": field.x,
-                        "y": field.y,
-                        "width": field.configs.get("width", 100),
-                        "height": field.configs.get("height", 20),
-                        "fontSize": field.font_size or 12,
-                    }
-                    formatted_fields.append(field_data)
-
             return jsonify(
                 {
                     "success": True,
@@ -2605,7 +2623,7 @@ def pdf_labeler_detect_fields() -> Response:
                     "data": {
                         "filename": filename,
                         "page_count": len(fields_per_page),
-                        "fields": formatted_fields,
+                        "fields": _format_pdf_fields_for_ui_payload(fields_per_page),
                     },
                 }
             )
@@ -2641,7 +2659,8 @@ def pdf_labeler_auto_detect() -> Response:
     """Use AI to automatically detect and add fields to a PDF.
 
     Returns:
-        Response: A JSON response containing normalized PDF field results.
+        Response: A JSON response containing detected field positions and the
+        updated PDF.
     """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: auto-detect request {request_id}", "info")
@@ -2650,10 +2669,29 @@ def pdf_labeler_auto_detect() -> Response:
         return _ai_auth_fail(request_id)
 
     try:
-        import formfyxer  # type: ignore[import-not-found]
-
         filename, content, post_data = _read_pdf_labeler_file_request()
         post_data = merge_raw_options(post_data)
+        normalize_fields = parse_bool(post_data.get("normalize_fields"), default=True)
+
+        # Resolve preferred variable names from Playground/installed interview.
+        (
+            preferred_variable_names,
+            _interview_source_mode,
+            _selected_playground_project,
+            _selected_playground_filename,
+            _selected_installed_interview_path,
+        ) = _resolve_interview_variables(post_data)
+
+        detect_payload: Dict[str, Any] = {
+            "filename": filename,
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "include_pdf_base64": True,
+            "include_field_positions": True,
+            **post_data,
+        }
+        detect_payload.setdefault("relabel_with_ai", normalize_fields)
+        if "preferred_variable_names" in post_data or preferred_variable_names:
+            detect_payload["preferred_variable_names"] = preferred_variable_names or []
 
         if coerce_async_flag(post_data):
             if not _labeler_async_is_configured():
@@ -2674,145 +2712,19 @@ def pdf_labeler_auto_detect() -> Response:
                 )
             from .api_dashboard_worker import dashboard_pdf_fields_detect_task
 
-            task = dashboard_pdf_fields_detect_task.delay(
-                payload={
-                    "filename": filename,
-                    "file_content_base64": base64.b64encode(content).decode("ascii"),
-                    "relabel_with_ai": True,
-                    "include_pdf_base64": True,
-                    "include_parse_stats": True,
-                    **post_data,
-                }
-            )
+            task = dashboard_pdf_fields_detect_task.delay(payload=detect_payload)
             return _queue_labeler_async_job(
                 task, kind="pdf_auto_detect", request_id=request_id
             )
 
-        # Options
-        normalize_fields = parse_bool(post_data.get("normalize_fields"), default=True)
-        jur = str(post_data.get("jur", "MA"))
-        model = str(post_data.get("model") or "").strip() or None
-        tools_token = (
-            str(post_data.get("tools_token")).strip()
-            if post_data.get("tools_token") is not None
-            else str(
-                get_config("assembly line", {}).get(
-                    "tools.suffolklitlab.org api key", ""
-                )
-            ).strip()
-            or None
+        payload = pdf_fields_detect_payload_from_options(detect_payload)
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": _format_pdf_auto_detect_labeler_data(payload),
+            }
         )
-        openai_api = (
-            str(post_data.get("openai_api")).strip()
-            if post_data.get("openai_api") is not None
-            else str(
-                get_config("open ai", {}).get("key")
-                or get_config("openai api key")
-                or ""
-            ).strip()
-            or None
-        )
-        openai_base_url = (
-            str(post_data.get("openai_base_url")).strip()
-            if post_data.get("openai_base_url") is not None
-            else str(get_config("openai base url") or "").strip() or None
-        )
-
-        # Resolve preferred variable names from Playground/installed interview
-        (
-            preferred_variable_names,
-            _interview_source_mode,
-            _selected_playground_project,
-            _selected_playground_filename,
-            _selected_installed_interview_path,
-        ) = _resolve_interview_variables(post_data)
-
-        # Write to temp files for processing
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
-            tmp_in.write(content)
-            input_path = tmp_in.name
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
-            output_path = tmp_out.name
-
-        try:
-            # Auto-add fields using FormFyxer
-            auto_add_kwargs: Dict[str, Any] = {}
-            if preferred_variable_names:
-                try:
-                    auto_add_signature = inspect.signature(formfyxer.auto_add_fields)
-                    if "preferred_names" in auto_add_signature.parameters:
-                        auto_add_kwargs["preferred_names"] = preferred_variable_names
-                except (TypeError, ValueError):
-                    pass
-            formfyxer.auto_add_fields(input_path, output_path, **auto_add_kwargs)
-
-            # Optionally normalize with AI
-            stats = {}
-            if normalize_fields:
-                parse_kwargs: Dict[str, Any] = {
-                    "title": os.path.splitext(filename)[0],
-                    "jur": jur,
-                    "normalize": True,
-                    "rewrite": True,
-                }
-                if tools_token:
-                    parse_kwargs["tools_token"] = tools_token
-                if openai_api:
-                    parse_kwargs["openai_api_key"] = openai_api
-                if openai_base_url:
-                    parse_kwargs["openai_base_url"] = openai_base_url
-                if model:
-                    parse_kwargs["model"] = model
-                try:
-                    stats = formfyxer.parse_form(output_path, **parse_kwargs)
-                except TypeError:
-                    parse_kwargs.pop("model", None)
-                    parse_kwargs.pop("openai_base_url", None)
-                    stats = formfyxer.parse_form(output_path, **parse_kwargs)
-
-            # Get the resulting fields
-            fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
-
-            # Read the output file
-            with open(output_path, "rb") as f:
-                output_bytes = f.read()
-
-            # Format fields for the UI
-            formatted_fields = []
-            for page_idx, page_fields in enumerate(fields_per_page):
-                for field in page_fields:
-                    field_data = {
-                        "id": str(uuid.uuid4()),
-                        "name": field.name,
-                        "type": str(field.type).lower().replace("fieldtype.", ""),
-                        "pageIndex": page_idx,
-                        "x": field.x,
-                        "y": field.y,
-                        "width": field.configs.get("width", 100),
-                        "height": field.configs.get("height", 20),
-                        "fontSize": field.font_size or 12,
-                    }
-                    formatted_fields.append(field_data)
-
-            return jsonify(
-                {
-                    "success": True,
-                    "request_id": request_id,
-                    "data": {
-                        "filename": filename,
-                        "page_count": len(fields_per_page),
-                        "fields": formatted_fields,
-                        "stats": stats if isinstance(stats, dict) else {},
-                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
-                    },
-                }
-            )
-        finally:
-            if os.path.exists(input_path):
-                os.remove(input_path)
-            if os.path.exists(output_path):
-                os.remove(output_path)
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(
@@ -2842,7 +2754,7 @@ def pdf_labeler_relabel() -> Response:
     """Relabel PDF fields using AI suggestions.
 
     Returns:
-        Response: A JSON response containing the relabeled PDF and stats.
+        Response: A JSON response containing renamed field names and the updated PDF.
     """
     request_id = str(uuid.uuid4())
     log(f"ALDashboard: pdf-relabel request {request_id}", "info")
@@ -2851,10 +2763,16 @@ def pdf_labeler_relabel() -> Response:
         return _ai_auth_fail(request_id)
 
     try:
-        from .pdf_field_labeler import relabel_existing_pdf_fields
-
         filename, content, post_data = _read_pdf_labeler_file_request()
         post_data = merge_raw_options(post_data)
+
+        relabel_payload: Dict[str, Any] = {
+            "filename": filename,
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "relabel_with_ai": True,
+            "include_pdf_base64": True,
+            **post_data,
+        }
 
         if coerce_async_flag(post_data):
             if not _labeler_async_is_configured():
@@ -2875,62 +2793,19 @@ def pdf_labeler_relabel() -> Response:
                 )
             from .api_dashboard_worker import dashboard_pdf_fields_relabel_task
 
-            task = dashboard_pdf_fields_relabel_task.delay(
-                payload={
-                    "filename": filename,
-                    "file_content_base64": base64.b64encode(content).decode("ascii"),
-                    "relabel_with_ai": True,
-                    "include_pdf_base64": True,
-                    "include_parse_stats": True,
-                    **post_data,
-                }
-            )
+            task = dashboard_pdf_fields_relabel_task.delay(payload=relabel_payload)
             return _queue_labeler_async_job(
                 task, kind="pdf_relabel", request_id=request_id
             )
 
-        jur = str(post_data.get("jur", "MA"))
-        model = str(post_data.get("model") or "").strip() or None
-
-        # Write to temp files for processing
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
-            tmp_in.write(content)
-            input_path = tmp_in.name
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
-            output_path = tmp_out.name
-
-        try:
-            stats = relabel_existing_pdf_fields(
-                input_pdf_path=input_path,
-                output_pdf_path=output_path,
-                relabel_with_ai=True,
-                jur=jur,
-                model=model,
-            )
-
-            # Read the output file
-            with open(output_path, "rb") as f:
-                output_bytes = f.read()
-
-            output_filename = filename.replace(".pdf", "-labeled.pdf")
-
-            return jsonify(
-                {
-                    "success": True,
-                    "request_id": request_id,
-                    "data": {
-                        "filename": output_filename,
-                        "stats": stats,
-                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
-                    },
-                }
-            )
-        finally:
-            if os.path.exists(input_path):
-                os.remove(input_path)
-            if os.path.exists(output_path):
-                os.remove(output_path)
+        payload = pdf_fields_relabel_payload_from_options(relabel_payload)
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": _format_pdf_relabel_labeler_data(payload),
+            }
+        )
 
     except DashboardAPIValidationError as exc:
         return jsonify_with_status(

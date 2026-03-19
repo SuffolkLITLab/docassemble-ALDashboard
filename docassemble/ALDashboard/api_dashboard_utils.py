@@ -25,6 +25,29 @@ class DashboardAPIValidationError(ValueError):
         super().__init__(message)
 
 
+def _format_pdf_fields_for_ui_payload(
+    fields_per_page: List[List[Any]],
+) -> List[Dict[str, Any]]:
+    """Convert FormFyxer fields into the browser labeler payload shape."""
+    formatted_fields: List[Dict[str, Any]] = []
+    for page_idx, page_fields in enumerate(fields_per_page):
+        for field in page_fields:
+            formatted_fields.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": field.name,
+                    "type": str(field.type).lower().replace("fieldtype.", ""),
+                    "pageIndex": page_idx,
+                    "x": field.x,
+                    "y": field.y,
+                    "width": field.configs.get("width", 100),
+                    "height": field.configs.get("height", 20),
+                    "fontSize": field.font_size or 12,
+                }
+            )
+    return formatted_fields
+
+
 def parse_bool(value: Any, *, default: bool = False) -> bool:
     if value is None:
         return default
@@ -1658,7 +1681,7 @@ def _finalize_pdf_payload(
     output_path: str,
     stats: Dict[str, Any],
     include_pdf_base64: bool,
-    include_parse_stats: bool,
+    include_field_positions: bool = False,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "input_filename": filename,
@@ -1671,8 +1694,12 @@ def _finalize_pdf_payload(
         "fields": stats.get("fields", []),
         "fields_old": stats.get("fields_old", []),
     }
-    if include_parse_stats:
-        payload["parse_stats"] = stats
+    if include_field_positions:
+        import formfyxer  # type: ignore[import-not-found]
+
+        fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
+        payload["page_count"] = len(fields_per_page)
+        payload["positioned_fields"] = _format_pdf_fields_for_ui_payload(fields_per_page)
     if include_pdf_base64:
         with open(output_path, "rb") as handle:
             payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
@@ -1733,7 +1760,9 @@ def pdf_fields_detect_payload_from_options(
     output_path = prepared["output_path"]
 
     include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
-    include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
+    include_field_positions = parse_bool(
+        raw.get("include_field_positions"), default=False
+    )
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
     model = str(raw.get("model") or "").strip() or None
@@ -1755,12 +1784,22 @@ def pdf_fields_detect_payload_from_options(
     )
     if isinstance(target_field_names, list):
         target_field_names = [str(item) for item in target_field_names]
+    preferred_variable_names = _load_json_field(
+        raw.get("preferred_variable_names"),
+        field_name="preferred_variable_names",
+        expected_type=list,
+    )
+    if isinstance(preferred_variable_names, list):
+        preferred_variable_names = [
+            str(item) for item in preferred_variable_names if str(item).strip()
+        ]
     try:
         stats = detect_pdf_fields_and_optionally_relabel(
             input_pdf_path=input_path,
             output_pdf_path=output_path,
             relabel_with_ai=relabel_with_ai,
             target_field_names=target_field_names,
+            preferred_variable_names=preferred_variable_names,
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
@@ -1772,7 +1811,7 @@ def pdf_fields_detect_payload_from_options(
             output_path=output_path,
             stats=stats,
             include_pdf_base64=include_pdf_base64,
-            include_parse_stats=include_parse_stats,
+            include_field_positions=include_field_positions,
         )
     except PDFLabelingError as err:
         raise DashboardAPIValidationError(str(err), status_code=400)
@@ -1804,7 +1843,7 @@ def pdf_fields_relabel_payload_from_options(
         raw_options: Request options containing upload data and rename settings.
 
     Returns:
-        Dict[str, Any]: Serialized rename statistics and optional PDF output data.
+        Dict[str, Any]: Serialized renamed field metadata and optional PDF output data.
     """
     from .pdf_field_labeler import PDFLabelingError, relabel_existing_pdf_fields
 
@@ -1815,7 +1854,6 @@ def pdf_fields_relabel_payload_from_options(
     output_path = prepared["output_path"]
 
     include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
-    include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
     model = str(raw.get("model") or "").strip() or None
@@ -1862,7 +1900,6 @@ def pdf_fields_relabel_payload_from_options(
             output_path=output_path,
             stats=stats,
             include_pdf_base64=include_pdf_base64,
-            include_parse_stats=include_parse_stats,
         )
     except PDFLabelingError as err:
         raise DashboardAPIValidationError(str(err), status_code=400)
@@ -2195,8 +2232,8 @@ def build_docs_html() -> str:
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
-    <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>.</li>
-    <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>.</li>
+    <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>; responses include renamed <code>fields</code>, optional positioned fields, and optional <code>pdf_base64</code>.</li>
+    <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>; responses include <code>fields</code>, <code>fields_old</code>, and optional <code>pdf_base64</code>.</li>
     <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
   </ul>
   <h2>DOCX Modes</h2>

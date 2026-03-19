@@ -9,12 +9,210 @@
     <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/variables.css">
     <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/custom.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         .hidden { display: none !important; }
         .pdf-labeler-body { background: #e8edf5; min-height: 100vh; color: #132238; }
         .pdf-labeler-app { height: 100vh; }
         .pdf-main { min-height: 0; }
-        .pdf-container { background: linear-gradient(180deg, #dae3ef 0%, #d6deea 100%); }
+        .pdf-container {
+            position: relative;
+            background: linear-gradient(180deg, #dae3ef 0%, #d6deea 100%);
+            overscroll-behavior: contain;
+        }
+        .pdf-viewport-toolbar-wrap {
+            position: sticky;
+            top: 0.75rem;
+            z-index: 30;
+            display: flex;
+            justify-content: flex-end;
+            pointer-events: none;
+            margin-bottom: -3.1rem;
+        }
+        .pdf-viewport-toolbar {
+            pointer-events: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.35rem 0.45rem;
+            border: 1px solid rgba(19, 34, 56, 0.12);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 10px 22px rgba(14, 29, 51, 0.15);
+            backdrop-filter: blur(10px);
+        }
+        .pdf-viewport-toolbar-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0 0.15rem 0 0.1rem;
+            color: #4d6482;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+        .pdf-viewport-toolbar-label svg {
+            width: 0.95rem;
+            height: 0.95rem;
+        }
+        .pdf-zoom-btn {
+            width: 2rem;
+            height: 2rem;
+            padding: 0;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pdf-zoom-label {
+            min-width: 3.15rem;
+            text-align: center;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #19314f;
+        }
+        .pdf-manager-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.7fr) minmax(20rem, 1fr);
+            gap: 1rem;
+        }
+        .page-manager-panel {
+            border: 1px solid #d8e0ea;
+            border-radius: 0.9rem;
+            background: #fbfdff;
+            padding: 0.9rem;
+            min-height: 0;
+        }
+        .page-manager-panel .panel-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #53657b;
+            margin-bottom: 0.6rem;
+        }
+        .page-manager-pages {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+            gap: 0.85rem;
+            max-height: 60vh;
+            overflow: auto;
+            padding-right: 0.2rem;
+        }
+        .page-manager-page {
+            position: relative;
+            border: 1px solid #d6deea;
+            border-radius: 0.85rem;
+            background: #fff;
+            padding: 0.7rem;
+            box-shadow: 0 10px 18px rgba(17, 36, 64, 0.06);
+            cursor: grab;
+        }
+        .page-manager-page.dragging {
+            opacity: 0.45;
+            cursor: grabbing;
+        }
+        .page-manager-page.drop-target {
+            border-color: #114a8b;
+            box-shadow: 0 0 0 2px rgba(17, 74, 139, 0.12);
+        }
+        .page-manager-page-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.5rem;
+            margin-bottom: 0.55rem;
+        }
+        .page-manager-page-title {
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: #19314f;
+        }
+        .page-manager-page-subtitle {
+            margin-top: 0.14rem;
+            font-size: 0.72rem;
+            color: #62768f;
+        }
+        .page-manager-source-badge {
+            border-radius: 999px;
+            padding: 0.16rem 0.45rem;
+            background: #edf2f8;
+            color: #3f5876;
+            font-size: 0.68rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .page-manager-thumb {
+            position: relative;
+            aspect-ratio: 0.77;
+            border-radius: 0.7rem;
+            overflow: hidden;
+            background: linear-gradient(180deg, #eef3f9 0%, #e2eaf4 100%);
+            border: 1px solid #dde5ef;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 0.65rem;
+        }
+        .page-manager-thumb canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .page-manager-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .page-manager-thumb-placeholder {
+            color: #7b8da5;
+            font-size: 0.72rem;
+        }
+        .page-manager-page-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+        .page-manager-insert-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+            gap: 0.75rem;
+            max-height: 23rem;
+            overflow: auto;
+        }
+        .insert-page-card {
+            border: 1px solid #d6deea;
+            border-radius: 0.8rem;
+            background: #fff;
+            padding: 0.65rem;
+            cursor: pointer;
+        }
+        .insert-page-card.selected {
+            border-color: #114a8b;
+            box-shadow: 0 0 0 2px rgba(17, 74, 139, 0.12);
+            background: #f8fbff;
+        }
+        .page-manager-dropzone {
+            border: 2px dashed #c3d0e0;
+            border-radius: 0.85rem;
+            padding: 0.8rem;
+            text-align: center;
+            color: #62768f;
+            font-size: 0.75rem;
+            background: rgba(255, 255, 255, 0.65);
+        }
+        .page-manager-dropzone.drop-target {
+            border-color: #114a8b;
+            background: rgba(17, 74, 139, 0.05);
+            color: #114a8b;
+        }
+        .page-manager-summary {
+            font-size: 0.76rem;
+            color: #60748d;
+        }
         .pdf-fields-panel {
             width: 24rem;
             min-width: 24rem;
@@ -557,6 +755,9 @@
         @media (max-width: 1100px) {
             .pdf-fields-panel { width: 100%; min-width: 0; max-height: 42vh; }
             .pdf-main { flex-direction: column !important; }
+            .pdf-manager-layout {
+                grid-template-columns: 1fr;
+            }
             .floating-tool-picker {
                 left: 0.75rem;
                 right: 0.75rem;
@@ -571,6 +772,23 @@
             }
             .font-row {
                 grid-template-columns: 1fr;
+            }
+            .page-manager-pages,
+            .page-manager-insert-grid {
+                grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+            }
+        }
+        @media (max-width: 768px) {
+            .pdf-viewport-toolbar-wrap {
+                top: 0.5rem;
+                margin-bottom: -2.85rem;
+            }
+            .pdf-viewport-toolbar {
+                gap: 0.2rem;
+                padding: 0.3rem 0.38rem;
+            }
+            .pdf-viewport-toolbar-label {
+                display: none;
             }
         }
     </style>
@@ -613,6 +831,10 @@
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"></path></svg>
                         Utilities
                     </button>
+                    <button id="manage-pages-btn" class="btn btn-outline-light btn-sm" disabled title="Reorder, split, delete, or insert PDF pages">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+                        Manage Pages
+                    </button>
                     <button id="preview-btn" class="btn btn-outline-light btn-sm" disabled title="Toggle field value preview">
                         <svg id="preview-icon-open" class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                         <svg id="preview-icon-closed" class="icon-16 me-1 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
@@ -642,6 +864,22 @@
 
         <main class="pdf-main d-flex flex-grow-1 overflow-hidden">
             <div id="pdf-container" class="pdf-container flex-grow-1 overflow-auto p-4">
+                <div class="pdf-viewport-toolbar-wrap">
+                    <div id="pdf-viewport-toolbar" class="pdf-viewport-toolbar" aria-label="PDF viewport zoom controls">
+                        <div class="pdf-viewport-toolbar-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.35-4.35"></path><path d="M11 8v6"></path><path d="M8 11h6"></path></svg>
+                            Zoom
+                        </div>
+                        <button id="pdf-zoom-out" type="button" class="btn btn-outline-secondary btn-sm pdf-zoom-btn" disabled aria-label="Zoom out">
+                            <svg class="icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"></path></svg>
+                        </button>
+                        <div id="pdf-zoom-label" class="pdf-zoom-label" aria-live="polite">100%</div>
+                        <button id="pdf-zoom-in" type="button" class="btn btn-outline-secondary btn-sm pdf-zoom-btn" disabled aria-label="Zoom in">
+                            <svg class="icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+                        </button>
+                        <button id="pdf-zoom-reset" type="button" class="btn btn-outline-secondary btn-sm" disabled>Reset</button>
+                    </div>
+                </div>
                 <div id="pdf-empty" class="h-100 d-flex align-items-center justify-content-center text-center">
                     <div>
                         <svg class="icon-96 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1259,6 +1497,62 @@
                 </section>
             </div>
         </div>
+
+        <div id="page-manager-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.52); z-index: 1070;">
+            <div class="bg-white border shadow rounded p-4" style="width: min(94vw, 82rem); max-height: 92vh; overflow-y: auto;">
+                <div class="d-flex align-items-start justify-content-between gap-3 border-bottom pb-3 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Manage Pages</h2>
+                        <p class="small text-muted mb-0">Reorder pages by dragging cards, remove pages, insert pages from another PDF, or add split points for multi-document export.</p>
+                    </div>
+                    <button id="close-page-manager" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div id="page-manager-status" class="hidden alert small mb-3"></div>
+                <div class="pdf-manager-layout">
+                    <section class="page-manager-panel">
+                        <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                            <div class="panel-title mb-0">Current Arrangement</div>
+                            <div id="page-manager-summary" class="page-manager-summary"></div>
+                        </div>
+                        <p class="small text-muted mt-2 mb-3">Drag cards to reorder. Check “Start new document here” on any page after the first to split the PDF at that point.</p>
+                        <div id="page-manager-pages" class="page-manager-pages"></div>
+                        <div id="page-manager-dropzone" class="page-manager-dropzone mt-3">Drop here to move a page to the end</div>
+                    </section>
+                    <section class="d-flex flex-column gap-3">
+                        <div class="page-manager-panel">
+                            <div class="panel-title">Insert Pages</div>
+                            <p class="small text-muted mb-3">Upload another PDF, pick the pages to insert, and choose where they should land in the current arrangement.</p>
+                            <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                                <label class="btn btn-outline-secondary btn-sm mb-0">
+                                    Upload PDF
+                                    <input type="file" id="page-manager-insert-file" accept=".pdf" class="d-none">
+                                </label>
+                                <span id="page-manager-insert-file-name" class="small text-muted"></span>
+                            </div>
+                            <div class="mb-2">
+                                <label for="page-manager-insert-position" class="form-label small mb-1">Insert position</label>
+                                <select id="page-manager-insert-position" class="form-select form-select-sm"></select>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                <div id="page-manager-insert-selection-summary" class="small text-muted">No insert PDF loaded.</div>
+                                <button id="page-manager-insert-run" class="btn btn-primary btn-sm" disabled>Insert Selected Pages</button>
+                            </div>
+                            <div id="page-manager-insert-pages" class="page-manager-insert-grid"></div>
+                        </div>
+                        <div class="page-manager-panel">
+                            <div class="panel-title">Split &amp; Apply</div>
+                            <p class="small text-muted mb-3">Applying updates the active PDF in the workspace and preserves field overlays on kept pages. Split download exports the current arrangement as multiple PDFs.</p>
+                            <div class="form-text mb-3">Split downloads use the current PDF pages. If you have unsaved field edits, apply the arrangement to the workspace first and export afterward to embed those fields.</div>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button id="page-manager-reset" class="btn btn-outline-secondary btn-sm">Reset</button>
+                                <button id="page-manager-download-splits" class="btn btn-outline-primary btn-sm" disabled>Split &amp; Download</button>
+                                <button id="page-manager-apply" class="btn btn-primary btn-sm" disabled>Apply to Workspace</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script id="labeler-bootstrap" type="application/json">__LABELER_BOOTSTRAP_JSON__</script>
@@ -1282,6 +1576,7 @@
     const BRANDING = LABELER_BOOTSTRAP.branding || {};
     const PDF_CONFIG = LABELER_BOOTSTRAP.pdf || {};
     const PDFLibGlobal = window.PDFLib || {};
+    const JSZipGlobal = window.JSZip || null;
 
     const FIELD_TYPES = ['text', 'multiline', 'checkbox', 'signature', 'radio', 'dropdown', 'listbox'];
     const POINT_INSERT_TYPES = new Set(['checkbox', 'radio']);
@@ -1402,6 +1697,7 @@
         selectedTool: null,
         previewMode: false,
         renderScale: 1.35,
+        viewerZoom: 1,
         defaultModel: 'gpt-5-mini',
         recommendedModels: ['gpt-5-mini'],
         availableModels: [],
@@ -1476,12 +1772,19 @@
     let fieldsListSyncRaf = null;
     let fieldsListProgrammaticScroll = false;
     let fieldsListManualScrollUntil = 0;
+    let pageManagerState = null;
+    let pageManagerDragPageId = null;
 
     const fileInput = document.getElementById('file-input');
     const pdfContainer = document.getElementById('pdf-container');
     const pdfEmpty = document.getElementById('pdf-empty');
     const pdfLoading = document.getElementById('pdf-loading');
     const loadingMessage = document.getElementById('loading-message');
+    const managePagesBtn = document.getElementById('manage-pages-btn');
+    const pdfZoomOutBtn = document.getElementById('pdf-zoom-out');
+    const pdfZoomInBtn = document.getElementById('pdf-zoom-in');
+    const pdfZoomResetBtn = document.getElementById('pdf-zoom-reset');
+    const pdfZoomLabel = document.getElementById('pdf-zoom-label');
     const floatingToolPicker = document.getElementById('floating-tool-picker');
     const pdfPages = document.getElementById('pdf-pages');
     const fieldsEmpty = document.getElementById('fields-empty');
@@ -1517,6 +1820,21 @@
     const previewBtn = document.getElementById('preview-btn');
     const utilitiesModal = document.getElementById('utilities-modal');
     const utilitiesCloseBtn = document.getElementById('utilities-close');
+    const pageManagerModal = document.getElementById('page-manager-modal');
+    const closePageManagerBtn = document.getElementById('close-page-manager');
+    const pageManagerStatus = document.getElementById('page-manager-status');
+    const pageManagerPages = document.getElementById('page-manager-pages');
+    const pageManagerDropzone = document.getElementById('page-manager-dropzone');
+    const pageManagerSummary = document.getElementById('page-manager-summary');
+    const pageManagerInsertFileInput = document.getElementById('page-manager-insert-file');
+    const pageManagerInsertFileName = document.getElementById('page-manager-insert-file-name');
+    const pageManagerInsertPosition = document.getElementById('page-manager-insert-position');
+    const pageManagerInsertSelectionSummary = document.getElementById('page-manager-insert-selection-summary');
+    const pageManagerInsertPages = document.getElementById('page-manager-insert-pages');
+    const pageManagerInsertRunBtn = document.getElementById('page-manager-insert-run');
+    const pageManagerResetBtn = document.getElementById('page-manager-reset');
+    const pageManagerDownloadSplitsBtn = document.getElementById('page-manager-download-splits');
+    const pageManagerApplyBtn = document.getElementById('page-manager-apply');
     const passwordModal = document.getElementById('password-modal');
     const passwordInput = document.getElementById('password-input');
     const passwordError = document.getElementById('password-error');
@@ -1626,6 +1944,52 @@
 
     function clamp(value, min, max) {
         return Math.min(Math.max(value, min), max);
+    }
+
+    function getViewerRenderScale() {
+        return state.renderScale * state.viewerZoom;
+    }
+
+    function updateZoomControls() {
+        const hasPdf = !!state.pdfBytes;
+        const zoomPercent = Math.round(state.viewerZoom * 100);
+        pdfZoomLabel.textContent = zoomPercent + '%';
+        pdfZoomOutBtn.disabled = !hasPdf || state.viewerZoom <= 0.6;
+        pdfZoomInBtn.disabled = !hasPdf || state.viewerZoom >= 2.4;
+        pdfZoomResetBtn.disabled = !hasPdf || Math.abs(state.viewerZoom - 1) < 0.001;
+    }
+
+    function captureViewerAnchor() {
+        const shell = document.querySelector('.pdf-page-shell[data-page-index="' + currentVisiblePageIndex + '"]');
+        if (!shell) {
+            return { pageIndex: currentVisiblePageIndex || 0, offsetRatio: 0 };
+        }
+        const pageHeight = Math.max(shell.offsetHeight, 1);
+        return {
+            pageIndex: Number(shell.dataset.pageIndex || 0),
+            offsetRatio: clamp((pdfContainer.scrollTop - shell.offsetTop) / pageHeight, 0, 1)
+        };
+    }
+
+    function restoreViewerAnchor(anchor) {
+        if (!anchor) return;
+        const shell = document.querySelector('.pdf-page-shell[data-page-index="' + anchor.pageIndex + '"]');
+        if (!shell) return;
+        pdfContainer.scrollTop = shell.offsetTop + (shell.offsetHeight * clamp(anchor.offsetRatio || 0, 0, 1));
+        currentVisiblePageIndex = anchor.pageIndex;
+    }
+
+    async function updateViewerZoom(nextZoom) {
+        const clampedZoom = clamp(Number(nextZoom) || 1, 0.6, 2.4);
+        if (!state.pdfDoc || Math.abs(clampedZoom - state.viewerZoom) < 0.001) {
+            state.viewerZoom = clampedZoom;
+            updateZoomControls();
+            return;
+        }
+        const anchor = captureViewerAnchor();
+        state.viewerZoom = clampedZoom;
+        updateZoomControls();
+        await renderPages({ anchor: anchor });
     }
 
     function normalizeFieldType(rawType) {
@@ -1974,6 +2338,7 @@
             pdfPages.classList.remove('hidden');
             pdfEmpty.classList.add('hidden');
         }
+        updateZoomControls();
     }
 
     function getCurrentVisiblePageIndex() {
@@ -2106,12 +2471,14 @@
         repairBtn.disabled = !state.pdfBytes;
         relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
         previewBtn.disabled = !state.pdfBytes || totalCount === 0;
+        managePagesBtn.disabled = !state.pdfBytes;
         if (!state.pdfBytes || totalCount === 0) {
             state.previewMode = false;
             previewBtn.classList.remove('active');
             document.getElementById('preview-icon-open').classList.remove('hidden');
             document.getElementById('preview-icon-closed').classList.add('hidden');
         }
+        updateZoomControls();
     }
 
     function getDisplayedFields() {
@@ -2838,6 +3205,20 @@
         return bytes;
     }
 
+    function clonePdfBytes(pdfBytes) {
+        if (!pdfBytes) return null;
+        if (pdfBytes instanceof Uint8Array) {
+            return new Uint8Array(pdfBytes);
+        }
+        if (ArrayBuffer.isView(pdfBytes)) {
+            return new Uint8Array(pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength));
+        }
+        if (pdfBytes instanceof ArrayBuffer) {
+            return new Uint8Array(pdfBytes.slice(0));
+        }
+        return new Uint8Array(pdfBytes);
+    }
+
     function looksLikePdfBytes(pdfBytes) {
         if (!pdfBytes || pdfBytes.length < 5) return false;
         return pdfBytes[0] === 0x25 &&
@@ -2958,11 +3339,50 @@
     }
 
     function syncPdfState(pdfBytes, fileName, originalFile) {
-        state.pdfBytes = pdfBytes;
+        state.pdfBytes = clonePdfBytes(pdfBytes);
         if (fileName) {
             state.fileName = fileName;
         }
-        updateRequestPdfFile(pdfBytes, state.fileName, originalFile);
+        updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
+    }
+
+    async function refreshPdfDocumentFromState(renderOptions) {
+        state.pdfDoc = await pdfjsLib.getDocument({ data: clonePdfBytes(state.pdfBytes) }).promise;
+        state.pageCount = state.pdfDoc.numPages;
+        state.pageSizes = [];
+        state.pageTextBoxes = [];
+
+        for (let index = 1; index <= state.pageCount; index += 1) {
+            const page = await state.pdfDoc.getPage(index);
+            const viewport = page.getViewport({ scale: 1 });
+            state.pageSizes.push({ width: viewport.width, height: viewport.height });
+            state.pageTextBoxes.push(await extractTextBoxesFromPage(page));
+        }
+
+        await renderPages(renderOptions);
+    }
+
+    function stripPdfExtension(fileName) {
+        return String(fileName || 'document').replace(/\.pdf$/i, '');
+    }
+
+    function sanitizeFilenameSegment(value, fallbackValue) {
+        const cleaned = String(value || '')
+            .replace(/[^a-z0-9._-]+/gi, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-+|-+$/g, '');
+        return cleaned || fallbackValue || 'document';
+    }
+
+    function downloadBlob(blob, fileName) {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
     }
 
     function getPdfFileForRequests() {
@@ -3063,7 +3483,7 @@
         }
         const fields = [];
         try {
-            const pdfDoc = await PDFLibGlobal.PDFDocument.load(pdfBytes);
+            const pdfDoc = await PDFLibGlobal.PDFDocument.load(clonePdfBytes(pdfBytes));
             const form = pdfDoc.getForm();
             const pdfPages = pdfDoc.getPages();
 
@@ -3805,7 +4225,7 @@
                     var css = pdfFontToCss(field.font || getSessionDefault('font'));
                     var ptSize = field.fontSize || getSessionDefault('fontSize') || 10;
                     // 1 PDF pt = renderScale CSS px on the scaled canvas overlay
-                    var pxSize = ptSize * state.renderScale;
+                    var pxSize = ptSize * getViewerRenderScale();
                     previewDiv.style.fontFamily = css.family;
                     previewDiv.style.fontWeight = css.weight;
                     previewDiv.style.lineHeight = '1.15';
@@ -3816,8 +4236,8 @@
                     // Apply auto-sizing: adjust font to fit field dimensions
                     if (field.autoSize && field.name && field.type === 'text') {
                         var pageSize = state.pageSizes[field.pageIndex] || { width: 612, height: 792 };
-                        var fieldWidthPx = field.width * (pageSize.width * state.renderScale);
-                        var fieldHeightPx = field.height * (pageSize.height * state.renderScale);
+                        var fieldWidthPx = field.width * (pageSize.width * getViewerRenderScale());
+                        var fieldHeightPx = field.height * (pageSize.height * getViewerRenderScale());
                         
                         // Max font size based on field height (single-line text, ~15% padding)
                         var maxPxSize = fieldHeightPx * 0.85 / 1.15;  // Account for line-height
@@ -4180,12 +4600,13 @@
         return { shell: shell, page: page };
     }
 
-    async function renderPages() {
+    async function renderPages(options) {
+        const settings = options || {};
         pdfPages.innerHTML = '';
 
         for (let pageIndex = 0; pageIndex < state.pageCount; pageIndex += 1) {
             const pageProxy = await state.pdfDoc.getPage(pageIndex + 1);
-            const viewport = pageProxy.getViewport({ scale: state.renderScale });
+            const viewport = pageProxy.getViewport({ scale: getViewerRenderScale() });
             const pageShell = createPageShell(pageIndex);
             pageShell.page.style.width = viewport.width + 'px';
             pageShell.page.style.height = viewport.height + 'px';
@@ -4213,6 +4634,9 @@
 
         updateOverlayCursorState();
         renderFieldsOnPages();
+        if (settings.anchor) {
+            restoreViewerAnchor(settings.anchor);
+        }
         currentVisiblePageIndex = getCurrentVisiblePageIndex();
     }
 
@@ -4226,20 +4650,7 @@
             const arrayBuffer = await file.arrayBuffer();
             syncPdfState(arrayBufferToUint8Array(arrayBuffer), file.name || 'edited-form.pdf', file);
             updateDocumentName();
-
-            state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
-            state.pageCount = state.pdfDoc.numPages;
-            state.pageSizes = [];
-            state.pageTextBoxes = [];
-
-            for (let index = 1; index <= state.pageCount; index += 1) {
-                const page = await state.pdfDoc.getPage(index);
-                const viewport = page.getViewport({ scale: 1 });
-                state.pageSizes.push({ width: viewport.width, height: viewport.height });
-                state.pageTextBoxes.push(await extractTextBoxesFromPage(page));
-            }
-
-            await renderPages();
+            await refreshPdfDocumentFromState();
             showLoading('Detecting fields with FormFyxer...');
 
             const existingFields = await parseExistingFieldsLocally(state.pdfBytes, state.pageSizes);
@@ -4485,8 +4896,7 @@
                 if (data.success && data.data && data.data.pdf_base64) {
                     var strippedBytes = base64ToUint8Array(data.data.pdf_base64);
                     syncPdfState(strippedBytes, state.fileName || 'edited-form.pdf');
-                    state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
-                    await renderPages();
+                    await refreshPdfDocumentFromState();
                     replaceFields(state.fields, { preserveSelection: true });
                 }
             }
@@ -4692,6 +5102,466 @@
         }
     }
 
+    function createPageManagerDraftPage(sourceId, sourcePageIndex) {
+        return {
+            id: 'page-' + generateId(),
+            sourceId: sourceId,
+            sourcePageIndex: Number(sourcePageIndex) || 0,
+            splitBefore: false
+        };
+    }
+
+    function getPageManagerSource(sourceId) {
+        if (!pageManagerState || !pageManagerState.sources) return null;
+        return pageManagerState.sources[sourceId] || null;
+    }
+
+    function setPageManagerStatus(message, tone) {
+        if (!message) {
+            pageManagerStatus.className = 'hidden alert small mb-3';
+            pageManagerStatus.textContent = '';
+            return;
+        }
+        const level = tone || 'info';
+        pageManagerStatus.className = 'alert alert-' + level + ' small mb-3';
+        pageManagerStatus.textContent = message;
+        pageManagerStatus.classList.remove('hidden');
+    }
+
+    function hasPageManagerStructuralChanges() {
+        if (!pageManagerState) return false;
+        if (pageManagerState.draftPages.length !== state.pageCount) {
+            return true;
+        }
+        return pageManagerState.draftPages.some(function (page, index) {
+            return page.sourceId !== 'active' || page.sourcePageIndex !== index;
+        });
+    }
+
+    function getPageManagerSplitGroups() {
+        if (!pageManagerState || !pageManagerState.draftPages.length) return [];
+        const groups = [];
+        let currentGroup = [];
+        pageManagerState.draftPages.forEach(function (page, index) {
+            if (index > 0 && page.splitBefore && currentGroup.length) {
+                groups.push(currentGroup);
+                currentGroup = [];
+            }
+            currentGroup.push(page);
+        });
+        if (currentGroup.length) {
+            groups.push(currentGroup);
+        }
+        return groups;
+    }
+
+    function syncPageManagerInsertPositionOptions() {
+        if (!pageManagerState) return;
+        const previousValue = pageManagerInsertPosition.value;
+        pageManagerInsertPosition.innerHTML = '';
+        const totalPages = pageManagerState.draftPages.length;
+        if (!totalPages) {
+            const option = document.createElement('option');
+            option.value = '0';
+            option.textContent = 'At beginning';
+            pageManagerInsertPosition.appendChild(option);
+            return;
+        }
+        for (let index = 0; index <= totalPages; index += 1) {
+            const option = document.createElement('option');
+            option.value = String(index);
+            if (index === 0) {
+                option.textContent = 'Before page 1';
+            } else if (index === totalPages) {
+                option.textContent = 'After page ' + totalPages;
+            } else {
+                option.textContent = 'Between pages ' + index + ' and ' + (index + 1);
+            }
+            pageManagerInsertPosition.appendChild(option);
+        }
+        if (Array.from(pageManagerInsertPosition.options).some(function (option) { return option.value === previousValue; })) {
+            pageManagerInsertPosition.value = previousValue;
+        } else {
+            pageManagerInsertPosition.value = String(totalPages);
+        }
+    }
+
+    function renderPageManagerSummary() {
+        if (!pageManagerState) return;
+        const totalPages = pageManagerState.draftPages.length;
+        const insertedCount = pageManagerState.draftPages.filter(function (page) { return page.sourceId !== 'active'; }).length;
+        const splitCount = Math.max(getPageManagerSplitGroups().length - 1, 0);
+        const parts = [totalPages + ' page' + (totalPages === 1 ? '' : 's')];
+        if (insertedCount) {
+            parts.push(insertedCount + ' inserted');
+        }
+        if (splitCount) {
+            parts.push(splitCount + ' split point' + (splitCount === 1 ? '' : 's'));
+        }
+        pageManagerSummary.textContent = parts.join(' • ');
+    }
+
+    function updatePageManagerControls() {
+        if (!pageManagerState) return;
+        const insertSource = getPageManagerSource(pageManagerState.insertSourceId);
+        const selectedInsertCount = insertSource && pageManagerState.insertSelections
+            ? pageManagerState.insertSelections.size
+            : 0;
+        if (!insertSource) {
+            pageManagerInsertSelectionSummary.textContent = 'No insert PDF loaded.';
+        } else if (!selectedInsertCount) {
+            pageManagerInsertSelectionSummary.textContent = insertSource.name + ' loaded. Select page cards to insert.';
+        } else {
+            pageManagerInsertSelectionSummary.textContent = selectedInsertCount + ' page' + (selectedInsertCount === 1 ? '' : 's') + ' selected from ' + insertSource.name + '.';
+        }
+        pageManagerInsertRunBtn.disabled = !insertSource || selectedInsertCount === 0;
+        pageManagerApplyBtn.disabled = !pageManagerState.draftPages.length || !hasPageManagerStructuralChanges();
+        pageManagerDownloadSplitsBtn.disabled = getPageManagerSplitGroups().length < 2;
+        renderPageManagerSummary();
+        syncPageManagerInsertPositionOptions();
+    }
+
+    async function ensurePageManagerThumbnail(source, pageIndex) {
+        if (!source) return '';
+        if (!source.thumbCache) {
+            source.thumbCache = {};
+        }
+        if (source.thumbCache[pageIndex]) {
+            return source.thumbCache[pageIndex];
+        }
+        const page = await source.pdfDoc.getPage(pageIndex + 1);
+        const viewport = page.getViewport({ scale: 0.23 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({
+            canvasContext: canvas.getContext('2d'),
+            viewport: viewport,
+            annotationMode: 0
+        }).promise;
+        source.thumbCache[pageIndex] = canvas.toDataURL('image/png');
+        return source.thumbCache[pageIndex];
+    }
+
+    async function hydratePageManagerThumb(thumbEl, sourceId, pageIndex) {
+        const source = getPageManagerSource(sourceId);
+        if (!thumbEl || !source || !source.pdfDoc) return;
+        thumbEl.innerHTML = '<div class="page-manager-thumb-placeholder">Rendering preview…</div>';
+        try {
+            const imageUrl = await ensurePageManagerThumbnail(source, pageIndex);
+            if (!thumbEl.isConnected) return;
+            const image = document.createElement('img');
+            image.src = imageUrl;
+            image.alt = 'Page preview';
+            thumbEl.innerHTML = '';
+            thumbEl.appendChild(image);
+        } catch (_error) {
+            if (!thumbEl.isConnected) return;
+            thumbEl.innerHTML = '<div class="page-manager-thumb-placeholder">Preview unavailable</div>';
+        }
+    }
+
+    function clearPageManagerDropTargets() {
+        pageManagerPages.querySelectorAll('.page-manager-page.drop-target').forEach(function (card) {
+            card.classList.remove('drop-target');
+        });
+        pageManagerDropzone.classList.remove('drop-target');
+    }
+
+    function movePageManagerDraftPage(pageId, nextIndex) {
+        if (!pageManagerState) return;
+        const currentIndex = pageManagerState.draftPages.findIndex(function (page) {
+            return page.id === pageId;
+        });
+        if (currentIndex < 0) return;
+        const boundedIndex = clamp(nextIndex, 0, pageManagerState.draftPages.length);
+        if (currentIndex === boundedIndex) return;
+        const movedPage = pageManagerState.draftPages.splice(currentIndex, 1)[0];
+        const adjustedIndex = boundedIndex > currentIndex ? boundedIndex - 1 : boundedIndex;
+        pageManagerState.draftPages.splice(adjustedIndex, 0, movedPage);
+        renderPageManagerPages();
+    }
+
+    function renderPageManagerPages() {
+        if (!pageManagerState) return;
+        pageManagerPages.innerHTML = '';
+        pageManagerState.draftPages.forEach(function (page, index) {
+            const source = getPageManagerSource(page.sourceId);
+            const card = document.createElement('div');
+            card.className = 'page-manager-page';
+            card.draggable = true;
+            card.dataset.pageId = page.id;
+
+            const header = document.createElement('div');
+            header.className = 'page-manager-page-header';
+            header.innerHTML =
+                '<div>' +
+                    '<div class="page-manager-page-title">Page ' + (index + 1) + '</div>' +
+                    '<div class="page-manager-page-subtitle">Source page ' + (page.sourcePageIndex + 1) + '</div>' +
+                '</div>' +
+                '<span class="page-manager-source-badge">' + escapeHtml(source && source.kind === 'active' ? 'Active PDF' : 'Inserted PDF') + '</span>';
+            card.appendChild(header);
+
+            const thumb = document.createElement('div');
+            thumb.className = 'page-manager-thumb';
+            thumb.innerHTML = '<div class="page-manager-thumb-placeholder">Rendering preview…</div>';
+            card.appendChild(thumb);
+            void hydratePageManagerThumb(thumb, page.sourceId, page.sourcePageIndex);
+
+            const actions = document.createElement('div');
+            actions.className = 'page-manager-page-actions';
+            actions.innerHTML =
+                '<div class="form-check mb-0">' +
+                    '<input class="form-check-input page-manager-split-toggle"' +
+                        (index === 0 ? ' disabled' : '') +
+                        ' type="checkbox" data-page-id="' + escapeHtml(page.id) + '"' +
+                        (page.splitBefore ? ' checked' : '') +
+                        ' id="page-manager-split-' + escapeHtml(page.id) + '">' +
+                    '<label class="form-check-label small" for="page-manager-split-' + escapeHtml(page.id) + '">Start new document here</label>' +
+                '</div>' +
+                '<button type="button" class="btn btn-outline-danger btn-sm" data-page-manager-action="remove" data-page-id="' + escapeHtml(page.id) + '">Remove</button>';
+            card.appendChild(actions);
+
+            pageManagerPages.appendChild(card);
+        });
+        updatePageManagerControls();
+    }
+
+    function renderPageManagerInsertPages() {
+        pageManagerInsertPages.innerHTML = '';
+        if (!pageManagerState) return;
+        const insertSource = getPageManagerSource(pageManagerState.insertSourceId);
+        if (!insertSource) {
+            updatePageManagerControls();
+            return;
+        }
+        for (let pageIndex = 0; pageIndex < insertSource.pdfDoc.numPages; pageIndex += 1) {
+            const selected = pageManagerState.insertSelections.has(pageIndex);
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'insert-page-card text-start' + (selected ? ' selected' : '');
+            card.dataset.insertPageIndex = String(pageIndex);
+            card.innerHTML =
+                '<div class="d-flex justify-content-between align-items-center gap-2 mb-2">' +
+                    '<div class="small fw-semibold">Page ' + (pageIndex + 1) + '</div>' +
+                    '<input type="checkbox" class="form-check-input m-0" tabindex="-1"' + (selected ? ' checked' : '') + '>' +
+                '</div>';
+            const thumb = document.createElement('div');
+            thumb.className = 'page-manager-thumb mb-0';
+            thumb.innerHTML = '<div class="page-manager-thumb-placeholder">Rendering preview…</div>';
+            card.appendChild(thumb);
+            void hydratePageManagerThumb(thumb, insertSource.id, pageIndex);
+            pageManagerInsertPages.appendChild(card);
+        }
+        updatePageManagerControls();
+    }
+
+    function renderPageManager() {
+        renderPageManagerPages();
+        renderPageManagerInsertPages();
+        updatePageManagerControls();
+    }
+
+    function buildFreshPageManagerState() {
+        return {
+            sources: {
+                active: {
+                    id: 'active',
+                    kind: 'active',
+                    name: state.fileName || 'active.pdf',
+                    bytes: clonePdfBytes(state.pdfBytes),
+                    pdfDoc: state.pdfDoc,
+                    thumbCache: {}
+                }
+            },
+            draftPages: Array.from({ length: state.pageCount }, function (_unused, index) {
+                return createPageManagerDraftPage('active', index);
+            }),
+            insertSourceId: null,
+            insertSelections: new Set()
+        };
+    }
+
+    function openPageManager() {
+        if (!state.pdfBytes || !state.pdfDoc) return;
+        pageManagerState = buildFreshPageManagerState();
+        pageManagerInsertFileInput.value = '';
+        pageManagerInsertFileName.textContent = '';
+        pageManagerDragPageId = null;
+        setPageManagerStatus('', 'info');
+        renderPageManager();
+        pageManagerModal.classList.remove('hidden');
+    }
+
+    function closePageManager() {
+        pageManagerModal.classList.add('hidden');
+        pageManagerState = null;
+        pageManagerDragPageId = null;
+        setPageManagerStatus('', 'info');
+    }
+
+    async function loadPageManagerInsertSource(file) {
+        if (!pageManagerState || !file) return;
+        setPageManagerStatus('Loading insert PDF...', 'info');
+        try {
+            const bytes = clonePdfBytes(arrayBufferToUint8Array(await file.arrayBuffer()));
+            const pdfDoc = await pdfjsLib.getDocument({ data: clonePdfBytes(bytes) }).promise;
+            const sourceId = 'insert-' + Date.now();
+            pageManagerState.sources[sourceId] = {
+                id: sourceId,
+                kind: 'insert',
+                name: file.name || 'insert.pdf',
+                bytes: bytes,
+                pdfDoc: pdfDoc,
+                thumbCache: {}
+            };
+            pageManagerState.insertSourceId = sourceId;
+            pageManagerState.insertSelections = new Set();
+            pageManagerInsertFileName.textContent = file.name || 'insert.pdf';
+            renderPageManagerInsertPages();
+            setPageManagerStatus('Insert PDF loaded.', 'success');
+        } catch (error) {
+            console.error('Error loading insert PDF:', error);
+            setPageManagerStatus('Could not load insert PDF: ' + (error && error.message ? error.message : 'Unknown error.'), 'danger');
+        }
+    }
+
+    function togglePageManagerInsertSelection(pageIndex) {
+        if (!pageManagerState) return;
+        if (pageManagerState.insertSelections.has(pageIndex)) {
+            pageManagerState.insertSelections.delete(pageIndex);
+        } else {
+            pageManagerState.insertSelections.add(pageIndex);
+        }
+        renderPageManagerInsertPages();
+    }
+
+    function insertSelectedPagesIntoManager() {
+        if (!pageManagerState) return;
+        const source = getPageManagerSource(pageManagerState.insertSourceId);
+        const selectedPages = Array.from(pageManagerState.insertSelections).sort(function (left, right) {
+            return left - right;
+        });
+        if (!source || !selectedPages.length) return;
+        const insertAt = clamp(Number(pageManagerInsertPosition.value || pageManagerState.draftPages.length), 0, pageManagerState.draftPages.length);
+        const draftPages = selectedPages.map(function (pageIndex) {
+            return createPageManagerDraftPage(source.id, pageIndex);
+        });
+        pageManagerState.draftPages.splice.apply(pageManagerState.draftPages, [insertAt, 0].concat(draftPages));
+        pageManagerState.insertSelections = new Set();
+        renderPageManager();
+        setPageManagerStatus('Inserted ' + selectedPages.length + ' page' + (selectedPages.length === 1 ? '' : 's') + '.', 'success');
+    }
+
+    async function buildPdfBytesFromPageDescriptors(pages) {
+        if (!PDFLibGlobal.PDFDocument) {
+            throw new Error('Page management requires pdf-lib in the browser.');
+        }
+        const outputDoc = await PDFLibGlobal.PDFDocument.create();
+        const sourceDocs = {};
+        for (const page of pages) {
+            const source = getPageManagerSource(page.sourceId);
+            if (!source || !source.bytes) {
+                throw new Error('A source PDF is missing for one or more pages.');
+            }
+            if (!sourceDocs[source.id]) {
+                sourceDocs[source.id] = await PDFLibGlobal.PDFDocument.load(clonePdfBytes(source.bytes));
+            }
+            const copiedPages = await outputDoc.copyPages(sourceDocs[source.id], [page.sourcePageIndex]);
+            outputDoc.addPage(copiedPages[0]);
+        }
+        return new Uint8Array(await outputDoc.save());
+    }
+
+    function remapFieldsForPageManagerDraft() {
+        const fieldsByPageIndex = new Map();
+        state.fields.forEach(function (field) {
+            if (!fieldsByPageIndex.has(field.pageIndex)) {
+                fieldsByPageIndex.set(field.pageIndex, []);
+            }
+            fieldsByPageIndex.get(field.pageIndex).push(field);
+        });
+
+        const nextFields = [];
+        pageManagerState.draftPages.forEach(function (page, newPageIndex) {
+            if (page.sourceId !== 'active') return;
+            const sourceFields = fieldsByPageIndex.get(page.sourcePageIndex) || [];
+            sourceFields.forEach(function (field) {
+                nextFields.push(Object.assign({}, field, { pageIndex: newPageIndex }));
+            });
+        });
+        return nextFields;
+    }
+
+    async function applyPageManagerChanges() {
+        if (!pageManagerState || !pageManagerState.draftPages.length) {
+            setPageManagerStatus('Keep at least one page in the document.', 'danger');
+            return;
+        }
+        showLoading('Applying page changes...');
+        try {
+            const nextPdfBytes = await buildPdfBytesFromPageDescriptors(pageManagerState.draftPages);
+            const nextFields = remapFieldsForPageManagerDraft();
+            syncPdfState(nextPdfBytes, state.fileName || 'edited-form.pdf');
+            updateDocumentName();
+            await refreshPdfDocumentFromState();
+            replaceFields(nextFields, { preserveSelection: true });
+            setDirty(true);
+            closePageManager();
+            showPdfWorkspace();
+            showSuccess('Page changes applied to the workspace.');
+        } catch (error) {
+            console.error('Error applying page changes:', error);
+            setPageManagerStatus('Could not apply page changes: ' + (error && error.message ? error.message : 'Unknown error.'), 'danger');
+        } finally {
+            hideLoading();
+        }
+    }
+
+    async function downloadSplitDocumentsFromManager() {
+        if (!pageManagerState) return;
+        const groups = getPageManagerSplitGroups();
+        if (groups.length < 2) {
+            setPageManagerStatus('Add at least one split point before downloading multiple documents.', 'warning');
+            return;
+        }
+        if (state.fields.length > 0 && state.hasUnsavedChanges) {
+            const confirmed = window.confirm('Split downloads use the current PDF pages only. Unsaved field overlay edits will not be embedded. Continue?');
+            if (!confirmed) return;
+        }
+        showLoading('Preparing split PDFs...');
+        try {
+            const baseName = sanitizeFilenameSegment(stripPdfExtension(state.fileName || 'document'), 'document');
+            const outputs = [];
+            for (let index = 0; index < groups.length; index += 1) {
+                const bytes = await buildPdfBytesFromPageDescriptors(groups[index]);
+                outputs.push({
+                    name: baseName + '-part-' + String(index + 1).padStart(2, '0') + '.pdf',
+                    bytes: bytes
+                });
+            }
+            if (JSZipGlobal) {
+                const zip = new JSZipGlobal();
+                outputs.forEach(function (output) {
+                    zip.file(output.name, output.bytes);
+                });
+                const zipBlob = await zip.generateAsync({ type: 'blob' });
+                downloadBlob(zipBlob, baseName + '-split-pdfs.zip');
+            } else {
+                outputs.forEach(function (output) {
+                    downloadBlob(new Blob([output.bytes], { type: 'application/pdf' }), output.name);
+                });
+            }
+            setPageManagerStatus('Downloaded ' + outputs.length + ' split PDF' + (outputs.length === 1 ? '' : 's') + '.', 'success');
+            showSuccess('Split PDFs downloaded.');
+        } catch (error) {
+            console.error('Error downloading split PDFs:', error);
+            setPageManagerStatus('Could not split the PDF: ' + (error && error.message ? error.message : 'Unknown error.'), 'danger');
+        } finally {
+            hideLoading();
+        }
+    }
+
     document.addEventListener('pointermove', function (event) {
         if (draftState) {
             const overlay = getOverlayForPage(draftState.pageIndex);
@@ -4736,6 +5606,16 @@
         fileInput.value = '';
     });
 
+    pdfZoomOutBtn.addEventListener('click', function () {
+        void updateViewerZoom(state.viewerZoom - 0.15);
+    });
+    pdfZoomInBtn.addEventListener('click', function () {
+        void updateViewerZoom(state.viewerZoom + 0.15);
+    });
+    pdfZoomResetBtn.addEventListener('click', function () {
+        void updateViewerZoom(1);
+    });
+
     pdfContainer.addEventListener('dragover', function (event) {
         event.preventDefault();
         pdfContainer.classList.add('drag-over');
@@ -4757,6 +5637,13 @@
         currentVisiblePageIndex = getCurrentVisiblePageIndex();
         positionQuickFieldEditor();
     });
+    pdfContainer.addEventListener('wheel', function (event) {
+        if (!state.pdfBytes || !(event.ctrlKey || event.metaKey)) return;
+        if (event.cancelable) {
+            event.preventDefault();
+        }
+        void updateViewerZoom(state.viewerZoom + (event.deltaY < 0 ? 0.1 : -0.1));
+    }, { passive: false });
     fieldsList.addEventListener('scroll', function () {
         if (fieldsListProgrammaticScroll) return;
         fieldsListManualScrollUntil = Date.now() + 1600;
@@ -4801,6 +5688,109 @@
         repairStatus.classList.add('hidden');
         repairModal.querySelectorAll('.repair-run-btn').forEach(function (btn) { btn.disabled = false; });
         repairModal.classList.remove('hidden');
+    });
+    managePagesBtn.addEventListener('click', function () {
+        openPageManager();
+    });
+    closePageManagerBtn.addEventListener('click', function () {
+        closePageManager();
+    });
+    pageManagerResetBtn.addEventListener('click', function () {
+        if (!state.pdfBytes) return;
+        pageManagerState = buildFreshPageManagerState();
+        pageManagerInsertFileInput.value = '';
+        pageManagerInsertFileName.textContent = '';
+        setPageManagerStatus('Page arrangement reset to the active PDF.', 'info');
+        renderPageManager();
+    });
+    pageManagerInsertFileInput.addEventListener('change', function (event) {
+        const file = event.target.files && event.target.files[0];
+        if (file) {
+            void loadPageManagerInsertSource(file);
+        }
+        pageManagerInsertFileInput.value = '';
+    });
+    pageManagerInsertRunBtn.addEventListener('click', function () {
+        insertSelectedPagesIntoManager();
+    });
+    pageManagerApplyBtn.addEventListener('click', function () {
+        void applyPageManagerChanges();
+    });
+    pageManagerDownloadSplitsBtn.addEventListener('click', function () {
+        void downloadSplitDocumentsFromManager();
+    });
+    pageManagerInsertPages.addEventListener('click', function (event) {
+        const card = event.target.closest('[data-insert-page-index]');
+        if (!card || !pageManagerState) return;
+        togglePageManagerInsertSelection(Number(card.dataset.insertPageIndex || 0));
+    });
+    pageManagerPages.addEventListener('click', function (event) {
+        const removeBtn = event.target.closest('[data-page-manager-action="remove"][data-page-id]');
+        if (!removeBtn || !pageManagerState) return;
+        if (pageManagerState.draftPages.length <= 1) {
+            setPageManagerStatus('The document must keep at least one page.', 'warning');
+            return;
+        }
+        const pageId = removeBtn.dataset.pageId;
+        pageManagerState.draftPages = pageManagerState.draftPages.filter(function (page) {
+            return page.id !== pageId;
+        });
+        renderPageManagerPages();
+    });
+    pageManagerPages.addEventListener('change', function (event) {
+        const toggle = event.target.closest('.page-manager-split-toggle[data-page-id]');
+        if (!toggle || !pageManagerState) return;
+        const page = pageManagerState.draftPages.find(function (candidate) {
+            return candidate.id === toggle.dataset.pageId;
+        });
+        if (!page) return;
+        page.splitBefore = !!toggle.checked;
+        updatePageManagerControls();
+    });
+    pageManagerPages.addEventListener('dragstart', function (event) {
+        const card = event.target.closest('.page-manager-page[data-page-id]');
+        if (!card || !pageManagerState) return;
+        pageManagerDragPageId = card.dataset.pageId;
+        card.classList.add('dragging');
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+        }
+    });
+    pageManagerPages.addEventListener('dragend', function () {
+        pageManagerDragPageId = null;
+        pageManagerPages.querySelectorAll('.page-manager-page.dragging').forEach(function (card) {
+            card.classList.remove('dragging');
+        });
+        clearPageManagerDropTargets();
+    });
+    pageManagerPages.addEventListener('dragover', function (event) {
+        const card = event.target.closest('.page-manager-page[data-page-id]');
+        if (!card || !pageManagerState || !pageManagerDragPageId || card.dataset.pageId === pageManagerDragPageId) return;
+        event.preventDefault();
+        clearPageManagerDropTargets();
+        card.classList.add('drop-target');
+    });
+    pageManagerPages.addEventListener('drop', function (event) {
+        const card = event.target.closest('.page-manager-page[data-page-id]');
+        if (!card || !pageManagerState || !pageManagerDragPageId || card.dataset.pageId === pageManagerDragPageId) return;
+        event.preventDefault();
+        const nextIndex = pageManagerState.draftPages.findIndex(function (page) {
+            return page.id === card.dataset.pageId;
+        });
+        movePageManagerDraftPage(pageManagerDragPageId, nextIndex);
+        clearPageManagerDropTargets();
+    });
+    pageManagerDropzone.addEventListener('dragover', function (event) {
+        if (!pageManagerState || !pageManagerDragPageId) return;
+        event.preventDefault();
+        clearPageManagerDropTargets();
+        pageManagerDropzone.classList.add('drop-target');
+    });
+    pageManagerDropzone.addEventListener('drop', function (event) {
+        if (!pageManagerState || !pageManagerDragPageId) return;
+        event.preventDefault();
+        movePageManagerDraftPage(pageManagerDragPageId, pageManagerState.draftPages.length);
+        clearPageManagerDropTargets();
     });
     closeRepairBtn.addEventListener('click', function () {
         repairModal.classList.add('hidden');
@@ -5186,6 +6176,9 @@
         if (!repairModal.classList.contains('hidden') && event.target === repairModal) {
             repairModal.classList.add('hidden');
         }
+        if (!pageManagerModal.classList.contains('hidden') && event.target === pageManagerModal) {
+            closePageManager();
+        }
     });
 
     fieldsList.addEventListener('input', function (event) {
@@ -5353,6 +6346,9 @@
             aiModelSuggestions.classList.add('hidden');
             settingsModal.classList.add('hidden');
             normalizationModal.classList.add('hidden');
+            if (!pageManagerModal.classList.contains('hidden')) {
+                closePageManager();
+            }
             return;
         }
         if (!state.selectedFieldId || targetTag === 'INPUT' || targetTag === 'TEXTAREA') {
@@ -5387,6 +6383,7 @@
     fetchModelCatalog();
     fetchAuthStatus();
     updateFieldCount();
+    updateZoomControls();
     </script>
 </body>
 </html>

@@ -135,9 +135,14 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         inner_close_fill = updated.paragraphs[2].runs[1]._r.xml
         outer_close_fill = updated.paragraphs[3].runs[1]._r.xml
 
+        # Level 0 (outer): teal
         self.assertIn('w:fill="C7E1DD"', outer_open_fill)
-        self.assertIn('w:fill="B8D7D3"', inner_open_fill)
-        self.assertIn('w:fill="B8D7D3"', inner_close_fill)
+
+        # Level 1 (inner): yellow
+        self.assertIn('w:fill="FFD966"', inner_open_fill)
+        self.assertIn('w:fill="FFD966"', inner_close_fill)
+
+        # Back to level 0
         self.assertIn('w:fill="C7E1DD"', outer_close_fill)
 
     def test_update_docx_ignores_invalid_items_and_accepts_dict_items(self):

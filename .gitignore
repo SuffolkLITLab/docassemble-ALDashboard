@@ -5,6 +5,7 @@
 
 # Python
 __pycache__
+venv/
 *.egg-info
 build/
 dist/
@@ -12,3 +13,5 @@ dist/
 # Local secrets
 .env
 .env.*
+.env2
+*Zone.Identifier*

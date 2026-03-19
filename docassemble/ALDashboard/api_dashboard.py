@@ -43,8 +43,10 @@ from .api_dashboard_utils import (
     validate_translation_payload_from_request,
     yaml_check_payload_from_request,
     yaml_reformat_payload_from_request,
+    pdf_repair_payload_from_request,
 )
 from . import api_mcp  # noqa: F401
+from . import api_labelers  # noqa: F401
 
 __all__ = []
 
@@ -67,6 +69,7 @@ if not in_celery:
         dashboard_validate_translation_task,
         dashboard_yaml_check_task,
         dashboard_yaml_reformat_task,
+        dashboard_pdf_repair_task,
     )
 
 
@@ -120,6 +123,14 @@ def _request_payload_without_files() -> Dict[str, Any]:
 
 
 def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Add uploaded file content to an async-safe payload.
+
+    Args:
+        base_payload: Request options collected before reading uploaded files.
+
+    Returns:
+        Dict[str, Any]: A payload that includes base64-encoded file content.
+    """
     payload: Dict[str, Any] = dict(base_payload)
     if request.files:
         files_payload = []
@@ -128,7 +139,7 @@ def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
             _validate_upload_size(content)
             try:
                 upload.stream.seek(0)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             files_payload.append(
                 {
@@ -535,17 +546,45 @@ def dashboard_pdf_fields_detect():
 @app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/fields/relabel", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def dashboard_pdf_fields_relabel():
+def dashboard_pdf_fields_relabel() -> Response:
+    """Handle synchronous or asynchronous PDF field relabeling requests.
+
+    Returns:
+        Response: A JSON response containing relabel results or queued job details.
+    """
     return _run_endpoint(
         pdf_fields_relabel_payload_from_request,
         dashboard_pdf_fields_relabel_task,
     )
 
 
+@app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/repair", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_pdf_repair() -> Response:
+    """Handle synchronous or asynchronous PDF repair requests.
+
+    Returns:
+        Response: A JSON response containing repair results or queued job details.
+    """
+    return _run_endpoint(
+        pdf_repair_payload_from_request,
+        dashboard_pdf_repair_task,
+    )
+
+
 @app.route(f"{DASHBOARD_API_BASE_PATH}/jobs/<job_id>", methods=["GET", "DELETE"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "DELETE", "HEAD"], automatic_options=True)
-def dashboard_job(job_id: str):
+def dashboard_job(job_id: str) -> Response:
+    """Return or delete async job state for an ALDashboard API task.
+
+    Args:
+        job_id: The public job identifier returned when the task was queued.
+
+    Returns:
+        Response: A JSON response describing job state, result data, or deletion.
+    """
     request_id = str(uuid.uuid4())
     if not api_verify():
         return _auth_fail(request_id)
@@ -563,7 +602,7 @@ def dashboard_job(job_id: str):
             )
         try:
             workerapp.AsyncResult(id=task_info["id"]).forget()
-        except Exception:
+        except Exception:  # nosec B110
             pass
         r.delete(_job_key(job_id))
         return jsonify(

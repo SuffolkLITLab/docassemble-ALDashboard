@@ -5,10 +5,13 @@ import json
 import os
 import re
 import tempfile
+import time
+import uuid
 from typing import Any, Dict, List, Mapping, Optional, cast
 
 from flask import request
 from docassemble.base.error import DAError
+from docassemble.base.util import log
 
 DASHBOARD_API_BASE_PATH = "/al/api/v1/dashboard"
 
@@ -86,6 +89,14 @@ def _load_json_field(
             f"{field_name} must be a {expected_type.__name__}."
         )
     return value
+
+
+def _load_string_list_field(raw_value: Any, *, field_name: str) -> Optional[List[str]]:
+    parsed = _load_json_field(raw_value, field_name=field_name, expected_type=list)
+    if parsed is None:
+        return None
+    output = [str(item).strip() for item in parsed if str(item).strip()]
+    return output or None
 
 
 def merge_raw_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
@@ -368,6 +379,236 @@ def docx_runs_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             "paragraph_count": paragraph_count,
             "run_count": len(runs),
             "results": runs,
+        }
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def docx_labeler_suggest_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    import docx
+
+    from .docx_wrangling import defragment_docx_runs, get_voted_docx_label_suggestions
+    from .validate_docx import detect_docx_automation_features
+
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.docx")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError("file_content_base64 is required.")
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+
+    if not filename.lower().endswith(".docx"):
+        raise DashboardAPIValidationError(
+            "Only DOCX uploads are supported.", status_code=415
+        )
+
+    prompt_profile = str(raw.get("prompt_profile") or "standard").strip() or "standard"
+    optional_context = raw.get("context_text")
+    custom_prompt = raw.get("custom_prompt")
+    additional_instructions = raw.get("additional_instructions")
+    defragment_runs = parse_bool(raw.get("defragment_runs"), default=True)
+    model = str(raw.get("model") or "gpt-5-mini").strip() or "gpt-5-mini"
+
+    judge_model_raw = raw.get("judge_model")
+    judge_model = None
+    if judge_model_raw is not None:
+        judge_model = str(judge_model_raw).strip() or None
+
+    openai_api = raw.get("openai_api")
+    if openai_api is not None:
+        openai_api = str(openai_api)
+    openai_base_url = raw.get("openai_base_url")
+    if openai_base_url is not None:
+        openai_base_url = str(openai_base_url)
+
+    generator_models = _load_string_list_field(
+        raw.get("generator_models"), field_name="generator_models"
+    )
+    custom_people_names = _load_json_field(
+        raw.get("custom_people_names"),
+        field_name="custom_people_names",
+        expected_type=list,
+    )
+    preferred_variable_names = _load_string_list_field(
+        raw.get("preferred_variable_names"),
+        field_name="preferred_variable_names",
+    )
+
+    interview_source_mode = (
+        str(raw.get("interview_source_mode") or "playground").strip().lower()
+        or "playground"
+    )
+    selected_playground_project = raw.get("playground_project")
+    selected_playground_filename = raw.get("playground_yaml_file")
+    selected_installed_interview_path = raw.get("installed_interview_path")
+
+    temp_path = _write_temp_file(filename, content)
+    started_at = time.perf_counter()
+    try:
+        prep_started_at = time.perf_counter()
+        review_document = docx.Document(temp_path)
+        if defragment_runs:
+            review_document, _ = defragment_docx_runs(review_document)
+        prep_elapsed = time.perf_counter() - prep_started_at
+
+        automation_started_at = time.perf_counter()
+        automation_findings = detect_docx_automation_features(temp_path)
+        document_warnings = [
+            finding
+            for finding in automation_findings.get("findings", [])
+            if finding.get("code")
+            in {
+                "track_changes",
+                "structured_document_tags",
+                "sdt_specialized_controls",
+                "sdt_plain_text_control",
+                "sdt_group_control",
+                "sdt_docpart_non_page_numbers",
+                "sdt_metadata",
+                "sdt_bound_or_locked",
+                "data_binding",
+                "custom_xml_parts",
+                "custom_xml_relationships",
+            }
+        ]
+        automation_elapsed = time.perf_counter() - automation_started_at
+
+        suggestion_started_at = time.perf_counter()
+        aggregated = get_voted_docx_label_suggestions(
+            docx_path=temp_path,
+            custom_people_names=cast(Any, custom_people_names),
+            preferred_variable_names=preferred_variable_names,
+            openai_api=cast(Optional[str], openai_api),
+            openai_base_url=cast(Optional[str], openai_base_url),
+            model=model,
+            generator_models=generator_models,
+            judge_model=judge_model,
+            prompt_profile=prompt_profile,
+            optional_context=(
+                str(optional_context) if optional_context is not None else None
+            ),
+            custom_prompt=str(custom_prompt) if custom_prompt is not None else None,
+            additional_instructions=(
+                str(additional_instructions)
+                if additional_instructions is not None
+                else None
+            ),
+            defragment_runs=defragment_runs,
+            judge_max_output_tokens=2000,
+        )
+        suggestion_elapsed = time.perf_counter() - suggestion_started_at
+
+        format_started_at = time.perf_counter()
+        suggestions = aggregated.get("suggestions", [])
+        aggregation_summary = aggregated.get("aggregation", {})
+        judge_review = aggregated.get("judge_review", {})
+        generation_runs = aggregated.get("generation_runs", [])
+        flagged_selected_count = sum(
+            1 for suggestion in suggestions if suggestion.get("validation_flags")
+        )
+
+        formatted_suggestions = []
+        for suggestion in suggestions:
+            alternates = []
+            for alternate in suggestion.get("alternates", []):
+                alternates.append(
+                    {
+                        "text": alternate.get("text", ""),
+                        "paragraph": alternate.get("paragraph"),
+                        "run": alternate.get("run"),
+                        "new_paragraph": alternate.get("new_paragraph", 0),
+                        "validation_flags": alternate.get("validation_flags", []),
+                        "confidence": alternate.get("confidence", "low"),
+                        "vote_count": alternate.get("vote_count", 0),
+                        "clean_vote_count": alternate.get("clean_vote_count", 0),
+                        "vote_total": suggestion.get(
+                            "vote_total", len(generation_runs)
+                        ),
+                        "sources": alternate.get("sources", []),
+                    }
+                )
+            formatted_suggestions.append(
+                {
+                    "paragraph": suggestion.get("paragraph"),
+                    "run": suggestion.get("run"),
+                    "text": suggestion.get("text", ""),
+                    "new_paragraph": suggestion.get("new_paragraph", 0),
+                    "id": str(uuid.uuid4()),
+                    "validation_flags": suggestion.get("validation_flags", []),
+                    "judge_review": suggestion.get("judge_review"),
+                    "confidence": suggestion.get("confidence", "low"),
+                    "vote_count": suggestion.get("vote_count", 0),
+                    "clean_vote_count": suggestion.get("clean_vote_count", 0),
+                    "vote_total": suggestion.get("vote_total", len(generation_runs)),
+                    "sources": suggestion.get("sources", []),
+                    "alternates": alternates,
+                }
+            )
+        format_elapsed = time.perf_counter() - format_started_at
+
+        total_elapsed = time.perf_counter() - started_at
+        timings = {
+            "document_prep_seconds": round(prep_elapsed, 3),
+            "automation_scan_seconds": round(automation_elapsed, 3),
+            "label_generation_seconds": round(suggestion_elapsed, 3),
+            "response_format_seconds": round(format_elapsed, 3),
+            "total_seconds": round(total_elapsed, 3),
+            "generator_run_count": len(generation_runs),
+            "generator_models": [
+                str(item.get("model") or "")
+                for item in generation_runs
+                if str(item.get("model") or "")
+            ],
+            "ambiguous_group_count": int(
+                aggregation_summary.get("ambiguous_group_count") or 0
+            ),
+            "judge_review_count": len(judge_review.get("reviews", []) or []),
+        }
+        log(
+            "ALDashboard: DOCX suggest-labels timings for "
+            + repr(filename)
+            + ": "
+            + json.dumps(timings, sort_keys=True),
+            "info",
+        )
+
+        return {
+            "filename": filename,
+            "suggestions": formatted_suggestions,
+            "defragment_runs": defragment_runs,
+            "interview_source_mode": interview_source_mode,
+            "playground_project": (
+                str(selected_playground_project)
+                if selected_playground_project is not None
+                else None
+            ),
+            "playground_yaml_file": (
+                str(selected_playground_filename)
+                if selected_playground_filename is not None
+                else None
+            ),
+            "installed_interview_path": (
+                str(selected_installed_interview_path)
+                if selected_installed_interview_path is not None
+                else None
+            ),
+            "playground_variable_count": len(preferred_variable_names or []),
+            "validation": {
+                "deterministic": {
+                    "flagged_count": flagged_selected_count,
+                    "ai_review_recommended": bool(
+                        aggregation_summary.get("ambiguous_group_count")
+                    ),
+                },
+                "ai_review": judge_review,
+                "document_warnings": document_warnings,
+                "aggregation": aggregation_summary,
+                "timings": timings,
+            },
         }
     finally:
         if os.path.exists(temp_path):
@@ -686,6 +927,14 @@ def _apply_add_label_rules(
 
 
 def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    """Apply relabeling edits to DOCX suggestions and optionally build output DOCX.
+
+    Args:
+        raw_options: Request options containing source labels, edits, and file data.
+
+    Returns:
+        Dict[str, Any]: A payload with updated labels and optional labeled DOCX bytes.
+    """
     from .docx_wrangling import get_labeled_docx_runs, update_docx
 
     raw = merge_raw_options(raw_options)
@@ -761,7 +1010,10 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
                 _coerce_label_item(item, field_name="results") for item in raw_results
             ]
         else:
-            assert temp_path is not None
+            if temp_path is None:
+                raise DashboardAPIValidationError(
+                    "Either 'results' or a file upload is required."
+                )
             labels = [
                 list(item)
                 for item in get_labeled_docx_runs(
@@ -1054,6 +1306,7 @@ def validate_docx_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
     from .validate_docx import (
+        analyze_docx_template_markup,
         detect_docx_automation_features,
         get_jinja_errors,
         strip_docx_problem_controls,
@@ -1084,11 +1337,14 @@ def validate_docx_payload_from_options(
         temp_path = _write_temp_file(filename, content)
         try:
             findings = detect_docx_automation_features(temp_path)
+            markup_warnings = analyze_docx_template_markup(temp_path)
+            warning_details = findings.get("warning_details", []) + markup_warnings
             result: Dict[str, Any] = {
                 "file": filename,
                 "errors": get_jinja_errors(temp_path),
-                "warnings": findings.get("warnings", []),
-                "warning_details": findings.get("warning_details", []),
+                "warnings": findings.get("warnings", [])
+                + [str(item.get("message")) for item in markup_warnings],
+                "warning_details": warning_details,
             }
             if include_stripped_docx_base64 and result["warnings"]:
                 with tempfile.NamedTemporaryFile(
@@ -1225,7 +1481,7 @@ def _dayaml_issue_severity(message: str) -> str:
 
 def _run_dayaml_checker(yaml_text: str, *, input_file: str) -> List[Any]:
     try:
-        from dayamlchecker.yaml_structure import (  # type: ignore[import-untyped]
+        from dayamlchecker.yaml_structure import (
             find_errors_from_string,
         )
     except Exception as exc:
@@ -1245,7 +1501,7 @@ def _run_dayaml_reformat(
     yaml_text: str, *, line_length: int, convert_indent_4_to_2: bool
 ) -> Any:
     try:
-        from dayamlchecker.code_formatter import (  # type: ignore[import-untyped]
+        from dayamlchecker.code_formatter import (
             FormatterConfig,
             format_yaml_string,
         )
@@ -1457,6 +1713,14 @@ def pdf_fields_detect_payload_from_request() -> Dict[str, Any]:
 def pdf_fields_detect_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Detect PDF fields and optionally relabel them before returning artifacts.
+
+    Args:
+        raw_options: Request options containing upload data and relabel settings.
+
+    Returns:
+        Dict[str, Any]: Serialized field metadata and optional output PDF content.
+    """
     from .pdf_field_labeler import (
         PDFLabelingError,
         detect_pdf_fields_and_optionally_relabel,
@@ -1472,11 +1736,17 @@ def pdf_fields_detect_payload_from_options(
     include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
+    model = str(raw.get("model") or "").strip() or None
     tools_token = (
         str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
     )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    openai_base_url = (
+        str(raw.get("openai_base_url"))
+        if raw.get("openai_base_url") is not None
+        else None
     )
     target_field_names = _load_json_field(
         raw.get("target_field_names"),
@@ -1494,6 +1764,8 @@ def pdf_fields_detect_payload_from_options(
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
+            model=model,
         )
         return _finalize_pdf_payload(
             filename=filename,
@@ -1526,6 +1798,14 @@ def pdf_fields_relabel_payload_from_request() -> Dict[str, Any]:
 def pdf_fields_relabel_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Relabel existing PDF fields and package the resulting PDF artifacts.
+
+    Args:
+        raw_options: Request options containing upload data and rename settings.
+
+    Returns:
+        Dict[str, Any]: Serialized rename statistics and optional PDF output data.
+    """
     from .pdf_field_labeler import PDFLabelingError, relabel_existing_pdf_fields
 
     prepared = _prepare_pdf_upload(raw_options)
@@ -1538,11 +1818,17 @@ def pdf_fields_relabel_payload_from_options(
     include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
+    model = str(raw.get("model") or "").strip() or None
     tools_token = (
         str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
     )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    openai_base_url = (
+        str(raw.get("openai_base_url"))
+        if raw.get("openai_base_url") is not None
+        else None
     )
     target_field_names = _load_json_field(
         raw.get("target_field_names"),
@@ -1568,6 +1854,8 @@ def pdf_fields_relabel_payload_from_options(
             jur=jur,
             tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
+            model=model,
         )
         return _finalize_pdf_payload(
             filename=filename,
@@ -1585,7 +1873,117 @@ def pdf_fields_relabel_payload_from_options(
             os.remove(output_path)
 
 
+# ---------------------------------------------------------------------------
+# PDF repair
+# ---------------------------------------------------------------------------
+
+
+def _extract_repair_options(raw: Mapping[str, Any], action: str) -> Dict[str, Any]:
+    """Build keyword arguments for ``pdf_repair.run_repair`` from raw request data."""
+    options: Dict[str, Any] = {}
+    if action == "ghostscript_reprint":
+        options["preserve_fields"] = parse_bool(
+            raw.get("preserve_fields"), default=False
+        )
+        pdf_opt = str(raw.get("pdf_optimization") or "").strip()
+        if pdf_opt:
+            options["pdf_optimization"] = pdf_opt
+    elif action == "unlock":
+        pw = raw.get("password")
+        if pw is not None:
+            options["password"] = str(pw)
+    elif action == "ocr":
+        lang = raw.get("language")
+        if lang is not None:
+            options["language"] = str(lang).strip() or "eng"
+        skip = raw.get("skip_text")
+        if skip is not None:
+            options["skip_text"] = parse_bool(skip, default=True)
+    return options
+
+
+def pdf_repair_payload_from_request() -> Dict[str, Any]:
+    """Build PDF repair options from a multipart request.
+
+    Returns:
+        Dict[str, Any]: Normalized repair options including base64-encoded PDF data.
+    """
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return pdf_repair_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
+
+
+def pdf_repair_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Run a PDF repair action and package the result for the API response.
+
+    Args:
+        raw_options: Request options containing repair action, file data, and flags.
+
+    Returns:
+        Dict[str, Any]: Repair metadata and optional repaired PDF bytes.
+    """
+    from .pdf_repair import PDFRepairError, list_repair_actions, run_repair
+
+    raw = merge_raw_options(raw_options)
+    action = str(raw.get("action") or "").strip()
+    if not action:
+        return {"available_actions": list_repair_actions()}
+
+    filename = str(raw.get("filename") or "upload.pdf")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError(
+            "file_content_base64 is required for repair actions."
+        )
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+    if not filename.lower().endswith(".pdf"):
+        raise DashboardAPIValidationError(
+            "Only PDF uploads are supported.", status_code=415
+        )
+    input_path = _write_temp_file(filename, content)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_file:
+        output_path = out_file.name
+    if os.path.exists(output_path):
+        os.remove(output_path)
+
+    include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
+    repair_options = _extract_repair_options(raw, action)
+
+    try:
+        result = run_repair(action, input_path, output_path, options=repair_options)
+        payload: Dict[str, Any] = {
+            "input_filename": filename,
+            "output_filename": f"repaired_{filename}",
+            "repair_result": result,
+        }
+        if include_pdf_base64 and os.path.isfile(output_path):
+            with open(output_path, "rb") as handle:
+                payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
+        return payload
+    except PDFRepairError as err:
+        raise DashboardAPIValidationError(str(err), status_code=400)
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
 def build_openapi_spec() -> Dict[str, Any]:
+    """Construct the OpenAPI document for the ALDashboard REST API.
+
+    Returns:
+        Dict[str, Any]: An OpenAPI 3.1 document describing supported endpoints.
+    """
     return {
         "openapi": "3.1.0",
         "info": {
@@ -1702,6 +2100,18 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
+            f"{DASHBOARD_API_BASE_PATH}/pdf/repair": {
+                "post": {
+                    "summary": "Repair / fix a PDF",
+                    "description": (
+                        "Run a single repair action on an uploaded PDF. "
+                        "Send without `action` to list available actions. "
+                        "Actions: ghostscript_reprint (re-distill, optionally preserve fields), "
+                        "qpdf_repair (fix xref/page tree), unlock (remove encryption), "
+                        "repair_metadata (fix catalog/metadata), ocr (add text layer)."
+                    ),
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/jobs/{{job_id}}": {
                 "get": {"summary": "Get async job status and result"},
                 "delete": {"summary": "Delete async job metadata"},
@@ -1726,6 +2136,11 @@ def build_openapi_spec() -> Dict[str, Any]:
 
 
 def build_docs_html() -> str:
+    """Render the lightweight human-readable API documentation page.
+
+    Returns:
+        str: HTML content for the API docs page.
+    """
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -1764,6 +2179,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/repair</code></li>
     <li><code>GET {DASHBOARD_API_BASE_PATH}/jobs/&lt;job_id&gt;/download</code></li>
   </ul>
   <h2>Notes</h2>
@@ -1781,6 +2197,7 @@ def build_docs_html() -> str:
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
     <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>.</li>
     <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>.</li>
+    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
   </ul>
   <h2>DOCX Modes</h2>
   <ul>

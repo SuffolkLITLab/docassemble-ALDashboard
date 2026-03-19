@@ -1,6 +1,9 @@
 import unittest
 import base64
+import tempfile
 from unittest.mock import patch
+
+import docx
 
 from docassemble.ALDashboard.api_dashboard_utils import (
     DEFAULT_MAX_UPLOAD_BYTES,
@@ -10,6 +13,7 @@ from docassemble.ALDashboard.api_dashboard_utils import (
     build_openapi_spec,
     coerce_async_flag,
     decode_base64_content,
+    docx_labeler_suggest_payload_from_options,
     docx_runs_payload_from_options,
     interview_lint_payload_from_options,
     parse_bool,
@@ -175,6 +179,67 @@ class TestDashboardAPIUtils(unittest.TestCase):
         self.assertEqual(payload["run_count"], 3)
         self.assertEqual(payload["results"][1], [1, 0, "Dear ____"])
 
+    @patch("docassemble.ALDashboard.validate_docx.detect_docx_automation_features")
+    @patch("docassemble.ALDashboard.docx_wrangling.get_voted_docx_label_suggestions")
+    def test_docx_labeler_suggest_payload_includes_timings(
+        self, mock_get_voted, mock_detect_automation
+    ):
+        mock_detect_automation.return_value = {
+            "findings": [
+                {
+                    "code": "track_changes",
+                    "message": "Tracked changes are present.",
+                }
+            ]
+        }
+        mock_get_voted.return_value = {
+            "suggestions": [
+                {
+                    "paragraph": 0,
+                    "run": 0,
+                    "text": "Name: {{ users[0].name.full() }}",
+                    "new_paragraph": 0,
+                    "validation_flags": [],
+                    "judge_review": None,
+                    "confidence": "high",
+                    "vote_count": 3,
+                    "clean_vote_count": 3,
+                    "vote_total": 3,
+                    "sources": [{"model": "gpt-5-mini", "generation_index": 0}],
+                    "alternates": [],
+                }
+            ],
+            "aggregation": {"ambiguous_group_count": 0},
+            "judge_review": {"performed": False, "reviews": []},
+            "generation_runs": [
+                {"model": "gpt-5-mini"},
+                {"model": "gpt-5-mini"},
+                {"model": "gpt-5-mini"},
+            ],
+        }
+
+        document = docx.Document()
+        document.add_paragraph("Name: ____")
+        with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
+            document.save(tmp.name)
+            with open(tmp.name, "rb") as handle:
+                payload = docx_labeler_suggest_payload_from_options(
+                    {
+                        "filename": "sample.docx",
+                        "file_content_base64": base64.b64encode(handle.read()).decode(
+                            "ascii"
+                        ),
+                        "model": "gpt-5-mini",
+                    }
+                )
+
+        self.assertEqual(payload["filename"], "sample.docx")
+        self.assertEqual(len(payload["suggestions"]), 1)
+        self.assertIn("timings", payload["validation"])
+        self.assertEqual(payload["validation"]["timings"]["generator_run_count"], 3)
+        self.assertEqual(len(payload["validation"]["document_warnings"]), 1)
+        self.assertTrue(mock_get_voted.called)
+
     @patch("docassemble.ALDashboard.interview_linter.lint_multiple_sources")
     def test_interview_lint_payload_accepts_sources(self, mock_lint):
         mock_lint.return_value = [{"name": "x.yml", "error": None, "result": {}}]
@@ -261,9 +326,13 @@ class TestDashboardAPIUtils(unittest.TestCase):
             ],
         },
     )
+    @patch(
+        "docassemble.ALDashboard.validate_docx.analyze_docx_template_markup",
+        return_value=[],
+    )
     @patch("docassemble.ALDashboard.validate_docx.get_jinja_errors", return_value=None)
     def test_validate_docx_payload_returns_warnings(
-        self, _mock_jinja_errors, _mock_findings
+        self, _mock_jinja_errors, _mock_markup, _mock_findings
     ):
         payload = validate_docx_payload_from_options(
             {
@@ -302,10 +371,14 @@ class TestDashboardAPIUtils(unittest.TestCase):
             ],
         },
     )
+    @patch(
+        "docassemble.ALDashboard.validate_docx.analyze_docx_template_markup",
+        return_value=[],
+    )
     @patch("docassemble.ALDashboard.validate_docx.get_jinja_errors", return_value=None)
     @patch("docassemble.ALDashboard.validate_docx.strip_docx_problem_controls")
     def test_validate_docx_payload_can_include_stripped_docx(
-        self, mock_strip, _mock_jinja_errors, _mock_findings
+        self, mock_strip, _mock_jinja_errors, _mock_markup, _mock_findings
     ):
         def _fake_strip(_input_path, output_path):
             with open(output_path, "wb") as handle:

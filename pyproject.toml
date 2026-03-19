@@ -18,12 +18,16 @@ dependencies = [
     'python-docx>=1.1.1',
     'openai>=1.0',
     'tiktoken',
+    'defusedxml',
+    'xmlschema>=4.3.1',
     'pyaml',
     'formfyxer>=1.0.1',
     'dayamlchecker>=0.2.0',
+    'Mako>=1.1.4',
     'pyspellchecker>=0.6.3',
     'ruamel.yaml>=0.17.4',
-    'textstat>=0.7.0'
+    'textstat>=0.7.0',
+    'pdfrw>=0.4'
 ]
 license="MIT"
 license-files = [
@@ -125,4 +129,72 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module="spellchecker.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="docassemble.ALToolbox.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="dayamlchecker.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="flask_login"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="jinja2"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="jinja2.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="lxml"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="lxml.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="pdfrw"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="pikepdf"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="reportlab"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="reportlab.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="requests"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="sqlalchemy"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="sqlalchemy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="textstat"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module="werkzeug"
 ignore_missing_imports = true

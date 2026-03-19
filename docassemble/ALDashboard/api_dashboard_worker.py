@@ -7,11 +7,13 @@ from docassemble.webapp.worker_common import bg_context, workerapp  # type: igno
 from .api_dashboard_utils import (
     autolabel_payload_from_options,
     bootstrap_payload_from_options,
+    docx_labeler_suggest_payload_from_options,
     docx_runs_payload_from_options,
     interview_lint_payload_from_options,
     pdf_fields_detect_payload_from_options,
     pdf_fields_relabel_payload_from_options,
     pdf_label_fields_payload_from_options,
+    pdf_repair_payload_from_options,
     relabel_payload_from_options,
     review_screen_payload_from_options,
     translation_payload_from_options,
@@ -38,6 +40,12 @@ def dashboard_autolabel_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_docx_runs_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return docx_runs_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_docx_labeler_suggest_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return docx_labeler_suggest_payload_from_options(payload)
 
 
 @workerapp.task
@@ -104,3 +112,17 @@ def dashboard_yaml_check_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_yaml_reformat_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return yaml_reformat_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute PDF repair work inside a background docassemble context.
+
+    Args:
+        payload: Serialized request options for the repair operation.
+
+    Returns:
+        Dict[str, Any]: The PDF repair payload returned by the repair helper.
+    """
+    with bg_context():
+        return pdf_repair_payload_from_options(payload)

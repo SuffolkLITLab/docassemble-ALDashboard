@@ -21,7 +21,7 @@ from typing import (
 import mako.runtime
 import mako.template
 import ruamel.yaml
-import textstat  # type: ignore[import-untyped]
+import textstat
 from spellchecker import SpellChecker
 
 import docassemble.base.filter
@@ -58,7 +58,7 @@ except Exception:
     user_info = None  # type: ignore
 
 try:
-    from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors  # type: ignore[import-untyped]
+    from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors
 except Exception:
     _dayaml_find_errors = None  # type: ignore
 

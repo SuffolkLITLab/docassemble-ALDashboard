@@ -43,7 +43,7 @@ import xlsxwriter
 from docassemble.base.util import DAFile, language_name, get_config, log, DAEmpty
 from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
-from docassemble.ALToolbox.llms import chat_completion  # type: ignore[import-untyped]
+from docassemble.ALToolbox.llms import chat_completion
 
 import tiktoken
 import mako.template
@@ -662,7 +662,12 @@ def translation_file(
                 worksheet.write_string(row, 1, question_id, text_format)
                 worksheet.write_number(row, 2, indexno, numb)
                 worksheet.write_string(
-                    row, 3, hashlib.md5(item.encode("utf-8"),usedforsecurity=False).hexdigest(), text_format
+                    row,
+                    3,
+                    hashlib.md5(
+                        item.encode("utf-8"), usedforsecurity=False
+                    ).hexdigest(),
+                    text_format,
                 )
                 worksheet.write_string(row, 4, language, text_format)
                 worksheet.write_string(row, 5, tr_lang, text_format)

@@ -87,9 +87,6 @@ data:
   - name: Generate a review screen draft
     url: ${ interview_url(i=user_info().package + ":review_screen_generator.yml", reset=1) }
     image: pencil-alt
-  - name: Validate docx template
-    url: ${ interview_url(i=user_info().package + ":validate_docx.yml", reset=1) }
-    image: file-word
   - name: Validate translation files
     url: ${ interview_url(i=user_info().package + ":validate_translation.yml", reset=1) }
     image: language
@@ -105,10 +102,10 @@ data:
   - name: Reformat YAML
     url: ${ interview_url(i=user_info().package + ":yaml_formatter.yml", reset=1) }
     image: magic
-  - name: Auto-label DOCX
+  - name: DOCX utilities
     url: "/al/docx-labeler"
     image: file-word
-  - name: Auto-label PDF
+  - name: PDF utilities
     url: "/al/pdf-labeler"
     image: file-pdf    
   - name: Compile Bootstrap theme

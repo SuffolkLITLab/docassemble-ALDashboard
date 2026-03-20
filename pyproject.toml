@@ -21,7 +21,7 @@ dependencies = [
     'defusedxml',
     'xmlschema>=4.3.1',
     'pyaml',
-    'formfyxer>=1.0.1',
+    'formfyxer>=1.1.0',
     'dayamlchecker>=0.2.0',
     'Mako>=1.1.4',
     'pyspellchecker>=0.6.3',

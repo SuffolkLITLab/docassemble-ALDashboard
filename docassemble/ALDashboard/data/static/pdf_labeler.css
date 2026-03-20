@@ -205,6 +205,11 @@
     min-width: 24rem;
     border-color: var(--bs-border-color) !important;
     overscroll-behavior: contain;
+    transition: width 0.2s ease;
+}
+.pdf-fields-panel.bulk-rename-expanded {
+    width: 29rem;
+    min-width: 29rem;
 }
 .toolbar-divider { width: 1px; height: 1.5rem; background: rgba(255, 255, 255, 0.25); margin: 0 0.5rem; }
 .icon-16 { width: 1rem; height: 1rem; }
@@ -659,6 +664,17 @@
     font-size: 0.76rem;
     color: #60748d;
 }
+.field-count-inline {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #7589a1;
+    margin-left: 0.3rem;
+}
+.fields-mode-toggle .btn {
+    font-size: 0.72rem;
+    line-height: 1.05;
+    padding: 0.25rem 0.55rem;
+}
 .font-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -683,8 +699,8 @@
 .fields-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 0.55rem;
-    margin-top: 0.8rem;
+    gap: 0.45rem;
+    margin-top: 0.55rem;
 }
 .fields-toolbar-row {
     display: grid;
@@ -694,6 +710,60 @@
 .fields-toolbar .form-control,
 .fields-toolbar .form-select {
     font-size: 0.78rem;
+}
+.bulk-rename-panel {
+    margin-top: 0.55rem;
+    padding: 0.55rem;
+    border: 1px solid #dce4ef;
+    border-radius: 0.7rem;
+    background: #f9fbff;
+}
+.bulk-rename-row {
+    margin-bottom: 0.45rem;
+}
+.bulk-rename-row:last-of-type {
+    margin-bottom: 0.35rem;
+}
+.bulk-rename-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+.bulk-rename-status {
+    min-height: 1.2rem;
+    margin-bottom: 0.45rem;
+}
+.bulk-rename-status.error {
+    color: #9d2d2d;
+}
+.bulk-rename-status.warning {
+    color: #8a5a06;
+}
+.field-list-name-preview {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    min-width: 0;
+}
+.field-list-name-preview .rename-old {
+    text-decoration: line-through;
+    color: #8a99ad;
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.field-list-name-preview .rename-arrow {
+    color: #7c8fa6;
+    font-size: 0.7rem;
+    flex: 0 0 auto;
+}
+.field-list-name-preview .rename-new {
+    color: #114a8b;
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 #fields-list {
     scroll-behavior: smooth;

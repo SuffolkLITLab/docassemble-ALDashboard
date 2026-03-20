@@ -64,10 +64,6 @@
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
                         Auto-Detect
                     </button>
-                    <button id="relabel-btn" class="btn btn-outline-light btn-sm" disabled>
-                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                        AI Relabel
-                    </button>
                     <button id="export-btn" class="btn btn-primary btn-sm" disabled>Export PDF</button>
                     <button id="save-playground-btn" class="btn btn-outline-success btn-sm hidden" disabled title="Save this PDF back to the Playground templates folder">
                         <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
@@ -122,13 +118,16 @@
 
             <aside id="fields-panel" class="pdf-fields-panel bg-white border-start d-flex flex-column overflow-hidden">
                 <div class="p-3 border-bottom">
-                    <div class="d-flex align-items-center justify-content-between gap-2">
-                        <div>
-                            <h2 class="h5 fw-semibold mb-0">Fields</h2>
-                            <p id="field-count" class="small text-muted mt-1 mb-0">No fields</p>
-                        </div>
+                    <div class="d-flex align-items-baseline justify-content-between gap-2">
+                        <h2 class="h5 fw-semibold mb-0">Fields <span id="field-count" class="field-count-inline">No fields</span></h2>
                     </div>
-                    <div class="fields-toolbar">
+                    <div class="fields-mode-toggle btn-group btn-group-sm mt-2" role="group" aria-label="Fields panel mode">
+                        <input type="radio" class="btn-check" name="fields-panel-mode" id="fields-mode-filter" value="filter" checked>
+                        <label class="btn btn-outline-secondary" for="fields-mode-filter">Filter</label>
+                        <input type="radio" class="btn-check" name="fields-panel-mode" id="fields-mode-rename" value="rename">
+                        <label class="btn btn-outline-secondary" for="fields-mode-rename">Rename</label>
+                    </div>
+                    <div id="fields-filter-controls" class="fields-toolbar">
                         <input id="field-search" type="search" class="form-control form-control-sm" placeholder="Filter by field name">
                         <div class="fields-toolbar-row">
                             <select id="field-type-filter" class="form-select form-select-sm" aria-label="Filter fields by type">
@@ -148,6 +147,32 @@
                                 <option value="type_name">Type</option>
                             </select>
                         </div>
+                    </div>
+                    <div id="bulk-rename-controls" class="bulk-rename-panel hidden">
+                        <div class="bulk-rename-row">
+                            <label class="form-label small text-muted fw-semibold mb-1" for="bulk-rename-type">Rename type</label>
+                            <select id="bulk-rename-type" class="form-select form-select-sm">
+                                <option value="pattern" selected>Pattern</option>
+                                <option value="regex">Regex (advanced)</option>
+                            </select>
+                        </div>
+                        <div class="bulk-rename-row">
+                            <label class="form-label small text-muted fw-semibold mb-1" for="bulk-rename-pattern">Original pattern</label>
+                            <input id="bulk-rename-pattern" type="text" class="form-control form-control-sm font-monospace" placeholder="parents1_">
+                        </div>
+                        <div class="bulk-rename-row">
+                            <label class="form-label small text-muted fw-semibold mb-1" for="bulk-rename-replacement">New value</label>
+                            <input id="bulk-rename-replacement" type="text" class="form-control form-control-sm font-monospace" placeholder="other_parties1_">
+                        </div>
+                        <div id="bulk-rename-status" class="bulk-rename-status small text-muted">Live preview will appear in the list below.</div>
+                        <div class="bulk-rename-actions">
+                            <button id="bulk-rename-apply" type="button" class="btn btn-primary btn-sm" disabled>Apply Rename</button>
+                            <button id="sidebar-relabel-btn" type="button" class="btn btn-outline-secondary btn-sm" disabled>
+                                <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                AI Relabel
+                            </button>
+                        </div>
+                        <p class="form-text small mb-0 mt-1">AI relabel can take 2-3 minutes.</p>
                     </div>
                     <div id="ai-auth-notice" class="alert alert-warning small mt-3 mb-0 hidden"></div>
                 </div>
@@ -925,6 +950,12 @@
         fieldSearch: '',
         fieldTypeFilter: '',
         fieldSort: 'position',
+        fieldsPanelMode: 'filter',
+        bulkRenameType: 'pattern',
+        bulkRenamePattern: '',
+        bulkRenameReplacement: '',
+        fieldNamesVersion: 0,
+        bulkRenamePreviewCache: null,
         auth: {
             isAuthenticated: false,
             email: '',
@@ -1012,8 +1043,18 @@
     const fieldSearchInput = document.getElementById('field-search');
     const fieldTypeFilterInput = document.getElementById('field-type-filter');
     const fieldSortInput = document.getElementById('field-sort');
+    const fieldsPanel = document.getElementById('fields-panel');
+    const fieldsFilterControls = document.getElementById('fields-filter-controls');
+    const bulkRenameControls = document.getElementById('bulk-rename-controls');
+    const fieldsModeInputs = Array.from(document.querySelectorAll('input[name="fields-panel-mode"]'));
+    const bulkRenameTypeInput = document.getElementById('bulk-rename-type');
+    const bulkRenamePatternInput = document.getElementById('bulk-rename-pattern');
+    const bulkRenameReplacementInput = document.getElementById('bulk-rename-replacement');
+    const bulkRenameStatus = document.getElementById('bulk-rename-status');
+    const bulkRenameApplyBtn = document.getElementById('bulk-rename-apply');
     const autoDetectBtn = document.getElementById('auto-detect-btn');
     const relabelBtn = document.getElementById('relabel-btn');
+    const sidebarRelabelBtn = document.getElementById('sidebar-relabel-btn');
     const exportBtn = document.getElementById('export-btn');
     const normalizePassBtn = document.getElementById('normalize-pass-btn');
     const errorToast = document.getElementById('error-toast');
@@ -1673,7 +1714,7 @@
     function updateFieldCount() {
         const totalCount = state.fields.length;
         const filteredCount = totalCount === 0 ? 0 : getDisplayedFields().length;
-        const filtersActive = Boolean(String(state.fieldSearch || '').trim() || normalizeOptionalFieldType(state.fieldTypeFilter || ''));
+        const filtersActive = state.fieldsPanelMode !== 'rename' && Boolean(String(state.fieldSearch || '').trim() || normalizeOptionalFieldType(state.fieldTypeFilter || ''));
         if (totalCount === 0) {
             fieldCount.textContent = 'No fields';
         } else if (filtersActive) {
@@ -1688,7 +1729,12 @@
         savePlaygroundBtn.disabled = !state.pdfBytes || totalCount === 0;
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
         repairBtn.disabled = !state.pdfBytes;
-        relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
+        if (relabelBtn) {
+            relabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
+        }
+        if (sidebarRelabelBtn) {
+            sidebarRelabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
+        }
         previewBtn.disabled = !state.pdfBytes || totalCount === 0;
         managePagesBtn.disabled = !state.pdfBytes;
         if (!state.pdfBytes || totalCount === 0) {
@@ -1701,9 +1747,10 @@
     }
 
     function getDisplayedFields() {
-        const search = String(state.fieldSearch || '').trim().toLowerCase();
-        const typeFilter = normalizeOptionalFieldType(state.fieldTypeFilter || '');
-        const hasTypeFilter = FIELD_TYPES.includes(typeFilter);
+        const inRenameMode = state.fieldsPanelMode === 'rename';
+        const search = inRenameMode ? '' : String(state.fieldSearch || '').trim().toLowerCase();
+        const typeFilter = inRenameMode ? '' : normalizeOptionalFieldType(state.fieldTypeFilter || '');
+        const hasTypeFilter = !inRenameMode && FIELD_TYPES.includes(typeFilter);
         const filtered = state.fields.filter(function (field) {
             if (hasTypeFilter && field.type !== typeFilter) {
                 return false;
@@ -1743,6 +1790,203 @@
             return left.x - right.x;
         });
         return sorted;
+    }
+
+    function invalidateBulkRenamePreview() {
+        state.bulkRenamePreviewCache = null;
+    }
+
+    function bumpFieldNamesVersion() {
+        state.fieldNamesVersion = (Number(state.fieldNamesVersion) || 0) + 1;
+        invalidateBulkRenamePreview();
+    }
+
+    function setFieldsPanelMode(nextMode) {
+        state.fieldsPanelMode = (nextMode === 'rename') ? 'rename' : 'filter';
+        fieldsModeInputs.forEach(function (input) {
+            input.checked = input.value === state.fieldsPanelMode;
+        });
+        const showRename = state.fieldsPanelMode === 'rename';
+        fieldsFilterControls.classList.toggle('hidden', showRename);
+        bulkRenameControls.classList.toggle('hidden', !showRename);
+        fieldsPanel.classList.toggle('bulk-rename-expanded', showRename);
+        if (!showRename) {
+            state.fieldSearch = fieldSearchInput.value || '';
+            refreshFieldsListFromControls();
+            return;
+        }
+        refreshFieldsListFromControls();
+    }
+
+    function escapeRegexPattern(text) {
+        return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function buildWildcardRegex(patternText) {
+        const escaped = String(patternText || '')
+            .split('')
+            .map(function (char) {
+                if (char === '*') return '.*';
+                if (char === '?') return '.';
+                return escapeRegexPattern(char);
+            })
+            .join('');
+        return new RegExp(escaped, 'g');
+    }
+
+    function compileBulkRenameTransform(renameType, findPattern, replacementText) {
+        const replacement = String(replacementText || '');
+        if (!findPattern) {
+            return { error: '', transform: null };
+        }
+        if (renameType === 'regex') {
+            try {
+                const regex = new RegExp(findPattern, 'g');
+                return {
+                    error: '',
+                    transform: function (name) {
+                        return String(name || '').replace(regex, replacement);
+                    }
+                };
+            } catch (error) {
+                return { error: 'Invalid regex: ' + (error && error.message ? error.message : 'unknown error'), transform: null };
+            }
+        }
+        const hasWildcard = /[*?]/.test(findPattern);
+        if (hasWildcard) {
+            try {
+                const wildcardRegex = buildWildcardRegex(findPattern);
+                return {
+                    error: '',
+                    transform: function (name) {
+                        return String(name || '').replace(wildcardRegex, replacement);
+                    }
+                };
+            } catch (error) {
+                return { error: 'Invalid wildcard pattern.', transform: null };
+            }
+        }
+        return {
+            error: '',
+            transform: function (name) {
+                const source = String(name || '');
+                if (!findPattern) return source;
+                if (source.indexOf(findPattern) === -1) return source;
+                return source.split(findPattern).join(replacement);
+            }
+        };
+    }
+
+    function getBulkRenamePreview() {
+        if (state.fieldsPanelMode !== 'rename') {
+            return { changedCount: 0, renamedById: new Map(), mapping: {}, error: '', duplicates: [] };
+        }
+        const renameType = state.bulkRenameType === 'regex' ? 'regex' : 'pattern';
+        const findPattern = String(state.bulkRenamePattern || '');
+        const replacementText = String(state.bulkRenameReplacement || '');
+        const cacheKey = [
+            state.fieldNamesVersion,
+            renameType,
+            findPattern,
+            replacementText
+        ].join('::');
+        if (state.bulkRenamePreviewCache && state.bulkRenamePreviewCache.key === cacheKey) {
+            return state.bulkRenamePreviewCache.value;
+        }
+        const compiled = compileBulkRenameTransform(renameType, findPattern, replacementText);
+        if (!compiled.transform) {
+            const emptyResult = {
+                changedCount: 0,
+                renamedById: new Map(),
+                mapping: {},
+                error: compiled.error || '',
+                duplicates: []
+            };
+            state.bulkRenamePreviewCache = { key: cacheKey, value: emptyResult };
+            return emptyResult;
+        }
+
+        const renamedById = new Map();
+        const mapping = {};
+        const resultingCounts = new Map();
+        let changedCount = 0;
+
+        state.fields.forEach(function (field) {
+            const original = String(field.name || '');
+            const renamed = String(compiled.transform(original));
+            const finalName = renamed || original;
+            resultingCounts.set(finalName, (resultingCounts.get(finalName) || 0) + 1);
+            if (finalName !== original) {
+                changedCount += 1;
+                renamedById.set(field.id, {
+                    oldName: original,
+                    newName: finalName
+                });
+                mapping[original] = finalName;
+            }
+        });
+
+        const duplicates = [];
+        resultingCounts.forEach(function (count, name) {
+            if (count > 1) duplicates.push(name);
+        });
+        const result = {
+            changedCount: changedCount,
+            renamedById: renamedById,
+            mapping: mapping,
+            error: '',
+            duplicates: duplicates
+        };
+        state.bulkRenamePreviewCache = { key: cacheKey, value: result };
+        return result;
+    }
+
+    function updateBulkRenameUiState() {
+        const preview = getBulkRenamePreview();
+        const hasPattern = String(state.bulkRenamePattern || '').length > 0;
+        bulkRenameStatus.className = 'bulk-rename-status small text-muted';
+        if (!hasPattern) {
+            bulkRenameStatus.textContent = 'Live preview will appear in the list below.';
+        } else if (preview.error) {
+            bulkRenameStatus.classList.add('error');
+            bulkRenameStatus.textContent = preview.error;
+        } else if (preview.duplicates.length) {
+            bulkRenameStatus.classList.add('warning');
+            bulkRenameStatus.textContent = 'Rename would create duplicate names: ' + preview.duplicates.slice(0, 3).join(', ') + (preview.duplicates.length > 3 ? ' ...' : '');
+        } else if (preview.changedCount === 0) {
+            bulkRenameStatus.textContent = 'No matching fields for current pattern.';
+        } else {
+            bulkRenameStatus.textContent = 'Previewing ' + preview.changedCount + ' rename' + (preview.changedCount === 1 ? '' : 's') + '.';
+        }
+        bulkRenameApplyBtn.disabled = !hasPattern || !!preview.error || preview.changedCount === 0 || preview.duplicates.length > 0;
+    }
+
+    function applyBulkRename() {
+        const preview = getBulkRenamePreview();
+        if (preview.error) {
+            showError(preview.error);
+            return;
+        }
+        if (!preview.changedCount) {
+            showError('No matching fields to rename.');
+            return;
+        }
+        if (preview.duplicates.length) {
+            showError('Bulk rename would create duplicate field names.');
+            return;
+        }
+        state.fields.forEach(function (field) {
+            const change = preview.renamedById.get(field.id);
+            if (change) {
+                field.name = change.newName;
+            }
+        });
+        bumpFieldNamesVersion();
+        setDirty(true);
+        renderFieldsList();
+        renderFieldsOnPages();
+        updateFieldCount();
+        showSuccess('Renamed ' + preview.changedCount + ' field' + (preview.changedCount === 1 ? '' : 's') + '.');
     }
 
     function refreshFieldsListFromControls() {
@@ -1843,8 +2087,8 @@
         }
         const listItem = fieldsList.querySelector('.field-list-item[data-field-id="' + field.id + '"]');
         if (listItem) {
-            const title = listItem.querySelector('.fw-semibold');
-            if (title) {
+            const title = listItem.querySelector('.field-list-name');
+            if (title && !title.classList.contains('field-list-name-preview')) {
                 title.textContent = field.name || '';
             }
             const sidebarInput = listItem.querySelector('[data-action="field-name"]');
@@ -1863,8 +2107,13 @@
     function commitFieldNameChange(fieldId, nextValue, source) {
         const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
         if (!field) return;
+        if (field.name === nextValue) return;
         field.name = nextValue;
+        bumpFieldNamesVersion();
         setDirty(true);
+        if (state.fieldsPanelMode === 'rename') {
+            renderFieldsList();
+        }
         updateRenderedFieldName(fieldId);
         if (source !== 'quick') {
             const quickField = getQuickEditField();
@@ -2000,10 +2249,15 @@
     function updateAiUiState() {
         const aiEnabled = !!state.auth.aiEnabled;
         autoDetectBtn.disabled = !state.pdfBytes || !aiEnabled;
-        relabelBtn.disabled = !state.pdfBytes || state.fields.length === 0 || !aiEnabled;
+        if (relabelBtn) {
+            relabelBtn.disabled = !state.pdfBytes || state.fields.length === 0 || !aiEnabled;
+        }
+        if (sidebarRelabelBtn) {
+            sidebarRelabelBtn.disabled = !state.pdfBytes || state.fields.length === 0 || !aiEnabled;
+        }
         if (!aiEnabled) {
             aiAuthNotice.classList.remove('hidden');
-            aiAuthNotice.innerHTML = 'AI features require login. <a href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a> to use auto-detect and relabel.';
+            aiAuthNotice.innerHTML = 'AI features require login. <a href="' + escapeHtml(state.auth.loginUrl || '/user/sign-in') + '">Log in</a> to use auto-detect and AI relabel.';
         } else {
             aiAuthNotice.classList.add('hidden');
         }
@@ -3282,6 +3536,7 @@
     }
 
     function renderFieldsList() {
+        updateBulkRenameUiState();
         updateFieldCount();
         if (state.fields.length === 0) {
             fieldsList.innerHTML = '';
@@ -3289,6 +3544,7 @@
         }
         const showPageGroups = state.pageCount > 1 && state.fieldSort === 'position';
         const orderedFields = getDisplayedFields();
+        const renamePreview = state.fieldsPanelMode === 'rename' ? getBulkRenamePreview() : null;
         fieldsList.innerHTML = '';
         if (orderedFields.length === 0) {
             fieldsList.innerHTML = '<div class="text-muted small px-1 py-2">No fields match the current filter.</div>';
@@ -3318,10 +3574,20 @@
             const item = document.createElement('div');
             item.className = 'field-list-item' + (field.id === state.selectedFieldId ? ' selected' : '');
             item.dataset.fieldId = field.id;
+            const renameChange = renamePreview ? renamePreview.renamedById.get(field.id) : null;
+            const displayNameHtml = renameChange
+                ? (
+                    '<div class="field-list-name field-list-name-preview" title="' + escapeHtml(renameChange.oldName + ' -> ' + renameChange.newName) + '">' +
+                        '<span class="rename-old">' + escapeHtml(renameChange.oldName) + '</span>' +
+                        '<span class="rename-arrow">-></span>' +
+                        '<span class="rename-new">' + escapeHtml(renameChange.newName) + '</span>' +
+                    '</div>'
+                )
+                : ('<div class="field-list-name" title="' + escapeHtml(field.name) + '">' + escapeHtml(field.name) + '</div>');
             item.innerHTML =
                 '<div class="field-list-row">' +
                     '<div class="field-list-icon" aria-hidden="true">' + meta.icon + '</div>' +
-                    '<div class="field-list-name" title="' + escapeHtml(field.name) + '">' + escapeHtml(field.name) + '</div>' +
+                    displayNameHtml +
                 '</div>' +
                 (field.id === state.selectedFieldId ? renderFieldEditor(field) : '');
             item.addEventListener('click', function (event) {
@@ -3583,6 +3849,7 @@
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
             };
         });
+        bumpFieldNamesVersion();
         state.selectedFieldId = settings.preserveSelection && state.fields.some(function (field) {
             return field.id === state.selectedFieldId;
         }) ? state.selectedFieldId : (state.fields[0] ? state.fields[0].id : null);
@@ -3633,6 +3900,7 @@
         field.x = rect.x;
         field.y = rect.y;
         state.fields.push(field);
+        bumpFieldNamesVersion();
         selectField(field.id, { focusNameInput: true, scrollIntoView: false });
         setDirty(true);
         updateFieldCount();
@@ -4006,6 +4274,7 @@
 
     function deleteField(fieldId) {
         state.fields = state.fields.filter(function (field) { return field.id !== fieldId; });
+        bumpFieldNamesVersion();
         if (state.selectedFieldId === fieldId) {
             state.selectedFieldId = state.fields[0] ? state.fields[0].id : null;
         }
@@ -4040,6 +4309,7 @@
             options: Array.isArray(field.options) ? field.options.slice() : undefined
         };
         state.fields.push(duplicate);
+        bumpFieldNamesVersion();
         selectField(duplicate.id, { focusNameInput: false, scrollIntoView: false });
         setDirty(true);
         updateFieldCount();
@@ -4058,7 +4328,9 @@
         const field = getCurrentField();
         if (!field) return;
         const normalized = ensureUniqueFieldName(field.name, field.id);
+        if (field.name === normalized) return;
         field.name = normalized;
+        bumpFieldNamesVersion();
         setDirty(true);
         updateRenderedFieldName(field.id);
         syncQuickFieldEditor();
@@ -4224,7 +4496,7 @@
             if (!confirmed) return;
         }
 
-        showLoading('Relabeling fields with AI...');
+        showLoading('Relabeling fields with AI... this can take 2-3 minutes.');
         try {
             const formData = new FormData();
             formData.append('file', getPdfFileForRequests());
@@ -4233,7 +4505,7 @@
             const data = await requestAsyncLabelerAction(
                 '/pdf-labeler/api/relabel',
                 formData,
-                'AI relabel is running in the background...'
+                'AI relabel is running in the background (this can take 2-3 minutes)...'
             );
 
             const pdfWasUpdated = applyReturnedPdfPayload(data, state.fileName || 'edited-form.pdf');
@@ -4879,6 +5151,27 @@
         state.fieldSort = fieldSortInput.value || 'position';
         refreshFieldsListFromControls();
     });
+    fieldsModeInputs.forEach(function (input) {
+        input.addEventListener('change', function () {
+            setFieldsPanelMode(input.value);
+        });
+    });
+    bulkRenameTypeInput.addEventListener('change', function () {
+        state.bulkRenameType = bulkRenameTypeInput.value === 'regex' ? 'regex' : 'pattern';
+        invalidateBulkRenamePreview();
+        refreshFieldsListFromControls();
+    });
+    bulkRenamePatternInput.addEventListener('input', function () {
+        state.bulkRenamePattern = bulkRenamePatternInput.value || '';
+        invalidateBulkRenamePreview();
+        refreshFieldsListFromControls();
+    });
+    bulkRenameReplacementInput.addEventListener('input', function () {
+        state.bulkRenameReplacement = bulkRenameReplacementInput.value || '';
+        invalidateBulkRenamePreview();
+        refreshFieldsListFromControls();
+    });
+    bulkRenameApplyBtn.addEventListener('click', applyBulkRename);
     window.addEventListener('resize', function () {
         currentVisiblePageIndex = getCurrentVisiblePageIndex();
         positionQuickFieldEditor();
@@ -5508,7 +5801,12 @@
     });
 
     autoDetectBtn.addEventListener('click', autoDetectFields);
-    relabelBtn.addEventListener('click', relabelFields);
+    if (relabelBtn) {
+        relabelBtn.addEventListener('click', relabelFields);
+    }
+    if (sidebarRelabelBtn) {
+        sidebarRelabelBtn.addEventListener('click', relabelFields);
+    }
     exportBtn.addEventListener('click', exportPdf);
 
     // Playground event listeners
@@ -5597,6 +5895,10 @@
     });
 
     applyBranding();
+    bulkRenameTypeInput.value = state.bulkRenameType;
+    bulkRenamePatternInput.value = state.bulkRenamePattern;
+    bulkRenameReplacementInput.value = state.bulkRenameReplacement;
+    setFieldsPanelMode(state.fieldsPanelMode);
     updateDocumentName();
     updateToolHint();
     fetchModelCatalog();

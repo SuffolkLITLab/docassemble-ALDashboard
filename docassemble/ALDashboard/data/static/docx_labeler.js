@@ -89,6 +89,10 @@
         // ================================================================
         // State
         // ================================================================
+        var previewUtils = (typeof window !== 'undefined' && window.DocxLabelerPreviewUtils)
+            ? window.DocxLabelerPreviewUtils
+            : null;
+
         let state = {
             file: null,
             fileContent: null,
@@ -284,6 +288,32 @@
             state.suggestions.forEach(function(suggestion) {
                 if (suggestion.group !== groupId) return;
                 suggestion._displayLabel = variableName;
+                var manualKind = suggestion._manualKind || 'replace';
+                if (manualKind === 'if_wrap' || manualKind === 'ifp_wrap') {
+                    var openTag = manualKind === 'ifp_wrap'
+                        ? '{%p if ' + variableName + ' %}'
+                        : '{% if ' + variableName + ' %}';
+                    var closeTag = manualKind === 'ifp_wrap'
+                        ? '{%p endif %}'
+                        : '{% endif %}';
+                    var selectedFragment = suggestion._selectedFragment || '';
+                    if (suggestion._manualRole === 'single') {
+                        suggestion.text =
+                            (suggestion._manualPrefix || '') +
+                            openTag +
+                            selectedFragment +
+                            closeTag +
+                            (suggestion._manualSuffix || '');
+                    } else if (suggestion._manualRole === 'first') {
+                        suggestion.text =
+                            (suggestion._manualPrefix || '') + openTag + selectedFragment;
+                    } else if (suggestion._manualRole === 'last') {
+                        suggestion.text = selectedFragment + closeTag + (suggestion._manualSuffix || '');
+                    } else if (suggestion._manualRole === 'middle') {
+                        suggestion.text = selectedFragment;
+                    }
+                    return;
+                }
                 if (suggestion._manualRole === 'single') {
                     suggestion.text = (suggestion._manualPrefix || '') + variableName + (suggestion._manualSuffix || '');
                 } else if (suggestion._manualRole === 'first') {
@@ -297,19 +327,28 @@
         }
 
         function collectRenamePayload() {
-            var renames = [];
-            Object.entries(state.labelRenames).forEach(function(entry) {
-                var original = entry[0], newValue = entry[1];
-                if (original !== newValue) {
-                    renames.push({ original: original, replacement: newValue });
-                }
-            });
-            return renames;
+            // Existing-label edits are sent as run-level patches via the labels payload.
+            return [];
         }
 
         function collectAcceptedLabels() {
-            return state.suggestions.filter(function(s) { return s.status === 'accepted'; }).map(function(s) {
-                return { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
+            var acceptedByKey = {};
+            state.suggestions.filter(function(s) { return s.status === 'accepted'; }).forEach(function(s) {
+                var key = s.paragraph + ',' + s.run + ',' + (s.new_paragraph || 0);
+                acceptedByKey[key] = { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
+            });
+
+            var existingPatches = [];
+            if (previewUtils && previewUtils.buildRunPatchLabelsFromExistingEdits) {
+                existingPatches = previewUtils.buildRunPatchLabelsFromExistingEdits(state.existingLabels, state.runs);
+            }
+            existingPatches.forEach(function(patch) {
+                var key = patch.paragraph + ',' + patch.run + ',0';
+                acceptedByKey[key] = patch;
+            });
+
+            return Object.keys(acceptedByKey).map(function(key) {
+                return acceptedByKey[key];
             });
         }
 
@@ -1167,30 +1206,44 @@
         // ================================================================
         function extractExistingLabels(html) {
             const labels = [];
-            const seen = new Map();
-            const varPattern = /\{\{[\s\S]*?\}\}/g;
+            // Combined scan in document order: {{ }} and {% %}
+            const allPattern = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}/g;
             let match;
-            while ((match = varPattern.exec(html)) !== null) {
-                const label = match[0];
-                if (seen.has(label)) {
-                    seen.get(label).occurrences++;
-                } else {
-                    const entry = { id: generateId(), original: label, current: label, occurrences: 1 };
-                    seen.set(label, entry);
-                    labels.push(entry);
-                }
+            while ((match = allPattern.exec(html)) !== null) {
+                const text = match[0];
+                labels.push({
+                    id: generateId(),
+                    original: text,
+                    current: text,
+                    isControl: text.startsWith('{%')
+                });
             }
-            const ctrlPattern = /\{%[\s\S]*?%\}/g;
-            while ((match = ctrlPattern.exec(html)) !== null) {
-                const label = match[0];
-                if (seen.has(label)) {
-                    seen.get(label).occurrences++;
-                } else {
-                    const entry = { id: generateId(), original: label, current: label, occurrences: 1, isControl: true };
-                    seen.set(label, entry);
-                    labels.push(entry);
+            return labels;
+        }
+
+        function extractExistingLabelsFromRuns(runs) {
+            var labels = [];
+            var pattern = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}/g;
+            (runs || []).forEach(function(run) {
+                var paragraph = run[0];
+                var runIndex = run[1];
+                var text = String(run[2] || '');
+                pattern.lastIndex = 0;
+                var match;
+                while ((match = pattern.exec(text)) !== null) {
+                    var labelText = match[0];
+                    labels.push({
+                        id: generateId(),
+                        original: labelText,
+                        current: labelText,
+                        isControl: labelText.startsWith('{%'),
+                        paragraph: paragraph,
+                        run: runIndex,
+                        start: match.index,
+                        end: match.index + labelText.length
+                    });
                 }
-            }
+            });
             return labels;
         }
 
@@ -1209,6 +1262,34 @@
                 index[p].runs.forEach(function(r) { r.end = r.start + r.text.length; });
             });
             return index;
+        }
+
+        function buildGlobalRunIndex() {
+            var sortedRuns = state.runs.slice().sort(function(a, b) {
+                if (a[0] !== b[0]) return a[0] - b[0];
+                return a[1] - b[1];
+            });
+            var entries = [];
+            var globalOffset = 0;
+            var lastParagraph = null;
+            sortedRuns.forEach(function(r) {
+                var paragraph = r[0];
+                var run = r[1];
+                var text = String(r[2] || '');
+                if (lastParagraph !== null && paragraph !== lastParagraph) {
+                    globalOffset += 1;
+                }
+                entries.push({
+                    paragraph: paragraph,
+                    run: run,
+                    text: text,
+                    start: globalOffset,
+                    end: globalOffset + text.length,
+                });
+                globalOffset += text.length;
+                lastParagraph = paragraph;
+            });
+            return entries;
         }
 
         /**
@@ -1299,9 +1380,61 @@
                     _isManual: true,
                     _selectedText: match.selectedText,
                     _displayLabel: variableName,
+                    _manualKind: 'replace',
                     _manualRole: manualRole,
                     _manualPrefix: manualPrefix,
                     _manualSuffix: manualSuffix
+                });
+            });
+            return labels;
+        }
+
+        function createWrappedLabelFromSelection(conditionExpression, match, wrapperKind) {
+            var groupId = generateId();
+            var labels = [];
+            var openTag = wrapperKind === 'ifp_wrap'
+                ? '{%p if ' + conditionExpression + ' %}'
+                : '{% if ' + conditionExpression + ' %}';
+            var closeTag = wrapperKind === 'ifp_wrap'
+                ? '{%p endif %}'
+                : '{% endif %}';
+            match.runs.forEach(function(r, i) {
+                var selectedFragment = r.originalText.substring(r.selStart, r.selEnd);
+                var manualPrefix = '';
+                var manualSuffix = '';
+                var manualRole = 'middle';
+                var newText = selectedFragment;
+                if (match.runs.length === 1) {
+                    manualRole = 'single';
+                    manualPrefix = r.originalText.substring(0, r.selStart);
+                    manualSuffix = r.originalText.substring(r.selEnd);
+                    newText = manualPrefix + openTag + selectedFragment + closeTag + manualSuffix;
+                } else if (i === 0) {
+                    manualRole = 'first';
+                    manualPrefix = r.originalText.substring(0, r.selStart);
+                    newText = manualPrefix + openTag + selectedFragment;
+                } else if (i === match.runs.length - 1) {
+                    manualRole = 'last';
+                    manualSuffix = r.originalText.substring(r.selEnd);
+                    newText = selectedFragment + closeTag + manualSuffix;
+                }
+                labels.push({
+                    paragraph: r.paragraph,
+                    run: r.run,
+                    text: newText,
+                    new_paragraph: 0,
+                    id: generateId(),
+                    status: 'accepted',
+                    group: groupId,
+                    _isCompanion: i > 0,
+                    _isManual: true,
+                    _selectedText: match.selectedText,
+                    _displayLabel: conditionExpression,
+                    _manualKind: wrapperKind,
+                    _manualRole: manualRole,
+                    _manualPrefix: manualPrefix,
+                    _manualSuffix: manualSuffix,
+                    _selectedFragment: selectedFragment
                 });
             });
             return labels;
@@ -1311,13 +1444,123 @@
         // Selection popover logic
         // ================================================================
         var _selMatch = null;   // stashed findRunsForSelection() result
+        var _selectionMode = 'replace';
+
+        function ensureSelectionModeControls() {
+            if (document.getElementById('sel-mode-group')) return;
+            var controls = document.createElement('div');
+            controls.className = 'mb-2';
+            controls.innerHTML =
+                '<div id="sel-mode-group" class="btn-group btn-group-sm w-100" role="group" aria-label="Selection mode">' +
+                    '<button type="button" class="btn btn-outline-secondary sel-mode-btn active" data-mode="replace">Replace</button>' +
+                    '<button type="button" class="btn btn-outline-secondary sel-mode-btn" data-mode="insert">Insert</button>' +
+                    '<button type="button" class="btn btn-outline-secondary sel-mode-btn" data-mode="if_wrap">{% if %}</button>' +
+                    '<button type="button" class="btn btn-outline-secondary sel-mode-btn" data-mode="ifp_wrap">{%p if %}</button>' +
+                '</div>';
+            var body = selPopover.querySelector('.dl-sel-popover-body');
+            if (body) {
+                body.insertBefore(controls, body.firstChild);
+                var filterBtn = document.createElement('button');
+                filterBtn.type = 'button';
+                filterBtn.id = 'sel-catchall-btn';
+                filterBtn.className = 'btn btn-sm btn-outline-primary mt-2 w-100';
+                filterBtn.textContent = 'Catchall / Request Filters';
+                filterBtn.addEventListener('click', function() {
+                    openCatchallDialog(selVarInput);
+                });
+                body.appendChild(filterBtn);
+            }
+            controls.querySelectorAll('.sel-mode-btn').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    _selectionMode = button.dataset.mode || 'replace';
+                    updateSelectionModeButtons();
+                    updateSelectionModeInputHints();
+                });
+            });
+            updateSelectionModeButtons();
+            updateSelectionModeInputHints();
+        }
+
+        function updateSelectionModeButtons() {
+            document.querySelectorAll('.sel-mode-btn').forEach(function(button) {
+                var isActive = button.dataset.mode === _selectionMode;
+                button.classList.toggle('active', isActive);
+                button.classList.toggle('btn-primary', isActive);
+                button.classList.toggle('btn-outline-secondary', !isActive);
+            });
+        }
+
+        function updateSelectionModeInputHints() {
+            if (_selectionMode === 'replace' || _selectionMode === 'insert') {
+                selVarInput.placeholder = '{{ users[0].name.first }}';
+            } else {
+                selVarInput.placeholder = 'users[0].is_active';
+            }
+            if (_selMatch && _selMatch.isInsertion) {
+                selOriginalText.textContent = '(insert at cursor)';
+            }
+        }
+
+        function normalizeSelectionInput(raw) {
+            if (_selectionMode === 'replace' || _selectionMode === 'insert') {
+                var varName = raw;
+                if (!/^\{[{%]/.test(varName)) {
+                    varName = '{{ ' + varName + ' }}';
+                }
+                return varName;
+            }
+            return raw
+                .replace(/^\{%\s*p?\s*if\s*/i, '')
+                .replace(/\s*%\}$/, '')
+                .replace(/^\{\{\s*/, '')
+                .replace(/\s*\}\}$/, '')
+                .trim();
+        }
+
+        function findRunMatchForCaret(caretRange) {
+            if (!caretRange) return null;
+            var prefixRange = document.createRange();
+            prefixRange.selectNodeContents(previewContent);
+            prefixRange.setEnd(caretRange.startContainer, caretRange.startOffset);
+            var globalOffset = prefixRange.toString().length;
+            var runIndex = buildGlobalRunIndex();
+            if (!runIndex.length) return null;
+            var target = runIndex.find(function(entry) {
+                return globalOffset >= entry.start && globalOffset <= entry.end;
+            });
+            if (!target) {
+                target = runIndex[runIndex.length - 1];
+            }
+            var offsetInRun = Math.max(0, Math.min(target.text.length, globalOffset - target.start));
+            return {
+                paraNum: target.paragraph,
+                runs: [{
+                    paragraph: target.paragraph,
+                    run: target.run,
+                    originalText: target.text,
+                    selStart: offsetInRun,
+                    selEnd: offsetInRun,
+                    isFullySelected: false
+                }],
+                selectedText: '',
+                isInsertion: true
+            };
+        }
 
         function showSelectionPopover(match, mouseX, mouseY) {
+            ensureSelectionModeControls();
             _selMatch = match;
-            selOriginalText.textContent = match.selectedText;
+            selOriginalText.textContent = match.isInsertion ? '(insert at cursor)' : match.selectedText;
             selVarInput.value = '';
             selVarPanel.classList.add('hidden');
             selVarSearch.value = '';
+            if (match.isInsertion) {
+                _selectionMode = 'insert';
+            } else if (_selectionMode === 'insert') {
+                _selectionMode = 'replace';
+            }
+            updateSelectionModeButtons();
+            updateSelectionModeInputHints();
 
             // Position near the cursor, clamped to viewport
             var pw = 380, ph = 260;
@@ -1339,12 +1582,17 @@
         function saveSelectionLabel() {
             var raw = selVarInput.value.trim();
             if (!raw || !_selMatch) return;
-            // Wrap in {{ }} if the user didn’t
-            var varName = raw;
-            if (!/^\{[{%]/.test(varName)) {
-                varName = '{{ ' + varName + ' }}';
+            if ((_selectionMode === 'if_wrap' || _selectionMode === 'ifp_wrap') && _selMatch.isInsertion) {
+                showError('Select text first when adding conditional wrappers.');
+                return;
             }
-            var newLabels = createLabelFromSelection(varName, _selMatch);
+            var value = normalizeSelectionInput(raw);
+            var newLabels;
+            if (_selectionMode === 'if_wrap' || _selectionMode === 'ifp_wrap') {
+                newLabels = createWrappedLabelFromSelection(value, _selMatch, _selectionMode);
+            } else {
+                newLabels = createLabelFromSelection(value, _selMatch);
+            }
             state.suggestions = state.suggestions.concat(newLabels);
             hideSelectionPopover();
             renderSuggestions();
@@ -1354,21 +1602,42 @@
         }
 
         function onPreviewMouseUp(e) {
+            if (previewUtils && previewUtils.shouldSuppressSelectionPopoverFromTarget) {
+                if (previewUtils.shouldSuppressSelectionPopoverFromTarget(e.target)) return;
+            } else if (e.target && e.target.closest && e.target.closest('.existing-inline-label')) {
+                return;
+            }
             // Ignore if popover is already open or no document loaded
             if (!selPopover.classList.contains('hidden')) return;
             if (!state.file || state.runs.length === 0) return;
 
             var sel = window.getSelection();
-            if (!sel || sel.isCollapsed) return;
-            var text = sel.toString();
-            if (!text || !text.trim()) return;
+            if (!sel) return;
 
             // Make sure the selection is inside the preview area
             var anchor = sel.anchorNode, focus = sel.focusNode;
             if (!previewContent.contains(anchor) || !previewContent.contains(focus)) return;
 
-            var match = findRunsForSelection(text);
-            if (!match) return;
+            var match = null;
+            if (sel.isCollapsed) {
+                if (document.caretRangeFromPoint) {
+                    match = findRunMatchForCaret(document.caretRangeFromPoint(e.clientX, e.clientY));
+                } else if (document.caretPositionFromPoint) {
+                    var caretPos = document.caretPositionFromPoint(e.clientX, e.clientY);
+                    if (caretPos) {
+                        var fallbackRange = document.createRange();
+                        fallbackRange.setStart(caretPos.offsetNode, caretPos.offset);
+                        fallbackRange.setEnd(caretPos.offsetNode, caretPos.offset);
+                        match = findRunMatchForCaret(fallbackRange);
+                    }
+                }
+                if (!match) return;
+            } else {
+                var text = sel.toString();
+                if (!text || !text.trim()) return;
+                match = findRunsForSelection(text);
+                if (!match) return;
+            }
 
             showSelectionPopover(match, e.clientX, e.clientY);
         }
@@ -1395,15 +1664,56 @@
             state.suggestions.forEach(function(s) {
                 if (s.status === 'accepted' && s.group && !processedGroups[s.group]) {
                     processedGroups[s.group] = true;
-                    var displayLabel = s._displayLabel || s.text;
                     var selectedText = s._selectedText;
-                    if (selectedText) {
-                        var encoded = escapeHtml(selectedText);
-                        var pos = html.indexOf(encoded);
-                        if (pos !== -1) {
-                            html = html.substring(0, pos)
-                                + '<span class="highlight-accepted">' + escapeHtml(displayLabel) + '</span>'
-                                + html.substring(pos + encoded.length);
+                    if (s._manualKind === 'if_wrap' || s._manualKind === 'ifp_wrap') {
+                        // Show the fully wrapped form in the preview
+                        var wrapDisplay = previewUtils && previewUtils.formatManualWrapPreviewDisplay
+                            ? previewUtils.formatManualWrapPreviewDisplay(
+                                s._manualKind,
+                                s._displayLabel || '',
+                                selectedText || '',
+                                escapeHtml
+                            )
+                            : escapeHtml(
+                                (s._manualKind === 'ifp_wrap' ? '{%p if ' : '{% if ')
+                                + (s._displayLabel || '')
+                                + ' %}'
+                                + (selectedText || '')
+                                + (s._manualKind === 'ifp_wrap' ? '{%p endif %}' : '{% endif %}')
+                            );
+                        if (selectedText) {
+                            var wrapEncoded = escapeHtml(selectedText);
+                            var wrapPos = html.indexOf(wrapEncoded);
+                            if (wrapPos !== -1) {
+                                html = html.substring(0, wrapPos)
+                                    + '<span class="highlight-accepted">' + wrapDisplay + '</span>'
+                                    + html.substring(wrapPos + wrapEncoded.length);
+                            }
+                        }
+                    } else if (!selectedText && s._isManual) {
+                        // Insert mode: no selected text — locate the run and replace its full text
+                        var insertRun = state.runs.find(function(r) {
+                            return r[0] === s.paragraph && r[1] === s.run;
+                        });
+                        if (insertRun && insertRun[2]) {
+                            var insertOrig = escapeHtml(String(insertRun[2]));
+                            var insertPos = html.indexOf(insertOrig);
+                            if (insertPos !== -1) {
+                                html = html.substring(0, insertPos)
+                                    + '<span class="highlight-accepted">' + escapeHtml(s.text) + '</span>'
+                                    + html.substring(insertPos + insertOrig.length);
+                            }
+                        }
+                    } else {
+                        var displayLabel = s._displayLabel || s.text;
+                        if (selectedText) {
+                            var encoded = escapeHtml(selectedText);
+                            var pos = html.indexOf(encoded);
+                            if (pos !== -1) {
+                                html = html.substring(0, pos)
+                                    + '<span class="highlight-accepted">' + escapeHtml(displayLabel) + '</span>'
+                                    + html.substring(pos + encoded.length);
+                            }
                         }
                     }
                 }
@@ -1439,15 +1749,40 @@
                 }
             }
 
-            // Highlight existing labels (with any renames applied)
-            state.existingLabels.forEach(function(label) {
-                const cls = label.original !== label.current ? 'highlight-accepted' : 'highlight-existing';
-                html = html.split(escapeHtml(label.original)).join(
-                    '<span class="' + cls + '">' + escapeHtml(label.current) + '</span>'
-                );
-            });
+            // Highlight existing labels (with any renames applied) — per-occurrence
+            if (previewUtils && previewUtils.applyExistingLabelHighlightsByOccurrence) {
+                html = previewUtils.applyExistingLabelHighlightsByOccurrence(html, state.existingLabels, escapeHtml);
+            } else {
+                var existingByOriginal = {};
+                state.existingLabels.forEach(function(label) {
+                    if (!existingByOriginal[label.original]) existingByOriginal[label.original] = [];
+                    existingByOriginal[label.original].push(label);
+                });
+                Object.keys(existingByOriginal).forEach(function(original) {
+                    var entries = existingByOriginal[original];
+                    var encoded = escapeHtml(original);
+                    var offset = 0;
+                    entries.forEach(function(label) {
+                        var cls = label.current !== label.original ? 'highlight-accepted' : 'highlight-existing';
+                        var span = '<span class="' + cls + ' existing-inline-label" data-label-id="' + escapeHtml(label.id) + '">' + escapeHtml(label.current) + '</span>';
+                        var pos = html.indexOf(encoded, offset);
+                        if (pos === -1) return;
+                        html = html.substring(0, pos) + span + html.substring(pos + encoded.length);
+                        offset = pos + span.length;
+                    });
+                });
+            }
 
             previewContent.innerHTML = html;
+            previewContent.querySelectorAll('.existing-inline-label').forEach(function(node) {
+                node.addEventListener('click', function(evt) {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    var labelId = node.getAttribute('data-label-id');
+                    var label = state.existingLabels.find(function(item) { return item.id === labelId; });
+                    if (label) openEditLabelModal(label);
+                });
+            });
         }
 
         // ================================================================
@@ -1455,13 +1790,24 @@
         // ================================================================
         function renderExistingLabelsTree() {
             existingLabelsTree.innerHTML = '';
-            existingCount.textContent = state.existingLabels.length;
-            if (state.existingLabels.length === 0) {
+            // Build unique-entry list and occurrence counts from per-occurrence data
+            var seenOriginals = {};
+            var uniqueEntries = [];
+            var occurrenceCounts = {};
+            state.existingLabels.forEach(function(label) {
+                occurrenceCounts[label.original] = (occurrenceCounts[label.original] || 0) + 1;
+                if (!seenOriginals[label.original]) {
+                    seenOriginals[label.original] = true;
+                    uniqueEntries.push(label);
+                }
+            });
+            existingCount.textContent = uniqueEntries.length;
+            if (uniqueEntries.length === 0) {
                 existingLabelsTree.innerHTML = '<div class="text-center py-5 text-muted"><p>No existing labels found.</p><p class="small mt-1">Use the AI Suggestions tab to add labels.</p></div>';
                 return;
             }
             const groups = {};
-            state.existingLabels.forEach(function(label) {
+            uniqueEntries.forEach(function(label) {
                 const inner = label.current.replace(/^\{\{\s*|\s*\}\}$/g, '').replace(/^\{%\s*|\s*%\}$/g, '').trim();
                 const base = inner.split('.')[0].split('[')[0];
                 if (!groups[base]) groups[base] = [];
@@ -1476,9 +1822,10 @@
                 const children = document.createElement('div');
                 children.className = 'tree-children mt-1';
                 groups[groupName].forEach(function(label) {
+                    var count = occurrenceCounts[label.original] || 1;
                     const item = document.createElement('div');
                     item.className = 'existing-label p-2 rounded mb-1 cursor-pointer';
-                    item.innerHTML = '<div class="font-monospace small break-all' + (label.original !== label.current ? ' text-primary' : '') + '">' + escapeHtml(label.current) + '</div>' + (label.original !== label.current ? '<div class="small text-muted mt-1 text-decoration-line-through">' + escapeHtml(label.original) + '</div>' : '') + '<div class="small text-muted mt-1">' + label.occurrences + ' occurrence' + (label.occurrences > 1 ? 's' : '') + '</div>';
+                    item.innerHTML = '<div class="font-monospace small break-all' + (label.original !== label.current ? ' text-primary' : '') + '">' + escapeHtml(label.current) + '</div>' + (label.original !== label.current ? '<div class="small text-muted mt-1 text-decoration-line-through">' + escapeHtml(label.original) + '</div>' : '') + '<div class="small text-muted mt-1">' + count + ' occurrence' + (count > 1 ? 's' : '') + '</div>';
                     item.addEventListener('click', function() { openEditLabelModal(label); });
                     children.appendChild(item);
                 });
@@ -1555,6 +1902,7 @@
         async function processFile(file) {
             if (!file) return;
             state.file = file;
+            savePlaygroundBtn.classList.remove('hidden');
             updateModalSourceStatus();
             fileName.textContent = file.name;
             fileName.classList.remove('hidden');
@@ -1586,7 +1934,10 @@
                     console.warn('Could not extract runs for preview mapping:', runErr);
                 }
 
-                state.existingLabels = extractExistingLabels(state.originalHtml);
+                state.existingLabels = extractExistingLabelsFromRuns(state.runs);
+                if (state.existingLabels.length === 0) {
+                    state.existingLabels = extractExistingLabels(state.originalHtml);
+                }
                 state.labelRenames = {};
                 state.suggestions = [];
                 state.validation = null;
@@ -1694,23 +2045,176 @@
             state.editingLabelId = label.id;
             document.getElementById('edit-label-original').textContent = label.original;
             document.getElementById('edit-label-input').value = label.current;
-            document.getElementById('edit-label-title').textContent = 'Edit Label';
             document.getElementById('variable-search').value = '';
             renderVariableTree(getEffectiveVariableTree());
+            // Show occurrence position in title when multiple exist
+            var allSameOriginal = state.existingLabels.filter(function(l) { return l.original === label.original; });
+            var occurrenceIndex = allSameOriginal.indexOf(label) + 1;
+            var totalCount = allSameOriginal.length;
+            document.getElementById('edit-label-title').textContent = totalCount > 1
+                ? 'Edit Label (occurrence ' + occurrenceIndex + ' of ' + totalCount + ')'
+                : 'Edit Label';
+            if (!document.getElementById('edit-catchall-btn')) {
+                var footer = editLabelModal.querySelector('.dl-modal-footer');
+                if (footer) {
+                    var catchallBtn = document.createElement('button');
+                    catchallBtn.id = 'edit-catchall-btn';
+                    catchallBtn.type = 'button';
+                    catchallBtn.className = 'btn btn-outline-primary me-auto';
+                    catchallBtn.textContent = 'Catchall / Request Filters';
+                    catchallBtn.addEventListener('click', function() {
+                        openCatchallDialog(document.getElementById('edit-label-input'));
+                    });
+                    footer.insertBefore(catchallBtn, footer.firstChild);
+                }
+            }
+            // Add/update "Replace all" button depending on occurrence count
+            var replaceAllBtn = document.getElementById('edit-replace-all-btn');
+            if (totalCount > 1) {
+                if (!replaceAllBtn) {
+                    replaceAllBtn = document.createElement('button');
+                    replaceAllBtn.id = 'edit-replace-all-btn';
+                    replaceAllBtn.type = 'button';
+                    replaceAllBtn.className = 'btn btn-outline-secondary';
+                    replaceAllBtn.addEventListener('click', function() { saveEditLabel(true); });
+                    var saveBtn = document.getElementById('edit-save');
+                    var modalFooter = editLabelModal.querySelector('.dl-modal-footer');
+                    if (saveBtn && modalFooter) modalFooter.insertBefore(replaceAllBtn, saveBtn);
+                    else if (modalFooter) modalFooter.appendChild(replaceAllBtn);
+                }
+                replaceAllBtn.textContent = 'Save for all ' + totalCount + ' occurrences';
+            } else if (replaceAllBtn) {
+                replaceAllBtn.remove();
+            }
             editLabelModal.classList.remove('hidden');
             document.getElementById('edit-label-input').focus();
         }
 
-        function saveEditLabel() {
+        function saveEditLabel(replaceAll) {
             var input = document.getElementById('edit-label-input').value.trim();
             if (!input || !state.editingLabelId) return;
+            var replaceAllMode = replaceAll === true;
             var label = state.existingLabels.find(function(l) { return l.id === state.editingLabelId; });
-            if (label) { label.current = input; state.labelRenames[label.original] = input; }
+            if (label) {
+                if (replaceAllMode) {
+                    var orig = label.original;
+                    state.existingLabels.forEach(function(l) {
+                        if (l.original === orig) l.current = input;
+                    });
+                } else {
+                    label.current = input;
+                }
+            }
             editLabelModal.classList.add('hidden');
             state.editingLabelId = null;
             renderExistingLabelsTree();
             updatePreview();
             scheduleSyntaxValidation();
+        }
+
+        function quoteFilterArg(value) {
+            return '"' + String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+        }
+
+        function expressionInsideBraces(rawValue) {
+            var text = String(rawValue || '').trim();
+            if (text.startsWith('{{') && text.endsWith('}}')) {
+                return text.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim();
+            }
+            return text;
+        }
+
+        function buildCatchallExpression(baseExpression, config) {
+            var expression = String(baseExpression || '').trim();
+            if (!expression) return '';
+            var filters = [];
+            if (config.question) filters.push('catchall_question(' + quoteFilterArg(config.question) + ')');
+            if (config.subquestion) filters.push('catchall_subquestion(' + quoteFilterArg(config.subquestion) + ')');
+            if (config.label) filters.push('catchall_label(' + quoteFilterArg(config.label) + ')');
+            if (config.datatype) filters.push('catchall_datatype(' + quoteFilterArg(config.datatype) + ')');
+            if (config.options) {
+                var list = config.options
+                    .split('\n')
+                    .join(',')
+                    .split(',')
+                    .map(function(item) { return item.trim(); })
+                    .filter(Boolean)
+                    .map(function(item) { return quoteFilterArg(item); });
+                if (list.length) filters.push('catchall_options(' + list.join(', ') + ')');
+            }
+            if (filters.length) {
+                expression += ' | ' + filters.join(' | ');
+            }
+            return '{{ ' + expression + ' }}';
+        }
+
+        function ensureCatchallDialog() {
+            var existing = document.getElementById('catchall-filter-modal');
+            if (existing) return existing;
+            var modal = document.createElement('div');
+            modal.id = 'catchall-filter-modal';
+            modal.className = 'hidden dl-modal-overlay';
+            modal.innerHTML =
+                '<div class="dl-modal dl-modal-md">' +
+                    '<div class="dl-modal-header">' +
+                        '<h2 class="h5 fw-semibold mb-0">Catchall / Request Filters</h2>' +
+                        '<button type="button" id="catchall-close" class="btn btn-sm btn-light rounded">Close</button>' +
+                    '</div>' +
+                    '<div class="dl-modal-body">' +
+                        '<div class="mb-2"><label class="form-label small mb-1" for="catchall-question">Question</label><input id="catchall-question" class="form-control form-control-sm" type="text"></div>' +
+                        '<div class="mb-2"><label class="form-label small mb-1" for="catchall-subquestion">Subquestion</label><textarea id="catchall-subquestion" class="form-control form-control-sm" rows="2"></textarea></div>' +
+                        '<div class="mb-2"><label class="form-label small mb-1" for="catchall-label">Label</label><input id="catchall-label" class="form-control form-control-sm" type="text"></div>' +
+                        '<div class="mb-2"><label class="form-label small mb-1" for="catchall-datatype">Datatype</label><select id="catchall-datatype" class="form-select form-select-sm"><option value="">(none)</option><option value="text">text</option><option value="area">area</option><option value="yesno">yesno</option><option value="radio">radio</option><option value="checkboxes">checkboxes</option><option value="date">date</option><option value="email">email</option><option value="currency">currency</option><option value="integer">integer</option><option value="number">number</option></select></div>' +
+                        '<div><label class="form-label small mb-1" for="catchall-options">Options (comma or one per line)</label><textarea id="catchall-options" class="form-control form-control-sm" rows="2"></textarea></div>' +
+                    '</div>' +
+                    '<div class="dl-modal-footer d-flex justify-content-end gap-2">' +
+                        '<button type="button" id="catchall-cancel" class="btn btn-outline-secondary">Cancel</button>' +
+                        '<button type="button" id="catchall-apply" class="btn btn-primary">Apply Filters</button>' +
+                    '</div>' +
+                '</div>';
+            document.body.appendChild(modal);
+            modal.addEventListener('click', function(evt) {
+                if (evt.target === modal) modal.classList.add('hidden');
+            });
+            document.getElementById('catchall-close').addEventListener('click', function() {
+                modal.classList.add('hidden');
+            });
+            document.getElementById('catchall-cancel').addEventListener('click', function() {
+                modal.classList.add('hidden');
+            });
+            return modal;
+        }
+
+        function openCatchallDialog(targetInput) {
+            var input = targetInput;
+            if (!input) return;
+            var raw = String(input.value || '').trim();
+            var innerExpression = expressionInsideBraces(raw);
+            if (!innerExpression || raw.startsWith('{%')) {
+                showError('Catchall filters apply to variable expressions like {{ variable_name }}.');
+                return;
+            }
+            var modal = ensureCatchallDialog();
+            modal.classList.remove('hidden');
+            document.getElementById('catchall-question').value = '';
+            document.getElementById('catchall-subquestion').value = '';
+            document.getElementById('catchall-label').value = '';
+            document.getElementById('catchall-datatype').value = '';
+            document.getElementById('catchall-options').value = '';
+            document.getElementById('catchall-apply').onclick = function() {
+                var updated = buildCatchallExpression(innerExpression, {
+                    question: document.getElementById('catchall-question').value.trim(),
+                    subquestion: document.getElementById('catchall-subquestion').value.trim(),
+                    label: document.getElementById('catchall-label').value.trim(),
+                    datatype: document.getElementById('catchall-datatype').value.trim(),
+                    options: document.getElementById('catchall-options').value.trim(),
+                });
+                if (!updated) return;
+                input.value = updated;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                modal.classList.add('hidden');
+                input.focus();
+            };
         }
 
         // ================================================================
@@ -1758,7 +2262,6 @@
                         regex.lastIndex = 0;
                         var newInner = inner.replace(regex, replace);
                         label.current = '{{ ' + newInner + ' }}';
-                        state.labelRenames[label.original] = label.current;
                     }
                 });
                 bulkReplaceModal.classList.add('hidden');

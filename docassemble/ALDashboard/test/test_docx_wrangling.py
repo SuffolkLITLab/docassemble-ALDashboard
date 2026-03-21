@@ -9,6 +9,7 @@ import docx
 
 from docassemble.ALDashboard.docx_wrangling import (
     apply_docx_label_renames,
+    apply_jinja2_highlights,
     _get_docx_label_role_description,
     _normalize_openai_base_url,
     DEFAULT_TEMPLATE_HIGHLIGHT_FILL,
@@ -112,7 +113,7 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         self.assertEqual(updated.paragraphs[0].text, "Name: {{ users[0].name.first }}")
         self.assertEqual(
             [run.text for run in updated.paragraphs[0].runs],
-            ["Name: ", "{{", " users[0].name.first ", "}}"],
+            ["Name: ", "{{ ", "users[0].name.first", " }}"],
         )
         self.assertIn(
             'w:fill="' + DEFAULT_TEMPLATE_HIGHLIGHT_FILL + '"',
@@ -120,6 +121,46 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         )
         self.assertNotIn("w:shd", updated.paragraphs[0].runs[1]._r.xml)
         self.assertNotIn("w:shd", updated.paragraphs[0].runs[3]._r.xml)
+
+    def test_apply_jinja2_highlights_keeps_docxtpl_special_prefixes_unshaded(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph("{%p if users[0].is_active %}")
+
+        updated = apply_jinja2_highlights(document)
+
+        self.assertEqual(
+            [run.text for run in updated.paragraphs[0].runs],
+            ["{%p ", "if users[0].is_active", " %}"],
+        )
+        self.assertNotIn("w:shd", updated.paragraphs[0].runs[0]._r.xml)
+        self.assertIn(
+            'w:fill="' + DEFAULT_TEMPLATE_HIGHLIGHT_FILL + '"',
+            updated.paragraphs[0].runs[1]._r.xml,
+        )
+        self.assertNotIn("w:shd", updated.paragraphs[0].runs[2]._r.xml)
+
+    def test_tags_inside_if_use_the_if_nesting_color(self):
+        document = docx.Document()
+        document.add_paragraph("{% if outer %}")
+        document.add_paragraph("{{ users[0].name.first }}")
+        document.add_paragraph("{{r rich_text }}")
+        document.add_paragraph("{% endif %}")
+
+        updated = apply_jinja2_highlights(document)
+
+        self.assertIn('w:fill="C7E1DD"', updated.paragraphs[0].runs[1]._r.xml)
+        self.assertEqual(
+            [run.text for run in updated.paragraphs[1].runs],
+            ["{{ ", "users[0].name.first", " }}"],
+        )
+        self.assertIn('w:fill="FFD966"', updated.paragraphs[1].runs[1]._r.xml)
+        self.assertEqual(
+            [run.text for run in updated.paragraphs[2].runs],
+            ["{{r ", "rich_text", " }}"],
+        )
+        self.assertNotIn("w:shd", updated.paragraphs[2].runs[0]._r.xml)
+        self.assertIn('w:fill="FFD966"', updated.paragraphs[2].runs[1]._r.xml)
+        self.assertNotIn("w:shd", updated.paragraphs[2].runs[2]._r.xml)
 
     def test_update_docx_uses_nested_if_stack_for_highlight_colors(self):
         document = docx.Document()

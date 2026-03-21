@@ -255,6 +255,11 @@
   font-family: monospace;
 }
 
+.dl-p-wrap-line {
+  display: block;
+  margin: 0;
+}
+
 /* ============================================================
    Tree widget (variable picker + existing-labels tree)
    ============================================================ */

@@ -1,4 +1,70 @@
     (function() {
+        const DOCX_LABELER_CONFIG = (typeof window !== 'undefined' && window.DOCX_LABELER_CONFIG)
+            ? window.DOCX_LABELER_CONFIG
+            : {};
+        const DOCX_LABELER_API = DOCX_LABELER_CONFIG.api || {};
+        const DOCX_LABELER_UI = DOCX_LABELER_CONFIG.ui || {};
+
+        function endpointPath(key, fallback) {
+            var override = DOCX_LABELER_API[key];
+            return (typeof override === 'string' && override.trim()) ? override.trim() : fallback;
+        }
+
+        function shouldHideInterviewPicker() {
+            return !!DOCX_LABELER_UI.hideInterviewPicker;
+        }
+
+        function cloneVariableTree(value) {
+            if (Array.isArray(value)) {
+                return value.map(cloneVariableTree);
+            }
+            if (!value || typeof value !== 'object') {
+                return value;
+            }
+            var clone = {};
+            Object.keys(value).forEach(function(key) {
+                clone[key] = cloneVariableTree(value[key]);
+            });
+            return clone;
+        }
+
+        function mergeVariableTree(baseTree, extraTree) {
+            var merged = cloneVariableTree(baseTree || {});
+            if (!extraTree || typeof extraTree !== 'object') {
+                return merged;
+            }
+            Object.keys(extraTree).forEach(function(key) {
+                var extraValue = extraTree[key];
+                var mergedValue = merged[key];
+                if (
+                    mergedValue && extraValue
+                    && typeof mergedValue === 'object'
+                    && typeof extraValue === 'object'
+                    && !Array.isArray(mergedValue)
+                    && !Array.isArray(extraValue)
+                ) {
+                    merged[key] = mergeVariableTree(mergedValue, extraValue);
+                } else {
+                    merged[key] = cloneVariableTree(extraValue);
+                }
+            });
+            return merged;
+        }
+
+        function getSingletonListChild(value) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                return null;
+            }
+            var childKeys = Object.keys(value).filter(function(key) { return !key.startsWith('_'); });
+            if (childKeys.length !== 1 || childKeys[0] !== '[0]') {
+                return null;
+            }
+            var child = value['[0]'];
+            return child && typeof child === 'object' && !Array.isArray(child) ? child : null;
+        }
+
+        const DOCX_LABELER_VARIABLE_TREE_EXTRAS = DOCX_LABELER_CONFIG.variableTreeExtras || {};
+
         // ================================================================
         // AssemblyLine Variable Tree Structure
         // ================================================================
@@ -46,7 +112,7 @@
             'bar_number': 'Bar/License number'
         };
 
-        const AL_VARIABLE_TREE = {
+        const AL_VARIABLE_TREE = mergeVariableTree({
             'users': { _description: 'People benefiting from the form (pro se filers)', '[0]': PERSON_ATTRIBUTES },
             'other_parties': { _description: 'Opposing/transactional parties', '[0]': PERSON_ATTRIBUTES },
             'plaintiffs': { _description: 'Plaintiffs in lawsuit', '[0]': PERSON_ATTRIBUTES },
@@ -84,7 +150,7 @@
             'signature_date': 'Date form is signed',
             'user_needs_interpreter': 'User needs interpreter (checkbox)',
             'user_preferred_language': 'User\'s preferred language'
-        };
+        }, DOCX_LABELER_VARIABLE_TREE_EXTRAS);
 
         // ================================================================
         // State
@@ -502,7 +568,7 @@
 
         async function fetchModelCatalog() {
             try {
-                var response = await fetch('/al/labeler/api/models', { method: 'GET' });
+                var response = await fetch(endpointPath('models', '/al/labeler/api/models'), { method: 'GET' });
                 var data = await response.json();
                 if (!data.success || !data.data) return;
                 state.defaultModel = data.data.default_model || state.defaultModel;
@@ -603,6 +669,17 @@
 
         function renderInterviewPicker() {
             if (!interviewPickerPanel || !interviewPickerSidebarHost || !settingsInterviewPickerHost || !usePlaygroundVarsGroup) return;
+            if (shouldHideInterviewPicker()) {
+                usePlaygroundVarsGroup.classList.add('hidden');
+                if (changeInterviewSourceBtn) changeInterviewSourceBtn.classList.add('hidden');
+                interviewPickerPanel.classList.add('hidden');
+                interviewPickerSidebarHost.classList.add('hidden');
+                settingsInterviewPickerHost.classList.add('hidden');
+                state.settings.usePlaygroundVariables = false;
+                usePlaygroundVariablesInput.checked = false;
+                usePlaygroundVariablesInput.disabled = true;
+                return;
+            }
             var showPicker = !!state.auth.isAuthenticated;
             usePlaygroundVarsGroup.classList.toggle('hidden', !showPicker);
             if (changeInterviewSourceBtn) {
@@ -937,7 +1014,7 @@
                 return;
             }
             try {
-                var data = await fetchJsonOrThrow('/al/labeler/api/playground-projects');
+                var data = await fetchJsonOrThrow(endpointPath('playgroundProjects', '/al/labeler/api/playground-projects'));
                 state.playground.projects =
                     data && data.success && data.data && Array.isArray(data.data.projects)
                         ? data.data.projects
@@ -967,7 +1044,7 @@
             }
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/labeler/api/playground-files?project='
+                    endpointPath('playgroundFiles', '/al/labeler/api/playground-files') + '?project='
                     + encodeURIComponent(state.playground.selectedProject)
                 );
                 var files =
@@ -997,7 +1074,7 @@
             }
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/labeler/api/playground-variables?project='
+                    endpointPath('playgroundVariables', '/al/labeler/api/playground-variables') + '?project='
                     + encodeURIComponent(state.playground.selectedProject)
                     + '&filename=' + encodeURIComponent(state.playground.selectedFile)
                 );
@@ -1028,7 +1105,7 @@
                 return;
             }
             try {
-                var data = await fetchJsonOrThrow('/al/labeler/api/installed-packages');
+                var data = await fetchJsonOrThrow(endpointPath('installedPackages', '/al/labeler/api/installed-packages'));
                 state.installed.packages =
                     data && data.success && data.data && Array.isArray(data.data.packages)
                         ? data.data.packages
@@ -1059,7 +1136,7 @@
             }
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/labeler/api/installed-files?package='
+                    endpointPath('installedFiles', '/al/labeler/api/installed-files') + '?package='
                     + encodeURIComponent(state.installed.selectedPackage)
                 );
                 var files =
@@ -1090,7 +1167,7 @@
             try {
                 var interviewPath = state.installed.selectedPackage + ':' + state.installed.selectedFile;
                 var data = await fetchJsonOrThrow(
-                    '/al/labeler/api/installed-variables?interview_path='
+                    endpointPath('installedVariables', '/al/labeler/api/installed-variables') + '?interview_path='
                     + encodeURIComponent(interviewPath)
                 );
                 state.installed.variables =
@@ -1111,7 +1188,7 @@
         async function fetchAuthStatus() {
             try {
                 var nextTarget = window.location.pathname + window.location.search;
-                var response = await fetch('/al/labeler/api/auth-status?next=' + encodeURIComponent(nextTarget), { method: 'GET' });
+                var response = await fetch(endpointPath('authStatus', '/al/labeler/api/auth-status') + '?next=' + encodeURIComponent(nextTarget), { method: 'GET' });
                 var data = await response.json();
                 if (data.success && data.data) {
                     state.auth.isAuthenticated = !!data.data.is_authenticated;
@@ -1131,8 +1208,10 @@
             }
             renderAuthControls();
             updateAiUiState();
-            await fetchPlaygroundProjects();
-            await fetchInstalledPackages();
+            if (!shouldHideInterviewPicker()) {
+                await fetchPlaygroundProjects();
+                await fetchInstalledPackages();
+            }
         }
 
         function renderModelSuggestions(filterText) {
@@ -1854,31 +1933,43 @@
             Object.keys(tree).forEach(function(key) {
                 if (key.startsWith('_')) return;
                 var value = tree[key];
+                var isSelectedInterviewGroup = !prefix && key === 'Selected interview variables';
                 var fullPath = prefix ? prefix + '.' + key : key;
                 var displayPath = fullPath.replace(/\.\[/g, '[');
-                if (filter && !displayPath.toLowerCase().includes(filter.toLowerCase())) {
-                    if (typeof value !== 'object') return;
-                    var hasMatch = JSON.stringify(value).toLowerCase().includes(filter.toLowerCase());
+                var singletonListChild = getSingletonListChild(value);
+                var renderTarget = singletonListChild || value;
+                var childKeys = renderTarget && typeof renderTarget === 'object'
+                    ? Object.keys(renderTarget).filter(function(childKey) { return !childKey.startsWith('_'); })
+                    : [];
+                var hasChildren = childKeys.length > 0;
+                var directSelectPath = singletonListChild ? displayPath + '[0]' : null;
+                var labelPath = directSelectPath || displayPath;
+                if (filter && !labelPath.toLowerCase().includes(filter.toLowerCase())) {
+                    if (typeof renderTarget !== 'object') return;
+                    var hasMatch = JSON.stringify(renderTarget).toLowerCase().includes(filter.toLowerCase());
                     if (!hasMatch) return;
                 }
                 var item = document.createElement('div');
                 item.className = 'mb-1';
-                var isLeaf = typeof value === 'string' || (typeof value === 'object' && !!value._variable);
-                var hasChildren = typeof value === 'object' && Object.keys(value).filter(function(k) { return !k.startsWith('_'); }).length > 0;
                 var header = document.createElement('div');
                 header.className = 'tree-item d-flex align-items-center gap-1 px-2 py-1 rounded small';
-                if (isLeaf) {
-                    var leafDescription = typeof value === 'string' ? value : (value._description || '');
-                    header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + displayPath + '">' + key + '</span><span class="text-muted small ms-1 text-truncate">' + leafDescription + '</span>';
-                    header.querySelector('[data-var]').addEventListener('click', function() { onSelectVariable(displayPath); });
+                var leafValue = renderTarget;
+                var leafDescription = typeof leafValue === 'string' ? leafValue : (leafValue && leafValue._description ? leafValue._description : '');
+                var isSelectableLeaf = typeof value === 'string' || (typeof value === 'object' && !!value._variable) || (directSelectPath && !hasChildren);
+                if (isSelectableLeaf) {
+                    header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + labelPath + '">' + labelPath + '</span><span class="text-muted small ms-1 text-truncate">' + leafDescription + '</span>';
+                    header.querySelector('[data-var]').addEventListener('click', function(e) { e.stopPropagation(); onSelectVariable(labelPath); });
+                } else if (directSelectPath) {
+                    header.innerHTML = '<span class="tree-toggle cursor-pointer">\u25B6</span><span class="font-monospace text-primary cursor-pointer" data-var="' + directSelectPath + '">' + directSelectPath + '</span>' + (leafDescription ? '<span class="text-muted small ms-1">' + leafDescription + '</span>' : '');
+                    header.querySelector('[data-var]').addEventListener('click', function(e) { e.stopPropagation(); onSelectVariable(directSelectPath); });
                 } else {
-                    header.innerHTML = '<span class="tree-toggle cursor-pointer">\u25B6</span><span class="fw-medium">' + key + '</span>' + (value._description ? '<span class="text-muted small ms-1">' + value._description + '</span>' : '');
+                    header.innerHTML = '<span class="tree-toggle cursor-pointer">\u25B6</span><span class="fw-medium">' + key + '</span>' + (leafDescription ? '<span class="text-muted small ms-1">' + leafDescription + '</span>' : '');
                 }
                 item.appendChild(header);
                 if (hasChildren) {
                     var children = document.createElement('div');
                     children.className = 'tree-children hidden';
-                    renderVariableTree(value, fullPath, children, filter, onSelectVariable);
+                    renderVariableTree(renderTarget, isSelectedInterviewGroup ? prefix : (directSelectPath || fullPath), children, filter, onSelectVariable);
                     item.appendChild(children);
                     header.addEventListener('click', function(e) {
                         if (e.target.dataset && e.target.dataset.var) return;
@@ -2124,14 +2215,185 @@
             return text;
         }
 
+        function splitExpressionFilters(expression) {
+            var parts = String(expression || '')
+                .split('|')
+                .map(function(part) { return part.trim(); })
+                .filter(Boolean);
+            return {
+                base: parts.shift() || '',
+                filters: parts
+            };
+        }
+
+        function normalizeFilterSnippet(snippet) {
+            var text = String(snippet || '').trim();
+            if (!text) return '';
+            if (text.startsWith('|')) text = text.slice(1).trim();
+            return text;
+        }
+
+        function parseFilterChain(rawChain) {
+            return String(rawChain || '')
+                .split(/[\n|]/)
+                .map(function(part) { return normalizeFilterSnippet(part); })
+                .filter(Boolean);
+        }
+
+        function parseQuotedFilterValue(rawValue) {
+            var text = String(rawValue || '').trim();
+            if (!text) return '';
+            if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+                text = text.slice(1, -1);
+            }
+            return text.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+        }
+
+        function parseCatchallInvocation(filterText) {
+            var match = String(filterText || '').trim().match(/^catchall_(complete|question|subquestion|label|datatype|options)\s*\((.*)\)$/i);
+            if (!match) return null;
+
+            var kind = match[1].toLowerCase();
+            var argsText = match[2].trim();
+            var result = {};
+
+            if (kind === 'complete') {
+                var argPattern = /(question|subquestion|label|datatype|options)\s*=\s*((?:\[[\s\S]*?\])|(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))/gi;
+                var argMatch;
+                while ((argMatch = argPattern.exec(argsText))) {
+                    var argName = argMatch[1].toLowerCase();
+                    var argValue = argMatch[2].trim();
+                    if (argName === 'options') {
+                        var optionText = argValue;
+                        if (optionText.startsWith('[') && optionText.endsWith(']')) {
+                            optionText = optionText.slice(1, -1);
+                        }
+                        result.options = optionText
+                            .split(',')
+                            .map(function(item) { return parseQuotedFilterValue(item.trim()); })
+                            .filter(Boolean)
+                            .join(', ');
+                    } else {
+                        result[argName] = parseQuotedFilterValue(argValue);
+                    }
+                }
+                return result;
+            }
+
+            result[kind] = parseQuotedFilterValue(argsText);
+            return result;
+        }
+
+        function getCatchallEditorState(rawExpression) {
+            var parts = splitExpressionFilters(rawExpression);
+            var base = parts.base;
+            var catchall = {
+                question: '',
+                subquestion: '',
+                label: '',
+                datatype: '',
+                options: ''
+            };
+            var extraFilters = [];
+
+            parts.filters.forEach(function(filterText) {
+                var normalized = normalizeFilterSnippet(filterText);
+                if (!normalized) return;
+                if (normalized.toLowerCase().startsWith('catchall_')) {
+                    var parsed = parseCatchallInvocation(normalized);
+                    if (parsed) {
+                        Object.keys(parsed).forEach(function(key) {
+                            if (Object.prototype.hasOwnProperty.call(catchall, key) && parsed[key]) {
+                                catchall[key] = parsed[key];
+                            }
+                        });
+                    }
+                    return;
+                }
+                extraFilters.push(normalized);
+            });
+
+            return {
+                base: base,
+                catchall: catchall,
+                extraFilters: extraFilters
+            };
+        }
+
+        const COMMON_FILTER_SNIPPETS = [
+            { label: 'Docassemble: currency', value: 'currency' },
+            { label: 'Docassemble: comma_and_list', value: 'comma_and_list' },
+            { label: 'Docassemble: comma_list', value: 'comma_list' },
+            { label: 'Docassemble: add_separators', value: 'add_separators' },
+            { label: 'Docassemble: phone_number_formatted', value: 'phone_number_formatted' },
+            { label: 'Docassemble: phone_number_in_e164', value: 'phone_number_in_e164' },
+            { label: 'Docassemble: manual_line_breaks', value: 'manual_line_breaks' },
+            { label: 'Docassemble: inline_markdown', value: 'inline_markdown' },
+            { label: 'Docassemble: markdown', value: 'markdown' },
+            { label: 'Docassemble: paragraphs', value: 'paragraphs' },
+            { label: 'Docassemble: fix_punctuation', value: 'fix_punctuation' },
+            { label: 'Docassemble: nice_number', value: 'nice_number' },
+            { label: 'Docassemble: ordinal', value: 'ordinal' },
+            { label: 'Docassemble: ordinal_number', value: 'ordinal_number' },
+            { label: 'Docassemble: title_case', value: 'title_case' },
+            { label: 'Docassemble: verbatim', value: 'verbatim' },
+            { label: 'Docassemble: country_name', value: 'country_name' },
+            { label: 'Docassemble: redact', value: 'redact' },
+            { label: 'Jinja2: default("")', value: 'default("")' },
+            { label: 'Jinja2: length', value: 'length' },
+            { label: 'Jinja2: lower', value: 'lower' },
+            { label: 'Jinja2: upper', value: 'upper' },
+            { label: 'Jinja2: capitalize', value: 'capitalize' },
+            { label: 'Jinja2: title', value: 'title' },
+            { label: 'Jinja2: trim', value: 'trim' },
+            { label: 'Jinja2: replace("", "")', value: 'replace("", "")' },
+            { label: 'Jinja2: join(", ")', value: 'join(", ")' },
+            { label: 'Jinja2: round', value: 'round' },
+            { label: 'Jinja2: int', value: 'int' },
+            { label: 'Jinja2: float', value: 'float' },
+            { label: 'Jinja2: list', value: 'list' },
+            { label: 'Jinja2: safe', value: 'safe' },
+            { label: 'Jinja2: escape', value: 'escape' },
+            { label: 'Jinja2: urlize', value: 'urlize' },
+            { label: 'Jinja2: selectattr("attr")', value: 'selectattr("attr")' },
+            { label: 'Jinja2: rejectattr("attr")', value: 'rejectattr("attr")' },
+            { label: 'Jinja2: map(attribute="attr")', value: 'map(attribute="attr")' },
+            { label: 'Jinja2: sort(attribute="attr")', value: 'sort(attribute="attr")' },
+            { label: 'Jinja2: sum(attribute="attr")', value: 'sum(attribute="attr")' }
+        ];
+
+        function insertFilterSnippet(target, snippet) {
+            if (!target) return;
+            var text = normalizeFilterSnippet(snippet);
+            if (!text) return;
+            var prefix = target.value && target.value.trim() ? ' | ' : '| ';
+            var insertText = prefix + text;
+            if (typeof target.selectionStart === 'number' && typeof target.selectionEnd === 'number') {
+                var start = target.selectionStart;
+                var end = target.selectionEnd;
+                var current = target.value || '';
+                var before = current.slice(0, start);
+                var after = current.slice(end);
+                target.value = before + insertText + after;
+                var caret = before.length + insertText.length;
+                target.selectionStart = caret;
+                target.selectionEnd = caret;
+            } else {
+                target.value = (target.value || '').trim();
+                target.value += insertText;
+            }
+            target.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
         function buildCatchallExpression(baseExpression, config) {
             var expression = String(baseExpression || '').trim();
             if (!expression) return '';
             var filters = [];
-            if (config.question) filters.push('catchall_question(' + quoteFilterArg(config.question) + ')');
-            if (config.subquestion) filters.push('catchall_subquestion(' + quoteFilterArg(config.subquestion) + ')');
-            if (config.label) filters.push('catchall_label(' + quoteFilterArg(config.label) + ')');
-            if (config.datatype) filters.push('catchall_datatype(' + quoteFilterArg(config.datatype) + ')');
+            var catchallArgs = [];
+            if (config.question) catchallArgs.push('question=' + quoteFilterArg(config.question));
+            if (config.subquestion) catchallArgs.push('subquestion=' + quoteFilterArg(config.subquestion));
+            if (config.label) catchallArgs.push('label=' + quoteFilterArg(config.label));
+            if (config.datatype) catchallArgs.push('datatype=' + quoteFilterArg(config.datatype));
             if (config.options) {
                 var list = config.options
                     .split('\n')
@@ -2140,8 +2402,14 @@
                     .map(function(item) { return item.trim(); })
                     .filter(Boolean)
                     .map(function(item) { return quoteFilterArg(item); });
-                if (list.length) filters.push('catchall_options(' + list.join(', ') + ')');
+                if (list.length) catchallArgs.push('options=[' + list.join(', ') + ']');
             }
+            if (catchallArgs.length) {
+                filters.push('catchall_complete(' + catchallArgs.join(', ') + ')');
+            }
+            parseFilterChain(config.additionalFilters).forEach(function(filterText) {
+                if (filterText) filters.push(filterText);
+            });
             if (filters.length) {
                 expression += ' | ' + filters.join(' | ');
             }
@@ -2166,10 +2434,11 @@
                         '<div class="mb-2"><label class="form-label small mb-1" for="catchall-label">Label</label><input id="catchall-label" class="form-control form-control-sm" type="text"></div>' +
                         '<div class="mb-2"><label class="form-label small mb-1" for="catchall-datatype">Datatype</label><select id="catchall-datatype" class="form-select form-select-sm"><option value="">(none)</option><option value="text">text</option><option value="area">area</option><option value="yesno">yesno</option><option value="radio">radio</option><option value="checkboxes">checkboxes</option><option value="date">date</option><option value="email">email</option><option value="currency">currency</option><option value="integer">integer</option><option value="number">number</option></select></div>' +
                         '<div><label class="form-label small mb-1" for="catchall-options">Options (comma or one per line)</label><textarea id="catchall-options" class="form-control form-control-sm" rows="2"></textarea></div>' +
+                        '<div class="mt-3 pt-2 border-top"><label class="form-label small mb-1" for="catchall-extra-filters">Additional filters</label><textarea id="catchall-extra-filters" class="form-control form-control-sm font-monospace" rows="4" placeholder="| default(\"\") | title"></textarea><div class="d-flex gap-2 mt-2"><select id="catchall-filter-pick" class="form-select form-select-sm flex-grow-1"><option value="">Common filters</option></select><button type="button" id="catchall-filter-add" class="btn btn-sm btn-outline-secondary">Add</button></div><div class="form-text mt-1">Add filters in order. Example: <span class="font-monospace">| default(\"\") | upper</span></div></div>' +
                     '</div>' +
                     '<div class="dl-modal-footer d-flex justify-content-end gap-2">' +
                         '<button type="button" id="catchall-cancel" class="btn btn-outline-secondary">Cancel</button>' +
-                        '<button type="button" id="catchall-apply" class="btn btn-primary">Apply Filters</button>' +
+                        '<button type="button" id="catchall-apply" class="btn btn-primary">Apply Catchall</button>' +
                     '</div>' +
                 '</div>';
             document.body.appendChild(modal);
@@ -2194,13 +2463,33 @@
                 showError('Catchall filters apply to variable expressions like {{ variable_name }}.');
                 return;
             }
+            var parsed = getCatchallEditorState(innerExpression);
             var modal = ensureCatchallDialog();
             modal.classList.remove('hidden');
-            document.getElementById('catchall-question').value = '';
-            document.getElementById('catchall-subquestion').value = '';
-            document.getElementById('catchall-label').value = '';
-            document.getElementById('catchall-datatype').value = '';
-            document.getElementById('catchall-options').value = '';
+            document.getElementById('catchall-question').value = parsed.catchall.question || '';
+            document.getElementById('catchall-subquestion').value = parsed.catchall.subquestion || '';
+            document.getElementById('catchall-label').value = parsed.catchall.label || '';
+            document.getElementById('catchall-datatype').value = parsed.catchall.datatype || '';
+            document.getElementById('catchall-options').value = parsed.catchall.options || '';
+            document.getElementById('catchall-extra-filters').value = parsed.extraFilters.join(' | ');
+            var pick = document.getElementById('catchall-filter-pick');
+            if (pick) {
+                pick.innerHTML = '<option value="">Common filters</option>';
+                COMMON_FILTER_SNIPPETS.forEach(function(item) {
+                    var option = document.createElement('option');
+                    option.value = item.value;
+                    option.textContent = item.label;
+                    pick.appendChild(option);
+                });
+                pick.value = '';
+            }
+            var addBtn = document.getElementById('catchall-filter-add');
+            if (addBtn && pick) {
+                addBtn.onclick = function() {
+                    insertFilterSnippet(document.getElementById('catchall-extra-filters'), pick.value);
+                    pick.value = '';
+                };
+            }
             document.getElementById('catchall-apply').onclick = function() {
                 var updated = buildCatchallExpression(innerExpression, {
                     question: document.getElementById('catchall-question').value.trim(),
@@ -2208,6 +2497,7 @@
                     label: document.getElementById('catchall-label').value.trim(),
                     datatype: document.getElementById('catchall-datatype').value.trim(),
                     options: document.getElementById('catchall-options').value.trim(),
+                    additionalFilters: document.getElementById('catchall-extra-filters').value.trim(),
                 });
                 if (!updated) return;
                 input.value = updated;
@@ -2611,7 +2901,7 @@
             openPgTemplate.innerHTML = '<option value="">Loading...</option>';
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/labeler/api/playground-templates?project=' + encodeURIComponent(project) + '&type=docx'
+                    endpointPath('playgroundTemplates', '/al/labeler/api/playground-templates') + '?project=' + encodeURIComponent(project) + '&type=docx'
                 );
                 var templates = data && data.success && data.data && Array.isArray(data.data.templates) ? data.data.templates : [];
                 openPgTemplate.innerHTML = '';
@@ -2641,7 +2931,7 @@
             showLoading('Loading ' + filename + ' from Playground...');
             try {
                 var data = await fetchJsonOrThrow(
-                    '/al/labeler/api/playground-templates/load?project=' + encodeURIComponent(project) + '&filename=' + encodeURIComponent(filename)
+                    endpointPath('playgroundTemplatesLoad', '/al/labeler/api/playground-templates/load') + '?project=' + encodeURIComponent(project) + '&filename=' + encodeURIComponent(filename)
                 );
                 if (!data.success || !data.data || !data.data.file_content_base64) {
                     throw new Error((data.error && data.error.message) || 'Failed to load template.');
@@ -2733,9 +3023,9 @@
                     docxBase64 = window.btoa(raw);
                 }
 
-                var response = await fetch('/al/labeler/api/playground-templates/save', {
+                var response = await fetch(endpointPath('playgroundTemplatesSave', '/al/labeler/api/playground-templates/save'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-WFD-Action': '1' },
                     body: JSON.stringify({ project: project, filename: filename, file_content_base64: docxBase64 }),
                     credentials: 'same-origin'
                 });

@@ -61,6 +61,9 @@ class TestDocxLabelerJsExtraction(unittest.TestCase):
     def test_js_contains_variable_tree(self):
         self.assertIn("AL_VARIABLE_TREE", self.js)
         self.assertIn("PERSON_ATTRIBUTES", self.js)
+        self.assertIn("variableTreeExtras", self.js)
+        self.assertIn("mergeVariableTree", self.js)
+        self.assertIn("Selected interview variables", self.js)
 
     def test_js_contains_core_functions(self):
         """Key functions that the DOCX labeler UI depends on."""
@@ -72,6 +75,13 @@ class TestDocxLabelerJsExtraction(unittest.TestCase):
         ]
         for fn_name in expected:
             self.assertIn(fn_name, self.js, f"Missing function: {fn_name}")
+
+    def test_js_contains_catchall_filter_ui(self):
+        self.assertIn("catchall_complete(", self.js)
+        self.assertIn("catchall-extra-filters", self.js)
+        self.assertIn("catchall-filter-pick", self.js)
+        self.assertIn("catchall-filter-add", self.js)
+        self.assertIn("COMMON_FILTER_SNIPPETS", self.js)
 
     def test_js_contains_api_calls(self):
         """Verify API endpoint references are present in the JS."""

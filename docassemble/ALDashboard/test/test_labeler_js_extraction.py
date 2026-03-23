@@ -112,9 +112,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
 
     def test_html_has_no_inline_application_js(self):
         """Only CDN scripts, bootstrap JSON data, and static JS src tags."""
-        script_tags = re.findall(
-            r"<script([^>]*)>(.*?)</script>", self.html, re.DOTALL
-        )
+        script_tags = re.findall(r"<script([^>]*)>(.*?)</script>", self.html, re.DOTALL)
         for attrs, body in script_tags:
             body_stripped = body.strip()
             if not body_stripped:

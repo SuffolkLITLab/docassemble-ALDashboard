@@ -411,7 +411,7 @@ def _split_tag_body_for_highlight(
     prefix = ""
     if prefix_match:
         prefix = prefix_match.group(0)
-        body = body[len(prefix):]
+        body = body[len(prefix) :]
 
     leading_space_length = len(body) - len(body.lstrip())
     trailing_space_length = len(body) - len(body.rstrip())
@@ -459,7 +459,7 @@ def _split_template_run_segments(
 
 
 def _collapse_adjacent_segments(
-    segments: Sequence[Tuple[str, Optional[str]]]
+    segments: Sequence[Tuple[str, Optional[str]]],
 ) -> List[Tuple[str, Optional[str]]]:
     """Merge neighboring segments that share the same highlight fill."""
     collapsed: List[Tuple[str, Optional[str]]] = []

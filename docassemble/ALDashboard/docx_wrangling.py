@@ -49,6 +49,7 @@ NESTED_IF_TEMPLATE_HIGHLIGHT_FILLS = [
 ]
 
 _JINJA_TAG_PATTERN = re.compile(r"(\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})")
+_DOCXTPL_SPECIAL_PREFIX_PATTERN = re.compile(r"^(?:p|tr|tc|r)(?=\s|$)", re.IGNORECASE)
 _IF_OPEN_PATTERN = re.compile(r"^(?:p\s+)?if\b", re.IGNORECASE)
 _IF_BRANCH_PATTERN = re.compile(r"^(?:p\s+)?(?:elif\b|else\b)", re.IGNORECASE)
 _IF_CLOSE_PATTERN = re.compile(r"^(?:p\s+)?endif\b", re.IGNORECASE)
@@ -370,7 +371,18 @@ def _if_highlight_fill_for_depth(depth: int) -> str:
 def _template_tag_highlight_fill(tag_text: str, if_stack: List[str]) -> str:
     """Choose the highlight color for one Jinja tag and update nesting state."""
     if tag_text.startswith("{{"):
-        return DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+        control_body = tag_text[2:-2].strip()
+        if _DOCXTPL_SPECIAL_PREFIX_PATTERN.match(control_body):
+            return (
+                _if_highlight_fill_for_depth(len(if_stack))
+                if if_stack
+                else DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+            )
+        return (
+            _if_highlight_fill_for_depth(len(if_stack))
+            if if_stack
+            else DEFAULT_TEMPLATE_HIGHLIGHT_FILL
+        )
 
     control_body = tag_text[2:-2].strip()
     if _IF_OPEN_PATTERN.match(control_body):
@@ -387,6 +399,40 @@ def _template_tag_highlight_fill(tag_text: str, if_stack: List[str]) -> str:
     return DEFAULT_TEMPLATE_HIGHLIGHT_FILL
 
 
+def _split_tag_body_for_highlight(
+    tag_text: str, if_stack: List[str]
+) -> List[Tuple[str, Optional[str]]]:
+    """Split one tag into delimiter, body, and delimiter segments."""
+    body = tag_text[2:-2]
+    fill = _template_tag_highlight_fill(tag_text, if_stack)
+    segments: List[Tuple[str, Optional[str]]] = []
+
+    prefix_match = _DOCXTPL_SPECIAL_PREFIX_PATTERN.match(body)
+    prefix = ""
+    if prefix_match:
+        prefix = prefix_match.group(0)
+        body = body[len(prefix) :]
+
+    leading_space_length = len(body) - len(body.lstrip())
+    trailing_space_length = len(body) - len(body.rstrip())
+
+    opener_text = tag_text[:2] + prefix + body[:leading_space_length]
+    closing_text = body[len(body) - trailing_space_length :] + tag_text[-2:]
+
+    if opener_text:
+        segments.append((opener_text, None))
+
+    core_end = len(body) - trailing_space_length if trailing_space_length else len(body)
+    core = body[leading_space_length:core_end]
+    if core:
+        segments.append((core, fill))
+
+    if closing_text:
+        segments.append((closing_text, None))
+
+    return segments
+
+
 def _split_template_run_segments(
     text: str, if_stack: List[str]
 ) -> List[Tuple[str, Optional[str]]]:
@@ -401,15 +447,7 @@ def _split_template_run_segments(
                 segments.append((literal, None))
 
         tag_text = match.group(0)
-        opening = tag_text[:2]
-        closing = tag_text[-2:]
-        body = tag_text[2:-2]
-        fill = _template_tag_highlight_fill(tag_text, if_stack)
-
-        segments.append((opening, None))
-        if body:
-            segments.append((body, fill))
-        segments.append((closing, None))
+        segments.extend(_split_tag_body_for_highlight(tag_text, if_stack))
         last_index = match.end()
 
     if last_index < len(text):
@@ -420,6 +458,31 @@ def _split_template_run_segments(
     return segments or [(text, None)]
 
 
+def _collapse_adjacent_segments(
+    segments: Sequence[Tuple[str, Optional[str]]],
+) -> List[Tuple[str, Optional[str]]]:
+    """Merge neighboring segments that share the same highlight fill."""
+    collapsed: List[Tuple[str, Optional[str]]] = []
+    for segment_text, shading_fill in segments:
+        if not segment_text:
+            continue
+        if (
+            collapsed
+            and collapsed[-1][1] == shading_fill
+            and not _is_template_delimiter_segment(collapsed[-1][0])
+            and not _is_template_delimiter_segment(segment_text)
+        ):
+            collapsed[-1] = (collapsed[-1][0] + segment_text, shading_fill)
+        else:
+            collapsed.append((segment_text, shading_fill))
+    return collapsed
+
+
+def _is_template_delimiter_segment(segment_text: str) -> bool:
+    """Return True for the bare opening or closing delimiter pieces."""
+    return segment_text.startswith(("{{", "{%")) or segment_text.endswith(("}}", "%}"))
+
+
 def _replace_run_with_segments(
     run: Any, segments: Sequence[Tuple[str, Optional[str]]]
 ) -> None:
@@ -428,7 +491,7 @@ def _replace_run_with_segments(
     if parent is None:
         return
 
-    non_empty_segments = [segment for segment in segments if segment[0]]
+    non_empty_segments = _collapse_adjacent_segments(segments)
     if not non_empty_segments:
         parent.remove(run._element)
         return

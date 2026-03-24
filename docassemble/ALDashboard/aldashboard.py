@@ -531,7 +531,7 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     user_manager = current_app.user_manager
 
     # Generate a secure token for password reset
-    token = user_manager.generate_token(user.id)
+    token = user_manager.generate_token(user.id) # type: ignore[attr-defined]
 
     reset_link = url_for(
         "user.reset_password",

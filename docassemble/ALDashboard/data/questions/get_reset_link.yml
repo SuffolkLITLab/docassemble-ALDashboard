@@ -1,6 +1,7 @@
 ---
 include:
   - nav.yml
+  - docassemble.ALToolbox:copy_button.yml
 ---
 metadata:
   title: Get password reset link
@@ -42,6 +43,7 @@ fields:
       [{user[0]: f"{user[1]} {user[2]} {user[3]}"} for user in get_users_and_name()]
     exclude:
       - "2"
+    # User ID 2 is the "cron" user and should not be managed here
 ---
 code: |
   # This does not send an email, it only generates the URL for the admin to send manually

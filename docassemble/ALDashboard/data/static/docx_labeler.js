@@ -393,8 +393,17 @@
         }
 
         function collectRenamePayload() {
-            // Existing-label edits are sent as run-level patches via the labels payload.
-            return [];
+            // Labels with run positioning are handled as run-level patches
+            // in collectAcceptedLabels(). Labels without positioning (e.g.
+            // split across runs, found via HTML fallback) fall back to
+            // global find/replace renames.
+            var renames = [];
+            (state.existingLabels || []).forEach(function(label) {
+                if (!label || label.current === label.original) return;
+                if (typeof label.paragraph === 'number' && typeof label.run === 'number') return;
+                renames.push({ original: label.original, replacement: label.current });
+            });
+            return renames;
         }
 
         function collectAcceptedLabels() {
@@ -410,7 +419,22 @@
             }
             existingPatches.forEach(function(patch) {
                 var key = patch.paragraph + ',' + patch.run + ',0';
-                acceptedByKey[key] = patch;
+                if (acceptedByKey[key]) {
+                    // Both a suggestion and existing-label edits target this
+                    // run.  Apply the renames to the suggestion text so both
+                    // the new label and the renamed existing labels survive.
+                    var mergedText = acceptedByKey[key].text;
+                    (state.existingLabels || []).forEach(function(label) {
+                        if (!label || label.current === label.original) return;
+                        if (label.paragraph !== patch.paragraph || label.run !== patch.run) return;
+                        if (typeof label.original === 'string' && mergedText.indexOf(label.original) !== -1) {
+                            mergedText = mergedText.split(label.original).join(label.current);
+                        }
+                    });
+                    acceptedByKey[key].text = mergedText;
+                } else {
+                    acceptedByKey[key] = patch;
+                }
             });
 
             return Object.keys(acceptedByKey).map(function(key) {
@@ -1596,13 +1620,72 @@
                 .trim();
         }
 
+        /**
+         * Build a global run index that reflects the current preview state
+         * by applying accepted suggestions and existing-label renames.
+         * This keeps DOM text offsets aligned with the run map.
+         */
+        function buildCurrentGlobalRunIndex() {
+            var modifications = {};
+            state.suggestions.forEach(function(s) {
+                if (s.status === 'accepted' && (s.new_paragraph || 0) === 0) {
+                    modifications[s.paragraph + ',' + s.run] = s.text;
+                }
+            });
+            var renamesByRun = {};
+            (state.existingLabels || []).forEach(function(label) {
+                if (!label || label.current === label.original) return;
+                if (typeof label.paragraph !== 'number' || typeof label.run !== 'number') return;
+                var key = label.paragraph + ',' + label.run;
+                if (!renamesByRun[key]) renamesByRun[key] = [];
+                renamesByRun[key].push(label);
+            });
+            var sortedRuns = state.runs.slice().sort(function(a, b) {
+                if (a[0] !== b[0]) return a[0] - b[0];
+                return a[1] - b[1];
+            });
+            var entries = [];
+            var globalOffset = 0;
+            var lastParagraph = null;
+            sortedRuns.forEach(function(r) {
+                var paragraph = r[0];
+                var run = r[1];
+                var key = paragraph + ',' + run;
+                var text;
+                if (modifications[key] !== undefined) {
+                    text = String(modifications[key]);
+                } else {
+                    text = String(r[2] || '');
+                    var renames = renamesByRun[key];
+                    if (renames) {
+                        renames.forEach(function(label) {
+                            text = text.split(label.original).join(label.current);
+                        });
+                    }
+                }
+                if (lastParagraph !== null && paragraph !== lastParagraph) {
+                    globalOffset += 1;
+                }
+                entries.push({
+                    paragraph: paragraph,
+                    run: run,
+                    text: text,
+                    start: globalOffset,
+                    end: globalOffset + text.length,
+                });
+                globalOffset += text.length;
+                lastParagraph = paragraph;
+            });
+            return entries;
+        }
+
         function findRunMatchForCaret(caretRange) {
             if (!caretRange) return null;
             var prefixRange = document.createRange();
             prefixRange.selectNodeContents(previewContent);
             prefixRange.setEnd(caretRange.startContainer, caretRange.startOffset);
             var globalOffset = prefixRange.toString().length;
-            var runIndex = buildGlobalRunIndex();
+            var runIndex = buildCurrentGlobalRunIndex();
             if (!runIndex.length) return null;
             var target = runIndex.find(function(entry) {
                 return globalOffset >= entry.start && globalOffset <= entry.end;
@@ -2026,9 +2109,22 @@
                 }
 
                 state.existingLabels = extractExistingLabelsFromRuns(state.runs);
-                if (state.existingLabels.length === 0) {
-                    state.existingLabels = extractExistingLabels(state.originalHtml);
-                }
+                // Also extract from HTML to catch labels split across runs
+                // that extractExistingLabelsFromRuns cannot find.
+                var htmlLabels = extractExistingLabels(state.originalHtml);
+                var runLabelCounts = {};
+                state.existingLabels.forEach(function(l) {
+                    runLabelCounts[l.original] = (runLabelCounts[l.original] || 0) + 1;
+                });
+                htmlLabels.forEach(function(hl) {
+                    if (runLabelCounts[hl.original] && runLabelCounts[hl.original] > 0) {
+                        runLabelCounts[hl.original]--;
+                    } else {
+                        // Label found in HTML but not in any single run —
+                        // likely split across runs.  Add without positioning.
+                        state.existingLabels.push(hl);
+                    }
+                });
                 state.labelRenames = {};
                 state.suggestions = [];
                 state.validation = null;

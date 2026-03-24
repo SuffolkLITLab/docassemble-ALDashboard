@@ -76,6 +76,134 @@
         return esc(openTag + content + closeTag);
     }
 
+    function extractLabelsFromRuns(runs, createIdFn) {
+        var labels = [];
+        var pattern = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}/g;
+        var nextId = typeof createIdFn === 'function'
+            ? createIdFn
+            : function() {
+                return 'label-' + Math.random().toString(36).slice(2);
+            };
+        var paragraphs = {};
+
+        (runs || []).forEach(function(run) {
+            var paragraph = Number(run[0]);
+            if (!paragraphs[paragraph]) paragraphs[paragraph] = [];
+            paragraphs[paragraph].push(run);
+        });
+
+        Object.keys(paragraphs).sort(function(a, b) {
+            return Number(a) - Number(b);
+        }).forEach(function(paragraphKey) {
+            var paragraph = Number(paragraphKey);
+            var fullText = '';
+            var entries = [];
+            paragraphs[paragraph].slice().sort(function(a, b) {
+                return Number(a[1]) - Number(b[1]);
+            }).forEach(function(run) {
+                var text = String(run[2] || '');
+                entries.push({
+                    paragraph: paragraph,
+                    run: Number(run[1]),
+                    text: text,
+                    start: fullText.length,
+                    end: fullText.length + text.length,
+                });
+                fullText += text;
+            });
+
+            pattern.lastIndex = 0;
+            var match;
+            while ((match = pattern.exec(fullText)) !== null) {
+                var labelText = match[0];
+                var labelStart = match.index;
+                var labelEnd = labelStart + labelText.length;
+                var overlapping = entries.filter(function(entry) {
+                    return entry.end > labelStart && entry.start < labelEnd;
+                });
+                if (!overlapping.length) continue;
+
+                var label = {
+                    id: nextId(),
+                    original: labelText,
+                    current: labelText,
+                    isControl: labelText.startsWith('{%'),
+                };
+
+                if (overlapping.length === 1) {
+                    label.paragraph = paragraph;
+                    label.run = overlapping[0].run;
+                    label.start = labelStart - overlapping[0].start;
+                    label.end = labelEnd - overlapping[0].start;
+                } else {
+                    label.paragraph = paragraph;
+                    label.segments = overlapping.map(function(entry) {
+                        return {
+                            paragraph: paragraph,
+                            run: entry.run,
+                            start: Math.max(0, labelStart - entry.start),
+                            end: Math.min(entry.text.length, labelEnd - entry.start),
+                        };
+                    });
+                }
+
+                labels.push(label);
+            }
+        });
+
+        return labels;
+    }
+
+    function getOccurrenceIndex(text, original, start) {
+        if (typeof text !== 'string' || typeof original !== 'string' || !original) {
+            return 0;
+        }
+        var occurrence = 0;
+        var searchFrom = 0;
+        var foundAt;
+        while ((foundAt = text.indexOf(original, searchFrom)) !== -1) {
+            if (foundAt === start) return occurrence;
+            occurrence += 1;
+            searchFrom = foundAt + Math.max(original.length, 1);
+        }
+        return 0;
+    }
+
+    function applyRunPatchEdits(baseText, edits) {
+        var output = String(baseText || '');
+        (edits || []).slice().sort(function(a, b) {
+            if (a.start !== b.start) return b.start - a.start;
+            return b.end - a.end;
+        }).forEach(function(edit) {
+            if (!edit || typeof edit.replacement !== 'string') return;
+            var start = typeof edit.start === 'number' ? edit.start : null;
+            var end = typeof edit.end === 'number' ? edit.end : null;
+
+            if (start !== null && end !== null && start >= 0 && end >= start && end <= output.length) {
+                var currentSlice = output.substring(start, end);
+                if (typeof edit.original === 'string' && currentSlice === edit.original) {
+                    output = output.substring(0, start) + edit.replacement + output.substring(end);
+                    return;
+                }
+            }
+
+            if (typeof edit.original !== 'string' || !edit.original) return;
+
+            var desiredOccurrence = typeof edit.occurrenceIndex === 'number' ? edit.occurrenceIndex : 0;
+            var searchFrom = 0;
+            var foundAt = -1;
+            var seen = 0;
+            while ((foundAt = output.indexOf(edit.original, searchFrom)) !== -1) {
+                if (seen === desiredOccurrence) break;
+                seen += 1;
+                searchFrom = foundAt + Math.max(edit.original.length, 1);
+            }
+            if (foundAt === -1) return;
+            output = output.substring(0, foundAt) + edit.replacement + output.substring(foundAt + edit.original.length);
+        });
+        return output;
+    }
+
     function buildRunPatchLabelsFromExistingEdits(existingLabels, runs) {
         var runByKey = {};
         (runs || []).forEach(function(run) {
@@ -83,32 +211,63 @@
         });
 
         var editedByRun = {};
+        function pushEdit(runKey, edit) {
+            if (!editedByRun[runKey]) editedByRun[runKey] = [];
+            editedByRun[runKey].push(edit);
+        }
+
         (existingLabels || []).forEach(function(label) {
             if (!label || label.current === label.original) return;
+            if (Array.isArray(label.segments) && label.segments.length > 0) {
+                label.segments.forEach(function(segment, segmentIndex) {
+                    if (typeof segment.paragraph !== 'number' || typeof segment.run !== 'number') return;
+                    if (typeof segment.start !== 'number' || typeof segment.end !== 'number') return;
+                    var segmentKey = segment.paragraph + ',' + segment.run;
+                    var runText = runByKey[segmentKey];
+                    if (typeof runText !== 'string') return;
+                    var originalSlice = runText.substring(segment.start, segment.end);
+                    pushEdit(segmentKey, {
+                        paragraph: segment.paragraph,
+                        run: segment.run,
+                        start: segment.start,
+                        end: segment.end,
+                        original: originalSlice,
+                        replacement: segmentIndex === 0 ? String(label.current || '') : '',
+                        occurrenceIndex: getOccurrenceIndex(runText, originalSlice, segment.start),
+                    });
+                });
+                return;
+            }
             if (typeof label.paragraph !== 'number' || typeof label.run !== 'number') return;
             if (typeof label.start !== 'number' || typeof label.end !== 'number') return;
             var key = label.paragraph + ',' + label.run;
-            if (!editedByRun[key]) editedByRun[key] = [];
-            editedByRun[key].push(label);
+            var originalRunText = runByKey[key];
+            if (typeof originalRunText !== 'string') return;
+            var originalSlice = originalRunText.substring(label.start, label.end);
+            pushEdit(key, {
+                paragraph: label.paragraph,
+                run: label.run,
+                start: label.start,
+                end: label.end,
+                original: originalSlice,
+                replacement: String(label.current || ''),
+                occurrenceIndex: getOccurrenceIndex(originalRunText, originalSlice, label.start),
+            });
         });
 
         var patches = [];
         Object.keys(editedByRun).forEach(function(key) {
-            var edits = editedByRun[key].slice().sort(function(a, b) {
-                return b.start - a.start;
-            });
+            var edits = editedByRun[key].slice();
             var originalRunText = runByKey[key];
             if (typeof originalRunText !== 'string') return;
-            var patched = originalRunText;
-            edits.forEach(function(edit) {
-                patched = patched.substring(0, edit.start) + edit.current + patched.substring(edit.end);
-            });
+            var patched = applyRunPatchEdits(originalRunText, edits);
             var first = edits[0];
             patches.push({
                 paragraph: first.paragraph,
                 run: first.run,
                 text: patched,
-                new_paragraph: 0
+                new_paragraph: 0,
+                _edits: edits,
             });
         });
 
@@ -117,6 +276,8 @@
 
     return {
         applyExistingLabelHighlightsByOccurrence: applyExistingLabelHighlightsByOccurrence,
+        applyRunPatchEdits: applyRunPatchEdits,
+        extractLabelsFromRuns: extractLabelsFromRuns,
         shouldSuppressSelectionPopoverFromTarget: shouldSuppressSelectionPopoverFromTarget,
         formatManualWrapPreviewDisplay: formatManualWrapPreviewDisplay,
         buildRunPatchLabelsFromExistingEdits: buildRunPatchLabelsFromExistingEdits,

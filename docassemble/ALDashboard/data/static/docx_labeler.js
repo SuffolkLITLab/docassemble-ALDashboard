@@ -394,13 +394,22 @@
 
         function collectRenamePayload() {
             // Labels with run positioning are handled as run-level patches
-            // in collectAcceptedLabels(). Labels without positioning (e.g.
-            // split across runs, found via HTML fallback) fall back to
-            // global find/replace renames.
+            // in collectAcceptedLabels(). For unresolved labels without run
+            // coordinates, only allow a global rename when the document has a
+            // single such occurrence, which avoids clobbering duplicates.
             var renames = [];
+            var unresolvedCounts = {};
+            (state.existingLabels || []).forEach(function(label) {
+                if (!label) return;
+                if (typeof label.paragraph === 'number' && typeof label.run === 'number') return;
+                if (Array.isArray(label.segments) && label.segments.length > 0) return;
+                unresolvedCounts[label.original] = (unresolvedCounts[label.original] || 0) + 1;
+            });
             (state.existingLabels || []).forEach(function(label) {
                 if (!label || label.current === label.original) return;
                 if (typeof label.paragraph === 'number' && typeof label.run === 'number') return;
+                if (Array.isArray(label.segments) && label.segments.length > 0) return;
+                if ((unresolvedCounts[label.original] || 0) !== 1) return;
                 renames.push({ original: label.original, replacement: label.current });
             });
             return renames;
@@ -421,17 +430,11 @@
                 var key = patch.paragraph + ',' + patch.run + ',0';
                 if (acceptedByKey[key]) {
                     // Both a suggestion and existing-label edits target this
-                    // run.  Apply the renames to the suggestion text so both
-                    // the new label and the renamed existing labels survive.
-                    var mergedText = acceptedByKey[key].text;
-                    (state.existingLabels || []).forEach(function(label) {
-                        if (!label || label.current === label.original) return;
-                        if (label.paragraph !== patch.paragraph || label.run !== patch.run) return;
-                        if (typeof label.original === 'string' && mergedText.indexOf(label.original) !== -1) {
-                            mergedText = mergedText.split(label.original).join(label.current);
-                        }
-                    });
-                    acceptedByKey[key].text = mergedText;
+                    // run. Apply the exact run edits so per-occurrence changes
+                    // survive even when identical labels repeat.
+                    if (previewUtils && previewUtils.applyRunPatchEdits && Array.isArray(patch._edits)) {
+                        acceptedByKey[key].text = previewUtils.applyRunPatchEdits(acceptedByKey[key].text, patch._edits);
+                    }
                 } else {
                     acceptedByKey[key] = patch;
                 }
@@ -1325,6 +1328,9 @@
         }
 
         function extractExistingLabelsFromRuns(runs) {
+            if (previewUtils && previewUtils.extractLabelsFromRuns) {
+                return previewUtils.extractLabelsFromRuns(runs, generateId);
+            }
             var labels = [];
             var pattern = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}/g;
             (runs || []).forEach(function(run) {
@@ -2109,22 +2115,9 @@
                 }
 
                 state.existingLabels = extractExistingLabelsFromRuns(state.runs);
-                // Also extract from HTML to catch labels split across runs
-                // that extractExistingLabelsFromRuns cannot find.
-                var htmlLabels = extractExistingLabels(state.originalHtml);
-                var runLabelCounts = {};
-                state.existingLabels.forEach(function(l) {
-                    runLabelCounts[l.original] = (runLabelCounts[l.original] || 0) + 1;
-                });
-                htmlLabels.forEach(function(hl) {
-                    if (runLabelCounts[hl.original] && runLabelCounts[hl.original] > 0) {
-                        runLabelCounts[hl.original]--;
-                    } else {
-                        // Label found in HTML but not in any single run —
-                        // likely split across runs.  Add without positioning.
-                        state.existingLabels.push(hl);
-                    }
-                });
+                if (state.existingLabels.length === 0) {
+                    state.existingLabels = extractExistingLabels(state.originalHtml);
+                }
                 state.labelRenames = {};
                 state.suggestions = [];
                 state.validation = null;

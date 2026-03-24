@@ -100,6 +100,57 @@ test('run patch builder only updates edited occurrence in labels payload', () =>
     assert.equal((patches[0].text.match(/\{\{ spouse_name \}\}/g) || []).length, 1);
 });
 
+test('applyRunPatchEdits only updates targeted repeated occurrence', () => {
+    const baseText = 'A {{ spouse_name }} and {{ spouse_name }} in one run';
+    const firstStart = baseText.indexOf('{{ spouse_name }}');
+
+    const merged = previewUtils.applyRunPatchEdits(baseText, [
+        {
+            start: firstStart,
+            end: firstStart + '{{ spouse_name }}'.length,
+            original: '{{ spouse_name }}',
+            replacement: '{{ spouse_full_name }}',
+            occurrenceIndex: 0,
+        }
+    ]);
+
+    assert.match(merged, /A \{\{ spouse_full_name \}\} and \{\{ spouse_name \}\} in one run/);
+});
+
+test('extractLabelsFromRuns finds labels split across multiple runs', () => {
+    const runs = [
+        [0, 0, 'A {{ spouse_'],
+        [0, 1, 'name }} and {{ other_name }}'],
+    ];
+
+    const labels = previewUtils.extractLabelsFromRuns(runs, () => 'generated-id');
+
+    assert.equal(labels.length, 2);
+    assert.equal(labels[0].original, '{{ spouse_name }}');
+    assert.equal(Array.isArray(labels[0].segments), true);
+    assert.equal(labels[0].segments.length, 2);
+    assert.equal(labels[1].original, '{{ other_name }}');
+    assert.equal(labels[1].run, 1);
+});
+
+test('run patch builder rewrites split label occurrence without global rename', () => {
+    const runs = [
+        [0, 0, 'A {{ spouse_'],
+        [0, 1, 'name }} and {{ spouse_name }}'],
+    ];
+    const labels = previewUtils.extractLabelsFromRuns(runs, () => 'generated-id');
+
+    labels[0].current = '{{ spouse_full_name }}';
+
+    const patches = previewUtils.buildRunPatchLabelsFromExistingEdits(labels, runs);
+    const firstRunPatch = patches.find((patch) => patch.run === 0);
+    const secondRunPatch = patches.find((patch) => patch.run === 1);
+
+    assert.equal(patches.length, 2);
+    assert.match(firstRunPatch.text, /A \{\{ spouse_full_name \}\}/);
+    assert.equal(secondRunPatch.text, ' and {{ spouse_name }}');
+});
+
 test('normalizeReplaceAllFlag only returns true for explicit true', () => {
     assert.equal(previewUtils.normalizeReplaceAllFlag(true), true);
     assert.equal(previewUtils.normalizeReplaceAllFlag(false), false);

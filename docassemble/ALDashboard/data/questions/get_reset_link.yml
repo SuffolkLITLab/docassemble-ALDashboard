@@ -1,0 +1,62 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: Get password reset link
+  sessions are unique: True
+  required privileges:
+    - admin
+  temporary session: True
+---
+modules:
+  - .aldashboard
+---
+mandatory: True
+id: interview order
+code: |
+  chosen_user
+
+  password_reset_link
+
+  display_reset_link_screen
+---
+code: |
+  user_lookup = {}
+  for user in get_users_and_name():
+    user_lookup[user[0]] = user[3]
+---
+id: select user
+question: |
+  Get password reset link
+subquestion: |
+  Select the user who needs a password reset link.
+  
+  The link will be shown on the next screen.
+  Copy it and send it directly to the user - do not share it with anyone else.
+fields:
+  - User: chosen_user
+    datatype: integer
+    input type: combobox
+    code: |
+      [{user[0]: f"{user[1]} {user[2]} {user[3]}"} for user in get_users_and_name()]
+    exclude:
+      - "2"
+---
+code: |
+  # This does not send an email, it only generates the URL for the admin to send manually
+  password_reset_link = get_password_reset_link(chosen_user)
+---
+id: display reset link
+event: display_reset_link_screen
+question: |
+  Password reset link for ${ user_lookup.get(chosen_user, "this user") }
+subquestion: |
+  Copy the link below and send it to the user directly.
+
+  **This link is sensitive — only the intended user should receive it.**
+
+  ${ password_reset_link if password_reset_link else "Could not generate a reset link. The user may not exist." }
+buttons:
+  - Restart: restart
+---

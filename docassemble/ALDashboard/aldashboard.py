@@ -7,6 +7,7 @@ from importlib.metadata import distributions
 from docassemble.webapp.users.models import UserModel
 from docassemble.webapp.db_object import init_sqlalchemy
 from github import Github  # PyGithub
+from flask import current_app
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
@@ -79,6 +80,7 @@ __all__ = [
     "get_latest_s3_folder",
     "get_user_details",
     "disable_user_mfa",
+    "get_password_reset_link",
 ]
 
 
@@ -510,6 +512,34 @@ def disable_user_mfa(user_id: int) -> bool:
     user.otp_secret = None
     UserModel.query.session.commit()
     return True
+
+def get_password_reset_link(user_id: int) -> Optional[str]:
+    """Generate a password reset link for a specific user without sending an email.
+
+    Args:
+        user_id: The database ID of the user to generate the reset link for.
+
+    Returns:
+        A full password reset URL string, or None if the user is not found.
+    """
+    user = UserModel.query.filter(UserModel.id == user_id).first()
+
+    if user is None:
+        log(f"get_password_reset_link: No user found with id {user_id}")
+        return None
+
+    user_manager = current_app.user_manager
+
+    # Generate a secure token for password reset
+    token = user_manager.generate_token(user.id)
+
+    reset_link = url_for(
+        "user.reset_password",
+        token=token,
+        _external=True
+    )
+
+    return reset_link
 
 
 def speedy_get_sessions(

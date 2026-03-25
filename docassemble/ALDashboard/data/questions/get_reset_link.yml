@@ -23,7 +23,7 @@ code: |
 code: |
   user_lookup = {}
   for user in get_users_and_name():
-    user_lookup[user[0]] = user[3]
+    user_lookup[user[0]] = f"{user[2]} {user[3]} ({user[1]})"
 ---
 id: select user
 question: |

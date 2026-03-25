@@ -32,6 +32,11 @@ data:
     privilege:
       - admin
       - al_manage_users
+  - name: Get password reset link
+    url: ${ interview_url(i=user_info().package + ":get_reset_link.yml", reset=1) }
+    image: key
+    privilege:
+      - admin
   - name: Usage stats
     url: ${ interview_url(i="docassemble.InterviewStats:data/questions/stats.yml", reset=1) }
     image: chart-bar

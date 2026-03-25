@@ -108,7 +108,7 @@ def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = Non
 
 
 def install_from_pypi(packagename: str):
-    return install_pip_package(packagename)
+    return install_pip_package(packagename, limitation=None)
 
 
 def github_url_to_package_name(url: str) -> str:

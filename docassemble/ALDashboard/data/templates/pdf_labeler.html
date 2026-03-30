@@ -817,6 +817,7 @@
 
     const LABELER_BOOTSTRAP = parseBootstrapJson();
     const API_BASE_PATH = LABELER_BOOTSTRAP.apiBasePath || '/al';
+    const INITIAL_PLAYGROUND_SOURCE = LABELER_BOOTSTRAP.initialPlaygroundSource || {};
     const BRANDING = LABELER_BOOTSTRAP.branding || {};
     const PDF_CONFIG = LABELER_BOOTSTRAP.pdf || {};
     const PDFLibGlobal = window.PDFLib || {};
@@ -966,6 +967,11 @@
         playgroundSource: {
             project: '',
             filename: '',
+        },
+        initialPlaygroundSource: {
+            project: INITIAL_PLAYGROUND_SOURCE.project || '',
+            filename: INITIAL_PLAYGROUND_SOURCE.filename || '',
+            attempted: false,
         },
         interviewSourceMode: 'playground',
         playground: {
@@ -2306,8 +2312,25 @@
         renderAuthControls();
         updateAiUiState();
         if (state.auth.isAuthenticated) {
-            fetchPdfPlaygroundProjects();
+            await fetchPdfPlaygroundProjects();
+            await maybeOpenInitialPlaygroundTemplate();
         }
+    }
+
+    async function maybeOpenInitialPlaygroundTemplate() {
+        if (!state.auth.isAuthenticated) return;
+        if (state.initialPlaygroundSource.attempted) return;
+        var project = state.initialPlaygroundSource.project;
+        var filename = state.initialPlaygroundSource.filename;
+        if (!project || !filename) {
+            state.initialPlaygroundSource.attempted = true;
+            return;
+        }
+        state.initialPlaygroundSource.attempted = true;
+        if (state.playground.projects.indexOf(project) === -1) return;
+        state.playground.selectedProject = project;
+        renderPdfInterviewPicker();
+        await openPdfTemplateFromPlayground(project, filename, { showSuccess: false });
     }
 
     // ================================================================
@@ -2535,6 +2558,11 @@
         var filename = openPgTemplate.value;
         if (!filename) { showError('Select a template file.'); return; }
         openPlaygroundModalEl.classList.add('hidden');
+        await openPdfTemplateFromPlayground(project, filename);
+    }
+
+    async function openPdfTemplateFromPlayground(project, filename, options) {
+        options = options || {};
         showLoading('Loading ' + filename + ' from Playground...');
         try {
             var response = await fetch(apiUrl('/labeler/api/playground-templates/load?project=' + encodeURIComponent(project) + '&filename=' + encodeURIComponent(filename)), { method: 'GET', credentials: 'same-origin' });
@@ -2547,7 +2575,9 @@
             state.playgroundSource = { project: project, filename: filename };
             savePlaygroundBtn.classList.remove('hidden');
             await loadPdf(file);
-            showSuccess('Opened ' + filename + ' from Playground.');
+            if (options.showSuccess !== false) {
+                showSuccess('Opened ' + filename + ' from Playground.');
+            }
         } catch (error) {
             showPdfWorkspace();
             showError('Failed to load from Playground: ' + (error.message || 'Unknown error.'));

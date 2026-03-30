@@ -749,6 +749,72 @@ def _render_template_content(
     )
 
 
+def _parse_initial_playground_source(
+    project: Optional[str],
+    filename: Optional[str],
+    *,
+    allowed_extensions: tuple[str, ...],
+) -> Dict[str, str]:
+    """Normalize optional labeler page query params for initial template load.
+
+    Args:
+        project: Optional ``project`` query parameter.
+        filename: Optional ``filename`` query parameter.
+        allowed_extensions: Allowed filename extensions for this labeler page.
+
+    Returns:
+        Dict[str, str]: Sanitized initial source keys for UI bootstrap.
+    """
+    raw_project = str(project or "").strip()
+    raw_filename = str(filename or "").strip()
+    if not raw_project and not raw_filename:
+        return {}
+
+    normalized_project = (
+        _normalize_playground_project(raw_project) if raw_project else "default"
+    )
+    if not raw_filename:
+        return {"project": normalized_project}
+
+    normalized_filename = _normalize_template_filename(
+        raw_filename, allowed_extensions=allowed_extensions
+    )
+    return {"project": normalized_project, "filename": normalized_filename}
+
+
+def _labeler_initial_playground_source_from_request(
+    *, allowed_extensions: tuple[str, ...]
+) -> Dict[str, str]:
+    """Read and validate optional ``project``/``filename`` query params.
+
+    Invalid query input is ignored so the labeler UI still loads.
+    """
+    try:
+        return _parse_initial_playground_source(
+            request.args.get("project"),
+            request.args.get("filename"),
+            allowed_extensions=allowed_extensions,
+        )
+    except DashboardAPIValidationError as exc:
+        log(
+            "ALDashboard: Ignoring invalid labeler query params "
+            f"project={request.args.get('project')!r} filename={request.args.get('filename')!r} "
+            f"({exc.message})",
+            "warning",
+        )
+        return {}
+
+
+def _build_docx_labeler_bootstrap() -> Dict[str, Any]:
+    """Build bootstrap data for the DOCX labeler page."""
+    return {
+        "apiBasePath": LABELER_BASE_PATH,
+        "initialPlaygroundSource": _labeler_initial_playground_source_from_request(
+            allowed_extensions=(".docx",)
+        ),
+    }
+
+
 def _build_pdf_labeler_bootstrap() -> Dict[str, Any]:
     """Build bootstrap data for the PDF labeler page."""
     from .labeler_config import get_pdf_labeler_ui_config
@@ -756,6 +822,9 @@ def _build_pdf_labeler_bootstrap() -> Dict[str, Any]:
     pdf_ui_config = get_pdf_labeler_ui_config()
     return {
         "apiBasePath": LABELER_BASE_PATH,
+        "initialPlaygroundSource": _labeler_initial_playground_source_from_request(
+            allowed_extensions=(".pdf",)
+        ),
         "branding": pdf_ui_config.get("branding", {}),
         "pdf": {
             "fieldNameLibrary": pdf_ui_config.get("field_name_library", {}),
@@ -1422,7 +1491,9 @@ def docx_labeler_page() -> Response:
         Response: The rendered DOCX labeler HTML page.
     """
     log("ALDashboard: Serving DOCX labeler page", "info")
-    html_content = _get_template_content("docx_labeler.html")
+    html_content = _render_template_content(
+        "docx_labeler.html", bootstrap_data=_build_docx_labeler_bootstrap()
+    )
     if not html_content:
         log("ALDashboard: DOCX labeler template not found", "error")
         return Response(

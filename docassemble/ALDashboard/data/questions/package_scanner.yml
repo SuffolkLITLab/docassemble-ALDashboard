@@ -177,7 +177,7 @@ mandatory: True
 code: |
   intro
   search_type
-  if github_select_type == "created":
+  if showifdef("github_select_type") == "created":
     end_date  # Github input with the end_date question
   else:
     github_user  # Github input w/t the end_date question

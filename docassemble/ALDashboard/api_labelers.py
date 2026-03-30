@@ -743,9 +743,17 @@ def _render_template_content(
         return ""
     if bootstrap_data is None:
         return html_content
+    bootstrap_json = json.dumps(bootstrap_data, sort_keys=True)
+    bootstrap_json = (
+        bootstrap_json.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
     return html_content.replace(
         "__LABELER_BOOTSTRAP_JSON__",
-        json.dumps(bootstrap_data, sort_keys=True),
+        bootstrap_json,
     )
 
 

@@ -96,7 +96,9 @@ def _load_formfyxer_prompt_text(formfyxer_module: Any, prompt_name: str) -> str:
 
 def _load_pdf_text_with_fields(formfyxer_module: Any, input_pdf_path: str) -> str:
     """Extract PDF text with inline field markers using FormFyxer."""
-    with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(
+        mode="w+", suffix=".txt", delete=False
+    ) as temp_file:
         temp_path = temp_file.name
     try:
         formfyxer_module.get_original_text_with_fields(input_pdf_path, temp_path)
@@ -111,7 +113,9 @@ def _field_names_in_prompt_order(
     """Return field names in the same order they appear in the AI prompt text."""
     marker_names = [
         match.group(1).strip()
-        for match in re.finditer(r"\{\{(.*?)\}\}", pdf_text_with_fields, flags=re.DOTALL)
+        for match in re.finditer(
+            r"\{\{(.*?)\}\}", pdf_text_with_fields, flags=re.DOTALL
+        )
         if match.group(1).strip()
     ]
     if (
@@ -169,11 +173,7 @@ def _fallback_target_field_names(
     fallback = getattr(formfyxer_module, "fallback_rename_fields", None)
     if callable(fallback):
         result = fallback(current_names)
-        if (
-            isinstance(result, tuple)
-            and result
-            and isinstance(result[0], list)
-        ):
+        if isinstance(result, tuple) and result and isinstance(result[0], list):
             return _ensure_unique_field_names([str(name) for name in result[0]])
         if isinstance(result, list):
             return _ensure_unique_field_names([str(name) for name in result])
@@ -301,7 +301,9 @@ def _rewrite_pdf_fields_in_order(
     target_field_names: List[str],
 ) -> None:
     """Rewrite PDF fields by occurrence order, including duplicate source names."""
-    normalized_targets = _ensure_unique_field_names([str(name) for name in target_field_names])
+    normalized_targets = _ensure_unique_field_names(
+        [str(name) for name in target_field_names]
+    )
     if len(current_names) != len(normalized_targets):
         raise PDFLabelingError(
             f"target_field_names count ({len(normalized_targets)}) does not match detected fields ({len(current_names)})."

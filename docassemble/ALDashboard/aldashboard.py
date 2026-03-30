@@ -513,6 +513,7 @@ def disable_user_mfa(user_id: int) -> bool:
     UserModel.query.session.commit()
     return True
 
+
 def get_password_reset_link(user_id: int) -> Optional[str]:
     """Generate a password reset link for a specific user without sending an email.
 
@@ -528,16 +529,12 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
         log(f"get_password_reset_link: No user found with id {user_id}")
         return None
 
-    user_manager = current_app.user_manager # type: ignore[attr-defined]
+    user_manager = current_app.user_manager  # type: ignore[attr-defined]
 
     # Generate a secure token for password reset
-    token = user_manager.generate_token(user.id) 
+    token = user_manager.generate_token(user.id)
 
-    reset_link = url_for(
-        "user.reset_password",
-        token=token,
-        _external=True
-    )
+    reset_link = url_for("user.reset_password", token=token, _external=True)
 
     return reset_link
 

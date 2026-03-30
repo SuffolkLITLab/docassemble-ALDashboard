@@ -1,7 +1,12 @@
 import os
-from typing import Any, Dict, Iterable, List
+import json
+import urllib.error
+import urllib.request
+from importlib import metadata
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from docassemble.base.util import user_info
+from docassemble.webapp.backend import directory_for
 from docassemble.webapp.files import SavedFile
 
 from .api_dashboard_utils import yaml_reformat_payload_from_options
@@ -11,9 +16,180 @@ __all__ = [
     "count_reformatted_rows",
     "format_yaml_text",
     "format_uploaded_yaml_file",
+    "get_black_release_status",
     "is_supported_yaml_filename",
     "rewrite_playground_yaml_files",
 ]
+
+def _is_excluded_black_target(filename: str) -> bool:
+    return os.path.basename(str(filename or "")) in {"__init__.py", "setup.py"}
+
+
+def _list_playground_python_files(project: str, area: SavedFile) -> Tuple[List[str], List[str]]:
+    project_dir = directory_for(area, project or "default")
+    if not project_dir or not os.path.isdir(project_dir):
+        return [], []
+
+    python_files: List[str] = []
+    excluded_files: List[str] = []
+    for root, _, files in os.walk(project_dir):
+        for filename in files:
+            if not filename.endswith(".py"):
+                continue
+            full_path = os.path.realpath(os.path.join(root, filename))
+            if not os.path.isfile(full_path):
+                continue
+            relative_name = os.path.relpath(full_path, project_dir)
+            if _is_excluded_black_target(filename):
+                excluded_files.append(relative_name)
+                continue
+            python_files.append(full_path)
+    return sorted(python_files), sorted(excluded_files)
+
+
+def _split_version_parts(version: str) -> Tuple[int, ...]:
+    parts = []
+    for token in str(version or "").split("."):
+        num = ""
+        for char in token:
+            if char.isdigit():
+                num += char
+            else:
+                break
+        if num == "":
+            break
+        parts.append(int(num))
+    return tuple(parts)
+
+
+def _is_newer_version(installed_version: str, latest_version: str) -> bool:
+    installed = str(installed_version or "").strip()
+    latest = str(latest_version or "").strip()
+    if not installed or not latest:
+        return False
+    try:
+        from packaging.version import Version  # type: ignore
+
+        return Version(latest) > Version(installed)
+    except Exception:
+        return _split_version_parts(latest) > _split_version_parts(installed)
+
+
+def _fetch_latest_black_version() -> Optional[str]:
+    request = urllib.request.Request(
+        "https://pypi.org/pypi/black/json",
+        headers={"User-Agent": "docassemble.ALDashboard/black-version-check"},
+    )
+    with urllib.request.urlopen(request, timeout=3) as response:  # nosec B310
+        payload = json.loads(response.read().decode("utf-8"))
+    latest_version = str(payload.get("info", {}).get("version") or "").strip()
+    return latest_version or None
+
+
+def get_black_release_status() -> Dict[str, Any]:
+    installed_version: Optional[str] = None
+    latest_version: Optional[str] = None
+    check_error: Optional[str] = None
+
+    try:
+        installed_version = metadata.version("black")
+    except metadata.PackageNotFoundError:
+        installed_version = None
+    except Exception as err:
+        check_error = str(err)
+
+    try:
+        latest_version = _fetch_latest_black_version()
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as err:
+        check_error = check_error or str(err)
+    except Exception as err:
+        check_error = check_error or str(err)
+
+    update_available = False
+    if installed_version and latest_version:
+        update_available = _is_newer_version(installed_version, latest_version)
+
+    return {
+        "installed_version": installed_version,
+        "latest_version": latest_version,
+        "update_available": update_available,
+        "error": check_error,
+    }
+
+
+def _format_playground_python_files_with_black(
+    project: str,
+    user_id: int,
+) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "requested": True,
+        "processed_count": 0,
+        "changed_count": 0,
+        "error_count": 0,
+        "changed_files": [],
+        "errors": [],
+    }
+
+    black_status = get_black_release_status()
+    result["installed_version"] = black_status.get("installed_version")
+    result["latest_version"] = black_status.get("latest_version")
+    result["update_available"] = bool(black_status.get("update_available"))
+
+    try:
+        import black as black_module  # type: ignore
+    except Exception:
+        result["error_count"] = 1
+        result["errors"].append(
+            {
+                "name": "(black)",
+                "error": "The black package is not installed.",
+            }
+        )
+        return result
+
+    mode = black_module.FileMode()
+    module_area = SavedFile(user_id, fix=True, section="playgroundmodules")
+    python_files, _ = _list_playground_python_files(project, module_area)
+    project_dir = directory_for(module_area, project or "default") or ""
+
+    for py_path in python_files:
+        relative_name = os.path.relpath(py_path, project_dir) if project_dir else py_path
+        try:
+            with open(py_path, "r", encoding="utf-8") as infile:
+                source_text = infile.read()
+
+            try:
+                formatted_text = black_module.format_file_contents(
+                    source_text,
+                    fast=False,
+                    mode=mode,
+                )
+            except black_module.NothingChanged:
+                formatted_text = source_text
+
+            if formatted_text != source_text:
+                module_area.write_content(
+                    formatted_text,
+                    filename=relative_name,
+                    project=project,
+                    save=False,
+                )
+                result["changed_count"] += 1
+                result["changed_files"].append(relative_name)
+        except Exception as err:
+            result["error_count"] += 1
+            result["errors"].append({"name": relative_name, "error": str(err)})
+        finally:
+            result["processed_count"] += 1
+
+    if result["changed_count"] > 0:
+        try:
+            module_area.finalize()
+        except Exception as err:
+            result["error_count"] += 1
+            result["errors"].append({"name": "(finalize)", "error": str(err)})
+
+    return result
 
 
 def count_reformatted_rows(before_text: str, after_text: str) -> int:
@@ -105,6 +281,7 @@ def rewrite_playground_yaml_files(
     selected_playground_project: str,
     line_length: int = 88,
     convert_indent_4_to_2: bool = True,
+    run_black_python_modules: bool = False,
 ) -> Dict[str, Any]:
     project = str(selected_playground_project or "default")
     result: Dict[str, Any] = {
@@ -114,6 +291,17 @@ def rewrite_playground_yaml_files(
         "reformatted_rows_total": 0,
         "error_count": 0,
         "items": [],
+        "black": {
+            "requested": bool(run_black_python_modules),
+            "processed_count": 0,
+            "changed_count": 0,
+            "error_count": 0,
+            "changed_files": [],
+            "errors": [],
+            "installed_version": None,
+            "latest_version": None,
+            "update_available": False,
+        },
     }
 
     tokens: List[str] = [str(token) for token in selected_tokens]
@@ -126,13 +314,10 @@ def rewrite_playground_yaml_files(
         if item.get("token")
     }
     allowed_tokens = set(allowed_token_to_name.keys())
-    project_root = (
-        os.path.realpath(next(iter(allowed_tokens), "")) if allowed_tokens else ""
-    )
-    if project_root:
-        project_root = os.path.dirname(project_root)
 
-    if not tokens:
+    project_root = ""
+
+    if not tokens and not run_black_python_modules:
         return result
 
     current_user = user_info()
@@ -149,6 +334,12 @@ def rewrite_playground_yaml_files(
         return result
 
     playground_area = SavedFile(current_user.id, fix=True, section="playground")
+    try:
+        project_root = directory_for(playground_area, project) or ""
+        if project_root:
+            project_root = os.path.realpath(project_root)
+    except Exception:
+        project_root = ""
 
     for token_path in tokens:
         filename = str(
@@ -163,8 +354,10 @@ def rewrite_playground_yaml_files(
         try:
             if token_path not in allowed_tokens:
                 raise ValueError("File is not in the selected playground project.")
-            if project_root and not os.path.realpath(token_path).startswith(
-                project_root + os.sep
+            normalized_token_path = os.path.realpath(token_path)
+            if project_root and not (
+                normalized_token_path == project_root
+                or normalized_token_path.startswith(project_root + os.sep)
             ):
                 raise ValueError(
                     "Refusing to rewrite files outside the selected playground project."
@@ -196,6 +389,14 @@ def rewrite_playground_yaml_files(
         finally:
             result["processed_count"] += 1
         result["items"].append(item)
+
+    if run_black_python_modules:
+        black_result = _format_playground_python_files_with_black(
+            project,
+            int(current_user.id),
+        )
+        result["black"] = black_result
+        result["error_count"] += int(black_result.get("error_count") or 0)
 
     if result["changed_count"] > 0:
         try:

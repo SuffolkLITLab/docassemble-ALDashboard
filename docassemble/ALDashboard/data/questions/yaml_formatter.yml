@@ -28,18 +28,40 @@ code: |
     playground_result
   show_results
 ---
+code: |
+  black_release_status = get_black_release_status()
+---
 question: |
-  Reformat YAML with `dayamlformatter-fmt`
+  Reformat python code in YAML and modules with `black`
 subquestion: |
-  Choose whether to upload a YAML file and download the reformatted result, or rewrite selected files in a playground project in place.
+  Choose whether to upload a YAML file and download the reformatted result, or rewrite
+  selected files in a playground project in place.
+  
+  Installed black version:
+  **${ black_release_status.get("installed_version") or "Not installed" }**
 
-  This tool only rewrites selected files in your playground. It does not rewrite installed package files.
+  % if black_release_status.get("update_available"):
+  <div class="alert alert-warning" role="alert">
+    A newer black release is available on PyPI
+    (${ black_release_status.get("latest_version") }).
+    Please ask an administrator to update the installed version of <code>black</code>.
+  </div>
+  % endif
 fields:
-  - Operation: format_mode
+  - Reformat: format_mode
     datatype: radio
     choices:
-      - Upload YAML and download reformatted YAML: upload
-      - Rewrite YAML files in a playground project in place: playground
+      - A file I upload: upload
+      - Files in the docassemble playground: playground
+  - Also format Python modules in playground?: format_playground_python_modules
+    datatype: yesno
+    default: True
+    show if:
+      variable: format_mode
+      is: playground
+    help: |
+      If enabled, all Python modules in the selected playground project are formatted with `black`
+      except `__init__.py` and `setup.py`.
   - Max line length: line_length
     datatype: integer
     default: 88
@@ -68,7 +90,10 @@ fields:
 question: |
   Select playground files to reformat
 subquestion: |
-  Only selected files will be rewritten.
+  Only selected YAML files will be rewritten.
+
+  All Python modules in the selected project are formatted with `black`
+  except `__init__.py` and `setup.py`.
 fields:
   - Files: selected_playground_files
     datatype: checkboxes
@@ -78,6 +103,7 @@ fields:
         {item["token"]: item["label"]}
         for item in list_playground_yaml_files(selected_playground_project)
       ]
+    all of the above: True
 ---
 code: |
   uploaded_yaml_path = uploaded_yaml_file.path()
@@ -104,6 +130,7 @@ code: |
     selected_playground_project=selected_playground_project,
     line_length=line_length,
     convert_indent_4_to_2=convert_indent_4_to_2,
+    run_black_python_modules=format_playground_python_modules,
   )
 ---
 event: show_results
@@ -134,8 +161,26 @@ subquestion: |
   Reformatted rows: **${ playground_result["reformatted_rows_total"] }**  
   Errors: **${ playground_result["error_count"] }**
 
+  % if playground_result["black"].get("requested"):
+  #### Black formatting (Python modules)
+  Installed black version:
+  **${ playground_result["black"].get("installed_version") or "Not installed" }**
+
+  Processed modules: **${ playground_result["black"].get("processed_count") or 0 }**  
+  Rewritten modules: **${ playground_result["black"].get("changed_count") or 0 }**  
+  Black errors: **${ playground_result["black"].get("error_count") or 0 }**
+
+  % if playground_result["black"].get("update_available"):
+  <div class="alert alert-warning" role="alert">
+    A newer black release is available on PyPI
+    (${ playground_result["black"].get("latest_version") }).
+    Please ask an administrator to update the installed version of <code>black</code>.
+  </div>
+  % endif
+  % endif
+
   % if playground_result["selected_count"] == 0:
-  No files were selected.
+  No YAML files were selected.
   % endif
 
   % if playground_result["items"]:
@@ -150,5 +195,22 @@ subquestion: |
   - `${ item["name"] }`: no changes needed (${ item["reformatted_rows"] } rows)
   % endif
   % endfor
+  % endif
+
+  % if playground_result["black"].get("requested"):
+  % if playground_result["black"].get("changed_files"):
+  #### Changed Python files
+  % for filename in playground_result["black"].get("changed_files"):
+  - `${ filename }`
+  % endfor
+  % endif
+
+  % if playground_result["black"].get("errors"):
+  #### Black errors
+  % for item in playground_result["black"].get("errors"):
+  - `${ item["name"] }`: error
+    `${ item["error"] }`
+  % endfor
+  % endif
   % endif
   % endif

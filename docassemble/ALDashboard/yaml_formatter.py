@@ -21,11 +21,14 @@ __all__ = [
     "rewrite_playground_yaml_files",
 ]
 
+
 def _is_excluded_black_target(filename: str) -> bool:
     return os.path.basename(str(filename or "")) in {"__init__.py", "setup.py"}
 
 
-def _list_playground_python_files(project: str, area: SavedFile) -> Tuple[List[str], List[str]]:
+def _list_playground_python_files(
+    project: str, area: SavedFile
+) -> Tuple[List[str], List[str]]:
     project_dir = directory_for(area, project or "default")
     if not project_dir or not os.path.isdir(project_dir):
         return [], []
@@ -100,7 +103,12 @@ def get_black_release_status() -> Dict[str, Any]:
 
     try:
         latest_version = _fetch_latest_black_version()
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as err:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as err:
         check_error = check_error or str(err)
     except Exception as err:
         check_error = check_error or str(err)
@@ -153,7 +161,9 @@ def _format_playground_python_files_with_black(
     project_dir = directory_for(module_area, project or "default") or ""
 
     for py_path in python_files:
-        relative_name = os.path.relpath(py_path, project_dir) if project_dir else py_path
+        relative_name = (
+            os.path.relpath(py_path, project_dir) if project_dir else py_path
+        )
         try:
             with open(py_path, "r", encoding="utf-8") as infile:
                 source_text = infile.read()

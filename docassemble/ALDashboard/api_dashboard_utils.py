@@ -1699,7 +1699,9 @@ def _finalize_pdf_payload(
 
         fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
         payload["page_count"] = len(fields_per_page)
-        payload["positioned_fields"] = _format_pdf_fields_for_ui_payload(fields_per_page)
+        payload["positioned_fields"] = _format_pdf_fields_for_ui_payload(
+            fields_per_page
+        )
     if include_pdf_base64:
         with open(output_path, "rb") as handle:
             payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")

@@ -129,8 +129,8 @@ class TestPDFLabelFieldsAPI(unittest.TestCase):
                         "ascii"
                     ),
                     "field_name_mapping": {"old1": "new1"},
-                    }
-                )
+                }
+            )
         self.assertEqual(payload["fields"], ["new1"])
         self.assertNotIn("parse_stats", payload)
 

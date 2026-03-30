@@ -103,13 +103,6 @@ def get_black_release_status() -> Dict[str, Any]:
 
     try:
         latest_version = _fetch_latest_black_version()
-    except (
-        urllib.error.URLError,
-        TimeoutError,
-        ValueError,
-        json.JSONDecodeError,
-    ) as err:
-        check_error = check_error or str(err)
     except Exception as err:
         check_error = check_error or str(err)
 

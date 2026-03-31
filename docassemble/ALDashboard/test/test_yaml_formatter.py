@@ -1,21 +1,77 @@
+import importlib
+import sys
+import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from docassemble.ALDashboard import yaml_formatter
+
+def _import_yaml_formatter_with_mocks():
+    fake_base_pkg = types.ModuleType("docassemble.base")
+    fake_base_pkg.__path__ = []
+
+    fake_util = types.ModuleType("docassemble.base.util")
+    fake_util.user_info = lambda: None
+    fake_base_pkg.util = fake_util
+
+    fake_webapp_pkg = types.ModuleType("docassemble.webapp")
+    fake_webapp_pkg.__path__ = []
+
+    fake_backend = types.ModuleType("docassemble.webapp.backend")
+    fake_backend.directory_for = lambda area, project: None
+
+    fake_files = types.ModuleType("docassemble.webapp.files")
+
+    class _ImportTimeSavedFile:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    fake_files.SavedFile = _ImportTimeSavedFile
+    fake_webapp_pkg.backend = fake_backend
+    fake_webapp_pkg.files = fake_files
+
+    fake_api_utils = types.ModuleType("docassemble.ALDashboard.api_dashboard_utils")
+    fake_api_utils.yaml_reformat_payload_from_options = lambda payload: {
+        "formatted_yaml": str(payload.get("yaml_text") or ""),
+        "changed": False,
+    }
+
+    fake_interview_linter = types.ModuleType(
+        "docassemble.ALDashboard.interview_linter"
+    )
+    fake_interview_linter.list_playground_yaml_files = lambda project: []
+
+    sys.modules.pop("docassemble.ALDashboard.yaml_formatter", None)
+    with patch.dict(
+        sys.modules,
+        {
+            "docassemble.base": fake_base_pkg,
+            "docassemble.base.util": fake_util,
+            "docassemble.webapp": fake_webapp_pkg,
+            "docassemble.webapp.backend": fake_backend,
+            "docassemble.webapp.files": fake_files,
+            "docassemble.ALDashboard.api_dashboard_utils": fake_api_utils,
+            "docassemble.ALDashboard.interview_linter": fake_interview_linter,
+        },
+    ):
+        module = importlib.import_module("docassemble.ALDashboard.yaml_formatter")
+    sys.modules["docassemble.ALDashboard.yaml_formatter"] = module
+    return module
+
+
+yaml_formatter = _import_yaml_formatter_with_mocks()
 
 
 class TestYamlFormatterBlackStatus(unittest.TestCase):
-    @patch("docassemble.ALDashboard.yaml_formatter._fetch_latest_black_version")
-    @patch("docassemble.ALDashboard.yaml_formatter.metadata.version")
-    def test_get_black_release_status_when_update_available(
-        self, mock_metadata_version, mock_fetch_latest
-    ):
-        mock_metadata_version.return_value = "24.1.0"
-        mock_fetch_latest.return_value = "24.3.0"
+    def test_get_black_release_status_when_update_available(self):
+        with patch.object(yaml_formatter.metadata, "version") as mock_metadata_version, patch.object(
+            yaml_formatter, "_fetch_latest_black_version"
+        ) as mock_fetch_latest:
+            mock_metadata_version.return_value = "24.1.0"
+            mock_fetch_latest.return_value = "24.3.0"
 
-        status = yaml_formatter.get_black_release_status()
+            status = yaml_formatter.get_black_release_status()
 
         self.assertEqual(status["installed_version"], "24.1.0")
         self.assertEqual(status["latest_version"], "24.3.0")
@@ -67,11 +123,13 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
                     return str(module_dir)
                 return None
 
-            with patch(
-                "docassemble.ALDashboard.yaml_formatter.SavedFile",
+            with patch.object(
+                yaml_formatter,
+                "SavedFile",
                 side_effect=fake_savedfile,
-            ), patch(
-                "docassemble.ALDashboard.yaml_formatter.directory_for",
+            ), patch.object(
+                yaml_formatter,
+                "directory_for",
                 side_effect=fake_directory_for,
             ):
                 result = yaml_formatter._format_playground_python_files_with_black(

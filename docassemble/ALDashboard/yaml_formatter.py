@@ -3,14 +3,15 @@ import json
 import urllib.error
 import urllib.request
 from importlib import metadata
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from docassemble.base.util import user_info
-from docassemble.webapp.backend import directory_for
-from docassemble.webapp.files import SavedFile
-
-from .api_dashboard_utils import yaml_reformat_payload_from_options
-from .interview_linter import list_playground_yaml_files
+user_info: Optional[Callable[[], Any]] = None
+directory_for: Optional[Callable[[Any, str], Optional[str]]] = None
+SavedFile: Optional[type] = None
+yaml_reformat_payload_from_options: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = (
+    None
+)
+list_playground_yaml_files: Optional[Callable[[str], List[Dict[str, Any]]]] = None
 
 __all__ = [
     "count_reformatted_rows",
@@ -22,14 +23,71 @@ __all__ = [
 ]
 
 
+def _get_user_info() -> Callable[[], Any]:
+    global user_info
+    if user_info is None:
+        from docassemble.base.util import user_info as da_user_info
+
+        user_info = da_user_info
+    return user_info
+
+
+def _get_directory_for() -> Callable[[Any, str], Optional[str]]:
+    global directory_for
+    if directory_for is None:
+        try:
+            from docassemble.webapp.backend import directory_for as da_directory_for
+        except BaseException as err:
+            raise RuntimeError(
+                "docassemble.webapp.backend.directory_for is unavailable."
+            ) from err
+        directory_for = da_directory_for
+    return directory_for
+
+
+def _get_saved_file_class() -> type:
+    global SavedFile
+    if SavedFile is None:
+        try:
+            from docassemble.webapp.files import SavedFile as da_saved_file
+        except BaseException as err:
+            raise RuntimeError(
+                "docassemble.webapp.files.SavedFile is unavailable."
+            ) from err
+        SavedFile = da_saved_file
+    return SavedFile
+
+
+def _get_yaml_reformatter() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
+    global yaml_reformat_payload_from_options
+    if yaml_reformat_payload_from_options is None:
+        from .api_dashboard_utils import (
+            yaml_reformat_payload_from_options as da_yaml_reformatter,
+        )
+
+        yaml_reformat_payload_from_options = da_yaml_reformatter
+    return yaml_reformat_payload_from_options
+
+
+def _get_list_playground_yaml_files() -> Callable[[str], List[Dict[str, Any]]]:
+    global list_playground_yaml_files
+    if list_playground_yaml_files is None:
+        from .interview_linter import (
+            list_playground_yaml_files as da_list_playground_yaml_files,
+        )
+
+        list_playground_yaml_files = da_list_playground_yaml_files
+    return list_playground_yaml_files
+
+
 def _is_excluded_black_target(filename: str) -> bool:
     return os.path.basename(str(filename or "")) in {"__init__.py", "setup.py"}
 
 
 def _list_playground_python_files(
-    project: str, area: SavedFile
+    project: str, area: Any
 ) -> Tuple[List[str], List[str]]:
-    project_dir = directory_for(area, project or "default")
+    project_dir = _get_directory_for()(area, project or "default")
     if not project_dir or not os.path.isdir(project_dir):
         return [], []
 
@@ -149,9 +207,11 @@ def _format_playground_python_files_with_black(
         return result
 
     mode = black_module.FileMode()
-    module_area = SavedFile(user_id, fix=True, section="playgroundmodules")
+    module_area = _get_saved_file_class()(
+        user_id, fix=True, section="playgroundmodules"
+    )
     python_files, _ = _list_playground_python_files(project, module_area)
-    project_dir = directory_for(module_area, project or "default") or ""
+    project_dir = _get_directory_for()(module_area, project or "default") or ""
 
     for py_path in python_files:
         relative_name = (
@@ -214,7 +274,7 @@ def format_yaml_text(
     line_length: int = 88,
     convert_indent_4_to_2: bool = True,
 ) -> Dict[str, Any]:
-    payload = yaml_reformat_payload_from_options(
+    payload = _get_yaml_reformatter()(
         {
             "yaml_text": source_text,
             "line_length": line_length,
@@ -313,7 +373,7 @@ def rewrite_playground_yaml_files(
         str(item.get("token")): str(
             item.get("label") or os.path.basename(str(item.get("token")))
         )
-        for item in list_playground_yaml_files(project)
+        for item in _get_list_playground_yaml_files()(project)
         if item.get("token")
     }
     allowed_tokens = set(allowed_token_to_name.keys())
@@ -323,7 +383,7 @@ def rewrite_playground_yaml_files(
     if not tokens and not run_black_python_modules:
         return result
 
-    current_user = user_info()
+    current_user = _get_user_info()()
     if current_user is None or not getattr(current_user, "id", None):
         result["error_count"] += 1
         result["items"].append(
@@ -336,9 +396,11 @@ def rewrite_playground_yaml_files(
         )
         return result
 
-    playground_area = SavedFile(current_user.id, fix=True, section="playground")
+    playground_area = _get_saved_file_class()(
+        current_user.id, fix=True, section="playground"
+    )
     try:
-        project_root = directory_for(playground_area, project) or ""
+        project_root = _get_directory_for()(playground_area, project) or ""
         if project_root:
             project_root = os.path.realpath(project_root)
     except Exception:

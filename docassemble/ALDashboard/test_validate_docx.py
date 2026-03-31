@@ -4,7 +4,7 @@ import unittest
 from typing import Optional
 import docx
 from unittest.mock import patch
-from docassemble.ALDashboard.validate_docx import (
+from .validate_docx import (
     analyze_docx_template_markup,
     detect_docx_automation_features,
     get_jinja_errors,
@@ -33,12 +33,12 @@ class TestGetJinjaErrors(unittest.TestCase):
             return archive.read(part_name).decode("utf-8", errors="ignore")
 
     def test_working_template(self):
-        working_template = Path(__file__).parent / "made_up_variables.docx"
+        working_template = Path(__file__).parent / "test/made_up_variables.docx"
         result: Optional[str] = get_jinja_errors(working_template)
         self.assertIsNone(result)
 
     def test_failing_template(self):
-        failing_template = Path(__file__).parent / "valid_word_invalid_jinja.docx"
+        failing_template = Path(__file__).parent / "test/valid_word_invalid_jinja.docx"
         result: Optional[str] = get_jinja_errors(failing_template)
         self.assertIsNotNone(result)
         self.assertIsInstance(result, str)

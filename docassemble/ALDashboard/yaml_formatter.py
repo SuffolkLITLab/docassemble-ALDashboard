@@ -9,6 +9,11 @@ from docassemble.base.util import user_info
 from docassemble.webapp.backend import directory_for
 from docassemble.webapp.files import SavedFile
 
+try:
+    from flask_login import current_user
+except Exception:
+    current_user = None  # type: ignore
+
 from .api_dashboard_utils import yaml_reformat_payload_from_options
 from .interview_linter import list_playground_yaml_files
 
@@ -20,6 +25,26 @@ __all__ = [
     "is_supported_yaml_filename",
     "rewrite_playground_yaml_files",
 ]
+
+
+def _resolve_current_user_id() -> Optional[int]:
+    try:
+        if current_user is not None and getattr(current_user, "is_authenticated", False):
+            user_id = getattr(current_user, "id", None)
+            if user_id is not None:
+                return int(user_id)
+    except Exception:
+        pass
+
+    try:
+        info = user_info()
+        user_id = getattr(info, "id", None)
+        if user_id is not None:
+            return int(user_id)
+    except Exception:
+        pass
+
+    return None
 
 
 def _is_excluded_black_target(filename: str) -> bool:
@@ -120,7 +145,7 @@ def get_black_release_status() -> Dict[str, Any]:
 
 def _format_playground_python_files_with_black(
     project: str,
-    user_id: int,
+    user_id: Optional[int],
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "requested": True,
@@ -144,6 +169,16 @@ def _format_playground_python_files_with_black(
             {
                 "name": "(black)",
                 "error": "The black package is not installed.",
+            }
+        )
+        return result
+
+    if user_id is None:
+        result["error_count"] = 1
+        result["errors"].append(
+            {
+                "name": "(playgroundmodules)",
+                "error": "Could not determine current user for playground module access.",
             }
         )
         return result
@@ -323,8 +358,18 @@ def rewrite_playground_yaml_files(
     if not tokens and not run_black_python_modules:
         return result
 
-    current_user = user_info()
-    if current_user is None or not getattr(current_user, "id", None):
+    current_user_id = _resolve_current_user_id()
+
+    if not tokens and run_black_python_modules:
+        black_result = _format_playground_python_files_with_black(
+            project,
+            current_user_id,
+        )
+        result["black"] = black_result
+        result["error_count"] += int(black_result.get("error_count") or 0)
+        return result
+
+    if current_user_id is None:
         result["error_count"] += 1
         result["items"].append(
             {
@@ -336,7 +381,7 @@ def rewrite_playground_yaml_files(
         )
         return result
 
-    playground_area = SavedFile(current_user.id, fix=True, section="playground")
+    playground_area = SavedFile(current_user_id, fix=True, section="playground")
     try:
         project_root = directory_for(playground_area, project) or ""
         if project_root:
@@ -396,7 +441,7 @@ def rewrite_playground_yaml_files(
     if run_black_python_modules:
         black_result = _format_playground_python_files_with_black(
             project,
-            int(current_user.id),
+            current_user_id,
         )
         result["black"] = black_result
         result["error_count"] += int(black_result.get("error_count") or 0)

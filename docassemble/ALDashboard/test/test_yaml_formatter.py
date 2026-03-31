@@ -149,6 +149,44 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
             self.assertIn('a = "single quotes"', rewritten)
             self.assertNotIn("a = 'single quotes'", rewritten)
 
+    def test_black_only_path_does_not_emit_playground_error(self):
+        black_result = {
+            "requested": True,
+            "processed_count": 0,
+            "changed_count": 0,
+            "error_count": 1,
+            "changed_files": [],
+            "errors": [
+                {
+                    "name": "(black)",
+                    "error": "The black package is not installed.",
+                }
+            ],
+            "installed_version": None,
+            "latest_version": None,
+            "update_available": False,
+        }
+
+        with patch.object(
+            yaml_formatter,
+            "_resolve_current_user_id",
+            return_value=None,
+        ), patch.object(
+            yaml_formatter,
+            "_format_playground_python_files_with_black",
+            return_value=black_result,
+        ):
+            result = yaml_formatter.rewrite_playground_yaml_files(
+                [],
+                selected_playground_project="Weaver2",
+                run_black_python_modules=True,
+            )
+
+        self.assertEqual(result["selected_count"], 0)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["error_count"], 1)
+        self.assertEqual(result["black"]["errors"], black_result["errors"])
+
 
 if __name__ == "__main__":
     unittest.main()

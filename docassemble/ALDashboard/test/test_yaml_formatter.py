@@ -4,6 +4,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest.mock import patch
 
 
@@ -82,7 +83,7 @@ class TestYamlFormatterBlackStatus(unittest.TestCase):
 class _FakeSavedFile:
     def __init__(self, section: str):
         self.section = section
-        self.writes = []
+        self.writes: list[dict[str, Any]] = []
         self.finalized = False
 
     def write_content(self, content, filename=None, project=None, save=False):

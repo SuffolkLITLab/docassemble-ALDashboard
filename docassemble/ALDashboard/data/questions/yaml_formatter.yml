@@ -32,19 +32,17 @@ code: |
   black_release_status = get_black_release_status()
 ---
 question: |
-  Reformat python code in YAML and modules with `black`
+  Reformat YAML and playground Python
 subquestion: |
   Choose whether to upload a YAML file and download the reformatted result, or rewrite
   selected files in a playground project in place.
-  
-  Installed black version:
-  **${ black_release_status.get("installed_version") or "Not installed" }**
 
   % if black_release_status.get("update_available"):
   <div class="alert alert-warning" role="alert">
-    A newer black release is available on PyPI
-    (${ black_release_status.get("latest_version") }).
-    Please ask an administrator to update the installed version of <code>black</code>.
+    This server is using an older version of <code>black</code>
+    (${ black_release_status.get("installed_version") }).
+    The current release is ${ black_release_status.get("latest_version") }, so formatting may
+    differ from CI and block a PR.
   </div>
   % endif
 fields:
@@ -162,20 +160,9 @@ subquestion: |
 
   % if playground_result["black"].get("requested"):
   #### Black formatting (Python modules)
-  Installed black version:
-  **${ playground_result["black"].get("installed_version") or "Not installed" }**
-
   Processed modules: **${ playground_result["black"].get("processed_count") or 0 }**  
   Rewritten modules: **${ playground_result["black"].get("changed_count") or 0 }**  
   Black errors: **${ playground_result["black"].get("error_count") or 0 }**
-
-  % if playground_result["black"].get("update_available"):
-  <div class="alert alert-warning" role="alert">
-    A newer black release is available on PyPI
-    (${ playground_result["black"].get("latest_version") }).
-    Please ask an administrator to update the installed version of <code>black</code>.
-  </div>
-  % endif
   % endif
 
   % if playground_result["selected_count"] == 0:

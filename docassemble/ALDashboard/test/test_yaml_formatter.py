@@ -38,10 +38,8 @@ def _import_yaml_formatter_with_mocks():
         "changed": False,
     }
 
-    fake_interview_linter = types.ModuleType(
-        "docassemble.ALDashboard.interview_linter"
-    )
-    fake_interview_linter.list_playground_yaml_files = lambda project: []
+    fake_interview_linter = types.ModuleType("docassemble.ALDashboard.interview_linter")
+    fake_interview_linter._resolve_current_user_id = lambda: None
 
     sys.modules.pop("docassemble.ALDashboard.yaml_formatter", None)
     with patch.dict(
@@ -64,20 +62,22 @@ def _import_yaml_formatter_with_mocks():
 yaml_formatter = _import_yaml_formatter_with_mocks()
 
 
-class TestYamlFormatterBlackStatus(unittest.TestCase):
-    def test_get_black_release_status_when_update_available(self):
-        with patch.object(yaml_formatter.metadata, "version") as mock_metadata_version, patch.object(
-            yaml_formatter, "_fetch_latest_black_version"
-        ) as mock_fetch_latest:
-            mock_metadata_version.return_value = "24.1.0"
-            mock_fetch_latest.return_value = "24.3.0"
-
+class TestBlackReleaseStatus(unittest.TestCase):
+    def test_reports_outdated_black_only_when_newer_release_exists(self):
+        with patch.object(
+            yaml_formatter.metadata,
+            "version",
+            return_value="24.1.0",
+        ), patch.object(
+            yaml_formatter,
+            "_fetch_latest_black_version",
+            return_value="24.3.0",
+        ):
             status = yaml_formatter.get_black_release_status()
 
         self.assertEqual(status["installed_version"], "24.1.0")
         self.assertEqual(status["latest_version"], "24.3.0")
         self.assertTrue(status["update_available"])
-        self.assertIsNone(status["error"])
 
 
 class _FakeSavedFile:
@@ -152,8 +152,9 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
     def test_black_uses_playground_section_module_listing_when_available(self):
         with TemporaryDirectory() as tmpdir:
             module_dir = Path(tmpdir) / "modules"
-            module_dir.mkdir(parents=True, exist_ok=True)
-            bad_file = module_dir / "test.py"
+            nested_dir = module_dir / "pkg"
+            nested_dir.mkdir(parents=True, exist_ok=True)
+            bad_file = nested_dir / "test.py"
             bad_file.write_text(
                 "def hello():\n  return 'hello'\n",
                 encoding="utf-8",
@@ -163,7 +164,7 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
                 def __init__(self, section: str = "", project: str = "default"):
                     self.section = section
                     self.project = project
-                    self.file_list = ["test.py"]
+                    self.file_list = ["pkg/test.py"]
                     self.writes: list[dict[str, Any]] = []
 
                 def get_file(self, filename):
@@ -202,9 +203,10 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
 
             self.assertEqual(result["processed_count"], 1)
             self.assertEqual(result["changed_count"], 1)
-            self.assertEqual(result["changed_files"], ["test.py"])
+            self.assertEqual(result["changed_files"], ["pkg/test.py"])
             self.assertEqual(result["error_count"], 0)
             self.assertEqual(len(fake_section.writes), 1)
+            self.assertEqual(fake_section.writes[0]["filename"], "pkg/test.py")
             self.assertIn('return "hello"', fake_section.writes[0]["content"])
 
     def test_black_only_path_does_not_emit_playground_error(self):
@@ -220,9 +222,6 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
                     "error": "The black package is not installed.",
                 }
             ],
-            "installed_version": None,
-            "latest_version": None,
-            "update_available": False,
         }
 
         with patch.object(
@@ -291,7 +290,7 @@ class TestYamlFormatterRefTokens(unittest.TestCase):
                 "format_yaml_text",
                 return_value={
                     "changed": True,
-                    "formatted_yaml": "code: |\n  x = \"hello\"\n",
+                    "formatted_yaml": 'code: |\n  x = "hello"\n',
                     "reformatted_rows": 1,
                 },
             ):

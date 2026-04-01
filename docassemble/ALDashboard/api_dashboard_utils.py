@@ -32,6 +32,8 @@ def _format_pdf_fields_for_ui_payload(
     formatted_fields: List[Dict[str, Any]] = []
     for page_idx, page_fields in enumerate(fields_per_page):
         for field in page_fields:
+            raw_font_size = getattr(field, "font_size", None)
+            auto_size = raw_font_size == 0
             formatted_fields.append(
                 {
                     "id": str(uuid.uuid4()),
@@ -42,7 +44,8 @@ def _format_pdf_fields_for_ui_payload(
                     "y": field.y,
                     "width": field.configs.get("width", 100),
                     "height": field.configs.get("height", 20),
-                    "fontSize": field.font_size or 12,
+                    "fontSize": 12 if auto_size else (raw_font_size or 12),
+                    "autoSize": auto_size,
                 }
             )
     return formatted_fields

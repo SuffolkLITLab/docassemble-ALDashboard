@@ -15,3 +15,5 @@ dist/
 .env.*
 .env2
 *Zone.Identifier*
+
+.codex

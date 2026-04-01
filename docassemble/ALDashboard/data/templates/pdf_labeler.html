@@ -128,7 +128,7 @@
                         <label class="btn btn-outline-secondary" for="fields-mode-rename">Rename</label>
                     </div>
                     <div id="fields-filter-controls" class="fields-toolbar">
-                        <input id="field-search" type="search" class="form-control form-control-sm" placeholder="Filter by field name">
+                        <input id="field-search" type="search" class="form-control form-control-sm" placeholder="Filter by field name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true">
                         <div class="fields-toolbar-row">
                             <select id="field-type-filter" class="form-select form-select-sm" aria-label="Filter fields by type">
                                 <option value="">All types</option>
@@ -3445,6 +3445,10 @@
 
             if (settings.disableAutoScroll && (nextField.type === 'text' || nextField.type === 'multiline')) {
                 nextField.allowScroll = false;
+            }
+
+            if (nextField.type === 'text' || nextField.type === 'multiline') {
+                nextField.autoSize = false;
             }
 
             if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {

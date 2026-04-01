@@ -3447,6 +3447,10 @@
                 nextField.allowScroll = false;
             }
 
+            if (nextField.type === 'text' || nextField.type === 'multiline') {
+                nextField.autoSize = false;
+            }
+
             if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.autoSize = true;
                 nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');

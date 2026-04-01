@@ -244,6 +244,29 @@ class TestLabelerQueryParams(unittest.TestCase):
         self.assertIn("\\u003c/script\\u003e", result["rendered"])
         self.assertNotIn("</script><script>", result["rendered"])
 
+    def test_name_address_phone_email_heuristic_matches_expected_names(self):
+        result = self._run_probe(
+            """
+            print(json.dumps({
+                "name": module._looks_like_name_email_address_phone_field("users[0].name.first"),
+                "email": module._looks_like_name_email_address_phone_field("users[0].email"),
+                "phone": module._looks_like_name_email_address_phone_field("users[0].phone_number"),
+                "address": module._looks_like_name_email_address_phone_field("users[0].address.city"),
+                "other": module._looks_like_name_email_address_phone_field("users[0].income.monthly"),
+            }))
+            """
+        )
+        self.assertEqual(
+            result,
+            {
+                "name": True,
+                "email": True,
+                "phone": True,
+                "address": True,
+                "other": False,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

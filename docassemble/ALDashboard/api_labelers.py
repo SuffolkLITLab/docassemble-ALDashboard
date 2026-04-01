@@ -99,6 +99,17 @@ def _sanitize_checkbox_export_value(raw_value: Any) -> str:
     return token or "Yes"
 
 
+def _looks_like_name_email_address_phone_field(field_name: Any) -> bool:
+    """Return True when a field name should keep auto-size enabled."""
+    return bool(
+        re.search(
+            r"(name|address|street|city|state|zip|postal|phone|phone_number|email|cell)",
+            str(field_name or ""),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _get_named_pdf_parent(field_obj: Any) -> Optional[Any]:
     """Walk up a PDF widget tree until a named field container is found.
 
@@ -3430,6 +3441,10 @@ def pdf_labeler_bulk_normalize():
             options.get("uniformCheckboxSize"), default=True
         )
         checkbox_size_pt = int(options.get("checkboxSizePt") or 12)
+        auto_size_name_address = parse_bool(
+            options.get("autoSizeNameAddress"), default=True
+        )
+        fixed_text_height_pt = int(options.get("fixedTextHeightPt") or 14)
         remove_embedded_fonts_flag = parse_bool(
             options.get("removeEmbeddedFonts"), default=False
         )
@@ -3504,7 +3519,7 @@ def pdf_labeler_bulk_normalize():
                                     if norm_font_size
                                     else int(f.get("fontSize", 12) or 12)
                                 ),
-                                "autoSize": True,
+                                "autoSize": False,
                             }
 
                             if field_type_str == "checkbox" and norm_checkbox_style:
@@ -3513,6 +3528,15 @@ def pdf_labeler_bulk_normalize():
                             if field_type_str == "checkbox" and uniform_checkbox_size:
                                 nf["width"] = checkbox_size_pt
                                 nf["height"] = checkbox_size_pt
+                            if (
+                                auto_size_name_address
+                                and field_type_str == "text"
+                                and _looks_like_name_email_address_phone_field(
+                                    field_name
+                                )
+                            ):
+                                nf["autoSize"] = True
+                                nf["height"] = fixed_text_height_pt
 
                             normalized_fields.append(nf)
 

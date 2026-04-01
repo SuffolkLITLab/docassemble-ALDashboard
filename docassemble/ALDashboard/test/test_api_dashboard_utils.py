@@ -1,6 +1,7 @@
 import unittest
 import base64
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import docx
@@ -9,6 +10,7 @@ from docassemble.ALDashboard.api_dashboard_utils import (
     DEFAULT_MAX_UPLOAD_BYTES,
     DashboardAPIValidationError,
     _validate_upload_size,
+    _format_pdf_fields_for_ui_payload,
     autolabel_payload_from_options,
     build_openapi_spec,
     coerce_async_flag,
@@ -25,6 +27,34 @@ from docassemble.ALDashboard.api_dashboard_utils import (
 
 
 class TestDashboardAPIUtils(unittest.TestCase):
+    def test_format_pdf_fields_sets_auto_size_true_for_zero_font_size(self):
+        field = SimpleNamespace(
+            name="users[0].name.first",
+            type="text",
+            x=10,
+            y=20,
+            font_size=0,
+            configs={"width": 120, "height": 16},
+        )
+        payload = _format_pdf_fields_for_ui_payload([[field]])
+        self.assertEqual(len(payload), 1)
+        self.assertTrue(payload[0]["autoSize"])
+        self.assertEqual(payload[0]["fontSize"], 12)
+
+    def test_format_pdf_fields_sets_auto_size_false_for_fixed_font_size(self):
+        field = SimpleNamespace(
+            name="users[0].other",
+            type="text",
+            x=10,
+            y=20,
+            font_size=11,
+            configs={"width": 120, "height": 16},
+        )
+        payload = _format_pdf_fields_for_ui_payload([[field]])
+        self.assertEqual(len(payload), 1)
+        self.assertFalse(payload[0]["autoSize"])
+        self.assertEqual(payload[0]["fontSize"], 11)
+
     def test_parse_bool_accepts_common_values(self):
         self.assertTrue(parse_bool("true"))
         self.assertTrue(parse_bool("YES"))

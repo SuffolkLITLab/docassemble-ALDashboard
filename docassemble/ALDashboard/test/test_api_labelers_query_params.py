@@ -4,9 +4,7 @@ import sys
 import textwrap
 import unittest
 
-
-_STUBBED_IMPORT_PREFIX = textwrap.dedent(
-    """
+_STUBBED_IMPORT_PREFIX = textwrap.dedent("""
     import importlib
     import json
     import sys
@@ -65,8 +63,7 @@ _STUBBED_IMPORT_PREFIX = textwrap.dedent(
 
     module = importlib.import_module("docassemble.ALDashboard.api_labelers")
     app = app_object_module.app
-    """
-)
+    """)
 
 
 class TestLabelerQueryParams(unittest.TestCase):
@@ -88,15 +85,13 @@ class TestLabelerQueryParams(unittest.TestCase):
         return json.loads(stdout)
 
     def test_parse_initial_playground_source_accepts_filename_spaces(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             print(json.dumps(module._parse_initial_playground_source(
                 \"demo-project\",
                 \"Template With Spaces.docx\",
                 allowed_extensions=(\".docx\",),
             )))
-            """
-        )
+            """)
         self.assertEqual(
             result,
             {
@@ -106,15 +101,13 @@ class TestLabelerQueryParams(unittest.TestCase):
         )
 
     def test_parse_initial_playground_source_defaults_project(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             print(json.dumps(module._parse_initial_playground_source(
                 \"\",
                 \"intake form.pdf\",
                 allowed_extensions=(\".pdf\",),
             )))
-            """
-        )
+            """)
         self.assertEqual(
             result,
             {
@@ -124,8 +117,7 @@ class TestLabelerQueryParams(unittest.TestCase):
         )
 
     def test_parse_initial_playground_source_rejects_wrong_extension(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             try:
                 module._parse_initial_playground_source(
                     \"demo-project\",
@@ -139,13 +131,11 @@ class TestLabelerQueryParams(unittest.TestCase):
                 }))
             else:
                 raise AssertionError(\"Expected validation error\")
-            """
-        )
+            """)
         self.assertEqual(result["type"], "DashboardAPIValidationError")
 
     def test_parse_initial_playground_source_rejects_invalid_project(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             try:
                 module._parse_initial_playground_source(
                     \"../bad-project\",
@@ -159,25 +149,21 @@ class TestLabelerQueryParams(unittest.TestCase):
                 }))
             else:
                 raise AssertionError(\"Expected validation error\")
-            """
-        )
+            """)
         self.assertEqual(result["type"], "DashboardAPIValidationError")
 
     def test_parse_initial_playground_source_keeps_project_without_filename(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             print(json.dumps(module._parse_initial_playground_source(
                 \"demo-project\",
                 \"\",
                 allowed_extensions=(\".docx\",),
             )))
-            """
-        )
+            """)
         self.assertEqual(result, {"project": "demo-project"})
 
     def test_request_query_params_are_url_decoded_for_pdf(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             with app.test_request_context(
                 \"/al/pdf-labeler?project=demo-project&filename=My%20Form%20v2.pdf\"
             ):
@@ -185,8 +171,7 @@ class TestLabelerQueryParams(unittest.TestCase):
                     allowed_extensions=(\".pdf\",)
                 )
             print(json.dumps(payload))
-            """
-        )
+            """)
         self.assertEqual(
             result,
             {
@@ -196,15 +181,13 @@ class TestLabelerQueryParams(unittest.TestCase):
         )
 
     def test_docx_bootstrap_includes_initial_playground_source(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             with app.test_request_context(
                 \"/al/docx-labeler?project=demo-project&filename=Family+Intake.docx\"
             ):
                 payload = module._build_docx_labeler_bootstrap()
             print(json.dumps(payload))
-            """
-        )
+            """)
         self.assertEqual(
             result["initialPlaygroundSource"],
             {
@@ -214,20 +197,17 @@ class TestLabelerQueryParams(unittest.TestCase):
         )
 
     def test_pdf_bootstrap_ignores_invalid_filename_extension(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             with app.test_request_context(
                 \"/al/pdf-labeler?project=demo-project&filename=not-a-pdf.docx\"
             ):
                 payload = module._build_pdf_labeler_bootstrap()
             print(json.dumps(payload))
-            """
-        )
+            """)
         self.assertEqual(result["initialPlaygroundSource"], {})
 
     def test_render_template_content_escapes_script_breakout_sequences(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             module._get_template_content = lambda _filename: '<script type=\"application/json\">__LABELER_BOOTSTRAP_JSON__</script>'
             rendered = module._render_template_content(
                 \"ignored.html\",
@@ -239,14 +219,12 @@ class TestLabelerQueryParams(unittest.TestCase):
                 },
             )
             print(json.dumps({\"rendered\": rendered}))
-            """
-        )
+            """)
         self.assertIn("\\u003c/script\\u003e", result["rendered"])
         self.assertNotIn("</script><script>", result["rendered"])
 
     def test_name_address_phone_email_heuristic_matches_expected_names(self):
-        result = self._run_probe(
-            """
+        result = self._run_probe("""
             print(json.dumps({
                 "name": module._looks_like_name_email_address_phone_field("users[0].name.first"),
                 "email": module._looks_like_name_email_address_phone_field("users[0].email"),
@@ -254,8 +232,7 @@ class TestLabelerQueryParams(unittest.TestCase):
                 "address": module._looks_like_name_email_address_phone_field("users[0].address.city"),
                 "other": module._looks_like_name_email_address_phone_field("users[0].income.monthly"),
             }))
-            """
-        )
+            """)
         self.assertEqual(
             result,
             {

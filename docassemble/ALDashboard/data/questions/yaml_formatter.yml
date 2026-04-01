@@ -101,9 +101,8 @@ fields:
     code: |
       [
         {item["token"]: item["label"]}
-        for item in list_playground_yaml_files(selected_playground_project)
+        for item in list_formatter_playground_yaml_files(selected_playground_project)
       ]
-    all of the above: True
 ---
 code: |
   uploaded_yaml_path = uploaded_yaml_file.path()

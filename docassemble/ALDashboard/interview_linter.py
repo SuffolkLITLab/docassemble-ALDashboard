@@ -321,6 +321,11 @@ def _resolve_source_token(token: str) -> Optional[str]:
     return token
 
 
+def _playground_package_name(user_id: int, project: str = "default") -> str:
+    suffix = "" if str(project or "default") == "default" else str(project)
+    return f"docassemble.playground{int(user_id)}{suffix}"
+
+
 def list_playground_projects() -> List[str]:
     uid = _resolve_current_user_id()
     if uid is None:
@@ -357,7 +362,9 @@ def list_playground_yaml_files(project: str = "default") -> List[Dict[str, str]]
             if os.path.isfile(full_path) and filename.lower().endswith(
                 (".yml", ".yaml")
             ):
-                output.append({"label": filename, "token": full_path})
+                package_name = _playground_package_name(uid, project)
+                token = f"ref:{package_name}:data/questions/{filename}"
+                output.append({"label": filename, "token": token})
         return output
     except Exception as err:
         log(

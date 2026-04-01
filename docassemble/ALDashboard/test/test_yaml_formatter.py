@@ -149,6 +149,64 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
             self.assertIn('a = "single quotes"', rewritten)
             self.assertNotIn("a = 'single quotes'", rewritten)
 
+    def test_black_uses_playground_section_module_listing_when_available(self):
+        with TemporaryDirectory() as tmpdir:
+            module_dir = Path(tmpdir) / "modules"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            bad_file = module_dir / "test.py"
+            bad_file.write_text(
+                "def hello():\n  return 'hello'\n",
+                encoding="utf-8",
+            )
+
+            class _FakePlaygroundSection:
+                def __init__(self, section: str = "", project: str = "default"):
+                    self.section = section
+                    self.project = project
+                    self.file_list = ["test.py"]
+                    self.writes: list[dict[str, Any]] = []
+
+                def get_file(self, filename):
+                    return str(module_dir / filename)
+
+                def write_file(self, filename, content, binary=False):
+                    self.writes.append(
+                        {
+                            "filename": filename,
+                            "content": content,
+                            "binary": binary,
+                        }
+                    )
+                    bad_file.write_text(content, encoding="utf-8")
+
+            fake_section = _FakePlaygroundSection(section="modules", project="AZDopa")
+
+            def fake_savedfile(user_id, fix=True, section="playground"):
+                return _FakeSavedFile(section=str(section))
+
+            fake_playground_module = types.SimpleNamespace(
+                PlaygroundSection=lambda section="", project="default": fake_section
+            )
+
+            with patch.object(
+                yaml_formatter,
+                "SavedFile",
+                side_effect=fake_savedfile,
+            ), patch.dict(
+                sys.modules,
+                {"docassemble.webapp.playground": fake_playground_module},
+            ):
+                result = yaml_formatter._format_playground_python_files_with_black(
+                    "AZDopa", 10
+                )
+
+            self.assertEqual(result["processed_count"], 1)
+            self.assertEqual(result["changed_count"], 1)
+            self.assertEqual(result["changed_files"], ["test.py"])
+            self.assertEqual(result["error_count"], 0)
+            self.assertEqual(len(fake_section.writes), 1)
+            self.assertIn('return "hello"', fake_section.writes[0]["content"])
+
     def test_black_only_path_does_not_emit_playground_error(self):
         black_result = {
             "requested": True,
@@ -186,6 +244,68 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
         self.assertEqual(result["items"], [])
         self.assertEqual(result["error_count"], 1)
         self.assertEqual(result["black"]["errors"], black_result["errors"])
+
+
+class TestYamlFormatterRefTokens(unittest.TestCase):
+    def test_rewrite_playground_yaml_files_uses_safe_filename_tokens(self):
+        with TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir) / "playground"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            yaml_path = project_dir / "example.yml"
+            yaml_path.write_text(
+                "code: |\n    x='hello'\n",
+                encoding="utf-8",
+            )
+
+            savedfiles = {}
+
+            def fake_savedfile(user_id, fix=True, section="playground"):
+                key = (int(user_id), str(section))
+                if key not in savedfiles:
+                    savedfiles[key] = _FakeSavedFile(section=str(section))
+                return savedfiles[key]
+
+            with patch.object(
+                yaml_formatter,
+                "SavedFile",
+                side_effect=fake_savedfile,
+            ), patch.object(
+                yaml_formatter,
+                "directory_for",
+                return_value=str(project_dir),
+            ), patch.object(
+                yaml_formatter,
+                "_resolve_current_user_id",
+                return_value=10,
+            ), patch.object(
+                yaml_formatter,
+                "list_formatter_playground_yaml_files",
+                return_value=[
+                    {
+                        "label": "example.yml",
+                        "token": "example.yml",
+                    }
+                ],
+            ), patch.object(
+                yaml_formatter,
+                "format_yaml_text",
+                return_value={
+                    "changed": True,
+                    "formatted_yaml": "code: |\n  x = \"hello\"\n",
+                    "reformatted_rows": 1,
+                },
+            ):
+                result = yaml_formatter.rewrite_playground_yaml_files(
+                    ["example.yml"],
+                    selected_playground_project="demo",
+                )
+
+            self.assertEqual(result["error_count"], 0)
+            self.assertEqual(result["changed_count"], 1)
+            playground_area = savedfiles[(10, "playground")]
+            self.assertTrue(playground_area.finalized)
+            self.assertEqual(playground_area.writes[0]["filename"], "example.yml")
+            self.assertIn('x = "hello"', playground_area.writes[0]["content"])
 
 
 if __name__ == "__main__":

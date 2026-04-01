@@ -23,6 +23,7 @@ __all__ = [
     "format_uploaded_yaml_file",
     "get_black_release_status",
     "is_supported_yaml_filename",
+    "list_formatter_playground_yaml_files",
     "rewrite_playground_yaml_files",
 ]
 
@@ -51,9 +52,55 @@ def _is_excluded_black_target(filename: str) -> bool:
     return os.path.basename(str(filename or "")) in {"__init__.py", "setup.py"}
 
 
+def list_formatter_playground_yaml_files(project: str = "default") -> List[Dict[str, str]]:
+    uid = _resolve_current_user_id()
+    if uid is None:
+        return []
+    try:
+        area = SavedFile(uid, fix=True, section="playground")
+        project_dir = directory_for(area, project or "default")
+        if not project_dir or not os.path.isdir(project_dir):
+            return []
+        output: List[Dict[str, str]] = []
+        for filename in sorted(os.listdir(project_dir)):
+            full_path = os.path.join(project_dir, filename)
+            if os.path.isfile(full_path) and filename.lower().endswith(
+                (".yml", ".yaml")
+            ):
+                output.append({"label": filename, "token": filename})
+        return output
+    except Exception:
+        return []
+
+
+def _playground_module_files_via_section(project: str) -> Tuple[List[str], List[str]]:
+    from docassemble.webapp.playground import PlaygroundSection
+
+    module_section = PlaygroundSection(section="modules", project=project or "default")
+    python_files: List[str] = []
+    excluded_files: List[str] = []
+    for filename in sorted(module_section.file_list):
+        if not filename.endswith(".py"):
+            continue
+        if _is_excluded_black_target(filename):
+            excluded_files.append(filename)
+            continue
+        full_path = module_section.get_file(filename)
+        if os.path.isfile(full_path):
+            python_files.append(full_path)
+    return python_files, excluded_files
+
+
 def _list_playground_python_files(
     project: str, area: SavedFile
 ) -> Tuple[List[str], List[str]]:
+    try:
+        python_files, excluded_files = _playground_module_files_via_section(project)
+        if python_files or excluded_files:
+            return python_files, excluded_files
+    except Exception:
+        pass
+
     project_dir = directory_for(area, project or "default")
     if not project_dir or not os.path.isdir(project_dir):
         return [], []
@@ -187,11 +234,21 @@ def _format_playground_python_files_with_black(
     module_area = SavedFile(user_id, fix=True, section="playgroundmodules")
     python_files, _ = _list_playground_python_files(project, module_area)
     project_dir = directory_for(module_area, project or "default") or ""
+    module_section = None
+    try:
+        from docassemble.webapp.playground import PlaygroundSection
+
+        module_section = PlaygroundSection(section="modules", project=project or "default")
+    except Exception:
+        module_section = None
 
     for py_path in python_files:
-        relative_name = (
-            os.path.relpath(py_path, project_dir) if project_dir else py_path
-        )
+        if module_section is not None:
+            relative_name = os.path.basename(py_path)
+        else:
+            relative_name = (
+                os.path.relpath(py_path, project_dir) if project_dir else py_path
+            )
         try:
             with open(py_path, "r", encoding="utf-8") as infile:
                 source_text = infile.read()
@@ -206,12 +263,15 @@ def _format_playground_python_files_with_black(
                 formatted_text = source_text
 
             if formatted_text != source_text:
-                module_area.write_content(
-                    formatted_text,
-                    filename=relative_name,
-                    project=project,
-                    save=False,
-                )
+                if module_section is not None:
+                    module_section.write_file(relative_name, formatted_text)
+                else:
+                    module_area.write_content(
+                        formatted_text,
+                        filename=relative_name,
+                        project=project,
+                        save=False,
+                    )
                 result["changed_count"] += 1
                 result["changed_files"].append(relative_name)
         except Exception as err:
@@ -220,7 +280,7 @@ def _format_playground_python_files_with_black(
         finally:
             result["processed_count"] += 1
 
-    if result["changed_count"] > 0:
+    if result["changed_count"] > 0 and module_section is None:
         try:
             module_area.finalize()
         except Exception as err:
@@ -348,7 +408,7 @@ def rewrite_playground_yaml_files(
         str(item.get("token")): str(
             item.get("label") or os.path.basename(str(item.get("token")))
         )
-        for item in list_playground_yaml_files(project)
+        for item in list_formatter_playground_yaml_files(project)
         if item.get("token")
     }
     allowed_tokens = set(allowed_token_to_name.keys())
@@ -402,7 +462,8 @@ def rewrite_playground_yaml_files(
         try:
             if token_path not in allowed_tokens:
                 raise ValueError("File is not in the selected playground project.")
-            normalized_token_path = os.path.realpath(token_path)
+            resolved_token_path = os.path.join(project_root, filename)
+            normalized_token_path = os.path.realpath(resolved_token_path)
             if project_root and not (
                 normalized_token_path == project_root
                 or normalized_token_path.startswith(project_root + os.sep)
@@ -411,7 +472,7 @@ def rewrite_playground_yaml_files(
                     "Refusing to rewrite files outside the selected playground project."
                 )
 
-            with open(token_path, "r", encoding="utf-8") as infile:
+            with open(resolved_token_path, "r", encoding="utf-8") as infile:
                 source_text = infile.read()
 
             format_result = format_yaml_text(

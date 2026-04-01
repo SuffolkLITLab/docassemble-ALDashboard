@@ -104,7 +104,7 @@ data:
   - name: Interview style check (lint)
     url: ${ interview_url(i=user_info().package + ":interview_linter.yml", reset=1) }
     image: spell-check
-  - name: Reformat YAML
+  - name: Reformat YAML and Python
     url: ${ interview_url(i=user_info().package + ":yaml_formatter.yml", reset=1) }
     image: magic
   - name: DOCX utilities

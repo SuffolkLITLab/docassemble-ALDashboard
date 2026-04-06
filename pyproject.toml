@@ -209,7 +209,6 @@ dev = [
     "mypy",
     "openai",
     "tiktoken",
-    "spellchecker",
     "dayamlchecker",
     "types-lxml",
     "xmlschema>=4.3.1",

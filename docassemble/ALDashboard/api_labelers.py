@@ -19,7 +19,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from flask import Response, jsonify, request, send_file
 from flask_cors import cross_origin
@@ -198,6 +198,103 @@ def _apply_checkbox_export_values(
                         _rename_checkbox_export_state(annot, export_value, pikepdf)
                 except Exception:  # nosec B112
                     continue
+        pdf.save(pdf_path)
+
+
+def _collect_fields_with_explicit_background(fields_data: List[Dict[str, Any]]) -> Set[str]:
+    """Collect field names where the client explicitly set a background color.
+
+    Args:
+        fields_data: Field definitions submitted by the labeler UI.
+
+    Returns:
+        Set[str]: Field names whose background color should be preserved.
+    """
+    explicit: Set[str] = set()
+    for field in fields_data:
+        try:
+            name = str(field.get("name", "")).strip()
+            background = field.get("backgroundColor")
+            if name and isinstance(background, str) and background.strip():
+                explicit.add(name)
+        except Exception:  # nosec B112
+            continue
+    return explicit
+
+
+def _apply_pdf_field_visual_defaults(
+    pdf_path: str, *, explicit_background_fields: Optional[Set[str]] = None
+) -> None:
+    """Enforce default transparent field backgrounds and no borders.
+
+    Fields with explicit background colors are preserved. For all other fields,
+    this clears widget background appearance metadata so viewers regenerate a
+    transparent background, and it removes border drawing.
+
+    Args:
+        pdf_path: Path to the written PDF file.
+        explicit_background_fields: Field names whose background should be kept.
+    """
+    import pikepdf
+
+    explicit = {str(name).strip() for name in (explicit_background_fields or set())}
+
+    def _set_no_border(obj: Any) -> None:
+        obj["/Border"] = pikepdf.Array([0, 0, 0])
+        bs = obj.get("/BS")
+        if not isinstance(bs, pikepdf.Dictionary):
+            bs = pikepdf.Dictionary()
+        bs["/W"] = 0
+        obj["/BS"] = bs
+        mk = obj.get("/MK")
+        if isinstance(mk, pikepdf.Dictionary) and "/BC" in mk:
+            del mk["/BC"]
+            if len(mk) == 0:
+                del obj["/MK"]
+
+    def _clear_background(obj: Any) -> None:
+        mk = obj.get("/MK")
+        if isinstance(mk, pikepdf.Dictionary) and "/BG" in mk:
+            del mk["/BG"]
+            if len(mk) == 0:
+                del obj["/MK"]
+
+    with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
+        acroform = pdf.Root.get("/AcroForm")
+        if isinstance(acroform, pikepdf.Dictionary):
+            acroform["/NeedAppearances"] = True
+
+        for page in pdf.pages:
+            if "/Annots" not in page:
+                continue
+            for annot in page.Annots:  # type: ignore[attr-defined]
+                try:
+                    if annot.Type != "/Annot" or annot.Subtype != "/Widget":
+                        continue
+
+                    named_parent = _get_named_pdf_parent(annot)
+                    field_name = ""
+                    if named_parent and hasattr(named_parent, "T"):
+                        field_name = str(named_parent.T).strip()
+
+                    _set_no_border(annot)
+                    if named_parent and named_parent is not annot:
+                        _set_no_border(named_parent)
+
+                    if field_name in explicit:
+                        continue
+
+                    _clear_background(annot)
+                    if named_parent and named_parent is not annot:
+                        _clear_background(named_parent)
+
+                    # Remove widget appearance so viewers can regenerate using
+                    # transparent/default settings instead of reportlab defaults.
+                    if "/AP" in annot:
+                        del annot["/AP"]
+                except Exception:  # nosec B112
+                    continue
+
         pdf.save(pdf_path)
 
 
@@ -2965,6 +3062,9 @@ def pdf_labeler_apply_fields() -> Response:
                 if str(field.get("type", "")).lower() == "checkbox"
                 and str(field.get("checkboxExportValue", "")).strip()
             }
+            explicit_background_fields = _collect_fields_with_explicit_background(
+                fields_data
+            )
 
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
@@ -2980,6 +3080,10 @@ def pdf_labeler_apply_fields() -> Response:
 
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
+            _apply_pdf_field_visual_defaults(
+                output_path,
+                explicit_background_fields=explicit_background_fields,
+            )
 
             # Read the output file
             with open(output_path, "rb") as f:
@@ -3553,6 +3657,11 @@ def pdf_labeler_bulk_normalize():
                             field_type_enum=FieldType,
                             color_parser=HexColor,
                         )
+                        explicit_background_fields = (
+                            _collect_fields_with_explicit_background(
+                                normalized_fields
+                            )
+                        )
 
                         with tempfile.NamedTemporaryFile(
                             suffix=".pdf", delete=False
@@ -3572,6 +3681,10 @@ def pdf_labeler_bulk_normalize():
                         }
                         if checkbox_values:
                             _apply_checkbox_export_values(output_path, checkbox_values)
+                        _apply_pdf_field_visual_defaults(
+                            output_path,
+                            explicit_background_fields=explicit_background_fields,
+                        )
 
                         # Strip embedded fonts if requested
                         if remove_embedded_fonts_flag:

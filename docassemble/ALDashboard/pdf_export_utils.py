@@ -148,6 +148,12 @@ def build_pdf_export_fields_per_page(
             except (ValueError, TypeError):
                 pass
 
+        # Default to no border.  reportlab uses borderWidth=1 with a near-black
+        # borderColor when these keys are absent, producing a solid black outline
+        # around every field.  Setting borderWidth=0 suppresses that outline.
+        if "borderWidth" not in field_configs:
+            field_configs["borderWidth"] = 0
+
         if field_type in (field_type_enum.CHOICE, field_type_enum.LIST_BOX):
             raw_options = field_data.get("options")
             if isinstance(raw_options, list):

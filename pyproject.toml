@@ -202,7 +202,6 @@ ignore_missing_imports = true
 [dependency-groups]
 dev = [
     "docassemble.base>=1.3",
-    "docassemble.webapp",
     "types-setuptools",
     "types-requests",
     "types-defusedxml",
@@ -214,3 +213,6 @@ dev = [
     "xmlschema>=4.3.1",
 ]
 
+docassemble = [
+    "docassemble.webapp",
+]

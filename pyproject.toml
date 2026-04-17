@@ -208,6 +208,7 @@ ignore_missing_imports = true
 [dependency-groups]
 dev = [
     "docassemble.base>=1.3",
+    "pytest",
     "types-setuptools",
     "types-requests",
     "types-defusedxml",

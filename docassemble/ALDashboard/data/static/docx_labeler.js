@@ -417,28 +417,23 @@
 
         function collectAcceptedLabels() {
             var acceptedByKey = {};
-            state.suggestions.filter(function(s) { return s.status === 'accepted'; }).forEach(function(s) {
-                var key = s.paragraph + ',' + s.run + ',' + (s.new_paragraph || 0);
-                acceptedByKey[key] = { paragraph: s.paragraph, run: s.run, text: s.text, new_paragraph: s.new_paragraph };
-            });
-
-            var existingPatches = [];
-            if (previewUtils && previewUtils.buildRunPatchLabelsFromExistingEdits) {
-                existingPatches = previewUtils.buildRunPatchLabelsFromExistingEdits(state.existingLabels, state.runs);
+            if (previewUtils && previewUtils.buildAcceptedRunPatchLookup) {
+                acceptedByKey = previewUtils.buildAcceptedRunPatchLookup(
+                    state.runs,
+                    state.existingLabels,
+                    state.suggestions
+                );
+            } else {
+                state.suggestions.filter(function(s) { return s.status === 'accepted'; }).forEach(function(s) {
+                    var key = s.paragraph + ',' + s.run + ',' + (s.new_paragraph || 0);
+                    acceptedByKey[key] = {
+                        paragraph: s.paragraph,
+                        run: s.run,
+                        text: s.text,
+                        new_paragraph: s.new_paragraph
+                    };
+                });
             }
-            existingPatches.forEach(function(patch) {
-                var key = patch.paragraph + ',' + patch.run + ',0';
-                if (acceptedByKey[key]) {
-                    // Both a suggestion and existing-label edits target this
-                    // run. Apply the exact run edits so per-occurrence changes
-                    // survive even when identical labels repeat.
-                    if (previewUtils && previewUtils.applyRunPatchEdits && Array.isArray(patch._edits)) {
-                        acceptedByKey[key].text = previewUtils.applyRunPatchEdits(acceptedByKey[key].text, patch._edits);
-                    }
-                } else {
-                    acceptedByKey[key] = patch;
-                }
-            });
 
             return Object.keys(acceptedByKey).map(function(key) {
                 return acceptedByKey[key];
@@ -1633,19 +1628,13 @@
          */
         function buildCurrentGlobalRunIndex() {
             var modifications = {};
-            state.suggestions.forEach(function(s) {
-                if (s.status === 'accepted' && (s.new_paragraph || 0) === 0) {
-                    modifications[s.paragraph + ',' + s.run] = s.text;
-                }
-            });
-            var renamesByRun = {};
-            (state.existingLabels || []).forEach(function(label) {
-                if (!label || label.current === label.original) return;
-                if (typeof label.paragraph !== 'number' || typeof label.run !== 'number') return;
-                var key = label.paragraph + ',' + label.run;
-                if (!renamesByRun[key]) renamesByRun[key] = [];
-                renamesByRun[key].push(label);
-            });
+            if (previewUtils && previewUtils.buildAcceptedRunPatchLookup) {
+                modifications = previewUtils.buildAcceptedRunPatchLookup(
+                    state.runs,
+                    state.existingLabels,
+                    state.suggestions
+                );
+            }
             var sortedRuns = state.runs.slice().sort(function(a, b) {
                 if (a[0] !== b[0]) return a[0] - b[0];
                 return a[1] - b[1];
@@ -1656,18 +1645,12 @@
             sortedRuns.forEach(function(r) {
                 var paragraph = r[0];
                 var run = r[1];
-                var key = paragraph + ',' + run;
-                var text;
-                if (modifications[key] !== undefined) {
-                    text = String(modifications[key]);
+                var key = paragraph + ',' + run + ',0';
+                var text = String(r[2] || '');
+                if (Object.prototype.hasOwnProperty.call(modifications, key)) {
+                    text = String(modifications[key].text || '');
                 } else {
                     text = String(r[2] || '');
-                    var renames = renamesByRun[key];
-                    if (renames) {
-                        renames.forEach(function(label) {
-                            text = text.split(label.original).join(label.current);
-                        });
-                    }
                 }
                 if (lastParagraph !== null && paragraph !== lastParagraph) {
                     globalOffset += 1;
@@ -2580,7 +2563,7 @@
                 };
             }
             document.getElementById('catchall-apply').onclick = function() {
-                var updated = buildCatchallExpression(innerExpression, {
+                var updated = buildCatchallExpression(parsed.base, {
                     question: document.getElementById('catchall-question').value.trim(),
                     subquestion: document.getElementById('catchall-subquestion').value.trim(),
                     label: document.getElementById('catchall-label').value.trim(),

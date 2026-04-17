@@ -151,6 +151,42 @@ test('run patch builder rewrites split label occurrence without global rename', 
     assert.equal(secondRunPatch.text, ' and {{ spouse_name }}');
 });
 
+test('accepted run patch lookup keeps per-occurrence rename when suggestion edits same run', () => {
+    const runs = [
+        [0, 0, 'A {{ spouse_name }} and {{ spouse_name }} in one run']
+    ];
+    const first = '{{ spouse_name }}';
+    const firstStart = runs[0][2].indexOf(first);
+    const labels = [
+        {
+            id: 'occ-1',
+            original: first,
+            current: '{{ spouse_full_name }}',
+            paragraph: 0,
+            run: 0,
+            start: firstStart,
+            end: firstStart + first.length
+        }
+    ];
+    const suggestions = [
+        {
+            status: 'accepted',
+            paragraph: 0,
+            run: 0,
+            new_paragraph: 0,
+            text: 'A {{ spouse_name }} and {{ spouse_name }} in one run plus suffix'
+        }
+    ];
+
+    const patches = previewUtils.buildAcceptedRunPatchLookup(runs, labels, suggestions);
+
+    assert.deepEqual(Object.keys(patches), ['0,0,0']);
+    assert.equal(
+        patches['0,0,0'].text,
+        'A {{ spouse_full_name }} and {{ spouse_name }} in one run plus suffix'
+    );
+});
+
 test('normalizeReplaceAllFlag only returns true for explicit true', () => {
     assert.equal(previewUtils.normalizeReplaceAllFlag(true), true);
     assert.equal(previewUtils.normalizeReplaceAllFlag(false), false);

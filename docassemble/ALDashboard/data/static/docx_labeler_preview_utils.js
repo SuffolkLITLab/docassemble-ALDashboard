@@ -274,6 +274,43 @@
         return patches;
     }
 
+    function buildAcceptedRunPatchLookup(runs, existingLabels, suggestions) {
+        var acceptedByKey = {};
+
+        (suggestions || []).forEach(function(suggestion) {
+            if (!suggestion || suggestion.status !== 'accepted') return;
+            var newParagraph = suggestion.new_paragraph || 0;
+            var key = suggestion.paragraph + ',' + suggestion.run + ',' + newParagraph;
+            acceptedByKey[key] = {
+                paragraph: suggestion.paragraph,
+                run: suggestion.run,
+                text: String(suggestion.text || ''),
+                new_paragraph: newParagraph,
+            };
+        });
+
+        buildRunPatchLabelsFromExistingEdits(existingLabels, runs).forEach(function(patch) {
+            var key = patch.paragraph + ',' + patch.run + ',0';
+            if (acceptedByKey[key] && Array.isArray(patch._edits)) {
+                acceptedByKey[key].text = applyRunPatchEdits(
+                    acceptedByKey[key].text,
+                    patch._edits
+                );
+                return;
+            }
+            if (!acceptedByKey[key]) {
+                acceptedByKey[key] = {
+                    paragraph: patch.paragraph,
+                    run: patch.run,
+                    text: String(patch.text || ''),
+                    new_paragraph: patch.new_paragraph || 0,
+                };
+            }
+        });
+
+        return acceptedByKey;
+    }
+
     return {
         applyExistingLabelHighlightsByOccurrence: applyExistingLabelHighlightsByOccurrence,
         applyRunPatchEdits: applyRunPatchEdits,
@@ -281,6 +318,7 @@
         shouldSuppressSelectionPopoverFromTarget: shouldSuppressSelectionPopoverFromTarget,
         formatManualWrapPreviewDisplay: formatManualWrapPreviewDisplay,
         buildRunPatchLabelsFromExistingEdits: buildRunPatchLabelsFromExistingEdits,
+        buildAcceptedRunPatchLookup: buildAcceptedRunPatchLookup,
         normalizeReplaceAllFlag: normalizeReplaceAllFlag
     };
 }));

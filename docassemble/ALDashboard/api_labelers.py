@@ -19,7 +19,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from flask import Response, jsonify, request
 from flask_cors import cross_origin
@@ -97,6 +97,17 @@ def _sanitize_checkbox_export_value(raw_value: Any) -> str:
     token = str(raw_value or "").strip() or "Yes"
     token = re.sub(r"[^A-Za-z0-9_.-]+", "_", token).strip("_")
     return token or "Yes"
+
+
+def _looks_like_name_email_address_phone_field(field_name: Any) -> bool:
+    """Return True when a field name should keep auto-size enabled."""
+    return bool(
+        re.search(
+            r"(name|address|street|city|state|zip|postal|phone|phone_number|email|cell)",
+            str(field_name or ""),
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _get_named_pdf_parent(field_obj: Any) -> Optional[Any]:
@@ -187,6 +198,103 @@ def _apply_checkbox_export_values(
                         _rename_checkbox_export_state(annot, export_value, pikepdf)
                 except Exception:  # nosec B112
                     continue
+        pdf.save(pdf_path)
+
+
+def _collect_fields_with_explicit_background(fields_data: List[Dict[str, Any]]) -> Set[str]:
+    """Collect field names where the client explicitly set a background color.
+
+    Args:
+        fields_data: Field definitions submitted by the labeler UI.
+
+    Returns:
+        Set[str]: Field names whose background color should be preserved.
+    """
+    explicit: Set[str] = set()
+    for field in fields_data:
+        try:
+            name = str(field.get("name", "")).strip()
+            background = field.get("backgroundColor")
+            if name and isinstance(background, str) and background.strip():
+                explicit.add(name)
+        except Exception:  # nosec B112
+            continue
+    return explicit
+
+
+def _apply_pdf_field_visual_defaults(
+    pdf_path: str, *, explicit_background_fields: Optional[Set[str]] = None
+) -> None:
+    """Enforce default transparent field backgrounds and no borders.
+
+    Fields with explicit background colors are preserved. For all other fields,
+    this clears widget background appearance metadata so viewers regenerate a
+    transparent background, and it removes border drawing.
+
+    Args:
+        pdf_path: Path to the written PDF file.
+        explicit_background_fields: Field names whose background should be kept.
+    """
+    import pikepdf
+
+    explicit = {str(name).strip() for name in (explicit_background_fields or set())}
+
+    def _set_no_border(obj: Any) -> None:
+        obj["/Border"] = pikepdf.Array([0, 0, 0])
+        bs = obj.get("/BS")
+        if not isinstance(bs, pikepdf.Dictionary):
+            bs = pikepdf.Dictionary()
+        bs["/W"] = 0
+        obj["/BS"] = bs
+        mk = obj.get("/MK")
+        if isinstance(mk, pikepdf.Dictionary) and "/BC" in mk:
+            del mk["/BC"]
+            if len(mk) == 0:
+                del obj["/MK"]
+
+    def _clear_background(obj: Any) -> None:
+        mk = obj.get("/MK")
+        if isinstance(mk, pikepdf.Dictionary) and "/BG" in mk:
+            del mk["/BG"]
+            if len(mk) == 0:
+                del obj["/MK"]
+
+    with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
+        acroform = pdf.Root.get("/AcroForm")
+        if isinstance(acroform, pikepdf.Dictionary):
+            acroform["/NeedAppearances"] = True
+
+        for page in pdf.pages:
+            if "/Annots" not in page:
+                continue
+            for annot in page.Annots:  # type: ignore[attr-defined]
+                try:
+                    if annot.Type != "/Annot" or annot.Subtype != "/Widget":
+                        continue
+
+                    named_parent = _get_named_pdf_parent(annot)
+                    field_name = ""
+                    if named_parent and hasattr(named_parent, "T"):
+                        field_name = str(named_parent.T).strip()
+
+                    _set_no_border(annot)
+                    if named_parent and named_parent is not annot:
+                        _set_no_border(named_parent)
+
+                    if field_name in explicit:
+                        continue
+
+                    _clear_background(annot)
+                    if named_parent and named_parent is not annot:
+                        _clear_background(named_parent)
+
+                    # Remove widget appearance so viewers can regenerate using
+                    # transparent/default settings instead of reportlab defaults.
+                    if "/AP" in annot:
+                        del annot["/AP"]
+                except Exception:  # nosec B112
+                    continue
+
         pdf.save(pdf_path)
 
 
@@ -743,10 +851,84 @@ def _render_template_content(
         return ""
     if bootstrap_data is None:
         return html_content
+    bootstrap_json = json.dumps(bootstrap_data, sort_keys=True)
+    bootstrap_json = (
+        bootstrap_json.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
     return html_content.replace(
         "__LABELER_BOOTSTRAP_JSON__",
-        json.dumps(bootstrap_data, sort_keys=True),
+        bootstrap_json,
     )
+
+
+def _parse_initial_playground_source(
+    project: Optional[str],
+    filename: Optional[str],
+    *,
+    allowed_extensions: tuple[str, ...],
+) -> Dict[str, str]:
+    """Normalize optional labeler page query params for initial template load.
+
+    Args:
+        project: Optional ``project`` query parameter.
+        filename: Optional ``filename`` query parameter.
+        allowed_extensions: Allowed filename extensions for this labeler page.
+
+    Returns:
+        Dict[str, str]: Sanitized initial source keys for UI bootstrap.
+    """
+    raw_project = str(project or "").strip()
+    raw_filename = str(filename or "").strip()
+    if not raw_project and not raw_filename:
+        return {}
+
+    normalized_project = (
+        _normalize_playground_project(raw_project) if raw_project else "default"
+    )
+    if not raw_filename:
+        return {"project": normalized_project}
+
+    normalized_filename = _normalize_template_filename(
+        raw_filename, allowed_extensions=allowed_extensions
+    )
+    return {"project": normalized_project, "filename": normalized_filename}
+
+
+def _labeler_initial_playground_source_from_request(
+    *, allowed_extensions: tuple[str, ...]
+) -> Dict[str, str]:
+    """Read and validate optional ``project``/``filename`` query params.
+
+    Invalid query input is ignored so the labeler UI still loads.
+    """
+    try:
+        return _parse_initial_playground_source(
+            request.args.get("project"),
+            request.args.get("filename"),
+            allowed_extensions=allowed_extensions,
+        )
+    except DashboardAPIValidationError as exc:
+        log(
+            "ALDashboard: Ignoring invalid labeler query params "
+            f"project={request.args.get('project')!r} filename={request.args.get('filename')!r} "
+            f"({exc.message})",
+            "warning",
+        )
+        return {}
+
+
+def _build_docx_labeler_bootstrap() -> Dict[str, Any]:
+    """Build bootstrap data for the DOCX labeler page."""
+    return {
+        "apiBasePath": LABELER_BASE_PATH,
+        "initialPlaygroundSource": _labeler_initial_playground_source_from_request(
+            allowed_extensions=(".docx",)
+        ),
+    }
 
 
 def _build_pdf_labeler_bootstrap() -> Dict[str, Any]:
@@ -756,6 +938,9 @@ def _build_pdf_labeler_bootstrap() -> Dict[str, Any]:
     pdf_ui_config = get_pdf_labeler_ui_config()
     return {
         "apiBasePath": LABELER_BASE_PATH,
+        "initialPlaygroundSource": _labeler_initial_playground_source_from_request(
+            allowed_extensions=(".pdf",)
+        ),
         "branding": pdf_ui_config.get("branding", {}),
         "pdf": {
             "fieldNameLibrary": pdf_ui_config.get("field_name_library", {}),
@@ -1422,7 +1607,9 @@ def docx_labeler_page() -> Response:
         Response: The rendered DOCX labeler HTML page.
     """
     log("ALDashboard: Serving DOCX labeler page", "info")
-    html_content = _get_template_content("docx_labeler.html")
+    html_content = _render_template_content(
+        "docx_labeler.html", bootstrap_data=_build_docx_labeler_bootstrap()
+    )
     if not html_content:
         log("ALDashboard: DOCX labeler template not found", "error")
         return Response(
@@ -2876,6 +3063,9 @@ def pdf_labeler_apply_fields() -> Response:
                 if str(field.get("type", "")).lower() == "checkbox"
                 and str(field.get("checkboxExportValue", "")).strip()
             }
+            explicit_background_fields = _collect_fields_with_explicit_background(
+                fields_data
+            )
 
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
@@ -2891,6 +3081,10 @@ def pdf_labeler_apply_fields() -> Response:
 
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
+            _apply_pdf_field_visual_defaults(
+                output_path,
+                explicit_background_fields=explicit_background_fields,
+            )
 
             # Read the output file
             with open(output_path, "rb") as f:
@@ -3353,6 +3547,10 @@ def pdf_labeler_bulk_normalize():
             options.get("uniformCheckboxSize"), default=True
         )
         checkbox_size_pt = int(options.get("checkboxSizePt") or 12)
+        auto_size_name_address = parse_bool(
+            options.get("autoSizeNameAddress"), default=True
+        )
+        fixed_text_height_pt = int(options.get("fixedTextHeightPt") or 14)
         remove_embedded_fonts_flag = parse_bool(
             options.get("removeEmbeddedFonts"), default=False
         )
@@ -3427,7 +3625,7 @@ def pdf_labeler_bulk_normalize():
                                     if norm_font_size
                                     else int(f.get("fontSize", 12) or 12)
                                 ),
-                                "autoSize": True,
+                                "autoSize": False,
                             }
 
                             if field_type_str == "checkbox" and norm_checkbox_style:
@@ -3436,6 +3634,15 @@ def pdf_labeler_bulk_normalize():
                             if field_type_str == "checkbox" and uniform_checkbox_size:
                                 nf["width"] = checkbox_size_pt
                                 nf["height"] = checkbox_size_pt
+                            if (
+                                auto_size_name_address
+                                and field_type_str == "text"
+                                and _looks_like_name_email_address_phone_field(
+                                    field_name
+                                )
+                            ):
+                                nf["autoSize"] = True
+                                nf["height"] = fixed_text_height_pt
 
                             normalized_fields.append(nf)
 
@@ -3451,6 +3658,11 @@ def pdf_labeler_bulk_normalize():
                             form_field_cls=FormField,
                             field_type_enum=FieldType,
                             color_parser=HexColor,
+                        )
+                        explicit_background_fields = (
+                            _collect_fields_with_explicit_background(
+                                normalized_fields
+                            )
                         )
 
                         with tempfile.NamedTemporaryFile(
@@ -3471,6 +3683,10 @@ def pdf_labeler_bulk_normalize():
                         }
                         if checkbox_values:
                             _apply_checkbox_export_values(output_path, checkbox_values)
+                        _apply_pdf_field_visual_defaults(
+                            output_path,
+                            explicit_background_fields=explicit_background_fields,
+                        )
 
                         # Strip embedded fonts if requested
                         if remove_embedded_fonts_flag:

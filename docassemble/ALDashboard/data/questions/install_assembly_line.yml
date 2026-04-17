@@ -103,7 +103,7 @@ question: |
   Do you want to enable answer sets?
 subquestion: |
   [Answer 
-  sets](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/framework/answer_sets/) 
+  sets](https://assemblyline.suffolklitlab.org/docs/components/AssemblyLine/answer_sets/overview) 
   allow interview users to save and reuse answers in multiple interviews.
   
   If you do not want users to be able to re-use answers, turn off this feature.
@@ -128,7 +128,7 @@ fields:
 question: |
   Use a custom interview list page?
 subquestion: |
-  You can use a [custom interview list](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/framework/magic_variables#use-the-assemblyline-interview-list-replacement)
+  You can use a [custom interview list](https://assemblyline.suffolklitlab.org/docs/components/AssemblyLine/magic_variables/#use-the-assemblyline-interview-list-replacement)
   to replace Docassemble's stock "My interviews" page.
 
   The replacement page has been expert-tested to improve usability. It is also
@@ -665,11 +665,11 @@ fields:
       - medium
       - high
     default: |
-      ${ the_config.get("open ai", {}).get("reasoning effort")
-         if the_config.get("open ai", {}).get("reasoning effort") in ["low", "medium", "high"]
+      ${ the_config.get("open ai", {}).get("reasoning effort") \
+         if the_config.get("open ai", {}).get("reasoning effort") in ["low", "medium", "high"] \
          else "low" }
     show if: configure_api_llm
-  - Configure [e-filing](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/efiling/overview): configure_api_efile
+  - Configure [e-filing](https://assemblyline.suffolklitlab.org/docs/components/EFSPIntegration/overview): configure_api_efile
     datatype: yesno
     help: |
       If you choose to use the [e-file proxy server](https://github.com/SuffolkLITLab/EfileProxyServer),
@@ -678,7 +678,7 @@ fields:
       
       Using the e-file connection is rare. Feel free to skip this step.       
   - E-file server URL: the_config['efile proxy']['url']
-    default: ${ the_config['efile proxy'].get('url') or "https://efile.suffolklitlab.org:9000" }
+    default: ${ the_config['efile proxy'].get('url') or "https://efile.suffolklitlab.org" }
     show if: configure_api_efile
   - E-file proxy api key: the_config['efile proxy']['api key']
     default: ${ the_config['efile proxy'].get('api key') }

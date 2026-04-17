@@ -27,6 +27,11 @@ from spellchecker import SpellChecker
 import docassemble.base.filter
 import docassemble.webapp.screenreader
 
+try:
+    from flask_login import current_user
+except Exception:
+    current_user = None  # type: ignore
+
 ChatCompletionFn = Callable[..., Union[List[Any], Dict[str, Any], str]]
 chat_completion: Optional[ChatCompletionFn]
 try:
@@ -56,6 +61,29 @@ try:
     from docassemble.base.util import user_info
 except Exception:
     user_info = None  # type: ignore
+
+
+def _resolve_current_user_id() -> Optional[int]:
+    try:
+        if current_user is not None and getattr(
+            current_user, "is_authenticated", False
+        ):
+            uid = getattr(current_user, "id", None)
+            if uid is not None:
+                return int(uid)
+    except Exception:
+        pass
+
+    try:
+        if user_info is not None:
+            uid = getattr(user_info(), "id", None)
+            if uid is not None:
+                return int(uid)
+    except Exception:
+        pass
+
+    return None
+
 
 try:
     from dayamlchecker.yaml_structure import find_errors as _dayaml_find_errors
@@ -297,12 +325,12 @@ def _resolve_source_token(token: str) -> Optional[str]:
 
 
 def list_playground_projects() -> List[str]:
-    if user_info is None:
+    uid = _resolve_current_user_id()
+    if uid is None:
         return []
     try:
         from docassemble.webapp.files import SavedFile
 
-        uid = user_info().id
         playground = SavedFile(uid, fix=False, section="playground")
         projects = playground.list_of_dirs() or []
         projects = [proj for proj in projects if isinstance(proj, str) and proj]
@@ -315,13 +343,13 @@ def list_playground_projects() -> List[str]:
 
 
 def list_playground_yaml_files(project: str = "default") -> List[Dict[str, str]]:
-    if user_info is None:
+    uid = _resolve_current_user_id()
+    if uid is None:
         return []
     try:
         from docassemble.webapp.files import SavedFile
         from docassemble.webapp.backend import directory_for
 
-        uid = user_info().id
         area = SavedFile(uid, fix=True, section="playground")
         project_dir = directory_for(area, project or "default")
         if not project_dir or not os.path.isdir(project_dir):

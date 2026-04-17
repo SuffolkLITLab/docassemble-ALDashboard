@@ -61,6 +61,7 @@ class TestPDFExportUtils(unittest.TestCase):
                 "height": 18.0,
                 "fontName": "Helvetica",
                 "fieldFlags": "doNotScroll",
+                "borderWidth": 0,
             },
         )
 
@@ -95,6 +96,7 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertNotIn("width", field.configs)
         self.assertNotIn("height", field.configs)
         self.assertNotIn("fontName", field.configs)
+        self.assertEqual(field.configs["borderWidth"], 0)
 
     def test_multiline_and_dropdown_export_configs_are_widget_specific(self):
         fields_per_page = build_pdf_export_fields_per_page(
@@ -140,6 +142,7 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(multiline.configs["fontName"], "Helvetica")
         self.assertEqual(multiline.configs["width"], 240.0)
         self.assertEqual(multiline.configs["height"], 54.0)
+        self.assertEqual(multiline.configs["borderWidth"], 0)
 
         self.assertEqual(dropdown.type, FakeFieldType.CHOICE)
         self.assertEqual(dropdown.configs["fieldFlags"], "combo")
@@ -148,6 +151,7 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(dropdown.configs["fontSize"], 10)
         self.assertEqual(dropdown.configs["width"], 80.0)
         self.assertEqual(dropdown.configs["height"], 18.0)
+        self.assertEqual(dropdown.configs["borderWidth"], 0)
 
 
 if __name__ == "__main__":

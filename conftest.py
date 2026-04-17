@@ -13,7 +13,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
-from typing import Any
+from typing import Any, Callable
 
 
 def _install_docassemble_webapp_stubs() -> None:
@@ -30,13 +30,14 @@ def _install_docassemble_webapp_stubs() -> None:
             self.args = args
             self.kwargs = kwargs
 
-    da_flask_mail.Message = Message
+    setattr(da_flask_mail, "Message", Message)
 
     screenreader = types.ModuleType("docassemble.webapp.screenreader")
-    screenreader.to_text = lambda html_text: html_text
+    to_text: Callable[[str], str] = lambda html_text: html_text
+    setattr(screenreader, "to_text", to_text)
 
-    webapp_pkg.da_flask_mail = da_flask_mail
-    webapp_pkg.screenreader = screenreader
+    setattr(webapp_pkg, "da_flask_mail", da_flask_mail)
+    setattr(webapp_pkg, "screenreader", screenreader)
 
     sys.modules["docassemble.webapp"] = webapp_pkg
     sys.modules["docassemble.webapp.da_flask_mail"] = da_flask_mail

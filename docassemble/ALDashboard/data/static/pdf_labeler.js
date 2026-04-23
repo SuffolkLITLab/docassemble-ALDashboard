@@ -14,6 +14,7 @@
 
     const LABELER_BOOTSTRAP = parseBootstrapJson();
     const API_BASE_PATH = LABELER_BOOTSTRAP.apiBasePath || '/al';
+    const INITIAL_PLAYGROUND_SOURCE = LABELER_BOOTSTRAP.initialPlaygroundSource || {};
     const BRANDING = LABELER_BOOTSTRAP.branding || {};
     const PDF_CONFIG = LABELER_BOOTSTRAP.pdf || {};
     const PDFLibGlobal = window.PDFLib || {};
@@ -164,11 +165,16 @@
             project: '',
             filename: '',
         },
+        initialPlaygroundSource: {
+            project: INITIAL_PLAYGROUND_SOURCE.project || '',
+            filename: INITIAL_PLAYGROUND_SOURCE.filename || '',
+            attempted: false,
+        },
         interviewSourceMode: 'playground',
         playground: {
             projects: [],
             files: [],
-            selectedProject: 'default',
+            selectedProject: INITIAL_PLAYGROUND_SOURCE.project || 'default',
             selectedFile: '',
             variables: [],
             topLevelNames: []
@@ -181,7 +187,21 @@
             variables: [],
             topLevelNames: []
         },
-        usePlaygroundVariables: false
+        usePlaygroundVariables: false,
+        accessibility: {
+            enabled: true,
+            fieldOrder: [],
+            metadata: {
+                language: '',
+                title: '',
+                author: '',
+                subject: ''
+            },
+            images: [],
+            imageMode: false,
+            tagStructure: null,
+            inspected: false
+        }
     };
 
     // --- Session-persisted defaults for font, fontSize, checkboxStyle ---
@@ -274,7 +294,20 @@
     const repairStatus = document.getElementById('repair-status');
     const repairStatusText = document.getElementById('repair-status-text');
     const utilitiesBtn = document.getElementById('utilities-btn');
+    const accessibilityBtn = document.getElementById('accessibility-btn');
     const previewBtn = document.getElementById('preview-btn');
+    const accessibilityModal = document.getElementById('accessibility-modal');
+    const closeAccessibilityBtn = document.getElementById('close-accessibility');
+    const a11yEnableInput = document.getElementById('a11y-enable');
+    const a11yAutofillTooltipsBtn = document.getElementById('a11y-autofill-tooltips');
+    const a11yFieldList = document.getElementById('a11y-field-list');
+    const a11yMetaLanguage = document.getElementById('a11y-meta-language');
+    const a11yMetaTitle = document.getElementById('a11y-meta-title');
+    const a11yMetaAuthor = document.getElementById('a11y-meta-author');
+    const a11yMetaSubject = document.getElementById('a11y-meta-subject');
+    const a11yImageModeInput = document.getElementById('a11y-image-mode');
+    const a11yImageList = document.getElementById('a11y-image-list');
+    const a11yTagStructure = document.getElementById('a11y-tag-structure');
     const utilitiesModal = document.getElementById('utilities-modal');
     const utilitiesCloseBtn = document.getElementById('utilities-close');
     const pageManagerModal = document.getElementById('page-manager-modal');
@@ -933,6 +966,7 @@
             sidebarRelabelBtn.disabled = !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
         }
         previewBtn.disabled = !state.pdfBytes || totalCount === 0;
+        accessibilityBtn.disabled = !state.pdfBytes;
         managePagesBtn.disabled = !state.pdfBytes;
         if (!state.pdfBytes || totalCount === 0) {
             state.previewMode = false;
@@ -987,6 +1021,250 @@
             return left.x - right.x;
         });
         return sorted;
+    }
+
+    function defaultTooltipFromFieldName(name) {
+        const normalized = String(name || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+        return normalized || 'Field';
+    }
+
+    function sortedFieldIdsByDefaultOrder() {
+        return state.fields
+            .slice()
+            .sort(function (left, right) {
+                if (left.pageIndex !== right.pageIndex) return left.pageIndex - right.pageIndex;
+                if (Math.abs(left.y - right.y) > 0.002) return left.y - right.y;
+                if (Math.abs(left.x - right.x) > 0.002) return left.x - right.x;
+                return String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' });
+            })
+            .map(function (field) { return field.id; });
+    }
+
+    function reconcileAccessibilityFieldOrder() {
+        const knownIds = new Set(state.fields.map(function (field) { return field.id; }));
+        const next = [];
+        (state.accessibility.fieldOrder || []).forEach(function (fieldId) {
+            if (knownIds.has(fieldId)) {
+                next.push(fieldId);
+                knownIds.delete(fieldId);
+            }
+        });
+        sortedFieldIdsByDefaultOrder().forEach(function (fieldId) {
+            if (knownIds.has(fieldId)) {
+                next.push(fieldId);
+                knownIds.delete(fieldId);
+            }
+        });
+        state.accessibility.fieldOrder = next;
+    }
+
+    function ensureFieldAccessibilityDefaults(field) {
+        if (!field) return;
+        if (!String(field.tooltip || '').trim()) {
+            field.tooltip = defaultTooltipFromFieldName(field.name);
+        }
+    }
+
+    function refreshAccessibilityFromFields() {
+        state.fields.forEach(ensureFieldAccessibilityDefaults);
+        reconcileAccessibilityFieldOrder();
+    }
+
+    function renderAccessibilityFieldList() {
+        if (!a11yFieldList) return;
+        a11yFieldList.innerHTML = '';
+        if (!state.fields.length) {
+            a11yFieldList.innerHTML = '<div class="small text-muted">No fields detected yet.</div>';
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        state.accessibility.fieldOrder.forEach(function (fieldId, index) {
+            const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+            if (!field) return;
+            const row = document.createElement('div');
+            row.className = 'border rounded p-2';
+            row.dataset.fieldId = field.id;
+            row.innerHTML =
+                '<div class="d-flex align-items-center justify-content-between gap-2 mb-2">' +
+                    '<div class="small fw-semibold">' + escapeHtml(field.name) + '</div>' +
+                    '<div class="btn-group btn-group-sm">' +
+                        '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' + escapeHtml(field.id) + '"' + (index === 0 ? ' disabled' : '') + '>Up</button>' +
+                        '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' + escapeHtml(field.id) + '"' + (index === state.accessibility.fieldOrder.length - 1 ? ' disabled' : '') + '>Down</button>' +
+                    '</div>' +
+                '</div>' +
+                '<label class="form-label small text-muted mb-1">Tooltip</label>' +
+                '<input type="text" class="form-control form-control-sm" data-a11y-action="tooltip" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.tooltip || '')) + '">';
+            fragment.appendChild(row);
+        });
+        a11yFieldList.appendChild(fragment);
+    }
+
+    function renderAccessibilityImages() {
+        if (!a11yImageList) return;
+        a11yImageList.innerHTML = '';
+        const showImages = !!state.accessibility.imageMode;
+        a11yImageList.classList.toggle('hidden', !showImages);
+        if (!showImages) return;
+        if (!state.accessibility.images.length) {
+            a11yImageList.innerHTML = '<div class="small text-muted">No embedded image assets were detected.</div>';
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        state.accessibility.images.forEach(function (imageAsset) {
+            const row = document.createElement('div');
+            row.className = 'border rounded p-2';
+            row.innerHTML =
+                '<div class="small fw-semibold mb-1">Page ' + (Number(imageAsset.pageIndex || 0) + 1) + ' - ' + escapeHtml(String(imageAsset.name || imageAsset.assetId || 'Image')) + '</div>' +
+                '<div class="small text-muted mb-1">Asset ID: ' + escapeHtml(String(imageAsset.assetId || '')) + '</div>' +
+                '<input type="text" class="form-control form-control-sm" data-a11y-action="image-alt" data-asset-id="' + escapeHtml(String(imageAsset.assetId || '')) + '" value="' + escapeHtml(String(imageAsset.altText || '')) + '" placeholder="Alternative text">';
+            fragment.appendChild(row);
+        });
+        a11yImageList.appendChild(fragment);
+    }
+
+    function renderAccessibilityTagStructure() {
+        if (!a11yTagStructure) return;
+        const summary = state.accessibility.tagStructure;
+        if (!summary || !summary.present) {
+            a11yTagStructure.textContent = 'No document tag tree detected.';
+            return;
+        }
+        const lines = [
+            'Tag tree present: yes',
+            'Nodes: ' + String(summary.node_count || 0),
+            'Max depth: ' + String(summary.max_depth || 0),
+            '',
+            'Preview:'
+        ];
+        const preview = Array.isArray(summary.preview) ? summary.preview : [];
+        if (!preview.length) {
+            lines.push('(no preview nodes available)');
+        } else {
+            preview.forEach(function (line) { lines.push(String(line)); });
+        }
+        a11yTagStructure.textContent = lines.join('\n');
+    }
+
+    function renderAccessibilityModal() {
+        refreshAccessibilityFromFields();
+        a11yEnableInput.checked = !!state.accessibility.enabled;
+        a11yImageModeInput.checked = !!state.accessibility.imageMode;
+        a11yMetaLanguage.value = String(state.accessibility.metadata.language || '');
+        a11yMetaTitle.value = String(state.accessibility.metadata.title || '');
+        a11yMetaAuthor.value = String(state.accessibility.metadata.author || '');
+        a11yMetaSubject.value = String(state.accessibility.metadata.subject || '');
+        renderAccessibilityFieldList();
+        renderAccessibilityImages();
+        renderAccessibilityTagStructure();
+    }
+
+    function updateAccessibilityMetadataFromInputs() {
+        state.accessibility.metadata = {
+            language: String(a11yMetaLanguage.value || '').trim(),
+            title: String(a11yMetaTitle.value || '').trim(),
+            author: String(a11yMetaAuthor.value || '').trim(),
+            subject: String(a11yMetaSubject.value || '').trim()
+        };
+    }
+
+    async function inspectAccessibilityData(forceRefresh) {
+        if (!state.pdfBytes) return;
+        if (state.accessibility.inspected && !forceRefresh) return;
+        const formData = new FormData();
+        formData.append('file', getPdfFileForRequests());
+        const response = await fetch(apiUrl('/pdf-labeler/api/accessibility-inspect'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' },
+            body: formData
+        });
+        const payload = await parseApiResponse(response);
+        if (!payload.success || !payload.data) return;
+
+        const metadata = payload.data.metadata || {};
+        if (!state.accessibility.metadata.language) state.accessibility.metadata.language = String(metadata.language || '');
+        if (!state.accessibility.metadata.title) state.accessibility.metadata.title = String(metadata.title || '');
+        if (!state.accessibility.metadata.author) state.accessibility.metadata.author = String(metadata.author || '');
+        if (!state.accessibility.metadata.subject) state.accessibility.metadata.subject = String(metadata.subject || '');
+
+        const serverFields = Array.isArray(payload.data.fields) ? payload.data.fields : [];
+        serverFields.forEach(function (serverField) {
+            const matched = state.fields.find(function (field) {
+                return String(field.name || '') === String(serverField.name || '');
+            });
+            if (!matched) return;
+            if (!String(matched.tooltip || '').trim() || serverField.has_custom_tooltip) {
+                matched.tooltip = String(serverField.tooltip || defaultTooltipFromFieldName(matched.name));
+            }
+        });
+
+        const serverOrder = Array.isArray(payload.data.field_order)
+            ? payload.data.field_order.map(function (name) { return String(name || ''); })
+            : [];
+        if (serverOrder.length) {
+            const byName = new Map();
+            state.fields.forEach(function (field) {
+                byName.set(String(field.name || ''), field.id);
+            });
+            const orderedIds = [];
+            serverOrder.forEach(function (name) {
+                const fieldId = byName.get(name);
+                if (fieldId && orderedIds.indexOf(fieldId) === -1) {
+                    orderedIds.push(fieldId);
+                }
+            });
+            state.accessibility.fieldOrder = orderedIds;
+        }
+
+        state.accessibility.images = Array.isArray(payload.data.images)
+            ? payload.data.images.map(function (item) {
+                return {
+                    assetId: String(item.assetId || ''),
+                    pageIndex: Number(item.pageIndex || 0),
+                    name: String(item.name || ''),
+                    altText: String(item.altText || ''),
+                    width: Number(item.width || 0),
+                    height: Number(item.height || 0)
+                };
+            })
+            : [];
+        state.accessibility.tagStructure = payload.data.tag_structure || null;
+        state.accessibility.inspected = true;
+        refreshAccessibilityFromFields();
+    }
+
+    function buildAccessibilityPayload(exportNameMap) {
+        if (!state.accessibility.enabled) {
+            return {
+                enabled: false,
+                auto_fill_missing_tooltips: true,
+            };
+        }
+        const fieldTooltips = {};
+        state.fields.forEach(function (field) {
+            const exportName = exportNameMap.get(field.id);
+            if (!exportName) return;
+            const tooltip = String(field.tooltip || '').trim() || defaultTooltipFromFieldName(field.name);
+            fieldTooltips[exportName] = tooltip;
+        });
+
+        const orderedNames = state.accessibility.fieldOrder
+            .map(function (fieldId) { return exportNameMap.get(fieldId); })
+            .filter(Boolean);
+
+        const imageAltText = {};
+        state.accessibility.images.forEach(function (imageAsset) {
+            if (!imageAsset || !imageAsset.assetId) return;
+            imageAltText[String(imageAsset.assetId)] = String(imageAsset.altText || '').trim();
+        });
+
+        return {
+            enabled: true,
+            auto_fill_missing_tooltips: true,
+            field_tooltips: fieldTooltips,
+            field_order: orderedNames,
+            image_alt_text: imageAltText,
+            metadata: Object.assign({}, state.accessibility.metadata)
+        };
     }
 
     function invalidateBulkRenamePreview() {
@@ -1305,8 +1583,15 @@
         const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
         if (!field) return;
         if (field.name === nextValue) return;
+        const previousName = String(field.name || '');
+        const previousDefaultTooltip = defaultTooltipFromFieldName(previousName);
         field.name = nextValue;
+        const currentTooltip = String(field.tooltip || '').trim();
+        if (!currentTooltip || currentTooltip === previousDefaultTooltip) {
+            field.tooltip = defaultTooltipFromFieldName(nextValue);
+        }
         bumpFieldNamesVersion();
+        reconcileAccessibilityFieldOrder();
         setDirty(true);
         if (state.fieldsPanelMode === 'rename') {
             renderFieldsList();
@@ -1503,8 +1788,25 @@
         renderAuthControls();
         updateAiUiState();
         if (state.auth.isAuthenticated) {
-            fetchPdfPlaygroundProjects();
+            await fetchPdfPlaygroundProjects();
+            await maybeOpenInitialPlaygroundTemplate();
         }
+    }
+
+    async function maybeOpenInitialPlaygroundTemplate() {
+        if (!state.auth.isAuthenticated) return;
+        if (state.initialPlaygroundSource.attempted) return;
+        var project = state.initialPlaygroundSource.project;
+        var filename = state.initialPlaygroundSource.filename;
+        if (!project || !filename) {
+            state.initialPlaygroundSource.attempted = true;
+            return;
+        }
+        state.initialPlaygroundSource.attempted = true;
+        if (state.playground.projects.indexOf(project) === -1) return;
+        state.playground.selectedProject = project;
+        renderPdfInterviewPicker();
+        await openPdfTemplateFromPlayground(project, filename, { showSuccess: false });
     }
 
     // ================================================================
@@ -1732,6 +2034,11 @@
         var filename = openPgTemplate.value;
         if (!filename) { showError('Select a template file.'); return; }
         openPlaygroundModalEl.classList.add('hidden');
+        await openPdfTemplateFromPlayground(project, filename);
+    }
+
+    async function openPdfTemplateFromPlayground(project, filename, options) {
+        options = options || {};
         showLoading('Loading ' + filename + ' from Playground...');
         try {
             var response = await fetch(apiUrl('/labeler/api/playground-templates/load?project=' + encodeURIComponent(project) + '&filename=' + encodeURIComponent(filename)), { method: 'GET', credentials: 'same-origin' });
@@ -1744,7 +2051,9 @@
             state.playgroundSource = { project: project, filename: filename };
             savePlaygroundBtn.classList.remove('hidden');
             await loadPdf(file);
-            showSuccess('Opened ' + filename + ' from Playground.');
+            if (options.showSuccess !== false) {
+                showSuccess('Opened ' + filename + ' from Playground.');
+            }
         } catch (error) {
             showPdfWorkspace();
             showError('Failed to load from Playground: ' + (error.message || 'Unknown error.'));
@@ -1800,7 +2109,9 @@
             if (state.hasUnsavedChanges && state.fields.length > 0) {
                 var formData = new FormData();
                 formData.append('file', getPdfFileForRequests());
-                formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates()));
+                var saveNameMap = buildUniqueExportNameMap();
+                formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)));
+                formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(saveNameMap)));
                 var exportResponse = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), { method: 'POST', headers: { 'Accept': 'application/json' }, body: formData });
                 var exportData = await parseApiResponse(exportResponse);
                 if (!exportData.success || !exportData.data || !exportData.data.pdf_base64) {
@@ -2013,6 +2324,9 @@
         if (fileName) {
             state.fileName = fileName;
         }
+        state.accessibility.inspected = false;
+        state.accessibility.images = [];
+        state.accessibility.tagStructure = null;
         updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
     }
 
@@ -2614,6 +2928,10 @@
                 nextField.allowScroll = false;
             }
 
+            if (nextField.type === 'text' || nextField.type === 'multiline') {
+                nextField.autoSize = false;
+            }
+
             if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.autoSize = true;
                 nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');
@@ -3043,9 +3361,11 @@
                 checkboxExportValue: field.checkboxExportValue || undefined,
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor || undefined,
-                options: Array.isArray(field.options) ? field.options.slice() : undefined
+                options: Array.isArray(field.options) ? field.options.slice() : undefined,
+                tooltip: String(field.tooltip || '').trim()
             };
         });
+        refreshAccessibilityFromFields();
         bumpFieldNamesVersion();
         state.selectedFieldId = settings.preserveSelection && state.fields.some(function (field) {
             return field.id === state.selectedFieldId;
@@ -3092,11 +3412,14 @@
             autoSize: type === 'text' || type === 'multiline',
             checkboxExportValue: type === 'checkbox' ? getSessionDefault('checkboxExportValue') : undefined,
             options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined,
-            nameSuggestions: nameSuggestions
+            nameSuggestions: nameSuggestions,
+            tooltip: ''
         };
         field.x = rect.x;
         field.y = rect.y;
+        ensureFieldAccessibilityDefaults(field);
         state.fields.push(field);
+        reconcileAccessibilityFieldOrder();
         bumpFieldNamesVersion();
         selectField(field.id, { focusNameInput: true, scrollIntoView: false });
         setDirty(true);
@@ -3342,6 +3665,9 @@
                 return existingFields;
             });
             replaceFields(detectedFields);
+            await inspectAccessibilityData(true).catch(function () {
+                state.accessibility.inspected = false;
+            });
             setDirty(false);
             updateAiUiState();
             floatingToolPicker.classList.remove('hidden');
@@ -3471,6 +3797,7 @@
 
     function deleteField(fieldId) {
         state.fields = state.fields.filter(function (field) { return field.id !== fieldId; });
+        reconcileAccessibilityFieldOrder();
         bumpFieldNamesVersion();
         if (state.selectedFieldId === fieldId) {
             state.selectedFieldId = state.fields[0] ? state.fields[0].id : null;
@@ -3503,9 +3830,11 @@
             checkboxExportValue: field.checkboxExportValue,
             allowScroll: field.allowScroll !== false,
             backgroundColor: field.backgroundColor,
-            options: Array.isArray(field.options) ? field.options.slice() : undefined
+            options: Array.isArray(field.options) ? field.options.slice() : undefined,
+            tooltip: String(field.tooltip || '').trim() || defaultTooltipFromFieldName(field.name)
         };
         state.fields.push(duplicate);
+        reconcileAccessibilityFieldOrder();
         bumpFieldNamesVersion();
         selectField(duplicate.id, { focusNameInput: false, scrollIntoView: false });
         setDirty(true);
@@ -3533,10 +3862,28 @@
         syncQuickFieldEditor();
     }
 
-    function convertFieldsToAbsoluteCoordinates() {
+    function buildUniqueExportNameMap() {
+        const exportNameMap = new Map();
+        const used = new Set();
+        state.fields.forEach(function (field) {
+            const base = normalizePdfFieldName(field.name || 'field') || 'field';
+            let candidate = base;
+            let suffix = 2;
+            while (used.has(candidate)) {
+                candidate = base + '__' + suffix;
+                suffix += 1;
+            }
+            used.add(candidate);
+            exportNameMap.set(field.id, candidate);
+        });
+        return exportNameMap;
+    }
+
+    function convertFieldsToAbsoluteCoordinates(exportNameMap) {
+        const nameMap = exportNameMap || buildUniqueExportNameMap();
         return state.fields.map(function (field) {
             const pageSize = state.pageSizes[field.pageIndex];
-            const safeName = ensureUniqueFieldName(field.name, field.id);
+            const safeName = nameMap.get(field.id) || normalizePdfFieldName(field.name || 'field');
             return {
                 name: safeName,
                 type: field.type,
@@ -3552,7 +3899,8 @@
                 checkboxExportValue: field.checkboxExportValue,
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor,
-                options: Array.isArray(field.options) ? field.options.slice() : undefined
+                options: Array.isArray(field.options) ? field.options.slice() : undefined,
+                tooltip: String(field.tooltip || '').trim()
             };
         });
     }
@@ -3747,7 +4095,9 @@
         try {
             const formData = new FormData();
             formData.append('file', getPdfFileForRequests());
-            formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates()));
+            const exportNameMap = buildUniqueExportNameMap();
+            formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)));
+            formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(exportNameMap)));
 
             const response = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), {
                 method: 'POST',
@@ -4776,6 +5126,81 @@
         state._pendingRepairFile = null;
         pdfEmpty.classList.remove('hidden');
     });
+    accessibilityBtn.addEventListener('click', async function () {
+        if (!state.pdfBytes) return;
+        await inspectAccessibilityData(false).catch(function () {
+            showError('Could not inspect accessibility metadata for this PDF.');
+        });
+        renderAccessibilityModal();
+        accessibilityModal.classList.remove('hidden');
+    });
+    closeAccessibilityBtn.addEventListener('click', function () {
+        updateAccessibilityMetadataFromInputs();
+        accessibilityModal.classList.add('hidden');
+    });
+    a11yEnableInput.addEventListener('change', function () {
+        state.accessibility.enabled = !!a11yEnableInput.checked;
+    });
+    a11yImageModeInput.addEventListener('change', function () {
+        state.accessibility.imageMode = !!a11yImageModeInput.checked;
+        renderAccessibilityImages();
+    });
+    a11yAutofillTooltipsBtn.addEventListener('click', function () {
+        state.fields.forEach(function (field) {
+            if (!String(field.tooltip || '').trim()) {
+                field.tooltip = defaultTooltipFromFieldName(field.name);
+            }
+        });
+        renderAccessibilityFieldList();
+        setDirty(true);
+    });
+    [a11yMetaLanguage, a11yMetaTitle, a11yMetaAuthor, a11yMetaSubject].forEach(function (input) {
+        input.addEventListener('input', function () {
+            updateAccessibilityMetadataFromInputs();
+            setDirty(true);
+        });
+    });
+    a11yFieldList.addEventListener('input', function (event) {
+        var target = event.target;
+        if (!target || !target.dataset) return;
+        if (target.dataset.a11yAction !== 'tooltip') return;
+        var fieldId = target.dataset.fieldId;
+        var field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
+        if (!field) return;
+        field.tooltip = String(target.value || '');
+        setDirty(true);
+    });
+    a11yFieldList.addEventListener('click', function (event) {
+        var actionTarget = event.target.closest('[data-a11y-action]');
+        if (!actionTarget) return;
+        var action = actionTarget.dataset.a11yAction;
+        var fieldId = actionTarget.dataset.fieldId;
+        if (!fieldId || (action !== 'move-up' && action !== 'move-down')) return;
+        var order = state.accessibility.fieldOrder.slice();
+        var index = order.indexOf(fieldId);
+        if (index < 0) return;
+        var swapWith = action === 'move-up' ? index - 1 : index + 1;
+        if (swapWith < 0 || swapWith >= order.length) return;
+        var temp = order[swapWith];
+        order[swapWith] = order[index];
+        order[index] = temp;
+        state.accessibility.fieldOrder = order;
+        renderAccessibilityFieldList();
+        setDirty(true);
+    });
+    a11yImageList.addEventListener('input', function (event) {
+        var target = event.target;
+        if (!target || !target.dataset) return;
+        if (target.dataset.a11yAction !== 'image-alt') return;
+        var assetId = String(target.dataset.assetId || '');
+        if (!assetId) return;
+        var imageAsset = state.accessibility.images.find(function (item) {
+            return String(item.assetId || '') === assetId;
+        });
+        if (!imageAsset) return;
+        imageAsset.altText = String(target.value || '');
+        setDirty(true);
+    });
     settingsBtn.addEventListener('click', function () {
         aiModelInput.value = state.model || state.defaultModel;
         renderModelSuggestions('');
@@ -4878,6 +5303,10 @@
         if (!settingsModal.classList.contains('hidden') && event.target === settingsModal) {
             settingsModal.classList.add('hidden');
             aiModelSuggestions.classList.add('hidden');
+        }
+        if (!accessibilityModal.classList.contains('hidden') && event.target === accessibilityModal) {
+            updateAccessibilityMetadataFromInputs();
+            accessibilityModal.classList.add('hidden');
         }
         if (!normalizationModal.classList.contains('hidden') && event.target === normalizationModal) {
             normalizationModal.classList.add('hidden');
@@ -5059,6 +5488,7 @@
             selectField(null, { focusNameInput: false, scrollIntoView: false });
             aiModelSuggestions.classList.add('hidden');
             settingsModal.classList.add('hidden');
+            accessibilityModal.classList.add('hidden');
             normalizationModal.classList.add('hidden');
             if (!pageManagerModal.classList.contains('hidden')) {
                 closePageManager();

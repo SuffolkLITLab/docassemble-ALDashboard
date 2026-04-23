@@ -59,6 +59,10 @@
                         <svg id="preview-icon-closed" class="icon-16 me-1 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
                         Preview
                     </button>
+                    <button id="accessibility-btn" class="btn btn-outline-light btn-sm" disabled title="Accessibility options">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2"></circle><path d="M12 7v5"></path><path d="M8 12h8"></path><path d="M10 12l-2 8"></path><path d="M14 12l2 8"></path></svg>
+                        Accessibility
+                    </button>
                     <div class="toolbar-divider"></div>
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
@@ -369,6 +373,70 @@
                     <button id="save-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
                     <button id="save-pg-confirm" class="btn btn-primary btn-sm">Save</button>
                 </div>
+            </div>
+        </div>
+
+        <div id="accessibility-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 62rem; max-height: 92vh; overflow: auto;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-0">PDF Accessibility</h2>
+                        <p class="small text-muted mb-0 mt-1">Tooltips, field order, image alt text, metadata, and tag structure.</p>
+                    </div>
+                    <button id="close-accessibility" class="btn btn-sm btn-light">Close</button>
+                </div>
+
+                <div class="form-check mb-3">
+                    <input id="a11y-enable" class="form-check-input" type="checkbox" checked>
+                    <label class="form-check-label fw-medium" for="a11y-enable">Enable accessibility enhancements on export</label>
+                </div>
+
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Field Tooltips and Order</h3>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button id="a11y-autofill-tooltips" type="button" class="btn btn-outline-secondary btn-sm">Auto-fill Missing Tooltips</button>
+                        <span class="small text-muted">Default tooltip format replaces underscores with spaces.</span>
+                    </div>
+                    <div id="a11y-field-list" class="vstack gap-2"></div>
+                </section>
+
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Document Metadata</h3>
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label for="a11y-meta-language" class="form-label small text-muted mb-1">Language</label>
+                            <input id="a11y-meta-language" type="text" class="form-control form-control-sm" placeholder="en-US">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="a11y-meta-title" class="form-label small text-muted mb-1">Title</label>
+                            <input id="a11y-meta-title" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="a11y-meta-author" class="form-label small text-muted mb-1">Author</label>
+                            <input id="a11y-meta-author" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="a11y-meta-subject" class="form-label small text-muted mb-1">Subject</label>
+                            <input id="a11y-meta-subject" type="text" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                </section>
+
+                <section class="border rounded p-3 mb-3">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h3 class="h6 fw-semibold mb-0">Image Alternative Text</h3>
+                        <label class="form-check form-switch m-0">
+                            <input id="a11y-image-mode" class="form-check-input" type="checkbox">
+                            <span class="form-check-label small">Image alt text mode</span>
+                        </label>
+                    </div>
+                    <div id="a11y-image-list" class="vstack gap-2"></div>
+                </section>
+
+                <section class="border rounded p-3">
+                    <h3 class="h6 fw-semibold mb-2">Document Tag Structure (Read-only)</h3>
+                    <pre id="a11y-tag-structure" class="small mb-0" style="max-height: 14rem; overflow: auto;"></pre>
+                </section>
             </div>
         </div>
 

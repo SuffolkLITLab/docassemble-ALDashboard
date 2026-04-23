@@ -22,7 +22,17 @@ from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional, Set
 
 from flask import Response, jsonify, request
-from flask_cors import cross_origin
+try:
+    from flask_cors import cross_origin
+except ImportError:  # pragma: no cover - exercised by subprocess import tests
+    def cross_origin(*args: Any, **kwargs: Any):
+        if args and callable(args[0]) and len(args) == 1 and not kwargs:
+            return args[0]
+
+        def decorator(func: Any) -> Any:
+            return func
+
+        return decorator
 from flask_login import current_user
 
 from docassemble.base.config import daconfig
@@ -97,6 +107,23 @@ def _sanitize_checkbox_export_value(raw_value: Any) -> str:
     token = str(raw_value or "").strip() or "Yes"
     token = re.sub(r"[^A-Za-z0-9_.-]+", "_", token).strip("_")
     return token or "Yes"
+
+
+def _parse_optional_json_field(raw_value: Any, *, field_name: str) -> Optional[Any]:
+    """Parse an optional JSON field that may be serialized as a string."""
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise DashboardAPIValidationError(
+                f"{field_name} must be valid JSON."
+            ) from exc
+    return raw_value
 
 
 def _looks_like_name_email_address_phone_field(field_name: Any) -> bool:
@@ -2838,6 +2865,80 @@ def pdf_labeler_detect_fields() -> Response:
         )
 
 
+@app.route("/pdf-labeler/api/accessibility-inspect", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-inspect", methods=["POST"]
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_inspect() -> Response:
+    """Inspect PDF accessibility metadata for the browser editor mode.
+
+    Returns:
+        Response: A JSON response containing field tooltip metadata, field order,
+            image assets, document metadata, and tag structure summary.
+    """
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: accessibility-inspect request {request_id}", "info")
+
+    try:
+        from .pdf_accessibility import PDFAccessibilityError, inspect_pdf_accessibility
+
+        _filename, content, _post_data = _read_pdf_labeler_file_request()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+
+        try:
+            payload = inspect_pdf_accessibility(input_path)
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": payload,
+                }
+            )
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+    except PDFAccessibilityError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {
+                    "type": "validation_error",
+                    "message": str(exc),
+                },
+            },
+            400,
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {
+                    "type": "validation_error",
+                    "message": exc.message,
+                },
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {
+                    "type": "server_error",
+                    "message": str(exc),
+                },
+            },
+            500,
+        )
+
+
 @app.route("/pdf-labeler/api/auto-detect", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/auto-detect", methods=["POST"])
 @csrf.exempt
@@ -3034,6 +3135,7 @@ def pdf_labeler_apply_fields() -> Response:
 
         filename, content, post_data = _read_pdf_labeler_file_request()
         fields_raw = post_data.get("fields")
+        accessibility_raw = post_data.get("accessibility")
 
         # Parse fields
         if isinstance(fields_raw, str):
@@ -3085,6 +3187,82 @@ def pdf_labeler_apply_fields() -> Response:
                 output_path,
                 explicit_background_fields=explicit_background_fields,
             )
+
+            accessibility_payload = _parse_optional_json_field(
+                accessibility_raw, field_name="accessibility"
+            )
+            if accessibility_payload is None:
+                accessibility_payload = {}
+            if not isinstance(accessibility_payload, dict):
+                raise DashboardAPIValidationError(
+                    "accessibility must be a JSON object."
+                )
+
+            accessibility_enabled = parse_bool(
+                accessibility_payload.get("enabled"), default=True
+            )
+            if accessibility_enabled:
+                field_tooltips_from_fields: Dict[str, str] = {}
+                field_order_from_fields: List[str] = []
+                for field in fields_data:
+                    field_name = str(field.get("name") or "").strip()
+                    if not field_name:
+                        continue
+                    field_order_from_fields.append(field_name)
+                    tooltip = str(field.get("tooltip") or "").strip()
+                    if tooltip:
+                        field_tooltips_from_fields[field_name] = tooltip
+
+                field_tooltips_override = accessibility_payload.get("field_tooltips")
+                if not isinstance(field_tooltips_override, dict):
+                    field_tooltips_override = {}
+                merged_field_tooltips = {
+                    **field_tooltips_from_fields,
+                    **{
+                        str(key): str(value)
+                        for key, value in field_tooltips_override.items()
+                        if str(key).strip()
+                    },
+                }
+
+                field_order = accessibility_payload.get("field_order")
+                if isinstance(field_order, list):
+                    ordered_names = [
+                        str(name) for name in field_order if str(name).strip()
+                    ]
+                else:
+                    ordered_names = field_order_from_fields
+
+                metadata_payload = accessibility_payload.get("metadata")
+                if not isinstance(metadata_payload, dict):
+                    metadata_payload = {}
+                image_alt_text_payload = accessibility_payload.get("image_alt_text")
+                if not isinstance(image_alt_text_payload, dict):
+                    image_alt_text_payload = {}
+
+                from .pdf_accessibility import apply_pdf_accessibility_settings
+
+                apply_pdf_accessibility_settings(
+                    input_pdf_path=output_path,
+                    output_pdf_path=output_path,
+                    field_tooltips=merged_field_tooltips,
+                    field_order=ordered_names,
+                    image_alt_text={
+                        str(key): str(value)
+                        for key, value in image_alt_text_payload.items()
+                        if str(key).strip()
+                    },
+                    metadata={
+                        "language": str(metadata_payload.get("language") or "").strip(),
+                        "title": str(metadata_payload.get("title") or "").strip(),
+                        "author": str(metadata_payload.get("author") or "").strip(),
+                        "subject": str(metadata_payload.get("subject") or "").strip(),
+                    },
+                    auto_fill_missing_tooltips=parse_bool(
+                        accessibility_payload.get("auto_fill_missing_tooltips"),
+                        default=True,
+                    ),
+                )
 
             # Read the output file
             with open(output_path, "rb") as f:
@@ -3380,6 +3558,21 @@ def pdf_labeler_copy_fields() -> Response:
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
                 output_path = tmp_out.name
             result_pdf.save(output_path)
+
+            from .pdf_accessibility import (
+                apply_pdf_accessibility_settings,
+                extract_pdf_field_tooltips,
+            )
+
+            source_field_tooltips = extract_pdf_field_tooltips(source_path)
+            if source_field_tooltips:
+                apply_pdf_accessibility_settings(
+                    input_pdf_path=output_path,
+                    output_pdf_path=output_path,
+                    field_tooltips=source_field_tooltips,
+                    auto_fill_missing_tooltips=False,
+                )
+
             with open(output_path, "rb") as fh:
                 output_bytes = fh.read()
             output_filename = dest_name.replace(".pdf", "-with-fields.pdf")

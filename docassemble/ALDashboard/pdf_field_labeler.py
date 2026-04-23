@@ -9,11 +9,27 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from docassemble.base.util import get_config, log
-
 
 class PDFLabelingError(RuntimeError):
     pass
+
+
+def get_config(key: str, default: Any = None) -> Any:
+    """Read docassemble config lazily so importing this module stays lightweight."""
+    try:
+        from docassemble.base.util import get_config as da_get_config
+    except ImportError:
+        return default
+    return da_get_config(key, default)
+
+
+def log(message: str, level: str = "info") -> None:
+    """Log lazily; unit tests import this module without docassemble.webapp."""
+    try:
+        from docassemble.base.util import log as da_log
+    except ImportError:
+        return
+    da_log(message, level)
 
 
 def _assert_valid_pdf_output(pdf_path: str, *, action_label: str) -> None:

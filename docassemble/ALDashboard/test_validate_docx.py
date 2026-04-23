@@ -18,6 +18,8 @@ import zipfile
 import os
 import xml.etree.ElementTree as ET
 
+VALIDATE_DOCX_MODULE = validate_docx_ooxml_schema.__module__
+
 
 class TestGetJinjaErrors(unittest.TestCase):
     def _build_docx(self, parts):
@@ -287,14 +289,14 @@ class TestDocxTemplateMarkupWarnings(unittest.TestCase):
                     return iter([])
 
             with patch(
-                "docassemble.ALDashboard.validate_docx.ensure_ooxml_schema_cache",
+                f"{VALIDATE_DOCX_MODULE}.ensure_ooxml_schema_cache",
                 return_value={
                     "transitional": transitional,
                     "strict": strict,
                     "opc": opc,
                 },
             ), patch(
-                "docassemble.ALDashboard.validate_docx._load_xmlschema",
+                f"{VALIDATE_DOCX_MODULE}._load_xmlschema",
                 return_value=_FakeSchema(),
             ):
                 report = validate_docx_ooxml_schema(docx_path)

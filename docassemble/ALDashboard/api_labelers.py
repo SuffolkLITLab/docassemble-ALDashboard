@@ -21,9 +21,26 @@ from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional, Set
 
-from flask import Response, jsonify, request, send_file
-from flask_cors import cross_origin
-from flask_login import current_user
+from flask import Response, jsonify, request
+try:
+    from flask_cors import cross_origin
+except ImportError:  # pragma: no cover - exercised by subprocess import tests
+    def cross_origin(*args: Any, **kwargs: Any):
+        if args and callable(args[0]) and len(args) == 1 and not kwargs:
+            return args[0]
+
+        def decorator(func: Any) -> Any:
+            return func
+
+        return decorator
+try:
+    from flask_login import current_user
+except ImportError:  # pragma: no cover - exercised by subprocess import tests
+    current_user = type(
+        "AnonymousCurrentUser",
+        (),
+        {"is_authenticated": False, "id": None, "email": None},
+    )()
 
 from docassemble.base.config import daconfig
 import docassemble.base.functions
@@ -3142,6 +3159,7 @@ def pdf_labeler_apply_fields() -> Response:
             tmp_in.write(content)
             input_path = tmp_in.name
 
+        output_path = None
         try:
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
@@ -3272,7 +3290,7 @@ def pdf_labeler_apply_fields() -> Response:
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
-            if os.path.exists(output_path):
+            if output_path is not None and os.path.exists(output_path):
                 os.remove(output_path)
 
     except DashboardAPIValidationError as exc:
@@ -3539,6 +3557,7 @@ def pdf_labeler_copy_fields() -> Response:
             tmp_dst.write(dest_bytes)
             dest_path = tmp_dst.name
 
+        output_path: Optional[str] = None
         try:
             result_pdf = formfyxer.swap_pdf_page(
                 source_pdf=source_path, destination_pdf=dest_path
@@ -3578,7 +3597,7 @@ def pdf_labeler_copy_fields() -> Response:
             for p in (source_path, dest_path):
                 if os.path.exists(p):
                     os.remove(p)
-            if "output_path" in locals() and os.path.exists(output_path):
+            if output_path is not None and os.path.exists(output_path):
                 os.remove(output_path)
 
     except DashboardAPIValidationError as exc:

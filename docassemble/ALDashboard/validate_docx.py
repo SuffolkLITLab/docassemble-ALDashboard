@@ -630,12 +630,6 @@ def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
         "skipped_parts": [],
     }
 
-    if xmlschema is None:
-        report["message"] = (
-            "xmlschema is not installed in the active Python environment."
-        )
-        return report
-
     try:
         schema_dirs = ensure_ooxml_schema_cache()
     except Exception as err:
@@ -695,6 +689,22 @@ def validate_docx_ooxml_schema(the_file: str) -> Dict[str, Any]:
                     )
             else:
                 report["validated_parts"].append(part_name)
+
+    only_missing_xmlschema_errors = (
+        not report["validated_parts"]
+        and not report["xml_parse_errors"]
+        and bool(report["schema_errors"])
+        and all(
+            error.get("error") == "xmlschema is not installed."
+            for error in report["schema_errors"]
+        )
+    )
+    if only_missing_xmlschema_errors:
+        report["available"] = False
+        report["message"] = (
+            "xmlschema is not installed in the active Python environment."
+        )
+        return report
 
     report["message"] = (
         "Validated OOXML parts against cached ECMA-376 schemas."

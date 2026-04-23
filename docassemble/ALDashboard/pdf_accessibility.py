@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 
 
 class PDFAccessibilityError(RuntimeError):
@@ -332,7 +332,7 @@ def apply_pdf_accessibility_settings(
                 annots = page.get("/Annots") if hasattr(page, "get") else None
                 if not annots:
                     continue
-                for annot in annots:
+                for annot in cast(Iterable[Any], annots):
                     try:
                         if annot.get("/Subtype") != "/Widget":
                             continue
@@ -364,7 +364,7 @@ def apply_pdf_accessibility_settings(
                         str(name).strip() for name in field_order if str(name).strip()
                     ]
                     if ordered:
-                        existing_refs = list(acroform["/Fields"])
+                        existing_refs = list(cast(Iterable[Any], acroform["/Fields"]))
                         by_name: Dict[str, Any] = {}
                         fallback_refs: List[Any] = []
                         for ref in existing_refs:

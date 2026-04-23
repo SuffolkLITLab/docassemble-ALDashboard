@@ -3158,6 +3158,12 @@ def lint_interview_content(
 ) -> Dict[str, Any]:
     resolved_lint_mode = normalize_lint_mode(lint_mode)
     yaml_errors = _run_dayamlchecker(content)
+    yaml_parsed: List[dict]
+    if not yaml_errors:
+        try:
+            yaml_parsed = load_interview(content)
+        except Exception as err:
+            yaml_errors = [_stringify(err).strip() or "YAML validation failed."]
     if yaml_errors:
         findings = [
             {
@@ -3191,7 +3197,6 @@ def lint_interview_content(
             "findings_by_severity": findings_by_severity(findings),
         }
 
-    yaml_parsed = load_interview(content)
     interview_texts = get_all_text(yaml_parsed)
     user_facing_texts = get_user_facing_text(yaml_parsed)
     screen_catalog = get_screen_catalog(yaml_parsed)

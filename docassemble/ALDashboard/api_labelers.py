@@ -3083,65 +3083,71 @@ def pdf_labeler_apply_fields() -> Response:
                     "accessibility must be a JSON object."
                 )
 
-            field_tooltips_from_fields: Dict[str, str] = {}
-            field_order_from_fields: List[str] = []
-            for field in fields_data:
-                field_name = str(field.get("name") or "").strip()
-                if not field_name:
-                    continue
-                field_order_from_fields.append(field_name)
-                tooltip = str(field.get("tooltip") or "").strip()
-                if tooltip:
-                    field_tooltips_from_fields[field_name] = tooltip
-
-            field_tooltips_override = accessibility_payload.get("field_tooltips")
-            if not isinstance(field_tooltips_override, dict):
-                field_tooltips_override = {}
-            merged_field_tooltips = {
-                **field_tooltips_from_fields,
-                **{
-                    str(key): str(value)
-                    for key, value in field_tooltips_override.items()
-                    if str(key).strip()
-                },
-            }
-
-            field_order = accessibility_payload.get("field_order")
-            if isinstance(field_order, list):
-                ordered_names = [str(name) for name in field_order if str(name).strip()]
-            else:
-                ordered_names = field_order_from_fields
-
-            metadata_payload = accessibility_payload.get("metadata")
-            if not isinstance(metadata_payload, dict):
-                metadata_payload = {}
-            image_alt_text_payload = accessibility_payload.get("image_alt_text")
-            if not isinstance(image_alt_text_payload, dict):
-                image_alt_text_payload = {}
-
-            from .pdf_accessibility import apply_pdf_accessibility_settings
-
-            apply_pdf_accessibility_settings(
-                input_pdf_path=output_path,
-                output_pdf_path=output_path,
-                field_tooltips=merged_field_tooltips,
-                field_order=ordered_names,
-                image_alt_text={
-                    str(key): str(value)
-                    for key, value in image_alt_text_payload.items()
-                    if str(key).strip()
-                },
-                metadata={
-                    "language": str(metadata_payload.get("language") or "").strip(),
-                    "title": str(metadata_payload.get("title") or "").strip(),
-                    "author": str(metadata_payload.get("author") or "").strip(),
-                    "subject": str(metadata_payload.get("subject") or "").strip(),
-                },
-                auto_fill_missing_tooltips=parse_bool(
-                    accessibility_payload.get("auto_fill_missing_tooltips"),
-                    default=True,
-                ),
+            accessibility_enabled = parse_bool(
+                accessibility_payload.get("enabled"), default=True
             )
+            if accessibility_enabled:
+                field_tooltips_from_fields: Dict[str, str] = {}
+                field_order_from_fields: List[str] = []
+                for field in fields_data:
+                    field_name = str(field.get("name") or "").strip()
+                    if not field_name:
+                        continue
+                    field_order_from_fields.append(field_name)
+                    tooltip = str(field.get("tooltip") or "").strip()
+                    if tooltip:
+                        field_tooltips_from_fields[field_name] = tooltip
+
+                field_tooltips_override = accessibility_payload.get("field_tooltips")
+                if not isinstance(field_tooltips_override, dict):
+                    field_tooltips_override = {}
+                merged_field_tooltips = {
+                    **field_tooltips_from_fields,
+                    **{
+                        str(key): str(value)
+                        for key, value in field_tooltips_override.items()
+                        if str(key).strip()
+                    },
+                }
+
+                field_order = accessibility_payload.get("field_order")
+                if isinstance(field_order, list):
+                    ordered_names = [
+                        str(name) for name in field_order if str(name).strip()
+                    ]
+                else:
+                    ordered_names = field_order_from_fields
+
+                metadata_payload = accessibility_payload.get("metadata")
+                if not isinstance(metadata_payload, dict):
+                    metadata_payload = {}
+                image_alt_text_payload = accessibility_payload.get("image_alt_text")
+                if not isinstance(image_alt_text_payload, dict):
+                    image_alt_text_payload = {}
+
+                from .pdf_accessibility import apply_pdf_accessibility_settings
+
+                apply_pdf_accessibility_settings(
+                    input_pdf_path=output_path,
+                    output_pdf_path=output_path,
+                    field_tooltips=merged_field_tooltips,
+                    field_order=ordered_names,
+                    image_alt_text={
+                        str(key): str(value)
+                        for key, value in image_alt_text_payload.items()
+                        if str(key).strip()
+                    },
+                    metadata={
+                        "language": str(metadata_payload.get("language") or "").strip(),
+                        "title": str(metadata_payload.get("title") or "").strip(),
+                        "author": str(metadata_payload.get("author") or "").strip(),
+                        "subject": str(metadata_payload.get("subject") or "").strip(),
+                    },
+                    auto_fill_missing_tooltips=parse_bool(
+                        accessibility_payload.get("auto_fill_missing_tooltips"),
+                        default=True,
+                    ),
+                )
 
             # Read the output file
             with open(output_path, "rb") as f:
@@ -3436,6 +3442,21 @@ def pdf_labeler_copy_fields() -> Response:
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
                 output_path = tmp_out.name
             result_pdf.save(output_path)
+
+            from .pdf_accessibility import (
+                apply_pdf_accessibility_settings,
+                extract_pdf_field_tooltips,
+            )
+
+            source_field_tooltips = extract_pdf_field_tooltips(source_path)
+            if source_field_tooltips:
+                apply_pdf_accessibility_settings(
+                    input_pdf_path=output_path,
+                    output_pdf_path=output_path,
+                    field_tooltips=source_field_tooltips,
+                    auto_fill_missing_tooltips=False,
+                )
+
             with open(output_path, "rb") as fh:
                 output_bytes = fh.read()
             output_filename = dest_name.replace(".pdf", "-with-fields.pdf")

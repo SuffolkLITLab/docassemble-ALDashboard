@@ -28,7 +28,9 @@ class _PositionedField:
     x: float
 
 
-def build_default_field_order(positioned_fields: Iterable[Mapping[str, Any]]) -> List[str]:
+def build_default_field_order(
+    positioned_fields: Iterable[Mapping[str, Any]],
+) -> List[str]:
     """Return a stable default reading order for field names.
 
     Order: page, top-to-bottom, then left-to-right.
@@ -69,6 +71,20 @@ def _named_parent(field_obj: Any) -> Optional[Any]:
 
 def _safe_pdf_string(value: Any) -> str:
     return str(value) if value is not None else ""
+
+
+def _widget_tooltip(annot: Any, parent: Any) -> str:
+    """Return a custom tooltip stored on a field parent or widget annotation."""
+    parent_tooltip = (
+        _safe_pdf_string(parent.get("/TU", "")).strip()
+        if hasattr(parent, "get")
+        else ""
+    )
+    if parent_tooltip:
+        return parent_tooltip
+    return (
+        _safe_pdf_string(annot.get("/TU", "")).strip() if hasattr(annot, "get") else ""
+    )
 
 
 def _extract_pdf_metadata(pdf: Any) -> Dict[str, str]:
@@ -152,7 +168,7 @@ def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
                 name = _safe_pdf_string(parent.get("/T", "")).strip()
                 if not name or name in seen:
                     continue
-                tooltip = _safe_pdf_string(parent.get("/TU", "")).strip()
+                tooltip = _widget_tooltip(annot, parent)
                 records.append(
                     {
                         "name": name,
@@ -226,6 +242,27 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
             }
     except Exception as exc:
         raise PDFAccessibilityError(f"Failed to inspect PDF accessibility data: {exc}")
+
+
+def extract_pdf_field_tooltips(pdf_path: str) -> Dict[str, str]:
+    """Return custom PDF field tooltips keyed by field name.
+
+    The PDF tooltip used by assistive technology is stored in the ``/TU`` entry.
+    Some generators put it on the field dictionary and others put it on the
+    widget annotation, so this checks both and only returns explicit values.
+    """
+    try:
+        import pikepdf
+
+        with pikepdf.open(pdf_path) as pdf:
+            fields, _field_order = _extract_field_records(pdf)
+            return {
+                str(field["name"]): str(field["tooltip"])
+                for field in fields
+                if field.get("name") and field.get("has_custom_tooltip")
+            }
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Failed to extract PDF field tooltips: {exc}")
 
 
 def _field_name_to_tooltip(
@@ -319,9 +356,13 @@ def apply_pdf_accessibility_settings(
 
             # Reorder AcroForm fields to match caller-supplied order.
             if field_order:
-                acroform = pdf.Root.get("/AcroForm") if hasattr(pdf.Root, "get") else None
+                acroform = (
+                    pdf.Root.get("/AcroForm") if hasattr(pdf.Root, "get") else None
+                )
                 if acroform is not None and "/Fields" in acroform:
-                    ordered = [str(name).strip() for name in field_order if str(name).strip()]
+                    ordered = [
+                        str(name).strip() for name in field_order if str(name).strip()
+                    ]
                     if ordered:
                         existing_refs = list(acroform["/Fields"])
                         by_name: Dict[str, Any] = {}
@@ -353,7 +394,9 @@ def apply_pdf_accessibility_settings(
             if image_alt_map:
                 for page_index, page in enumerate(pdf.pages):
                     resources = page.get("/Resources") if hasattr(page, "get") else None
-                    xobject_dict = resources.get("/XObject") if resources is not None else None
+                    xobject_dict = (
+                        resources.get("/XObject") if resources is not None else None
+                    )
                     if not xobject_dict:
                         continue
                     for key, obj in xobject_dict.items():
@@ -381,4 +424,6 @@ def apply_pdf_accessibility_settings(
             "metadata_updates": metadata_updates,
         }
     except Exception as exc:
-        raise PDFAccessibilityError(f"Failed to apply PDF accessibility settings: {exc}")
+        raise PDFAccessibilityError(
+            f"Failed to apply PDF accessibility settings: {exc}"
+        )

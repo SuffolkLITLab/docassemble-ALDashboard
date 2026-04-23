@@ -33,7 +33,14 @@ except ImportError:  # pragma: no cover - exercised by subprocess import tests
             return func
 
         return decorator
-from flask_login import current_user
+try:
+    from flask_login import current_user
+except ImportError:  # pragma: no cover - exercised by subprocess import tests
+    current_user = type(
+        "AnonymousCurrentUser",
+        (),
+        {"is_authenticated": False, "id": None, "email": None},
+    )()
 
 from docassemble.base.config import daconfig
 import docassemble.base.functions

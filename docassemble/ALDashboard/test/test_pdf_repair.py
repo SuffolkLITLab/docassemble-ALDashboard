@@ -1,3 +1,4 @@
+# do not pre-load
 """Tests for the pdf_repair module.
 
 These tests exercise logic that does NOT require Ghostscript or ocrmypdf

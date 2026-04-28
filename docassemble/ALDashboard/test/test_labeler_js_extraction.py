@@ -1,3 +1,4 @@
+# do not pre-load
 """Tests to verify JS extraction from labeler HTML templates to static files.
 
 Ensures no regression from moving inline JavaScript out of the DOCX and PDF

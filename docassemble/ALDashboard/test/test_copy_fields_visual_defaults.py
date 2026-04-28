@@ -1,3 +1,4 @@
+# do not pre-load
 """Tests for _apply_pdf_field_visual_defaults preserve_button_appearances behavior.
 
 These tests verify that:

@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import re
 import requests
+import calendar
 from importlib.metadata import distributions
 from docassemble.webapp.users.models import UserModel
 from docassemble.webapp.db_object import init_sqlalchemy
@@ -11,6 +12,7 @@ from flask import current_app
 
 # db is a SQLAlchemy Engine
 from sqlalchemy.sql import text
+from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 from typing import Any, List, Tuple, Dict, Optional, Callable, Set
 import math
@@ -49,6 +51,9 @@ from ruamel.yaml.compat import StringIO
 import werkzeug
 import importlib.resources
 from datetime import datetime, timedelta
+from flask_login import current_user
+from docassemble.webapp.files import SavedFile
+from docassemble.webapp.users.models import Role, UserDict, UserRoles
 
 db = init_sqlalchemy()
 
@@ -81,6 +86,9 @@ __all__ = [
     "get_user_details",
     "disable_user_mfa",
     "get_password_reset_link",
+    "inactive_developer_login_summary",
+    "inactive_developer_account_report",
+    "delete_inactive_developer_accounts",
 ]
 
 
@@ -537,6 +545,288 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     reset_link = url_for("user.reset_password", token=token, _external=True)
 
     return reset_link
+
+
+PLAYGROUND_SECTIONS = (
+    "playground",
+    "playgroundtemplate",
+    "playgroundstatic",
+    "playgroundsources",
+    "playgroundmodules",
+    "playgroundpackages",
+)
+
+
+def _format_optional_datetime(value: Optional[datetime]) -> str:
+    if value is None:
+        return "Never"
+    return value.strftime("%Y-%m-%d")
+
+
+def _epoch_to_datetime(epoch_value: Optional[float]) -> Optional[datetime]:
+    if epoch_value is None:
+        return None
+    return datetime.fromtimestamp(epoch_value)
+
+
+def _latest_datetime(*values: Optional[datetime]) -> Optional[datetime]:
+    real_values = [value for value in values if value is not None]
+    if not real_values:
+        return None
+    return max(real_values)
+
+
+def _months_ago(months: int) -> datetime:
+    now = datetime.now()
+    month_index = now.month - months - 1
+    year = now.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(now.day, calendar.monthrange(year, month)[1])
+    return now.replace(year=year, month=month, day=day)
+
+
+def _user_session_summary(user_id: int) -> Dict[str, Any]:
+    row = (
+        UserDict.query.with_entities(
+            db.func.count(db.func.distinct(UserDict.key)).label("session_count"),
+            db.func.max(UserDict.modtime).label("last_session_activity"),
+        )
+        .filter(UserDict.user_id == user_id)
+        .first()
+    )
+    if row is None:
+        return {"session_count": 0, "last_session_activity": None}
+    return {
+        "session_count": int(row.session_count or 0),
+        "last_session_activity": row.last_session_activity,
+    }
+
+
+def inactive_developer_login_summary(months: int = 18) -> Dict[str, Any]:
+    """Return a cheap login-only summary for the inactive developer report."""
+    try:
+        months = max(1, int(months))
+    except Exception:
+        months = 18
+
+    cutoff_date = _months_ago(months)
+    developer_role = Role.query.filter(Role.name == "developer").first()
+    total_users = UserModel.query.filter(
+        ~UserModel.social_id.startswith("disabled$")
+    ).count()
+    if developer_role is None:
+        return {
+            "months": months,
+            "cutoff_date": cutoff_date,
+            "cutoff_date_display": _format_optional_datetime(cutoff_date),
+            "total_users": total_users,
+            "developer_users": 0,
+            "developer_users_not_logged_in_since_cutoff": 0,
+            "developer_users_never_logged_in": 0,
+        }
+
+    developer_query = UserModel.query.join(
+        UserRoles, UserRoles.user_id == UserModel.id
+    ).filter(
+        UserRoles.role_id == developer_role.id,
+        UserModel.id.notin_([1, 2]),
+        ~UserModel.social_id.startswith("disabled$"),
+    )
+    return {
+        "months": months,
+        "cutoff_date": cutoff_date,
+        "cutoff_date_display": _format_optional_datetime(cutoff_date),
+        "total_users": int(total_users or 0),
+        "developer_users": developer_query.with_entities(UserModel.id)
+        .distinct()
+        .count(),
+        "developer_users_not_logged_in_since_cutoff": developer_query.filter(
+            or_(UserModel.last_login == None, UserModel.last_login < cutoff_date)
+        )
+        .with_entities(UserModel.id)
+        .distinct()
+        .count(),
+        "developer_users_never_logged_in": developer_query.filter(
+            UserModel.last_login == None
+        )
+        .with_entities(UserModel.id)
+        .distinct()
+        .count(),
+    }
+
+
+def _playground_summary(user_id: int) -> Dict[str, Any]:
+    projects: Set[str] = set()
+    total_files = 0
+    module_files = 0
+    package_files = 0
+    latest_modtime: Optional[datetime] = None
+    latest_file = ""
+
+    for section in PLAYGROUND_SECTIONS:
+        try:
+            area = SavedFile(user_id, fix=False, section=section)
+            files = [
+                filename
+                for filename in area.list_of_files()
+                if os.path.basename(filename) != ".placeholder"
+            ]
+        except Exception as err:
+            log(
+                "inactive_developer_account_report: unable to list "
+                f"{section} for user {user_id}: {err}"
+            )
+            continue
+
+        for filename in files:
+            total_files += 1
+            if os.sep in filename:
+                projects.add(filename.split(os.sep, 1)[0])
+            else:
+                projects.add("default")
+            if section == "playgroundmodules" and filename.endswith(".py"):
+                module_files += 1
+            if section == "playgroundpackages":
+                package_files += 1
+            try:
+                file_modtime = _epoch_to_datetime(area.get_modtime(filename=filename))
+            except Exception:
+                file_modtime = None
+            if file_modtime is not None and (
+                latest_modtime is None or file_modtime > latest_modtime
+            ):
+                latest_modtime = file_modtime
+                latest_file = f"{section}/{filename}"
+
+    return {
+        "project_count": len(projects),
+        "projects": sorted(projects),
+        "file_count": total_files,
+        "module_file_count": module_files,
+        "package_file_count": package_files,
+        "latest_playground_modtime": latest_modtime,
+        "latest_playground_file": latest_file,
+        "has_python_modules": module_files > 0,
+    }
+
+
+def _developer_user_rows() -> List[Any]:
+    return (
+        UserModel.query.options(joinedload(UserModel.roles))
+        .filter(UserModel.id.notin_([1, 2]))
+        .all()
+    )
+
+
+def inactive_developer_account_report(months: int = 18) -> List[Dict[str, Any]]:
+    """Return developer accounts with no recent login, session, or playground activity."""
+    try:
+        months = max(1, int(months))
+    except Exception:
+        months = 18
+
+    cutoff_date = _months_ago(months)
+    rows: List[Dict[str, Any]] = []
+
+    for user in _developer_user_rows():
+        if getattr(user, "social_id", "").startswith("disabled$"):
+            continue
+        if current_user.is_authenticated and user.id == current_user.id:
+            continue
+        privileges = sorted(role.name for role in user.roles)
+        if "developer" not in privileges:
+            continue
+
+        session_summary = _user_session_summary(user.id)
+        playground_summary = _playground_summary(user.id)
+        last_activity = _latest_datetime(
+            user.last_login,
+            session_summary["last_session_activity"],
+            playground_summary["latest_playground_modtime"],
+        )
+        if last_activity is not None and last_activity >= cutoff_date:
+            continue
+
+        row = {
+            "id": user.id,
+            "email": user.email or "",
+            "name": " ".join(
+                part for part in [user.first_name or "", user.last_name or ""] if part
+            ).strip(),
+            "active": bool(user.active),
+            "privileges": privileges,
+            "last_login": user.last_login,
+            "last_login_display": _format_optional_datetime(user.last_login),
+            "last_session_activity": session_summary["last_session_activity"],
+            "last_session_activity_display": _format_optional_datetime(
+                session_summary["last_session_activity"]
+            ),
+            "session_count": session_summary["session_count"],
+            "last_activity": last_activity,
+            "last_activity_display": _format_optional_datetime(last_activity),
+            "cutoff_date": cutoff_date,
+            "cutoff_date_display": _format_optional_datetime(cutoff_date),
+        }
+        row.update(playground_summary)
+        row["latest_playground_modtime_display"] = _format_optional_datetime(
+            row["latest_playground_modtime"]
+        )
+        rows.append(row)
+
+    rows.sort(key=lambda item: item["last_activity"] or datetime(1900, 1, 1))
+    return rows
+
+
+def delete_inactive_developer_accounts(
+    user_ids: List[int],
+    months: int = 18,
+    delete_shared: bool = False,
+    restart_if_needed: bool = True,
+) -> Dict[str, Any]:
+    """Delete selected stale developer accounts through docassemble's built-in cleanup."""
+    from docassemble.webapp.backend import delete_user_data
+    from docassemble.webapp.server import r, r_user, user_interviews
+
+    candidate_lookup = {
+        int(row["id"]): row for row in inactive_developer_account_report(months)
+    }
+    deleted: List[Dict[str, Any]] = []
+    skipped: List[int] = []
+    restart_needed = False
+
+    for raw_user_id in user_ids or []:
+        try:
+            user_id = int(raw_user_id)
+        except Exception:
+            continue
+        row = candidate_lookup.get(user_id)
+        if row is None or user_id in (1, 2) or (
+            current_user.is_authenticated and user_id == current_user.id
+        ):
+            skipped.append(user_id)
+            continue
+        restart_needed = restart_needed or bool(row.get("has_python_modules"))
+        user_interviews(
+            user_id=user_id,
+            secret=None,
+            exclude_invalid=False,
+            action="delete_all",
+            delete_shared=delete_shared,
+            admin=True,
+        )
+        delete_user_data(user_id, r, r_user)
+        deleted.append(row)
+
+    if restart_needed and restart_if_needed:
+        restart_all()
+
+    return {
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "skipped": skipped,
+        "restart_needed": restart_needed,
+        "restart_requested": bool(restart_needed and restart_if_needed),
+    }
 
 
 def speedy_get_sessions(

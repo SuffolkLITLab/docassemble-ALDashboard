@@ -32,6 +32,11 @@ data:
     privilege:
       - admin
       - al_manage_users
+  - name: Inactive developer accounts
+    url: ${ interview_url(i=user_info().package + ":inactive_developer_accounts.yml", reset=1) }
+    image: user-clock
+    privilege:
+      - admin
   - name: Get password reset link
     url: ${ interview_url(i=user_info().package + ":get_reset_link.yml", reset=1) }
     image: key

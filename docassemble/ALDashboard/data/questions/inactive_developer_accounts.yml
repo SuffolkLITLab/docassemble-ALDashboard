@@ -1,0 +1,294 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: Inactive developer accounts
+  sessions are unique: True
+  required privileges:
+    - admin
+  temporary session: True
+---
+modules:
+  - .aldashboard
+---
+mandatory: True
+id: interview order
+code: |
+  initial_inactive_developer_summary
+  inactive_developer_months
+  inactive_developer_report_task
+  # Check ready() before failed(); failed() calls get() and blocks until completion.
+  if not inactive_developer_report_task.ready():
+    inactive_developer_report_waiting
+  elif inactive_developer_report_task.failed():
+    inactive_developer_report_failed
+  build_inactive_developer_report
+  review_inactive_developers
+  if len(inactive_developer_candidates) and delete_scope != "none":
+    selected_inactive_developer_ids
+    if len(selected_inactive_developer_ids):
+      confirm_delete_inactive_developers
+      if confirm_delete_inactive_developers:
+        inactive_developer_delete_task
+        # Check ready() before failed(); failed() calls get() and blocks until completion.
+        if not inactive_developer_delete_task.ready():
+          inactive_developer_delete_waiting
+        elif inactive_developer_delete_task.failed():
+          inactive_developer_delete_failed
+        delete_inactive_developer_results
+  ending_screen
+---
+code: |
+  initial_inactive_developer_summary = inactive_developer_login_summary(18)
+---
+id: report settings
+question: |
+  Inactive developer account report
+subquestion: |
+  Using the default 18 month cutoff, this server currently has:
+
+  * **${ initial_inactive_developer_summary["total_users"] }** total non-disabled user accounts
+  * **${ initial_inactive_developer_summary["developer_users"] }** developer accounts
+  * **${ initial_inactive_developer_summary["developer_users_not_logged_in_since_cutoff"] }** developer accounts that have never logged in or have not logged in since ${ initial_inactive_developer_summary["cutoff_date_display"] }
+  * **${ initial_inactive_developer_summary["developer_users_never_logged_in"] }** developer accounts that have never logged in
+
+  This report lists developer accounts whose latest login, interview session activity, and playground file modification date are all older than the selected cutoff.
+
+  Account deletion uses Docassemble's built-in account cleanup, including removal of playground projects, files, modules, packages, answer sessions, and related user data. If any selected account has playground Python modules, the server is restarted once after all selected accounts are deleted.
+fields:
+  - Months inactive: inactive_developer_months
+    datatype: integer
+    min: 1
+    default: 18
+  - Delete shared sessions when deleting accounts: delete_shared_sessions
+    datatype: yesnoradio
+    default: False
+---
+code: |
+  inactive_developer_report_task = background_action(
+    "generate_inactive_developer_report",
+    months=inactive_developer_months,
+  )
+---
+event: generate_inactive_developer_report
+code: |
+  months = int(action_argument("months"))
+  background_response(
+    {
+      "candidates": inactive_developer_account_report(months),
+      "login_summary": inactive_developer_login_summary(months),
+    }
+  )
+---
+event: inactive_developer_report_waiting
+question: |
+  Building inactive developer account report
+subquestion: |
+  <div class="spinner-container d-flex justify-content-center">
+    <div class="spinner-border" role="status">
+      <span class="visually-hidden">Building report...</span>
+    </div>
+  </div>
+
+  The report is checking playground projects and file modification dates. This screen will reload until the report is ready.
+reload: True
+---
+event: inactive_developer_report_failed
+question: |
+  Report failed
+subquestion: |
+  The background report did not complete successfully.
+
+  % if inactive_developer_report_task.result():
+  **${ inactive_developer_report_task.result().error_type }**: ${ inactive_developer_report_task.result().error_message }
+  % endif
+buttons:
+  - Try again: restart
+---
+code: |
+  inactive_developer_report_result = inactive_developer_report_task.get()
+  inactive_developer_candidates = inactive_developer_report_result["candidates"]
+  inactive_developer_login_summary_result = inactive_developer_report_result["login_summary"]
+  build_inactive_developer_report = True
+---
+id: review inactive developers
+question: |
+  Inactive developer accounts
+subquestion: |
+  Cutoff date: **${ inactive_developer_login_summary_result["cutoff_date_display"] }**
+
+  Login-only summary: **${ inactive_developer_login_summary_result["developer_users_not_logged_in_since_cutoff"] }** developer accounts have never logged in or have not logged in since the cutoff. The full report below also excludes accounts with recent session or playground file activity.
+
+  % if inactive_developer_candidates:
+  <table class="table table-striped table-sm">
+    <thead>
+      <tr>
+        <th>User</th>
+        <th>Last login</th>
+        <th>Last session</th>
+        <th>Playground files</th>
+        <th>Projects</th>
+        <th>Latest playground file</th>
+        <th>Modules</th>
+      </tr>
+    </thead>
+    <tbody>
+    % for row in inactive_developer_candidates:
+      <tr>
+        <td>
+          <strong>${ row["name"] or row["email"] }</strong><br>
+          <small>${ row["email"] } - ID ${ row["id"] } - ${ "active" if row["active"] else "inactive" }</small>
+        </td>
+        <td>${ row["last_login_display"] }</td>
+        <td>${ row["last_session_activity_display"] }<br><small>${ row["session_count"] } saved sessions</small></td>
+        <td>${ row["file_count"] }</td>
+        <td>${ row["project_count"] }</td>
+        <td>
+          ${ row["latest_playground_modtime_display"] }
+          % if row["latest_playground_file"]:
+          <br><small>${ row["latest_playground_file"] }</small>
+          % endif
+        </td>
+        <td>${ row["module_file_count"] }</td>
+      </tr>
+    % endfor
+    </tbody>
+  </table>
+  % else:
+  No developer accounts matched this inactivity cutoff.
+  % endif
+fields:
+  - Delete accounts from this report?: delete_scope
+    datatype: radio
+    choices:
+      - Do not delete anything: none
+      - Delete all listed accounts: all
+      - Choose accounts to delete: selected
+    default: none
+    show if: |
+      len(inactive_developer_candidates) > 0
+  - Accounts to delete: selected_inactive_developers
+    datatype: checkboxes
+    code: |
+      [
+        {
+          row["id"]: (
+            f'{row["name"] or row["email"]} '
+            f'({row["email"]}, last activity {row["last_activity_display"]}, '
+            f'{row["file_count"]} playground files)'
+          )
+        }
+        for row in inactive_developer_candidates
+      ]
+    show if:
+      variable: delete_scope
+      is: selected
+continue button field: review_inactive_developers
+validation code: |
+  if delete_scope == "selected" and not selected_inactive_developers.any_true():
+    validation_error("Select at least one account, or choose not to delete anything.", field="selected_inactive_developers")
+---
+code: |
+  if delete_scope == "all":
+    selected_inactive_developer_ids = [row["id"] for row in inactive_developer_candidates]
+  elif delete_scope == "selected":
+    selected_inactive_developer_ids = [
+      int(user_id) for user_id in selected_inactive_developers.true_values().elements
+    ]
+  else:
+    selected_inactive_developer_ids = []
+---
+id: confirm delete inactive developers
+question: |
+  Delete selected developer accounts?
+subquestion: |
+  You are about to delete **${ len(selected_inactive_developer_ids) }** developer account(s).
+
+  % for row in inactive_developer_candidates:
+  % if row["id"] in selected_inactive_developer_ids:
+  * **${ row["name"] or row["email"] }** (${ row["email"] }, ID ${ row["id"] }) - ${ row["file_count"] } playground files, ${ row["module_file_count"] } Python modules
+  % endif
+  % endfor
+
+  % if any(row["id"] in selected_inactive_developer_ids and row["has_python_modules"] for row in inactive_developer_candidates):
+  At least one selected account has playground Python modules, so the server will be restarted once after deletion.
+  % endif
+fields:
+  - Confirm deletion: confirm_delete_inactive_developers
+    datatype: yesnoradio
+    default: False
+---
+code: |
+  inactive_developer_delete_task = background_action(
+    "delete_inactive_developer_accounts_in_background",
+    user_ids=selected_inactive_developer_ids,
+    months=inactive_developer_months,
+    delete_shared=delete_shared_sessions,
+  )
+---
+event: delete_inactive_developer_accounts_in_background
+code: |
+  delete_shared_arg = action_argument("delete_shared")
+  background_response(
+    delete_inactive_developer_accounts(
+      action_argument("user_ids"),
+      months=int(action_argument("months")),
+      delete_shared=delete_shared_arg is True or str(delete_shared_arg).lower() in ("true", "1", "yes"),
+      restart_if_needed=True,
+    )
+  )
+---
+event: inactive_developer_delete_waiting
+question: |
+  Deleting selected developer accounts
+subquestion: |
+  <div class="spinner-container d-flex justify-content-center">
+    <div class="spinner-border" role="status">
+      <span class="visually-hidden">Deleting accounts...</span>
+    </div>
+  </div>
+
+  Docassemble is deleting selected accounts and associated sessions and playground data. This screen will reload until the batch is complete.
+reload: True
+---
+event: inactive_developer_delete_failed
+question: |
+  Account deletion failed
+subquestion: |
+  The background deletion task did not complete successfully.
+
+  % if inactive_developer_delete_task.result():
+  **${ inactive_developer_delete_task.result().error_type }**: ${ inactive_developer_delete_task.result().error_message }
+  % endif
+buttons:
+  - Restart report: restart
+---
+code: |
+  delete_inactive_developer_results = inactive_developer_delete_task.get()
+---
+event: ending_screen
+question: |
+  % if len(inactive_developer_candidates) and delete_scope != "none" and defined("delete_inactive_developer_results"):
+  Developer account cleanup complete
+  % else:
+  Inactive developer account report complete
+  % endif
+subquestion: |
+  % if len(inactive_developer_candidates) and delete_scope != "none" and defined("delete_inactive_developer_results"):
+  Deleted accounts: **${ delete_inactive_developer_results["deleted_count"] }**
+
+  % if delete_inactive_developer_results["skipped"]:
+  Skipped account IDs: ${ comma_and_list(delete_inactive_developer_results["skipped"]) }
+  % endif
+
+  % if delete_inactive_developer_results["restart_requested"]:
+  A server restart was requested because at least one deleted account had playground Python modules.
+  % endif
+  % elif len(inactive_developer_candidates):
+  No accounts were deleted.
+  % else:
+  No stale developer accounts were found using a ${ inactive_developer_months } month cutoff.
+  % endif
+buttons:
+  - Restart report: restart

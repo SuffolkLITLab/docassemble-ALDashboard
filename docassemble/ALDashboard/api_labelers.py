@@ -3602,9 +3602,15 @@ def pdf_labeler_copy_fields() -> Response:
             with _pikepdf.open(source_path) as _src_pdf, _pikepdf.open(
                 output_path, allow_overwriting_input=True
             ) as _out_pdf:
-                for _out_page, _src_page in zip(_out_pdf.pages, _src_pdf.pages):
-                    if "/Tabs" in _src_page:
-                        _out_page["/Tabs"] = _src_page["/Tabs"]
+                _src_page_count = len(_src_pdf.pages)
+                for _page_index, _out_page in enumerate(_out_pdf.pages):
+                    if (
+                        _page_index < _src_page_count
+                        and "/Tabs" in _src_pdf.pages[_page_index]
+                    ):
+                        _out_page["/Tabs"] = _src_pdf.pages[_page_index]["/Tabs"]
+                    elif "/Tabs" in _out_page:
+                        del _out_page["/Tabs"]
                 _out_pdf.save(output_path)
 
             from .pdf_accessibility import (

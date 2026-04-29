@@ -288,16 +288,19 @@ class TestDocxTemplateMarkupWarnings(unittest.TestCase):
                 def iter_errors(self, _xml_bytes):
                     return iter([])
 
-            with patch(
-                f"{VALIDATE_DOCX_MODULE}.ensure_ooxml_schema_cache",
-                return_value={
-                    "transitional": transitional,
-                    "strict": strict,
-                    "opc": opc,
-                },
-            ), patch(
-                f"{VALIDATE_DOCX_MODULE}._load_xmlschema",
-                return_value=_FakeSchema(),
+            with (
+                patch(
+                    f"{VALIDATE_DOCX_MODULE}.ensure_ooxml_schema_cache",
+                    return_value={
+                        "transitional": transitional,
+                        "strict": strict,
+                        "opc": opc,
+                    },
+                ),
+                patch(
+                    f"{VALIDATE_DOCX_MODULE}._load_xmlschema",
+                    return_value=_FakeSchema(),
+                ),
             ):
                 report = validate_docx_ooxml_schema(docx_path)
 

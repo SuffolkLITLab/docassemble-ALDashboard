@@ -3594,6 +3594,19 @@ def pdf_labeler_copy_fields() -> Response:
                 output_path, preserve_button_appearances=True
             )
 
+            # Preserve the source PDF's per-page tab order setting (/Tabs).
+            # Without this, viewers fall back to visual row order even though
+            # copy_pdf_fields already copied the Annots array in source order.
+            import pikepdf as _pikepdf
+
+            with _pikepdf.open(source_path) as _src_pdf, _pikepdf.open(
+                output_path, allow_overwriting_input=True
+            ) as _out_pdf:
+                for _out_page, _src_page in zip(_out_pdf.pages, _src_pdf.pages):
+                    if "/Tabs" in _src_page:
+                        _out_page["/Tabs"] = _src_page["/Tabs"]
+                _out_pdf.save(output_path)
+
             from .pdf_accessibility import (
                 apply_pdf_accessibility_settings,
                 extract_pdf_field_tooltips,

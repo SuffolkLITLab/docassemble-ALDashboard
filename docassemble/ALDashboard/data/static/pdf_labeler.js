@@ -241,6 +241,7 @@
     let fieldsListManualScrollUntil = 0;
     let pageManagerState = null;
     let pageManagerDragPageId = null;
+    let a11yDragFieldId = null;
 
     const fileInput = document.getElementById('file-input');
     const pdfContainer = document.getElementById('pdf-container');
@@ -504,7 +505,6 @@
         name = name.replace(/[^a-zA-Z0-9_]+/g, '_');
         name = name.replace(/_+/g, '_');
         name = name.replace(/^_+|_+$/g, '');
-        name = name.toLowerCase();
         if (!name) name = 'field';
         if (/^[0-9]/.test(name)) {
             name = 'field_' + name;
@@ -1082,11 +1082,14 @@
             const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
             if (!field) return;
             const row = document.createElement('div');
-            row.className = 'border rounded p-2';
+            row.className = 'a11y-field-row border rounded p-2';
             row.dataset.fieldId = field.id;
             row.innerHTML =
                 '<div class="d-flex align-items-center justify-content-between gap-2 mb-2">' +
-                    '<div class="small fw-semibold">' + escapeHtml(field.name) + '</div>' +
+                    '<div class="d-flex align-items-center gap-1">' +
+                        '<span class="a11y-drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span>' +
+                        '<div class="small fw-semibold">' + escapeHtml(field.name) + '</div>' +
+                    '</div>' +
                     '<div class="btn-group btn-group-sm">' +
                         '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' + escapeHtml(field.id) + '"' + (index === 0 ? ' disabled' : '') + '>Up</button>' +
                         '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' + escapeHtml(field.id) + '"' + (index === state.accessibility.fieldOrder.length - 1 ? ' disabled' : '') + '>Down</button>' +
@@ -2855,7 +2858,8 @@
             multilineTallFields: document.getElementById('norm-multiline-tall').checked,
             multilineThresholdLines: Number(document.getElementById('norm-multiline-lines').value || 2.2),
             multilineWhiteBackground: document.getElementById('norm-multiline-white').checked,
-            removeEmbeddedFonts: document.getElementById('norm-remove-embedded-fonts').checked
+            removeEmbeddedFonts: document.getElementById('norm-remove-embedded-fonts').checked,
+            lowercaseNames: document.getElementById('norm-lowercase-names').checked
         };
     }
 
@@ -2957,6 +2961,9 @@
         }
         if (settings.alignColumns) {
             alignFieldsByColumn(transformed, settings.alignColumnThresholdPt);
+        }
+        if (settings.lowercaseNames) {
+            transformed.forEach(function (field) { field.name = field.name.toLowerCase(); });
         }
         return dedupeNormalizedFieldNames(transformed);
     }
@@ -5185,6 +5192,57 @@
         order[swapWith] = order[index];
         order[index] = temp;
         state.accessibility.fieldOrder = order;
+        renderAccessibilityFieldList();
+        setDirty(true);
+    });
+    a11yFieldList.addEventListener('dragstart', function (event) {
+        if (!event.target.closest('.a11y-drag-handle')) return;
+        var row = event.target.closest('[data-field-id]');
+        if (!row) return;
+        a11yDragFieldId = row.dataset.fieldId;
+        row.classList.add('a11y-dragging');
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+        }
+    });
+    a11yFieldList.addEventListener('dragend', function () {
+        a11yDragFieldId = null;
+        a11yFieldList.querySelectorAll('.a11y-dragging, .a11y-drag-over').forEach(function (el) {
+            el.classList.remove('a11y-dragging', 'a11y-drag-over');
+        });
+    });
+    a11yFieldList.addEventListener('dragover', function (event) {
+        if (!a11yDragFieldId) return;
+        event.preventDefault();
+        var row = event.target.closest('[data-field-id]');
+        a11yFieldList.querySelectorAll('.a11y-drag-over').forEach(function (el) {
+            el.classList.remove('a11y-drag-over');
+        });
+        if (row && row.dataset.fieldId !== a11yDragFieldId) {
+            row.classList.add('a11y-drag-over');
+        }
+    });
+    a11yFieldList.addEventListener('drop', function (event) {
+        if (!a11yDragFieldId) return;
+        event.preventDefault();
+        var targetRow = event.target.closest('[data-field-id]');
+        var order = state.accessibility.fieldOrder.slice();
+        var fromIndex = order.indexOf(a11yDragFieldId);
+        if (fromIndex < 0) return;
+        var toIndex;
+        if (targetRow && targetRow.dataset.fieldId !== a11yDragFieldId) {
+            toIndex = order.indexOf(targetRow.dataset.fieldId);
+            if (toIndex < 0) return;
+        } else if (!targetRow) {
+            toIndex = order.length;
+        } else {
+            return;
+        }
+        order.splice(fromIndex, 1);
+        var adjustedIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
+        order.splice(adjustedIndex, 0, a11yDragFieldId);
+        state.accessibility.fieldOrder = order;
+        a11yDragFieldId = null;
         renderAccessibilityFieldList();
         setDirty(true);
     });

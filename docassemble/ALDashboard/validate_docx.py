@@ -501,9 +501,10 @@ def _download_extract_nested_zip(
     target_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temp_dir:
         outer_zip_path = Path(temp_dir) / "outer.zip"
-        with urlopen(outer_url) as response, open(
-            outer_zip_path, "wb"
-        ) as out_handle:  # nosec B310 – outer_url is always a hardcoded https:// address from _OOXML_SCHEMA_DOWNLOADS
+        with (
+            urlopen(outer_url) as response,
+            open(outer_zip_path, "wb") as out_handle,
+        ):  # nosec B310 – outer_url is always a hardcoded https:// address from _OOXML_SCHEMA_DOWNLOADS
             shutil.copyfileobj(response, out_handle)
         with zipfile.ZipFile(outer_zip_path, "r") as outer_zip:
             nested_bytes = outer_zip.read(nested_zip_name)

@@ -22,9 +22,11 @@ from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional, Set
 
 from flask import Response, jsonify, request
+
 try:
     from flask_cors import cross_origin
 except ImportError:  # pragma: no cover - exercised by subprocess import tests
+
     def cross_origin(*args: Any, **kwargs: Any):
         if args and callable(args[0]) and len(args) == 1 and not kwargs:
             return args[0]
@@ -33,6 +35,8 @@ except ImportError:  # pragma: no cover - exercised by subprocess import tests
             return func
 
         return decorator
+
+
 try:
     from flask_login import current_user
 except ImportError:  # pragma: no cover - exercised by subprocess import tests
@@ -235,7 +239,9 @@ def _apply_checkbox_export_values(
         pdf.save(pdf_path)
 
 
-def _collect_fields_with_explicit_background(fields_data: List[Dict[str, Any]]) -> Set[str]:
+def _collect_fields_with_explicit_background(
+    fields_data: List[Dict[str, Any]],
+) -> Set[str]:
     """Collect field names where the client explicitly set a background color.
 
     Args:
@@ -3567,11 +3573,10 @@ def pdf_labeler_copy_fields() -> Response:
                 "Only PDF files are supported.", status_code=415
             )
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".pdf", delete=False
-        ) as tmp_src, tempfile.NamedTemporaryFile(
-            suffix=".pdf", delete=False
-        ) as tmp_dst:
+        with (
+            tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_src,
+            tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_dst,
+        ):
             tmp_src.write(source_bytes)
             source_path = tmp_src.name
             tmp_dst.write(dest_bytes)
@@ -3593,6 +3598,26 @@ def pdf_labeler_copy_fields() -> Response:
             _apply_pdf_field_visual_defaults(
                 output_path, preserve_button_appearances=True
             )
+
+            # Preserve the source PDF's per-page tab order setting (/Tabs).
+            # Without this, viewers fall back to visual row order even though
+            # copy_pdf_fields already copied the Annots array in source order.
+            import pikepdf as _pikepdf
+
+            with (
+                _pikepdf.open(source_path) as _src_pdf,
+                _pikepdf.open(output_path, allow_overwriting_input=True) as _out_pdf,
+            ):
+                _src_page_count = len(_src_pdf.pages)
+                for _page_index, _out_page in enumerate(_out_pdf.pages):
+                    if (
+                        _page_index < _src_page_count
+                        and "/Tabs" in _src_pdf.pages[_page_index]
+                    ):
+                        _out_page["/Tabs"] = _src_pdf.pages[_page_index]["/Tabs"]
+                    elif "/Tabs" in _out_page:
+                        del _out_page["/Tabs"]  # type: ignore[operator]
+                _out_pdf.save(output_path)
 
             from .pdf_accessibility import (
                 apply_pdf_accessibility_settings,
@@ -3888,9 +3913,7 @@ def pdf_labeler_bulk_normalize():
                             color_parser=HexColor,
                         )
                         explicit_background_fields = (
-                            _collect_fields_with_explicit_background(
-                                normalized_fields
-                            )
+                            _collect_fields_with_explicit_background(normalized_fields)
                         )
 
                         with tempfile.NamedTemporaryFile(

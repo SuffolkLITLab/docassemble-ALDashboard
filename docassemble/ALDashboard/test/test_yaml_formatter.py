@@ -65,14 +65,17 @@ yaml_formatter = _import_yaml_formatter_with_mocks()
 
 class TestBlackReleaseStatus(unittest.TestCase):
     def test_reports_outdated_black_only_when_newer_release_exists(self):
-        with patch.object(
-            yaml_formatter.metadata,
-            "version",
-            return_value="24.1.0",
-        ), patch.object(
-            yaml_formatter,
-            "_fetch_latest_black_version",
-            return_value="24.3.0",
+        with (
+            patch.object(
+                yaml_formatter.metadata,
+                "version",
+                return_value="24.1.0",
+            ),
+            patch.object(
+                yaml_formatter,
+                "_fetch_latest_black_version",
+                return_value="24.3.0",
+            ),
         ):
             status = yaml_formatter.get_black_release_status()
 
@@ -125,14 +128,17 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
                     return str(module_dir)
                 return None
 
-            with patch.object(
-                yaml_formatter,
-                "SavedFile",
-                side_effect=fake_savedfile,
-            ), patch.object(
-                yaml_formatter,
-                "directory_for",
-                side_effect=fake_directory_for,
+            with (
+                patch.object(
+                    yaml_formatter,
+                    "SavedFile",
+                    side_effect=fake_savedfile,
+                ),
+                patch.object(
+                    yaml_formatter,
+                    "directory_for",
+                    side_effect=fake_directory_for,
+                ),
             ):
                 result = yaml_formatter._format_playground_python_files_with_black(
                     "Black", 10
@@ -190,13 +196,16 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
                 PlaygroundSection=lambda section="", project="default": fake_section
             )
 
-            with patch.object(
-                yaml_formatter,
-                "SavedFile",
-                side_effect=fake_savedfile,
-            ), patch.dict(
-                sys.modules,
-                {"docassemble.webapp.playground": fake_playground_module},
+            with (
+                patch.object(
+                    yaml_formatter,
+                    "SavedFile",
+                    side_effect=fake_savedfile,
+                ),
+                patch.dict(
+                    sys.modules,
+                    {"docassemble.webapp.playground": fake_playground_module},
+                ),
             ):
                 result = yaml_formatter._format_playground_python_files_with_black(
                     "AZDopa", 10
@@ -225,14 +234,17 @@ class TestYamlFormatterBlackFormatting(unittest.TestCase):
             ],
         }
 
-        with patch.object(
-            yaml_formatter,
-            "_resolve_current_user_id",
-            return_value=None,
-        ), patch.object(
-            yaml_formatter,
-            "_format_playground_python_files_with_black",
-            return_value=black_result,
+        with (
+            patch.object(
+                yaml_formatter,
+                "_resolve_current_user_id",
+                return_value=None,
+            ),
+            patch.object(
+                yaml_formatter,
+                "_format_playground_python_files_with_black",
+                return_value=black_result,
+            ),
         ):
             result = yaml_formatter.rewrite_playground_yaml_files(
                 [],
@@ -265,35 +277,41 @@ class TestYamlFormatterRefTokens(unittest.TestCase):
                     savedfiles[key] = _FakeSavedFile(section=str(section))
                 return savedfiles[key]
 
-            with patch.object(
-                yaml_formatter,
-                "SavedFile",
-                side_effect=fake_savedfile,
-            ), patch.object(
-                yaml_formatter,
-                "directory_for",
-                return_value=str(project_dir),
-            ), patch.object(
-                yaml_formatter,
-                "_resolve_current_user_id",
-                return_value=10,
-            ), patch.object(
-                yaml_formatter,
-                "list_formatter_playground_yaml_files",
-                return_value=[
-                    {
-                        "label": "example.yml",
-                        "token": "example.yml",
-                    }
-                ],
-            ), patch.object(
-                yaml_formatter,
-                "format_yaml_text",
-                return_value={
-                    "changed": True,
-                    "formatted_yaml": 'code: |\n  x = "hello"\n',
-                    "reformatted_rows": 1,
-                },
+            with (
+                patch.object(
+                    yaml_formatter,
+                    "SavedFile",
+                    side_effect=fake_savedfile,
+                ),
+                patch.object(
+                    yaml_formatter,
+                    "directory_for",
+                    return_value=str(project_dir),
+                ),
+                patch.object(
+                    yaml_formatter,
+                    "_resolve_current_user_id",
+                    return_value=10,
+                ),
+                patch.object(
+                    yaml_formatter,
+                    "list_formatter_playground_yaml_files",
+                    return_value=[
+                        {
+                            "label": "example.yml",
+                            "token": "example.yml",
+                        }
+                    ],
+                ),
+                patch.object(
+                    yaml_formatter,
+                    "format_yaml_text",
+                    return_value={
+                        "changed": True,
+                        "formatted_yaml": 'code: |\n  x = "hello"\n',
+                        "reformatted_rows": 1,
+                    },
+                ),
             ):
                 result = yaml_formatter.rewrite_playground_yaml_files(
                     ["example.yml"],

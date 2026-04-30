@@ -79,16 +79,18 @@ def _run_probe(probe_code: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"Subprocess failed.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"Subprocess failed.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     return result.stdout.strip()
 
 
 class TestApplyPDFFieldVisualDefaultsButtonPreservation(unittest.TestCase):
     """_apply_pdf_field_visual_defaults: preserve_button_appearances behavior."""
 
-    def _make_pdf_with_checkbox(self, has_ap: bool = True, has_red_border: bool = True) -> str:
+    def _make_pdf_with_checkbox(
+        self, has_ap: bool = True, has_red_border: bool = True
+    ) -> str:
         """Create a minimal PDF with a checkbox widget.  Returns the file path."""
         import pikepdf
         from pikepdf import Array, Dictionary, Name, String
@@ -178,6 +180,7 @@ print("done")
 
     def _read_first_widget(self, pdf_path: str) -> dict:
         import pikepdf
+
         with pikepdf.open(pdf_path) as pdf:
             annot = pdf.pages[0]["/Annots"][0]
             result = {
@@ -200,7 +203,9 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_mk_bc"], "/MK[BC] (red border) should have been removed")
+            self.assertFalse(
+                widget["has_mk_bc"], "/MK[BC] (red border) should have been removed"
+            )
         finally:
             os.unlink(pdf_path)
 
@@ -210,7 +215,10 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertTrue(widget["has_ap"], "/AP should be preserved for checkbox when preserve_button_appearances=True")
+            self.assertTrue(
+                widget["has_ap"],
+                "/AP should be preserved for checkbox when preserve_button_appearances=True",
+            )
         finally:
             os.unlink(pdf_path)
 
@@ -220,7 +228,10 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=False)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_ap"], "/AP should be deleted when preserve_button_appearances=False")
+            self.assertFalse(
+                widget["has_ap"],
+                "/AP should be deleted when preserve_button_appearances=False",
+            )
         finally:
             os.unlink(pdf_path)
 
@@ -230,7 +241,10 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_ap"], "/AP should be removed from text fields even with preserve_button_appearances=True")
+            self.assertFalse(
+                widget["has_ap"],
+                "/AP should be removed from text fields even with preserve_button_appearances=True",
+            )
         finally:
             os.unlink(pdf_path)
 
@@ -240,7 +254,9 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_mk_bc"], "/MK[BC] should be removed from text fields")
+            self.assertFalse(
+                widget["has_mk_bc"], "/MK[BC] should be removed from text fields"
+            )
         finally:
             os.unlink(pdf_path)
 

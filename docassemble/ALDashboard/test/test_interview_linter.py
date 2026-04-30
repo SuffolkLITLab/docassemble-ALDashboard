@@ -850,9 +850,10 @@ class TestSpellcheckLanguages(unittest.TestCase):
 
 class TestLintMultipleSources(unittest.TestCase):
     def test_lint_multiple_sources_processes_multiple_files(self):
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".yml", delete=False
-        ) as f1, tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f2:
+        with (
+            tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f1,
+            tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f2,
+        ):
             f1.write("---\nid: q1\nquestion: Hello world\n")
             f2.write("---\nid: q2\nquestion: Another screen\n")
             path1 = f1.name

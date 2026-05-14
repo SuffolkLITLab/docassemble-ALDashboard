@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from typing import Any
 from unittest.mock import patch
 
 import docx
@@ -215,6 +216,62 @@ class TestDocxWranglingUpdateDocx(unittest.TestCase):
         self.assertEqual(len(updated.paragraphs[0].runs), 1)
         self.assertEqual(stats["paragraphs_defragmented"], 1)
         self.assertEqual(stats["runs_removed"], 2)
+
+    def test_defragment_docx_runs_preserves_hyperlink_position(self):
+        """Runs separated by a hyperlink must not be merged across it (issue #232)."""
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+
+        # Remove the empty run that add_paragraph creates
+        for el in list(paragraph._element):
+            if el.tag == qn("w:r"):
+                paragraph._element.remove(el)
+
+        def _make_run(text: str) -> Any:
+            r = OxmlElement("w:r")
+            t = OxmlElement("w:t")
+            t.text = text
+            r.append(t)
+            return r
+
+        def _make_hyperlink(text: str) -> Any:
+            hl = OxmlElement("w:hyperlink")
+            r = OxmlElement("w:r")
+            t = OxmlElement("w:t")
+            t.text = text
+            r.append(t)
+            hl.append(r)
+            return hl
+
+        # Structure: run("text ") + run("before ") + hyperlink("[link]")
+        #            + run(". text ") + run("after")
+        paragraph._element.append(_make_run("text "))
+        paragraph._element.append(_make_run("before "))
+        paragraph._element.append(_make_hyperlink("[link]"))
+        paragraph._element.append(_make_run(". text "))
+        paragraph._element.append(_make_run("after"))
+
+        updated, stats = defragment_docx_runs(document)
+
+        p = updated.paragraphs[0]
+        children = [c for c in p._element if c.tag != qn("w:pPr")]
+
+        # Hyperlink must remain in the middle, not be displaced to the end
+        self.assertEqual(children[0].tag, qn("w:r"), "first child should be a run")
+        self.assertEqual(
+            children[1].tag, qn("w:hyperlink"), "hyperlink must stay in position"
+        )
+        self.assertEqual(children[2].tag, qn("w:r"), "last child should be a run")
+        self.assertEqual(len(children), 3)
+
+        # Consecutive runs on each side of the hyperlink are merged
+        self.assertEqual(children[0].text, "text before ")
+        self.assertEqual(children[2].text, ". text after")
+        self.assertEqual(stats["runs_removed"], 2)
+        self.assertEqual(stats["paragraphs_defragmented"], 1)
 
     def test_update_docx_with_defragment_runs_handles_fragmented_fixture(self):
         fixture_path = Path(__file__).with_name("condo_deed.docx")

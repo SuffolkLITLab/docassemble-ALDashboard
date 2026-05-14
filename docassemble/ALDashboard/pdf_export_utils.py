@@ -129,7 +129,7 @@ def build_normalized_pdf_field_definitions(
                 "fontSize": (
                     font_size_pt if normalize_font_size else int(raw_font_size or 12)
                 ),
-                "autoSize": False,
+                "autoSize": False if normalize_font_size else auto_size,
             }
 
             if field_type_str == "checkbox" and normalize_checkbox_style:
@@ -139,7 +139,8 @@ def build_normalized_pdf_field_definitions(
                 nf["width"] = checkbox_size_pt
                 nf["height"] = checkbox_size_pt
             if (
-                auto_size_name_address
+                not normalize_font_size
+                and auto_size_name_address
                 and field_type_str == "text"
                 and _looks_like_single_line_auto_size_field(field_name)
             ):

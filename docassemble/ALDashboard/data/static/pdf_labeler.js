@@ -2936,7 +2936,7 @@
                 nextField.autoSize = false;
             }
 
-            if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
+            if (!settings.normalizeFontSize && settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.autoSize = true;
                 nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');
             }

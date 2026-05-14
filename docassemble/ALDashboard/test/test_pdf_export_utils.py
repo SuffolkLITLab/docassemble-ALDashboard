@@ -238,6 +238,40 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(normalized[1]["height"], 12)
         self.assertEqual(normalized[1]["checkboxStyle"], "cross")
 
+    def test_bulk_normalize_keeps_auto_size_only_when_font_size_is_not_normalized(self):
+        detected = [
+            [
+                FakeFormField(
+                    "client_name",
+                    FakeFieldType.TEXT,
+                    10,
+                    20,
+                    font_size=0,
+                    configs={"width": 150, "height": 18},
+                )
+            ]
+        ]
+
+        normalized_fixed = build_normalized_pdf_field_definitions(
+            detected,
+            page_count=1,
+            normalize_font_size=True,
+            font_size_pt=10,
+            auto_size_name_address=True,
+        )
+        normalized_auto = build_normalized_pdf_field_definitions(
+            detected,
+            page_count=1,
+            normalize_font_size=False,
+            auto_size_name_address=True,
+        )
+
+        self.assertEqual(normalized_fixed[0]["fontSize"], 10)
+        self.assertFalse(normalized_fixed[0]["autoSize"])
+        self.assertEqual(normalized_auto[0]["fontSize"], 12)
+        self.assertTrue(normalized_auto[0]["autoSize"])
+        self.assertEqual(normalized_auto[0]["height"], 14)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,6 +70,7 @@ from .api_dashboard_utils import (
 from .pdf_export_utils import (
     build_normalized_pdf_field_definitions,
     build_pdf_export_fields_per_page,
+    deduplicate_fields_data,
 )
 
 __all__ = []
@@ -3196,6 +3197,9 @@ def pdf_labeler_apply_fields() -> Response:
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
 
+            if deduplicate_field_names:
+                fields_data = deduplicate_fields_data(fields_data)
+
             checkbox_export_values = {
                 str(field.get("name", "")): str(
                     field.get("checkboxExportValue", "")
@@ -3214,7 +3218,7 @@ def pdf_labeler_apply_fields() -> Response:
                 form_field_cls=FormField,
                 field_type_enum=FieldType,
                 color_parser=HexColor,
-                deduplicate_field_names=deduplicate_field_names,
+                deduplicate_field_names=False,
             )
 
             # Apply fields using FormFyxer

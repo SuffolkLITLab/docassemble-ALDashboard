@@ -943,6 +943,16 @@
         }, typeof timeoutMs === 'number' ? timeoutMs : 3200);
     }
 
+    function updateDuplicateFieldWarning() {
+        const duplicateNames = getDuplicateFieldNames();
+        if (duplicateFieldWarning) {
+            duplicateFieldWarning.classList.toggle('hidden', duplicateNames.length === 0);
+            duplicateFieldWarning.title = duplicateNames.length
+                ? 'Repeated names: ' + duplicateNames.slice(0, 5).join(', ') + (duplicateNames.length > 5 ? ' ...' : '')
+                : '';
+        }
+    }
+
     function updateFieldCount() {
         const totalCount = state.fields.length;
         const filteredCount = totalCount === 0 ? 0 : getDisplayedFields().length;
@@ -958,13 +968,7 @@
         fieldsList.classList.toggle('hidden', totalCount === 0);
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
         exportBtn.disabled = !state.pdfBytes || totalCount === 0;
-        const duplicateNames = getDuplicateFieldNames();
-        if (duplicateFieldWarning) {
-            duplicateFieldWarning.classList.toggle('hidden', duplicateNames.length === 0);
-            duplicateFieldWarning.title = duplicateNames.length
-                ? 'Repeated names: ' + duplicateNames.slice(0, 5).join(', ') + (duplicateNames.length > 5 ? ' ...' : '')
-                : '';
-        }
+        updateDuplicateFieldWarning();
         savePlaygroundBtn.disabled = !state.pdfBytes || totalCount === 0;
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
         repairBtn.disabled = !state.pdfBytes;
@@ -1629,6 +1633,7 @@
             }
         }
         syncQuickFieldEditor({ preserveInput: source === 'quick' });
+        updateDuplicateFieldWarning();
     }
 
     function syncQuickFieldEditor(options) {
@@ -2976,6 +2981,8 @@
 
             if (!settings.normalizeFontSize && settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.autoSize = true;
+            }
+            if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');
             }
 

@@ -51,8 +51,37 @@ def _looks_like_single_line_auto_size_field(field_name: Any) -> bool:
     )
 
 
+def deduplicate_fields_data(
+    fields_data: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return a copy of fields_data with duplicate field names suffixed.
+
+    Applies the same ``__N`` suffix strategy used by
+    :func:`build_pdf_export_fields_per_page` so that side-channel metadata
+    (checkbox export values, background settings, tooltips, field order) can be
+    built from the already-deduplicated names.
+
+    Args:
+        fields_data: Browser field definitions as submitted by the labeler UI.
+
+    Returns:
+        List[Dict[str, Any]]: New list with each field's ``name`` key uniquified.
+    """
+    used_names: set[str] = set()
+    result: List[Dict[str, Any]] = []
+    for field in fields_data:
+        raw_name = str(field.get("name", "field") or "").strip() or "field"
+        deduped_name = _dedupe_pdf_field_name(raw_name, used_names)
+        if deduped_name != raw_name:
+            field = {**field, "name": deduped_name}
+        result.append(field)
+    return result
+
+
 def _field_value(field: Any, key: str, default: Any = None) -> Any:
     if isinstance(field, dict):
+        if key == "name":
+            return field.get("name", field.get("var_name", default))
         return field.get(key, default)
     if key == "name":
         return getattr(field, "name", getattr(field, "var_name", default))

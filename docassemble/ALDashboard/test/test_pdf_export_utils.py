@@ -292,6 +292,28 @@ class TestPDFExportUtils(unittest.TestCase):
             ["same_name", "same_name"],
         )
 
+    def test_bulk_normalize_deduplicates_repeated_names_when_requested(self):
+        detected = [
+            [
+                FakeFormField("same_name", FakeFieldType.TEXT, 10, 20),
+                FakeFormField("same_name", FakeFieldType.TEXT, 30, 40),
+                FakeFormField("other", FakeFieldType.TEXT, 50, 60),
+                FakeFormField("same_name", FakeFieldType.TEXT, 70, 80),
+            ]
+        ]
+
+        normalized = build_normalized_pdf_field_definitions(
+            detected,
+            page_count=1,
+            deduplicate_field_names=True,
+        )
+
+        self.assertEqual(
+            [field["name"] for field in normalized],
+            ["same_name", "same_name__1", "other", "same_name__2"],
+        )
+
+
     def test_bulk_normalize_keeps_auto_size_only_when_font_size_is_not_normalized(self):
         detected = [
             [

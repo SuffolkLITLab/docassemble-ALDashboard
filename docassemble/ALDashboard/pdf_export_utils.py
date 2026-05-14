@@ -1,3 +1,4 @@
+import re
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 
@@ -27,6 +28,127 @@ def _parse_bool(value: Any, *, default: bool = False) -> bool:
         if normalized in {"0", "false", "f", "no", "n", "off"}:
             return False
     raise ValueError(f"Could not parse boolean value {value!r}.")
+
+
+def _dedupe_pdf_field_name(raw_name: Any, used_names: set[str]) -> str:
+    base_name = str(raw_name or "").strip() or "field"
+    candidate = base_name
+    suffix = 1
+    while candidate in used_names:
+        candidate = f"{base_name}__{suffix}"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
+
+
+def _looks_like_single_line_auto_size_field(field_name: Any) -> bool:
+    return bool(
+        re.search(
+            r"(name|address|street|city|state|zip|postal|phone|phone_number|email|cell)",
+            str(field_name or ""),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _field_value(field: Any, key: str, default: Any = None) -> Any:
+    if isinstance(field, dict):
+        return field.get(key, default)
+    if key == "name":
+        return getattr(field, "name", getattr(field, "var_name", default))
+    if key == "type":
+        return getattr(field, "type", default)
+    if key == "fontSize":
+        return getattr(field, "font_size", default)
+    if key == "font":
+        return getattr(field, "font", default)
+    if key in {"width", "height"}:
+        configs = getattr(field, "configs", None)
+        if isinstance(configs, dict) and key in configs:
+            return configs[key]
+    return getattr(field, key, default)
+
+
+def _normalize_detected_field_type(raw_type: Any) -> str:
+    normalized = str(raw_type or "text").lower()
+    normalized = normalized.replace("fieldtype.", "")
+    if normalized in {"area", "textarea"}:
+        return "multiline"
+    if normalized in {"check_box", "checkbox"}:
+        return "checkbox"
+    if normalized in {"choice", "dropdown", "combo"}:
+        return "dropdown"
+    if normalized in {"list_box", "listbox"}:
+        return "listbox"
+    if normalized in {"radio", "signature", "text", "multiline"}:
+        return normalized
+    return "text"
+
+
+def build_normalized_pdf_field_definitions(
+    detected_fields_per_page: Iterable[Iterable[Any]],
+    *,
+    page_count: int,
+    normalize_font: bool = True,
+    font_name: str = "Helvetica",
+    normalize_font_size: bool = True,
+    font_size_pt: int = 10,
+    normalize_checkbox_style: bool = True,
+    checkbox_style: str = "cross",
+    checkbox_export_value: str = "Yes",
+    uniform_checkbox_size: bool = True,
+    checkbox_size_pt: int = 12,
+    auto_size_name_address: bool = True,
+    fixed_text_height_pt: int = 14,
+) -> List[Dict[str, Any]]:
+    """Convert detected FormFyxer fields into normalized export definitions."""
+    normalized_fields: List[Dict[str, Any]] = []
+    used_names: set[str] = set()
+
+    for page_idx, page_fields in enumerate(detected_fields_per_page):
+        if page_idx < 0 or page_idx >= page_count:
+            continue
+        for field in page_fields or []:
+            field_name = _dedupe_pdf_field_name(_field_value(field, "name", "field"), used_names)
+            field_type_str = _normalize_detected_field_type(_field_value(field, "type", "text"))
+            raw_font_size = _field_value(field, "fontSize", 12)
+            auto_size = raw_font_size == 0
+            nf: Dict[str, Any] = {
+                "name": field_name,
+                "type": field_type_str,
+                "pageIndex": page_idx,
+                "x": float(_field_value(field, "x", 0) or 0),
+                "y": float(_field_value(field, "y", 0) or 0),
+                "width": float(_field_value(field, "width", 100) or 100),
+                "height": float(_field_value(field, "height", 20) or 20),
+                "font": (
+                    font_name
+                    if normalize_font
+                    else str(_field_value(field, "font", "Helvetica") or "Helvetica")
+                ),
+                "fontSize": (
+                    font_size_pt if normalize_font_size else int(raw_font_size or 12)
+                ),
+                "autoSize": False,
+            }
+
+            if field_type_str == "checkbox" and normalize_checkbox_style:
+                nf["checkboxStyle"] = checkbox_style
+                nf["checkboxExportValue"] = checkbox_export_value
+            if field_type_str == "checkbox" and uniform_checkbox_size:
+                nf["width"] = checkbox_size_pt
+                nf["height"] = checkbox_size_pt
+            if (
+                auto_size_name_address
+                and field_type_str == "text"
+                and _looks_like_single_line_auto_size_field(field_name)
+            ):
+                nf["autoSize"] = True
+                nf["height"] = fixed_text_height_pt
+
+            normalized_fields.append(nf)
+
+    return normalized_fields
 
 
 def build_pdf_export_fields_per_page(

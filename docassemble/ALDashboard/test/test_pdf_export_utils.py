@@ -1,7 +1,10 @@
 # do not pre-load
 import unittest
 
-from docassemble.ALDashboard.pdf_export_utils import build_pdf_export_fields_per_page
+from docassemble.ALDashboard.pdf_export_utils import (
+    build_normalized_pdf_field_definitions,
+    build_pdf_export_fields_per_page,
+)
 
 
 class FakeFieldType:
@@ -153,6 +156,52 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(dropdown.configs["width"], 80.0)
         self.assertEqual(dropdown.configs["height"], 18.0)
         self.assertEqual(dropdown.configs["borderWidth"], 0)
+
+    def test_bulk_normalize_preserves_per_page_detected_coordinates(self):
+        detected = [
+            [
+                FakeFormField(
+                    "first_page_field",
+                    FakeFieldType.TEXT,
+                    72,
+                    144,
+                    font_size=0,
+                    configs={"width": 200, "height": 18},
+                )
+            ],
+            [
+                FakeFormField(
+                    "second_page_name",
+                    FakeFieldType.CHECK_BOX,
+                    55,
+                    66,
+                    font_size=12,
+                    configs={"width": 13, "height": 13},
+                )
+            ],
+        ]
+
+        normalized = build_normalized_pdf_field_definitions(
+            detected,
+            page_count=2,
+            normalize_font_size=True,
+            font_size_pt=10,
+            checkbox_size_pt=12,
+        )
+
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual(normalized[0]["pageIndex"], 0)
+        self.assertEqual(normalized[0]["x"], 72)
+        self.assertEqual(normalized[0]["y"], 144)
+        self.assertEqual(normalized[0]["width"], 200)
+        self.assertEqual(normalized[0]["height"], 18)
+        self.assertEqual(normalized[0]["fontSize"], 10)
+        self.assertEqual(normalized[1]["pageIndex"], 1)
+        self.assertEqual(normalized[1]["x"], 55)
+        self.assertEqual(normalized[1]["y"], 66)
+        self.assertEqual(normalized[1]["width"], 12)
+        self.assertEqual(normalized[1]["height"], 12)
+        self.assertEqual(normalized[1]["checkboxStyle"], "cross")
 
 
 if __name__ == "__main__":

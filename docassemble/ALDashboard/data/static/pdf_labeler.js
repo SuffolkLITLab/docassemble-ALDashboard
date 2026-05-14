@@ -3875,7 +3875,7 @@
         state.fields.forEach(function (field) {
             const base = normalizePdfFieldName(field.name || 'field') || 'field';
             let candidate = base;
-            let suffix = 2;
+            let suffix = 1;
             while (used.has(candidate)) {
                 candidate = base + '__' + suffix;
                 suffix += 1;

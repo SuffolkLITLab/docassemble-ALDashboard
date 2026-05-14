@@ -157,6 +157,41 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(dropdown.configs["height"], 18.0)
         self.assertEqual(dropdown.configs["borderWidth"], 0)
 
+    def test_export_deduplicates_repeated_field_names(self):
+        fields_per_page = build_pdf_export_fields_per_page(
+            [
+                {
+                    "name": "users1_name",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "x": 10,
+                    "y": 20,
+                },
+                {
+                    "name": "users1_name",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "x": 30,
+                    "y": 40,
+                },
+                {
+                    "name": "users1_name",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "x": 50,
+                    "y": 60,
+                },
+            ],
+            page_count=1,
+            form_field_cls=FakeFormField,
+            field_type_enum=FakeFieldType,
+        )
+
+        self.assertEqual(
+            [field.name for field in fields_per_page[0]],
+            ["users1_name", "users1_name__1", "users1_name__2"],
+        )
+
     def test_bulk_normalize_preserves_per_page_detected_coordinates(self):
         detected = [
             [

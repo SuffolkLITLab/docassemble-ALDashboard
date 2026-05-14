@@ -172,6 +172,7 @@ def build_pdf_export_fields_per_page(
         List[List[Any]]: Form field objects grouped by page index.
     """
     fields_per_page: List[List[Any]] = [[] for _ in range(page_count)]
+    used_names: set[str] = set()
 
     for field_data in fields_data:
         page_idx = int(field_data.get("pageIndex", 0))
@@ -296,7 +297,9 @@ def build_pdf_export_fields_per_page(
             field_configs["selected"] = False
 
         form_field = form_field_cls(
-            field_name=str(field_data.get("name", "field")),
+            field_name=_dedupe_pdf_field_name(
+                field_data.get("name", "field"), used_names
+            ),
             type_name=field_type,
             x=int(round(x_position)),
             y=int(round(y_position)),

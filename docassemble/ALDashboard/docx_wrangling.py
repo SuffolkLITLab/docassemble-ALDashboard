@@ -560,12 +560,17 @@ _SAFE_RUN_CHILD_TAGS = {
 }
 
 
-def _run_is_safe_to_defragment(run: Any) -> bool:
-    """Only merge plain-text runs that contain no fields, drawings, or other complex XML."""
-    for child in run._element:
+def _run_element_is_safe_to_defragment(run_element: Any) -> bool:
+    """Only merge plain-text <w:r> elements that contain no complex XML children."""
+    for child in run_element:
         if child.tag not in _SAFE_RUN_CHILD_TAGS:
             return False
     return True
+
+
+def _run_is_safe_to_defragment(run: Any) -> bool:
+    """Only merge plain-text runs that contain no fields, drawings, or other complex XML."""
+    return _run_element_is_safe_to_defragment(run._element)
 
 
 def _collect_paragraphs_from_table(
@@ -624,6 +629,10 @@ def defragment_docx_runs(
 ) -> Tuple[docx.document.Document, dict]:
     """Merge text-only runs within target paragraphs.
 
+    Only consecutive <w:r> siblings with no intervening non-run elements
+    (e.g. hyperlinks) are merged together.  This prevents hyperlinks and
+    other inline elements from being displaced from their original position.
+
     Args:
         document: A loaded ``python-docx`` document or a path to a DOCX file.
         paragraph_numbers: Optional paragraph indexes to limit defragmentation.
@@ -645,23 +654,43 @@ def defragment_docx_runs(
         "runs_removed": 0,
     }
 
+    w_r_tag = qn("w:r")
+
     for paragraph_number, paragraph in enumerate(_collect_target_paragraphs(document)):
         if target_paragraphs is not None and paragraph_number not in target_paragraphs:
             continue
 
-        runs = list(paragraph.runs)
-        if len(runs) <= 1:
-            continue
-        if not all(_run_is_safe_to_defragment(run) for run in runs):
-            continue
+        # Build groups of consecutive <w:r> direct children.  Any non-run
+        # sibling (e.g. <w:hyperlink>) ends the current group so that runs
+        # on opposite sides of such elements are never merged together.
+        run_groups: List[List[Any]] = []
+        current_group: List[Any] = []
+        for child in paragraph._element:
+            if child.tag == w_r_tag:
+                current_group.append(child)
+            else:
+                if current_group:
+                    run_groups.append(current_group)
+                    current_group = []
+        if current_group:
+            run_groups.append(current_group)
 
-        combined_text = "".join(run.text for run in runs)
-        runs[0].text = combined_text
-        for run in runs[1:]:
-            run._element.getparent().remove(run._element)
+        paragraph_changed = False
+        for group in run_groups:
+            if len(group) <= 1:
+                continue
+            if not all(_run_element_is_safe_to_defragment(el) for el in group):
+                continue
 
-        stats["paragraphs_defragmented"] += 1
-        stats["runs_removed"] += len(runs) - 1
+            combined_text = "".join(el.text for el in group)
+            group[0].text = combined_text
+            for el in group[1:]:
+                el.getparent().remove(el)
+                stats["runs_removed"] += 1
+            paragraph_changed = True
+
+        if paragraph_changed:
+            stats["paragraphs_defragmented"] += 1
 
     return document, stats
 

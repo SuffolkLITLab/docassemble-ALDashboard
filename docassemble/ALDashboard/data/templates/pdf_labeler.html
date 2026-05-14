@@ -68,6 +68,10 @@
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
                         Auto-Detect
                     </button>
+                    <label class="form-check form-check-inline text-light small mb-0 ms-1" title="When names repeat, export them as name, name__1, name__2, and so on">
+                        <input id="export-deduplicate-field-names" class="form-check-input" type="checkbox" checked>
+                        <span class="form-check-label">Deduplicate repeated names</span>
+                    </label>
                     <button id="export-btn" class="btn btn-primary btn-sm" disabled>Export PDF</button>
                     <button id="save-playground-btn" class="btn btn-outline-success btn-sm hidden" disabled title="Save this PDF back to the Playground templates folder">
                         <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
@@ -77,6 +81,7 @@
             </div>
             <div class="container-fluid mt-3 d-flex justify-content-end align-items-center flex-wrap gap-2">
                 <span id="document-name" class="small text-light"></span>
+                <span id="duplicate-field-warning" class="badge text-bg-warning hidden">Duplicate field names</span>
                 <span id="dirty-indicator" class="badge text-bg-warning dirty-indicator hidden">Unsaved changes</span>
             </div>
         </header>
@@ -368,6 +373,13 @@
                     <label class="form-label small mb-1" for="save-pg-filename">Filename</label>
                     <input id="save-pg-filename" type="text" class="form-control form-control-sm" placeholder="template.pdf">
                 </div>
+                <div id="save-pg-duplicate-warning" class="alert alert-warning small py-2 hidden">
+                    Duplicate PDF field names can work in some platforms, but PDF viewers handle them inconsistently.
+                </div>
+                <label class="form-check mb-3">
+                    <input id="save-pg-deduplicate-field-names" class="form-check-input" type="checkbox" checked>
+                    <span class="form-check-label small">Deduplicate repeated field names when saving</span>
+                </label>
                 <p id="save-pg-status" class="small text-muted hidden"></p>
                 <div class="d-flex justify-content-end gap-2">
                     <button id="save-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>

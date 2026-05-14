@@ -3180,6 +3180,9 @@ def pdf_labeler_apply_fields() -> Response:
             fields_data = fields_raw
         else:
             raise DashboardAPIValidationError("fields is required and must be a list.")
+        deduplicate_field_names = parse_bool(
+            post_data.get("deduplicate_field_names"), default=False
+        )
 
         # Get page count from original PDF
         import pikepdf
@@ -3211,6 +3214,7 @@ def pdf_labeler_apply_fields() -> Response:
                 form_field_cls=FormField,
                 field_type_enum=FieldType,
                 color_parser=HexColor,
+                deduplicate_field_names=deduplicate_field_names,
             )
 
             # Apply fields using FormFyxer
@@ -3810,6 +3814,9 @@ def pdf_labeler_bulk_normalize():
         remove_embedded_fonts_flag = parse_bool(
             options.get("removeEmbeddedFonts"), default=False
         )
+        deduplicate_field_names = parse_bool(
+            options.get("deduplicateFieldNames"), default=False
+        )
 
         import zipfile as _zipfile
 
@@ -3865,6 +3872,7 @@ def pdf_labeler_bulk_normalize():
                             checkbox_size_pt=checkbox_size_pt,
                             auto_size_name_address=auto_size_name_address,
                             fixed_text_height_pt=fixed_text_height_pt,
+                            deduplicate_field_names=deduplicate_field_names,
                         )
 
                         if not normalized_fields:
@@ -3879,6 +3887,7 @@ def pdf_labeler_bulk_normalize():
                             form_field_cls=FormField,
                             field_type_enum=FieldType,
                             color_parser=HexColor,
+                            deduplicate_field_names=False,
                         )
                         explicit_background_fields = (
                             _collect_fields_with_explicit_background(normalized_fields)

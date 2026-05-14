@@ -157,7 +157,7 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(dropdown.configs["height"], 18.0)
         self.assertEqual(dropdown.configs["borderWidth"], 0)
 
-    def test_export_deduplicates_repeated_field_names(self):
+    def test_export_preserves_duplicate_field_names_by_default(self):
         fields_per_page = build_pdf_export_fields_per_page(
             [
                 {
@@ -185,6 +185,42 @@ class TestPDFExportUtils(unittest.TestCase):
             page_count=1,
             form_field_cls=FakeFormField,
             field_type_enum=FakeFieldType,
+        )
+
+        self.assertEqual(
+            [field.name for field in fields_per_page[0]],
+            ["users1_name", "users1_name", "users1_name"],
+        )
+
+    def test_export_deduplicates_repeated_field_names_when_requested(self):
+        fields_per_page = build_pdf_export_fields_per_page(
+            [
+                {
+                    "name": "users1_name",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "x": 10,
+                    "y": 20,
+                },
+                {
+                    "name": "users1_name",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "x": 30,
+                    "y": 40,
+                },
+                {
+                    "name": "users1_name",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "x": 50,
+                    "y": 60,
+                },
+            ],
+            page_count=1,
+            form_field_cls=FakeFormField,
+            field_type_enum=FakeFieldType,
+            deduplicate_field_names=True,
         )
 
         self.assertEqual(
@@ -237,6 +273,24 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(normalized[1]["width"], 12)
         self.assertEqual(normalized[1]["height"], 12)
         self.assertEqual(normalized[1]["checkboxStyle"], "cross")
+
+    def test_bulk_normalize_preserves_duplicate_names_by_default(self):
+        detected = [
+            [
+                FakeFormField("same_name", FakeFieldType.TEXT, 10, 20),
+                FakeFormField("same_name", FakeFieldType.TEXT, 30, 40),
+            ]
+        ]
+
+        normalized = build_normalized_pdf_field_definitions(
+            detected,
+            page_count=1,
+        )
+
+        self.assertEqual(
+            [field["name"] for field in normalized],
+            ["same_name", "same_name"],
+        )
 
     def test_bulk_normalize_keeps_auto_size_only_when_font_size_is_not_normalized(self):
         detected = [

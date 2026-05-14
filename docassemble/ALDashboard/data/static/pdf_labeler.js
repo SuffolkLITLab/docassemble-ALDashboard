@@ -273,6 +273,8 @@
     const autoDetectBtn = document.getElementById('auto-detect-btn');
     const relabelBtn = document.getElementById('relabel-btn');
     const sidebarRelabelBtn = document.getElementById('sidebar-relabel-btn');
+    const exportDeduplicateFieldNamesInput = document.getElementById('export-deduplicate-field-names');
+    const duplicateFieldWarning = document.getElementById('duplicate-field-warning');
     const exportBtn = document.getElementById('export-btn');
     const normalizePassBtn = document.getElementById('normalize-pass-btn');
     const errorToast = document.getElementById('error-toast');
@@ -956,6 +958,13 @@
         fieldsList.classList.toggle('hidden', totalCount === 0);
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
         exportBtn.disabled = !state.pdfBytes || totalCount === 0;
+        const duplicateNames = getDuplicateFieldNames();
+        if (duplicateFieldWarning) {
+            duplicateFieldWarning.classList.toggle('hidden', duplicateNames.length === 0);
+            duplicateFieldWarning.title = duplicateNames.length
+                ? 'Repeated names: ' + duplicateNames.slice(0, 5).join(', ') + (duplicateNames.length > 5 ? ' ...' : '')
+                : '';
+        }
         savePlaygroundBtn.disabled = !state.pdfBytes || totalCount === 0;
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
         repairBtn.disabled = !state.pdfBytes;
@@ -1277,6 +1286,19 @@
     function bumpFieldNamesVersion() {
         state.fieldNamesVersion = (Number(state.fieldNamesVersion) || 0) + 1;
         invalidateBulkRenamePreview();
+    }
+
+    function getDuplicateFieldNames() {
+        const counts = new Map();
+        state.fields.forEach(function (field) {
+            const normalized = normalizePdfFieldName(field.name || 'field') || 'field';
+            counts.set(normalized, (counts.get(normalized) || 0) + 1);
+        });
+        const duplicates = [];
+        counts.forEach(function (count, name) {
+            if (count > 1) duplicates.push(name);
+        });
+        return duplicates;
     }
 
     function setFieldsPanelMode(nextMode) {
@@ -2075,6 +2097,18 @@
         savePgFilename.value = state.playgroundSource.filename || state.fileName || 'template.pdf';
         if (!savePgFilename.value.toLowerCase().endsWith('.pdf'))
             savePgFilename.value += '.pdf';
+        var duplicateNames = getDuplicateFieldNames();
+        var saveDedupeInput = document.getElementById('save-pg-deduplicate-field-names');
+        var saveDuplicateWarning = document.getElementById('save-pg-duplicate-warning');
+        if (saveDedupeInput) {
+            saveDedupeInput.checked = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
+        }
+        if (saveDuplicateWarning) {
+            saveDuplicateWarning.classList.toggle('hidden', duplicateNames.length === 0);
+            if (duplicateNames.length) {
+                saveDuplicateWarning.textContent = 'Duplicate PDF field names detected: ' + duplicateNames.slice(0, 5).join(', ') + (duplicateNames.length > 5 ? ' ...' : '') + '. Some PDF viewers handle duplicate names unpredictably.';
+            }
+        }
         savePgStatus.classList.add('hidden');
         savePlaygroundModalEl.classList.remove('hidden');
         // Load projects in background
@@ -2109,12 +2143,16 @@
         try {
             // First export to get the latest PDF with field changes applied
             var pdfContent;
-            if (state.hasUnsavedChanges && state.fields.length > 0) {
+            var saveDeduplicateFieldNames = document.getElementById('save-pg-deduplicate-field-names').checked;
+            if (state.fields.length > 0 && (state.hasUnsavedChanges || saveDeduplicateFieldNames)) {
                 var formData = new FormData();
                 formData.append('file', getPdfFileForRequests());
-                var saveNameMap = buildUniqueExportNameMap();
+                var saveNameMap = buildExportNameMap({
+                    deduplicate: saveDeduplicateFieldNames
+                });
                 formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)));
                 formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(saveNameMap)));
+                formData.append('deduplicate_field_names', saveDeduplicateFieldNames ? 'true' : 'false');
                 var exportResponse = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), { method: 'POST', headers: { 'Accept': 'application/json' }, body: formData });
                 var exportData = await parseApiResponse(exportResponse);
                 if (!exportData.success || !exportData.data || !exportData.data.pdf_base64) {
@@ -2659,7 +2697,7 @@
         if (duplicateExists) {
             return {
                 level: 'warning',
-                html: 'Another field already uses this PDF label. Rename it before export to avoid automatic suffixes.'
+                html: 'Another field already uses this PDF label. Some PDF viewers handle duplicate names unpredictably.'
             };
         }
         if (rawName !== normalized && /[\[\].()]/.test(rawName)) {
@@ -3869,21 +3907,28 @@
         syncQuickFieldEditor();
     }
 
-    function buildUniqueExportNameMap() {
+    function buildExportNameMap(options) {
+        const deduplicate = !!(options && options.deduplicate);
         const exportNameMap = new Map();
         const used = new Set();
         state.fields.forEach(function (field) {
             const base = normalizePdfFieldName(field.name || 'field') || 'field';
             let candidate = base;
-            let suffix = 1;
-            while (used.has(candidate)) {
-                candidate = base + '__' + suffix;
-                suffix += 1;
+            if (deduplicate) {
+                let suffix = 1;
+                while (used.has(candidate)) {
+                    candidate = base + '__' + suffix;
+                    suffix += 1;
+                }
             }
             used.add(candidate);
             exportNameMap.set(field.id, candidate);
         });
         return exportNameMap;
+    }
+
+    function buildUniqueExportNameMap() {
+        return buildExportNameMap({ deduplicate: true });
     }
 
     function convertFieldsToAbsoluteCoordinates(exportNameMap) {
@@ -4102,9 +4147,11 @@
         try {
             const formData = new FormData();
             formData.append('file', getPdfFileForRequests());
-            const exportNameMap = buildUniqueExportNameMap();
+            const deduplicateFieldNames = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
+            const exportNameMap = buildExportNameMap({ deduplicate: deduplicateFieldNames });
             formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)));
             formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(exportNameMap)));
+            formData.append('deduplicate_field_names', deduplicateFieldNames ? 'true' : 'false');
 
             const response = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), {
                 method: 'POST',

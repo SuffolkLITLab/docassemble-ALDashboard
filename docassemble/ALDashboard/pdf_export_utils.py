@@ -100,6 +100,7 @@ def build_normalized_pdf_field_definitions(
     checkbox_size_pt: int = 12,
     auto_size_name_address: bool = True,
     fixed_text_height_pt: int = 14,
+    deduplicate_field_names: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert detected FormFyxer fields into normalized export definitions."""
     normalized_fields: List[Dict[str, Any]] = []
@@ -109,8 +110,17 @@ def build_normalized_pdf_field_definitions(
         if page_idx < 0 or page_idx >= page_count:
             continue
         for field in page_fields or []:
-            field_name = _dedupe_pdf_field_name(_field_value(field, "name", "field"), used_names)
-            field_type_str = _normalize_detected_field_type(_field_value(field, "type", "text"))
+            raw_field_name = (
+                str(_field_value(field, "name", "field") or "").strip() or "field"
+            )
+            field_name = (
+                _dedupe_pdf_field_name(raw_field_name, used_names)
+                if deduplicate_field_names
+                else raw_field_name
+            )
+            field_type_str = _normalize_detected_field_type(
+                _field_value(field, "type", "text")
+            )
             raw_font_size = _field_value(field, "fontSize", 12)
             auto_size = raw_font_size == 0
             nf: Dict[str, Any] = {
@@ -159,6 +169,7 @@ def build_pdf_export_fields_per_page(
     form_field_cls: Any,
     field_type_enum: Any,
     color_parser: Optional[Callable[[str], Any]] = None,
+    deduplicate_field_names: bool = False,
 ) -> List[List[Any]]:
     """Convert browser field definitions into FormFyxer/ReportLab field objects.
 
@@ -297,9 +308,12 @@ def build_pdf_export_fields_per_page(
             )
             field_configs["selected"] = False
 
+        raw_field_name = str(field_data.get("name", "field") or "").strip() or "field"
         form_field = form_field_cls(
-            field_name=_dedupe_pdf_field_name(
-                field_data.get("name", "field"), used_names
+            field_name=(
+                _dedupe_pdf_field_name(raw_field_name, used_names)
+                if deduplicate_field_names
+                else raw_field_name
             ),
             type_name=field_type,
             x=int(round(x_position)),

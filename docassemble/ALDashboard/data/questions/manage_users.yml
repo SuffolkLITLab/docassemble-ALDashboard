@@ -29,6 +29,8 @@ code: |
   elif user_task == "disable_mfa":
     confirm_disable_mfa
     do_disable_mfa
+  elif user_task == "edit_profile":
+    edit_profile_screen
   ending_screen
 ---
 code: |
@@ -77,6 +79,7 @@ fields:
       - Download playground files: download_playground
       - Change user permissions: elevate_permissions
       - Disable two-factor authentication: disable_mfa
+      - Edit profile in docassemble: edit_profile
   - New password: new_user_password
     datatype: password
     show if:
@@ -149,6 +152,7 @@ subquestion: |
   % if user_details:
   Field | Value
   ------|------
+  **User ID** | ${ user_details["id"] }
   **Email** | ${ user_details["email"] }
   **Active** | ${ "Yes" if user_details["active"] else "No" }
   **Account type** | ${ user_details["account_type"] }
@@ -160,6 +164,17 @@ subquestion: |
   % else:
   The selected user could not be found in the database.
   % endif
+buttons:
+  - Restart: restart
+---
+id: edit profile
+event: edit_profile_screen
+question: |
+  Edit profile for ${ user_details["first_name"] } ${ user_details["last_name"] }
+subquestion: |
+  Use the link below to edit this user's profile in the built-in docassemble user management page:
+
+  [Edit profile (user ID: ${ user_details["id"] })](${ url_of('root') }user/${ user_details["id"] }/editprofile){:target="_blank"}
 buttons:
   - Restart: restart
 ---

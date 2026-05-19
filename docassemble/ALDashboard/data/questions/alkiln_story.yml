@@ -12,9 +12,11 @@ metadata:
 modules:
   - .alkiln_story
   - .aldashboard
+  - .interview_linter
 ---
 objects:
   - story_download: DAFile
+  - yaml_upload: DAFile
 ---
 mandatory: True
 code: |
@@ -23,6 +25,13 @@ code: |
     selected_interview_filename
     skip_step_one_sessions
     selected_session_id
+  elif story_source == "yaml_upload":
+    yaml_upload
+  elif story_source == "playground":
+    selected_playground_project
+    selected_playground_file
+  elif story_source == "pasted_yaml":
+    pasted_yaml
   else:
     pasted_json
   story_result
@@ -45,6 +54,9 @@ fields:
     choices:
       - Saved interview session: session
       - Pasted JSON: pasted_json
+      - Uploaded YAML: yaml_upload
+      - YAML in playground: playground
+      - Pasted YAML: pasted_yaml
     default: session
 ---
 code: |
@@ -138,12 +150,47 @@ fields:
     rows: 12
 ---
 question: |
+  Upload interview YAML
+fields:
+  - YAML file: yaml_upload
+    datatype: file
+---
+question: |
+  Select playground project
+fields:
+  - Playground project: selected_playground_project
+    datatype: combobox
+    code: |
+      list_playground_projects()
+---
+question: |
+  Select playground YAML
+fields:
+  - YAML file: selected_playground_file
+    datatype: combobox
+    code: |
+      {
+        item["token"]: item["label"]
+        for item in list_playground_yaml_files(selected_playground_project)
+      }
+validation code: |
+  if not selected_playground_file:
+    validation_error("Select a YAML file.")
+---
+question: |
+  Paste interview YAML
+fields:
+  - Docassemble YAML: pasted_yaml
+    input type: area
+    rows: 12
+---
+question: |
   Story options
 fields:
   - YAML file name: yaml_file_name
-    default: ${ selected_interview_filename if story_source == "session" else "interview.yml" }
+    default: ${ story_default_yaml_file_name }
   - Question ID: question_id
-    default: review_screen
+    default: ${ story_default_question_id }
   - Feature description: feature_description
     default: Generated docassemble test
   - Scenario description: scenario_description
@@ -171,14 +218,47 @@ fields:
       contains one of these strings.
 ---
 code: |
+  if story_source == "session":
+    story_default_yaml_file_name = selected_interview_filename
+    story_default_question_id = "review_screen"
+  elif story_source == "yaml_upload":
+    story_default_yaml_file_name = yaml_upload.filename
+    story_default_question_id = detect_yaml_ending_screen(yaml_upload.slurp())
+  elif story_source == "playground":
+    with open(selected_playground_file, "r", encoding="utf-8") as story_yaml_file:
+      selected_playground_yaml_text = story_yaml_file.read()
+    story_default_yaml_file_name = selected_playground_file.split("/")[-1]
+    story_default_question_id = detect_yaml_ending_screen(
+      selected_playground_yaml_text,
+      source_path=selected_playground_file,
+    )
+  elif story_source == "pasted_yaml":
+    story_default_yaml_file_name = "interview.yml"
+    story_default_question_id = detect_yaml_ending_screen(pasted_yaml)
+  else:
+    story_default_yaml_file_name = "interview.yml"
+    story_default_question_id = "review_screen"
+---
+code: |
   import json
   if story_source == "session":
     story_data = {
       "i": selected_interview_filename,
       "variables": selected_session_variables,
     }
+    story_input_type = "json"
+  elif story_source == "yaml_upload":
+    story_yaml_text = yaml_upload.slurp()
+    story_input_type = "yaml"
+  elif story_source == "playground":
+    story_yaml_text = selected_playground_yaml_text
+    story_input_type = "yaml"
+  elif story_source == "pasted_yaml":
+    story_yaml_text = pasted_yaml
+    story_input_type = "yaml"
   else:
     story_data = load_docassemble_json_text(pasted_json)
+    story_input_type = "json"
   ignore_anywhere = json.loads(ignore_anywhere_text) if ignore_anywhere_text.strip() else []
   story_options = StoryOptions(
     feature_description=feature_description,
@@ -189,7 +269,14 @@ code: |
     synthesize_target_number=synthesize_target_number,
     ignore_anywhere_in_var_name=ignore_anywhere,
   )
-  story_result = story_from_docassemble_json(story_data, options=story_options)
+  if story_input_type == "yaml":
+    story_result = story_from_docassemble_yaml(
+      story_yaml_text,
+      filename=selected_playground_file if story_source == "playground" else yaml_file_name,
+      options=story_options,
+    )
+  else:
+    story_result = story_from_docassemble_json(story_data, options=story_options)
   story_download.initialize(
     filename=output_file_name if output_file_name.endswith(".feature") else output_file_name + ".feature"
   )
@@ -204,6 +291,4 @@ subquestion: |
 
   **[Download story](${ story_download.url_for(attachment=True) })**
 
-  ```gherkin
-  ${ story_result["feature_text"] }
-  ```
+  ${ story_result["preview_markdown"] }

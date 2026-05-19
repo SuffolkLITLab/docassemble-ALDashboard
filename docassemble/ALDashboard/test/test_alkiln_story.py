@@ -1,12 +1,18 @@
 # do not pre-load
+import base64
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from docassemble.ALDashboard.alkiln_story import (
     StoryOptions,
+    build_feature_preview_markdown,
+    detect_yaml_ending_screen,
     load_docassemble_json_text,
     rows_from_variables,
+    rows_from_yaml_heuristics,
+    story_from_docassemble_yaml,
     story_from_docassemble_json,
 )
 from docassemble.ALDashboard.api_dashboard_utils import (
@@ -173,6 +179,19 @@ class TestALKilnStory(unittest.TestCase):
         )
         self.assertIn("| var | value |", result["feature_text"])
         self.assertIn("| x | 1 |", result["feature_text"])
+        self.assertEqual(
+            result["preview_markdown"],
+            build_feature_preview_markdown(result["feature_text"]),
+        )
+
+    def test_build_feature_preview_markdown_preserves_blank_lines(self):
+        preview = build_feature_preview_markdown(
+            "Feature: Story\n\nScenario: Preview\n  Given x < y"
+        )
+        self.assertTrue(all(line.startswith("    ") for line in preview.split("\n")))
+        self.assertIn("    \n", preview)
+        self.assertIn("    Scenario: Preview", preview)
+        self.assertIn("    Feature: Story", preview)
 
     def test_api_payload_accepts_json_text(self):
         payload = alkiln_story_payload_from_options(
@@ -187,6 +206,285 @@ class TestALKilnStory(unittest.TestCase):
         self.assertIn(
             'Given I start the interview at "test.yml"', payload["feature_text"]
         )
+
+    def test_rows_from_yaml_heuristics_extracts_fields_and_continue_button(self):
+        yaml_text = """---
+question: Name
+fields:
+  - First name: users[0].name.first
+  - Last name: users[0].name.last
+  - Is active?: is_active
+    datatype: yesno
+---
+question: Done
+continue button field: saw_done_screen
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| users[0].name.first | Jane |", rows)
+        self.assertIn("| users[0].name.last | Smith |", rows)
+        self.assertIn("| is_active | True |", rows)
+        self.assertIn("| saw_done_screen | True |", rows)
+
+    def test_rows_from_yaml_heuristics_normalizes_today_default(self):
+        yaml_text = """---
+question: Signature
+fields:
+  - Signature date: principal_signature_date
+    datatype: date
+    default: ${ today() }
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| principal_signature_date | today |", rows)
+        self.assertNotIn("| principal_signature_date | ${ today() } |", rows)
+
+    def test_rows_from_yaml_heuristics_uses_examples_and_minlength(self):
+        yaml_text = """---
+question: Vehicle
+fields:
+  - Vehicle year: vehicle_year
+  - Vehicle make: vehicle_make
+    under text: "example: Kia"
+  - Vehicle Identification Number (VIN): VIN
+    minlength: 17
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| vehicle_year | 2023 |", rows)
+        self.assertIn("| vehicle_make | Kia |", rows)
+        self.assertIn("| VIN | 11111111111111111 |", rows)
+
+    def test_rows_from_yaml_heuristics_supports_peoplelist_fields_helpers(self):
+        yaml_text = """---
+fields:
+  - code: |
+      users[i].name_fields(show_title=True)
+  - code: |
+      users[i].address_fields(show_country=True, show_county=True, allow_no_address=True, ask_if_impounded=True)
+  - code: |
+      users[i].gender_fields()
+  - code: |
+      users[i].language_fields()
+  - code: |
+      users[i].pronoun_fields()
+---
+fields:
+  - code: |
+      other_parties[i].name_fields(person_or_business='business')
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| users[0].name.title | Mr. |", rows)
+        self.assertIn("| users[0].name.first | Jane |", rows)
+        self.assertIn("| users[0].name.suffix | Jr. |", rows)
+        self.assertIn("| users[0].address.has_no_address | False |", rows)
+        self.assertIn("| users[0].address.country | US |", rows)
+        self.assertIn("| users[0].address.county | Suffolk |", rows)
+        self.assertIn("| users[0].address.impounded | False |", rows)
+        self.assertIn("| users[0].gender | female |", rows)
+        self.assertIn("| users[0].language | en |", rows)
+        self.assertIn("| users[0].pronouns['he/him/his'] | True |", rows)
+        self.assertIn("| other_parties[0].name.first | Acme LLC |", rows)
+        self.assertNotIn("| other_parties[0].name.last | Smith |", rows)
+
+    def test_rows_from_yaml_heuristics_adds_assemblyline_people_for_gather(self):
+        yaml_text = """---
+objects:
+  - children: ALPeopleList.using(ask_number=True)
+---
+mandatory: True
+code: |
+  users.gather()
+  children.gather()
+---
+event: download
+question: Download
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| users.target_number | 1 |", rows)
+        self.assertIn("| users[0].name.first | Jane |", rows)
+        self.assertIn("| children.target_number | 1 |", rows)
+        self.assertIn("| children[0].name.last | Smith |", rows)
+
+    def test_rows_from_yaml_heuristics_handles_single_field_sets_and_checkboxes(self):
+        yaml_text = """---
+question: Role
+field: person_answering
+datatype: radio
+choices:
+  - Tenant: tenant
+  - Attorney: attorney
+---
+question: Terms
+fields:
+  - Accept terms: acknowledged_information_use
+    datatype: checkboxes
+    choices:
+      - I accept the terms of use.
+      - Email me updates.
+---
+question: Address
+sets:
+  - users[0].address.address
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| person_answering | tenant |", rows)
+        self.assertIn(
+            "| acknowledged_information_use['I accept the terms of use.'] | True |",
+            rows,
+        )
+        self.assertIn(
+            "| acknowledged_information_use['Email me updates.'] | False |",
+            rows,
+        )
+        self.assertIn("| users[0].address.address | 123 Main St |", rows)
+        self.assertIn("| users[0].address.city | Boston |", rows)
+        self.assertIn("| users[0].address.state | MA |", rows)
+        self.assertIn("| users[0].address.zip | 02108 |", rows)
+
+    def test_rows_from_yaml_heuristics_extracts_direct_code_references(self):
+        yaml_text = """---
+objects:
+  - users[i].attorney: ALPeopleList.using(ask_number=True)
+---
+mandatory: True
+code: |
+  users[0].address.address
+  users[0].signature
+  users[0].attorney.target_number = 1
+  users[0].attorney[0].address.address
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| users[0].address.address | 123 Main St |", rows)
+        self.assertIn("| users[0].address.city | Boston |", rows)
+        self.assertIn("| users[0].signature | /placeholder_signature.png |", rows)
+        self.assertIn("| users[0].attorney.target_number | 1 |", rows)
+        self.assertIn("| users[0].attorney[0].name.first | Jane |", rows)
+        self.assertIn("| users[0].attorney[0].address.address | 123 Main St |", rows)
+
+    def test_story_from_docassemble_yaml_loads_local_includes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_path = temp_path / "shared.yml"
+            shared_path.write_text(
+                """---
+question: Shared
+fields:
+  - Acknowledge: acknowledged_information_use
+    datatype: yesno
+""",
+                encoding="utf-8",
+            )
+            main_path = temp_path / "main.yml"
+            main_path.write_text(
+                """---
+include:
+  - shared.yml
+---
+mandatory: True
+code: |
+  users[0].address.address
+---
+event: final_screen
+question: Done
+""",
+                encoding="utf-8",
+            )
+            result = story_from_docassemble_yaml(
+                main_path.read_text(encoding="utf-8"),
+                filename=str(main_path),
+                options=StoryOptions(
+                    yaml_file_name="main.yml",
+                    question_id="final_screen",
+                    ignore_anywhere_in_var_name=[],
+                ),
+            )
+        self.assertIn("| acknowledged_information_use | True |", result["rows"])
+        self.assertIn("| users[0].address.address | 123 Main St |", result["rows"])
+        self.assertIn("| users[0].address.city | Boston |", result["rows"])
+
+    def test_story_from_docassemble_yaml_detects_filename_and_ending_screen(self):
+        yaml_text = """---
+id: intro
+question: Intro
+---
+event: final_screen
+question: Done
+"""
+        result = story_from_docassemble_yaml(
+            yaml_text,
+            filename="/tmp/example_interview.yml",
+            options=StoryOptions(
+                yaml_file_name="example_interview.yml",
+                question_id=detect_yaml_ending_screen(yaml_text),
+                ignore_anywhere_in_var_name=[],
+            ),
+        )
+        self.assertEqual(result["yaml_file_name"], "example_interview.yml")
+        self.assertEqual(result["question_id"], "final_screen")
+        self.assertIn(
+            'Given I start the interview at "example_interview.yml"',
+            result["feature_text"],
+        )
+        self.assertIn('And the user gets to "final_screen"', result["feature_text"])
+
+    def test_detect_yaml_ending_screen_prefers_sanitized_id(self):
+        yaml_text = """---
+id: download lemon_law_letter
+event: lemon_law_letter_download
+question: Done
+"""
+        self.assertEqual(
+            detect_yaml_ending_screen(yaml_text),
+            "download lemon_law_letter",
+        )
+
+    def test_api_payload_accepts_yaml_text(self):
+        payload = alkiln_story_payload_from_options(
+            {
+                "yaml_text": "---\nfields:\n  - Email: user_email\n    input type: email\n---\nevent: done\nquestion: Done\n",
+                "filename": "intake.yml",
+                "ignore_anywhere_in_var_name": [],
+            }
+        )
+        self.assertEqual(payload["yaml_file_name"], "intake.yml")
+        self.assertEqual(payload["question_id"], "done")
+        self.assertIn("| user_email | user@example.com |", payload["rows"])
+
+    def test_api_payload_accepts_yaml_file_content_base64(self):
+        yaml_text = (
+            "---\nfields:\n  - Name: user_name\n---\nid: final\nquestion: Done\n"
+        )
+        payload = alkiln_story_payload_from_options(
+            {
+                "filename": "uploaded_interview.yml",
+                "file_content_base64": base64.b64encode(
+                    yaml_text.encode("utf-8")
+                ).decode("ascii"),
+                "ignore_anywhere_in_var_name": [],
+            }
+        )
+        self.assertEqual(payload["yaml_file_name"], "uploaded_interview.yml")
+        self.assertEqual(payload["question_id"], "final")
+        self.assertIn("| user_name | Sample answer |", payload["rows"])
 
     def test_load_docassemble_json_text_accepts_fixture_textarea_newlines(self):
         json_text = read_fixture("fixture_interview_answers_textarea_newlines.json")

@@ -1655,23 +1655,101 @@ def yaml_reformat_payload_from_options(
 
 def alkiln_story_payload_from_request() -> Dict[str, Any]:
     raw = merge_raw_options(_request_dict())
-    return alkiln_story_payload_from_options(raw)
+    upload: Optional[Dict[str, Any]] = None
+    if "file" in request.files:
+        upload = _read_single_upload(field_name="file")
+    elif "files" in request.files:
+        uploads = _read_multi_uploads(field_name="files")
+        upload = uploads[0] if uploads else None
+    return alkiln_story_payload_from_options(raw, upload=upload)
 
 
-def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+def alkiln_story_payload_from_options(
+    raw_options: Mapping[str, Any], *, upload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     from .alkiln_story import (
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME,
         StoryOptions,
         default_yaml_file_name,
         load_docassemble_json_text,
+        story_from_docassemble_yaml,
         story_from_docassemble_json,
+        detect_yaml_ending_screen,
     )
 
     raw = merge_raw_options(raw_options)
     data = raw.get("data")
     json_text = raw.get("json_text") or raw.get("json")
+    yaml_text = raw.get("yaml_text") or raw.get("yaml_content")
     variables = raw.get("variables")
     session_id = str(raw.get("session_id") or raw.get("key") or "").strip()
+    source_token = str(
+        raw.get("source_token")
+        or raw.get("playground_source_token")
+        or raw.get("yaml_source_token")
+        or ""
+    ).strip()
+    playground_project = str(raw.get("playground_project") or "").strip()
+    playground_yaml_file = str(raw.get("playground_yaml_file") or "").strip()
+    yaml_source_filename = str(
+        raw.get("filename") or raw.get("yaml_file_name") or ""
+    ).strip()
+    yaml_source_path: Optional[str] = None
+
+    if upload is None and raw.get("file_content_base64") is not None:
+        filename = str(raw.get("filename") or "upload.yml")
+        content = decode_base64_content(raw.get("file_content_base64"))
+        _validate_upload_size(content)
+        upload = {"filename": filename, "content": content}
+
+    if yaml_text is None and upload is not None:
+        filename = str(upload.get("filename") or "upload.yml")
+        content = upload.get("content")
+        if not isinstance(content, (bytes, bytearray)):
+            raise DashboardAPIValidationError("Upload content must be bytes.")
+        if not filename.lower().endswith((".yml", ".yaml")):
+            raise DashboardAPIValidationError(
+                "Only YAML uploads are supported for heuristic story generation.",
+                status_code=415,
+            )
+        yaml_text = bytes(content).decode("utf-8", errors="replace")
+        yaml_source_filename = filename
+
+    if yaml_text is None and source_token:
+        from .interview_linter import _resolve_source_token
+
+        source_path = _resolve_source_token(source_token)
+        if not source_path or not os.path.exists(source_path):
+            raise DashboardAPIValidationError(
+                f"Could not resolve YAML source token {source_token!r}."
+            )
+        with open(source_path, "r", encoding="utf-8") as source_file:
+            yaml_text = source_file.read()
+        yaml_source_path = source_path
+        yaml_source_filename = raw.get("filename") or source_token
+
+    if yaml_text is None and playground_yaml_file:
+        from .interview_linter import list_playground_yaml_files
+
+        playground_files = list_playground_yaml_files(playground_project or "default")
+        selected_file = next(
+            (
+                item
+                for item in playground_files
+                if item.get("label") == playground_yaml_file
+                or item.get("token") == playground_yaml_file
+            ),
+            None,
+        )
+        if not selected_file:
+            raise DashboardAPIValidationError(
+                f"Could not find playground YAML file {playground_yaml_file!r}."
+            )
+        source_path = str(selected_file.get("token") or "")
+        with open(source_path, "r", encoding="utf-8") as source_file:
+            yaml_text = source_file.read()
+        yaml_source_path = source_path
+        yaml_source_filename = str(selected_file.get("label") or playground_yaml_file)
 
     if data is None and session_id:
         from .aldashboard import (
@@ -1701,6 +1779,9 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
             raise DashboardAPIValidationError(
                 "Could not load variables for the requested session."
             ) from exc
+    elif data is None and yaml_text is not None:
+        if not isinstance(yaml_text, str) or not yaml_text.strip():
+            raise DashboardAPIValidationError("yaml_text must be non-empty YAML.")
     elif data is None and json_text is not None:
         if not isinstance(json_text, str) or not json_text.strip():
             raise DashboardAPIValidationError("json_text must be non-empty JSON.")
@@ -1719,9 +1800,11 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
     ):
         data = raw
 
-    if not isinstance(data, dict):
+    if yaml_text is None and not isinstance(data, dict):
         raise DashboardAPIValidationError(
-            "Provide docassemble JSON as `data`, `json_text`, or `variables`."
+            "Provide docassemble JSON as `data`, `json_text`, or `variables`, "
+            "or YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
+            "`source_token`, or `playground_project` with `playground_yaml_file`."
         )
 
     ignore_anywhere = _load_string_list_field(
@@ -1731,12 +1814,24 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
     if ignore_anywhere is None:
         ignore_anywhere = list(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME)
 
-    yaml_file_name = str(
-        raw.get("yaml_file_name")
-        or raw.get("interview_path")
-        or default_yaml_file_name(data)
-    ).strip()
-    question_id = str(raw.get("question_id") or "review_screen").strip()
+    if yaml_text is not None:
+        yaml_default_name = (
+            yaml_source_filename or raw.get("interview_path") or "interview.yml"
+        )
+        question_default = detect_yaml_ending_screen(
+            yaml_text, source_path=yaml_source_path
+        )
+    else:
+        yaml_default_name = raw.get("interview_path") or default_yaml_file_name(data)
+        question_default = "review_screen"
+
+    if raw.get("yaml_file_name"):
+        yaml_file_name = str(raw.get("yaml_file_name")).strip()
+    elif yaml_text is not None:
+        yaml_file_name = os.path.basename(str(yaml_default_name).rsplit(":", 1)[-1])
+    else:
+        yaml_file_name = str(yaml_default_name).strip()
+    question_id = str(raw.get("question_id") or question_default).strip()
     feature_description = str(
         raw.get("feature_description") or "Generated docassemble test"
     ).strip()
@@ -1759,6 +1854,12 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
         synthesize_target_number=synthesize_target_number,
         ignore_anywhere_in_var_name=ignore_anywhere,
     )
+    if yaml_text is not None:
+        return story_from_docassemble_yaml(
+            yaml_text,
+            filename=yaml_source_path or yaml_file_name,
+            options=options,
+        )
     return story_from_docassemble_json(data, options=options)
 
 
@@ -2226,11 +2327,12 @@ def build_openapi_spec() -> Dict[str, Any]:
             },
             f"{DASHBOARD_API_BASE_PATH}/kiln/story": {
                 "post": {
-                    "summary": "Convert docassemble JSON or a saved session to an ALKiln story",
+                    "summary": "Convert docassemble JSON, YAML, or a saved session to an ALKiln story",
                     "description": (
                         "Accepts docassemble JSON as `data`, `json_text`, or `variables`, "
-                        "or a saved interview `session_id`, and returns ALKiln table rows "
-                        "plus complete Gherkin feature text."
+                        "a saved interview `session_id`, or interview YAML via `yaml_text`, "
+                        "upload, source token, or playground selection. YAML input uses "
+                        "heuristics to create table rows and detect the ending screen."
                     ),
                     "requestBody": {
                         "content": {
@@ -2240,6 +2342,11 @@ def build_openapi_spec() -> Dict[str, Any]:
                                     "properties": {
                                         "data": {"type": "object"},
                                         "json_text": {"type": "string"},
+                                        "yaml_text": {"type": "string"},
+                                        "file_content_base64": {"type": "string"},
+                                        "source_token": {"type": "string"},
+                                        "playground_project": {"type": "string"},
+                                        "playground_yaml_file": {"type": "string"},
                                         "variables": {"type": "object"},
                                         "session_id": {
                                             "type": "string",

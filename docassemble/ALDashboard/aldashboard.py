@@ -69,6 +69,7 @@ __all__ = [
     "install_fonts",
     "list_installed_fonts",
     "dashboard_get_session_variables",
+    "dashboard_find_session_filename",
     "dashboard_session_activity",
     "make_usage_rows",
     "compute_heatmap_styles",
@@ -625,6 +626,36 @@ def dashboard_get_session_variables(session_id: str, filename: str):
     """
     user_dict = get_session_variables(filename, session_id, secret=None, simplify=False)
     return serializable_dict(user_dict, include_internal=False)
+
+
+def dashboard_find_session_filename(session_id: str) -> Optional[str]:
+    """
+    Return the filename for a saved interview session key, when it can be
+    identified unambiguously.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return None
+
+    find_session_query = text("""
+SELECT
+    filename,
+    MAX(modtime) AS modtime
+FROM
+    userdict
+WHERE
+    key = :session_id
+GROUP BY
+    filename
+ORDER BY
+    modtime DESC;
+        """)
+    with db.connect() as con:
+        rows = list(con.execute(find_session_query, {"session_id": session_id}))
+
+    if len(rows) == 1:
+        return str(rows[0].filename)
+    return None
 
 
 class ALPackageInstaller(DAObject):

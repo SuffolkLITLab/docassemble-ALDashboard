@@ -14,16 +14,28 @@ DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME = [
     "al_version",
     "al_session_store_default_filename",
     "all_answer_sets",
+    "all_reserved_names",
+    "all_template_fields",
+    "al_interview_languages",
+    "al_name_suffixes",
+    "al_name_titles",
     "menu_items",
     "._",
     "_attachment",
     "_bundle",
+    "available_efile_courts",
+    "available_templates",
+    "combined_fields",
     "court_emails",
+    "document_templates",
     "download_titles",
     "form_approved_for_email_filing",
     "github_user",
     "interview_metadata",
     "interview_short_title",
+    "just_bmc_courts",
+    "just_district_courts",
+    "legalserver_data",
     "macourts",
     "package_name",
     "package_version_number",
@@ -48,6 +60,7 @@ DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME = [
     "_internal",
     "nav",
     "url_args",
+    "valid_housing_courts",
     "_class",
     "auto_gather",
     "instanceName",
@@ -73,6 +86,79 @@ DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME = [
     "complete_attribute",
 ]
 
+DEFAULT_IGNORE_IF_TOP_LEVEL_KEY = [
+    "DA",
+    "DABreadCrumbs",
+    "DAGlobal",
+    "DAGoogleAPI",
+    "DAOAuth",
+    "DARedis",
+    "DAValidationError",
+    "DAWeb",
+    "DAWebError",
+    "STOP_RENDERING",
+    "_attachment_email_address",
+    "_attachment_include_editable",
+    "_back_one",
+    "_checkboxes",
+    "_datatypes",
+    "_email_attachments",
+    "_files",
+    "_question_name",
+    "_question_number",
+    "_save_as",
+    "_success",
+    "_the_image",
+    "_track_location",
+    "_tracker",
+    "_varnames",
+    "action_arguments",
+    "background_error_action",
+    "chat_partners_available",
+    "command",
+    "countries_list",
+    "device",
+    "device_local",
+    "dispatch",
+    "incoming_email",
+    "interface",
+    "interview_email",
+    "json_response",
+    "last_access_days",
+    "last_access_delta",
+    "last_access_hours",
+    "last_access_minutes",
+    "last_access_time",
+    "location_known",
+    "location_returned",
+    "logic_explanation",
+    "message",
+    "multi_user",
+    "prevent_going_back",
+    "raw",
+    "referring_url",
+    "returning_user",
+    "role",
+    "role_event",
+    "role_needed",
+    "section_links",
+    "server_capabilities",
+    "session_local",
+    "session_tags",
+    "start_time",
+    "task_not_yet_performed",
+    "task_performed",
+    "track_location",
+    "url_args",
+    "user_dict",
+    "user_info",
+    "user_lat_lon",
+    "user_local",
+    "user_logged_in",
+    "user_privileges",
+    "will_send_to_real_court",
+]
+
 DEFAULT_IGNORE_IF_IS_KEY = [
     "all_courts",
     "alt_text",
@@ -81,6 +167,57 @@ DEFAULT_IGNORE_IF_IS_KEY = [
     "object_type",
     "gathered",
     "minimum_number",
+    # Imported names used only for Python type annotations can be serialized
+    # into docassemble variables, but they are not interview answers.
+    "Annotated",
+    "Any",
+    "Callable",
+    "ClassVar",
+    "Concatenate",
+    "Dict",
+    "Fields",
+    "Final",
+    "ForwardRef",
+    "FrozenSet",
+    "Generic",
+    "Iterable",
+    "Iterator",
+    "List",
+    "Literal",
+    "Mapping",
+    "MutableMapping",
+    "MutableSequence",
+    "MutableSet",
+    "NewType",
+    "NoReturn",
+    "NotRequired",
+    "Optional",
+    "ParamSpec",
+    "Protocol",
+    "Required",
+    "Sequence",
+    "Set",
+    "Self",
+    "Tuple",
+    "Type",
+    "TypeAlias",
+    "TypeGuard",
+    "TypeVar",
+    "TypedDict",
+    "Union",
+    "Unpack",
+]
+
+DEFAULT_IGNORE_IF_CLASS_NAME_CONTAINS = [
+    "docassemble.AssemblyLine.al_document.DALazyAttribute",
+    "docassemble.base.util.DACloudStorage",
+    "docassemble.base.util.DAFile",
+    "docassemble.base.util.DAFileCollection",
+    "docassemble.base.util.DAFileList",
+    "docassemble.base.util.DALazyTemplate",
+    "docassemble.base.util.DAStaticFile",
+    "docassemble.base.util.DAStore",
+    "S3Backend",
 ]
 
 
@@ -95,7 +232,11 @@ class StoryOptions:
     ignore_anywhere_in_var_name: Sequence[str] = tuple(
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME
     )
+    ignore_if_top_level_key: Sequence[str] = tuple(DEFAULT_IGNORE_IF_TOP_LEVEL_KEY)
     ignore_if_is_key: Sequence[str] = tuple(DEFAULT_IGNORE_IF_IS_KEY)
+    ignore_if_class_name_contains: Sequence[str] = tuple(
+        DEFAULT_IGNORE_IF_CLASS_NAME_CONTAINS
+    )
 
 
 def _format_value(value: Any) -> Any:
@@ -111,6 +252,13 @@ def _format_value(value: Any) -> Any:
 
 def _is_ignored_name(name: str, ignore_anywhere: Sequence[str]) -> bool:
     return any(to_ignore and to_ignore in name for to_ignore in ignore_anywhere)
+
+
+def _is_ignored_class(value: Mapping[str, Any], ignore_classes: Sequence[str]) -> bool:
+    class_name = value.get("_class")
+    return isinstance(class_name, str) and any(
+        to_ignore and to_ignore in class_name for to_ignore in ignore_classes
+    )
 
 
 def _object_name(is_class: bool, name: str, key: str) -> str:
@@ -148,11 +296,21 @@ def _story_row(
 
 
 def _parse_value(name: str, value: Any, options: StoryOptions) -> List[str]:
+    if not name and isinstance(value, Mapping):
+        rows: List[str] = []
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text in options.ignore_if_top_level_key:
+                continue
+            rows.extend(_parse_value(key_text, item, options))
+        return rows
     if name in options.ignore_if_is_key or _is_ignored_name(
         name, options.ignore_anywhere_in_var_name
     ):
         return []
     if isinstance(value, Mapping):
+        if _is_ignored_class(value, options.ignore_if_class_name_contains):
+            return []
         return _parse_object(name, value, options)
     if isinstance(value, list):
         return _parse_array(name, value, options)
@@ -257,7 +415,12 @@ def rows_from_variables(
     variables: Mapping[str, Any], *, options: Optional[StoryOptions] = None
 ) -> List[str]:
     story_options = options or StoryOptions()
-    all_rows = _parse_value("", variables, story_options)
+    all_rows: List[str] = []
+    for key, item in variables.items():
+        key_text = str(key)
+        if key_text in story_options.ignore_if_top_level_key:
+            continue
+        all_rows.extend(_parse_value(key_text, item, story_options))
     rows: List[str] = []
     for row in all_rows:
         if isinstance(row, str) and row not in rows:

@@ -77,6 +77,72 @@ class TestALKilnStory(unittest.TestCase):
         self.assertIn("| users[1].name['first'] | Grace |", rows)
         self.assertNotIn("| users.there_are_any | True |", rows)
 
+    def test_rows_from_variables_skips_type_annotation_imports(self):
+        rows = rows_from_variables(
+            {
+                "Dict": None,
+                "Tuple": None,
+                "Fields": None,
+                "Optional": None,
+                "List": None,
+                "Union": None,
+                "Iterable": None,
+                "Callable": None,
+                "name": "Ada",
+            },
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertEqual(rows, ["| name | Ada |"])
+
+    def test_rows_from_variables_skips_file_helper_objects(self):
+        rows = rows_from_variables(
+            {
+                "uploaded_file": {
+                    "_class": "docassemble.base.util.DAFile",
+                    "filename": "secret.pdf",
+                    "number": 42,
+                    "ok": True,
+                },
+                "logo": {
+                    "_class": "docassemble.base.util.DAStaticFile",
+                    "filename": "logo.png",
+                    "package": "docassemble.demo",
+                },
+                "name": "Ada",
+            },
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertEqual(rows, ["| name | Ada |"])
+
+    def test_rows_from_variables_skips_reference_cache_roots(self):
+        rows = rows_from_variables(
+            {
+                "legalserver_data": {"documents": [{"name": "Cached PDF"}]},
+                "valid_housing_courts": [{"name": "Housing Court"}],
+                "all_reserved_names": {"elements": {"x": True}},
+                "name": "Ada",
+            },
+        )
+        self.assertEqual(rows, ["| name | Ada |"])
+
+    def test_rows_from_variables_skips_documented_top_level_reserved_names(self):
+        rows = rows_from_variables(
+            {
+                "device": "phone",
+                "session_tags": ["draft"],
+                "start_time": "2026-05-19T10:30:00-04:00",
+                "user_lat_lon": "42,-71",
+                "name": "Ada",
+                "child": {"name": "Grace"},
+            },
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| name | Ada |", rows)
+        self.assertIn("| child['name'] | Grace |", rows)
+        self.assertNotIn("| device | phone |", rows)
+        self.assertNotIn("| session_tags[0] | draft |", rows)
+        self.assertNotIn("| user_lat_lon | 42,-71 |", rows)
+
     def test_rows_from_variables_can_emit_legacy_trigger_column(self):
         rows = rows_from_variables(
             {"name": "Ada"},
@@ -176,10 +242,12 @@ class TestALKilnStory(unittest.TestCase):
 
     def test_openapi_and_mcp_include_story_endpoint(self):
         spec = build_openapi_spec()
-        self.assertIn("/al/api/v1/dashboard/interview/story", spec["paths"])
+        self.assertIn("/al/api/v1/dashboard/kiln/story", spec["paths"])
+        self.assertNotIn("/al/api/v1/dashboard/interview/story", spec["paths"])
+        self.assertNotIn("/al/api/v1/dashboard/interview/kiln-fixture", spec["paths"])
         tools = openapi_to_mcp_tools(spec, namespace="aldashboard")
         names = [tool["name"] for tool in tools]
-        self.assertIn("aldashboard.post_al_api_v1_dashboard_interview_story", names)
+        self.assertIn("aldashboard.post_al_api_v1_dashboard_kiln_story", names)
 
 
 if __name__ == "__main__":

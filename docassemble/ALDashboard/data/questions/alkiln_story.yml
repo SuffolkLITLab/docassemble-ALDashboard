@@ -11,13 +11,20 @@ metadata:
 ---
 modules:
   - .alkiln_story
+  - .aldashboard
 ---
 objects:
   - story_download: DAFile
 ---
 mandatory: True
 code: |
-  pasted_json
+  story_source
+  if story_source == "session":
+    selected_interview_filename
+    skip_step_one_sessions
+    selected_session_id
+  else:
+    pasted_json
   story_result
   show_results
 ---
@@ -31,13 +38,110 @@ code: |
 question: |
   Generate an ALKiln story
 subquestion: |
+  Choose the source for the story table.
+fields:
+  - Source: story_source
+    datatype: radio
+    choices:
+      - Saved interview session: session
+      - Pasted JSON: pasted_json
+    default: session
+---
+code: |
+  interviews = {interview["filename"]: interview for interview in interview_menu()}
+  story_interview_choices = {}
+  for interview_filename, interview_info in sorted(
+    interviews.items(),
+    key=lambda item: (
+      item[1].get("title") or item[0]
+      if isinstance(item[1], dict)
+      else item[0]
+    ),
+  ):
+    interview_title = (
+      interview_info.get("title")
+      if isinstance(interview_info, dict)
+      else interview_filename
+    )
+    story_interview_choices[interview_filename] = (
+      f"{interview_title} | {interview_filename}"
+    )
+---
+question: |
+  Select an interview
+subquestion: |
+  Pick the interview whose saved answers you want to convert.
+fields:
+  - Interview: selected_interview_filename
+    datatype: combobox
+    code: |
+      story_interview_choices
+  - Skip sessions that are still on the first page: skip_step_one_sessions
+    datatype: yesno
+    default: True
+---
+code: |
+  import json
+
+  def _story_progress_label(progress, num_keys):
+    if progress is not None and str(progress).strip():
+      try:
+        return f"{float(progress):.2f}%"
+      except Exception:
+        return str(progress)
+    return f"Step {num_keys}"
+
+  story_session_choices = {}
+  for saved_session in speedy_get_sessions(
+    filename=selected_interview_filename,
+    filter_step1=skip_step_one_sessions,
+  ):
+    session_title = saved_session.title or saved_session.auto_title or saved_session.key
+    story_session_choices[saved_session.key] = (
+      f"{session_title} | {saved_session.key} | "
+      f"{format_date(saved_session.modtime, 'MMM d YYYY')} | "
+      f"{_story_progress_label(saved_session.progress, saved_session.num_keys)}"
+    )
+---
+question: |
+  Select a session
+subquestion: |
+  The progress value is shown when the interview saved it, so you can pick a recent and fairly complete run.
+fields:
+  - Session: selected_session_id
+    datatype: combobox
+    code: |
+      story_session_choices
+validation code: |
+  if not story_session_choices:
+    validation_error("No saved sessions were found for this interview.")
+  try:
+    selected_session_variables = dashboard_get_session_variables(
+      session_id=selected_session_id,
+      filename=selected_interview_filename,
+    )
+  except Exception as err:
+    validation_error(
+      "Could not load variables for this session. It may be encrypted with "
+      "a key that is not available to the dashboard, or the session may not "
+      f"contain a complete interview dictionary. Details: {err}",
+      field="selected_session_id",
+    )
+---
+question: |
+  Generate an ALKiln story
+subquestion: |
   Paste the JSON output from a docassemble interview.
 fields:
   - Docassemble JSON: pasted_json
     input type: area
     rows: 12
+---
+question: |
+  Story options
+fields:
   - YAML file name: yaml_file_name
-    default: interview.yml
+    default: ${ selected_interview_filename if story_source == "session" else "interview.yml" }
   - Question ID: question_id
     default: review_screen
   - Feature description: feature_description
@@ -68,7 +172,13 @@ fields:
 ---
 code: |
   import json
-  story_data = load_docassemble_json_text(pasted_json)
+  if story_source == "session":
+    story_data = {
+      "i": selected_interview_filename,
+      "variables": selected_session_variables,
+    }
+  else:
+    story_data = load_docassemble_json_text(pasted_json)
   ignore_anywhere = json.loads(ignore_anywhere_text) if ignore_anywhere_text.strip() else []
   story_options = StoryOptions(
     feature_description=feature_description,

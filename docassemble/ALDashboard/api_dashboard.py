@@ -509,10 +509,10 @@ def dashboard_interview_lint():
     )
 
 
-@app.route(f"{DASHBOARD_API_BASE_PATH}/interview/story", methods=["POST"])
+@app.route(f"{DASHBOARD_API_BASE_PATH}/kiln/story", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def dashboard_interview_story():
+def dashboard_kiln_story():
     return _run_endpoint(alkiln_story_payload_from_request, dashboard_alkiln_story_task)
 
 

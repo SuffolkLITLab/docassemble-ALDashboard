@@ -1671,8 +1671,37 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
     data = raw.get("data")
     json_text = raw.get("json_text") or raw.get("json")
     variables = raw.get("variables")
+    session_id = str(raw.get("session_id") or raw.get("key") or "").strip()
 
-    if data is None and json_text is not None:
+    if data is None and session_id:
+        from .aldashboard import (
+            dashboard_find_session_filename,
+            dashboard_get_session_variables,
+        )
+
+        session_filename = str(
+            raw.get("filename") or raw.get("interview_path") or ""
+        ).strip()
+        if not session_filename:
+            found_filename = dashboard_find_session_filename(session_id)
+            if not found_filename:
+                raise DashboardAPIValidationError(
+                    "filename or interview_path is required when session_id cannot be resolved unambiguously."
+                )
+            session_filename = found_filename
+        try:
+            data = {
+                "i": session_filename,
+                "variables": dashboard_get_session_variables(
+                    session_id=session_id,
+                    filename=session_filename,
+                ),
+            }
+        except Exception as exc:
+            raise DashboardAPIValidationError(
+                "Could not load variables for the requested session."
+            ) from exc
+    elif data is None and json_text is not None:
         if not isinstance(json_text, str) or not json_text.strip():
             raise DashboardAPIValidationError("json_text must be non-empty JSON.")
         try:
@@ -2195,12 +2224,13 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
-            f"{DASHBOARD_API_BASE_PATH}/interview/story": {
+            f"{DASHBOARD_API_BASE_PATH}/kiln/story": {
                 "post": {
-                    "summary": "Convert docassemble interview JSON to an ALKiln story",
+                    "summary": "Convert docassemble JSON or a saved session to an ALKiln story",
                     "description": (
-                        "Accepts docassemble JSON as `data`, `json_text`, or `variables` "
-                        "and returns ALKiln table rows plus complete Gherkin feature text."
+                        "Accepts docassemble JSON as `data`, `json_text`, or `variables`, "
+                        "or a saved interview `session_id`, and returns ALKiln table rows "
+                        "plus complete Gherkin feature text."
                     ),
                     "requestBody": {
                         "content": {
@@ -2211,6 +2241,19 @@ def build_openapi_spec() -> Dict[str, Any]:
                                         "data": {"type": "object"},
                                         "json_text": {"type": "string"},
                                         "variables": {"type": "object"},
+                                        "session_id": {
+                                            "type": "string",
+                                            "description": (
+                                                "Saved docassemble session key to convert directly."
+                                            ),
+                                        },
+                                        "filename": {
+                                            "type": "string",
+                                            "description": (
+                                                "Interview filename for session_id, for example "
+                                                "docassemble.pkg:data/questions/interview.yml."
+                                            ),
+                                        },
                                         "yaml_file_name": {"type": "string"},
                                         "question_id": {"type": "string"},
                                         "feature_description": {"type": "string"},
@@ -2329,7 +2372,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/lint</code></li>
-    <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/story</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/kiln/story</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/check</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/reformat</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
@@ -2347,6 +2390,7 @@ def build_docs_html() -> str:
     <li><code>/docx/relabel</code> can replace or skip labels by index and add labels via explicit updates or paragraph-range rules.</li>
     <li><code>/yaml/check</code> runs DAYamlChecker and classifies returned issues into <code>errors</code> and <code>warnings</code>.</li>
     <li><code>/yaml/reformat</code> uses DAYamlChecker's formatter and returns the updated YAML as <code>formatted_yaml</code>.</li>
+    <li><code>/kiln/story</code> accepts docassemble JSON or <code>session_id</code> with optional <code>filename</code>/<code>interview_path</code>, then converts the variables into ALKiln feature text.</li>
     <li><code>/jobs/&lt;job_id&gt;/download</code> streams file outputs from async job results. Use <code>?index=1</code> or <code>?field=...</code> when multiple file artifacts exist.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>

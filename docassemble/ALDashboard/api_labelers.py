@@ -67,7 +67,11 @@ from .api_dashboard_utils import (
     parse_bool,
     validate_docx_payload_from_options,
 )
-from .pdf_export_utils import build_pdf_export_fields_per_page
+from .pdf_export_utils import (
+    build_normalized_pdf_field_definitions,
+    build_pdf_export_fields_per_page,
+    deduplicate_fields_data,
+)
 
 __all__ = []
 
@@ -3177,6 +3181,9 @@ def pdf_labeler_apply_fields() -> Response:
             fields_data = fields_raw
         else:
             raise DashboardAPIValidationError("fields is required and must be a list.")
+        deduplicate_field_names = parse_bool(
+            post_data.get("deduplicate_field_names"), default=False
+        )
 
         # Get page count from original PDF
         import pikepdf
@@ -3189,6 +3196,9 @@ def pdf_labeler_apply_fields() -> Response:
         try:
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
+
+            if deduplicate_field_names:
+                fields_data = deduplicate_fields_data(fields_data)
 
             checkbox_export_values = {
                 str(field.get("name", "")): str(
@@ -3208,6 +3218,7 @@ def pdf_labeler_apply_fields() -> Response:
                 form_field_cls=FormField,
                 field_type_enum=FieldType,
                 color_parser=HexColor,
+                deduplicate_field_names=False,
             )
 
             # Apply fields using FormFyxer
@@ -3807,6 +3818,9 @@ def pdf_labeler_bulk_normalize():
         remove_embedded_fonts_flag = parse_bool(
             options.get("removeEmbeddedFonts"), default=False
         )
+        deduplicate_field_names = parse_bool(
+            options.get("deduplicateFieldNames"), default=False
+        )
 
         import zipfile as _zipfile
 
@@ -3848,56 +3862,22 @@ def pdf_labeler_bulk_normalize():
                         if not detected:
                             detected = []
 
-                        # Build normalized field definitions
-                        normalized_fields: list[dict[str, Any]] = []
-                        for field in detected:
-                            f: dict[str, Any] = (
-                                dict(field) if isinstance(field, dict) else {}
-                            )
-                            field_name = str(f.get("name", f.get("var_name", "field")))
-                            field_type_str = str(f.get("type", "text")).lower()
-                            page_idx = int(f.get("page", f.get("pageIndex", 0)))
-                            if page_idx >= page_count:
-                                page_idx = 0
-
-                            nf: dict[str, Any] = {
-                                "name": field_name,
-                                "type": field_type_str,
-                                "pageIndex": page_idx,
-                                "x": float(f.get("x", 0)),
-                                "y": float(f.get("y", 0)),
-                                "width": float(f.get("width", 100)),
-                                "height": float(f.get("height", 20)),
-                                "font": (
-                                    norm_font_name
-                                    if norm_font
-                                    else str(f.get("font", "Helvetica"))
-                                ),
-                                "fontSize": (
-                                    font_size_pt
-                                    if norm_font_size
-                                    else int(f.get("fontSize", 12) or 12)
-                                ),
-                                "autoSize": False,
-                            }
-
-                            if field_type_str == "checkbox" and norm_checkbox_style:
-                                nf["checkboxStyle"] = checkbox_style
-                                nf["checkboxExportValue"] = checkbox_export_value
-                            if field_type_str == "checkbox" and uniform_checkbox_size:
-                                nf["width"] = checkbox_size_pt
-                                nf["height"] = checkbox_size_pt
-                            if (
-                                auto_size_name_address
-                                and field_type_str == "text"
-                                and _looks_like_name_email_address_phone_field(
-                                    field_name
-                                )
-                            ):
-                                nf["autoSize"] = True
-                                nf["height"] = fixed_text_height_pt
-
-                            normalized_fields.append(nf)
+                        normalized_fields = build_normalized_pdf_field_definitions(
+                            detected,
+                            page_count=page_count,
+                            normalize_font=norm_font,
+                            font_name=norm_font_name,
+                            normalize_font_size=norm_font_size,
+                            font_size_pt=font_size_pt,
+                            normalize_checkbox_style=norm_checkbox_style,
+                            checkbox_style=checkbox_style,
+                            checkbox_export_value=checkbox_export_value,
+                            uniform_checkbox_size=uniform_checkbox_size,
+                            checkbox_size_pt=checkbox_size_pt,
+                            auto_size_name_address=auto_size_name_address,
+                            fixed_text_height_pt=fixed_text_height_pt,
+                            deduplicate_field_names=deduplicate_field_names,
+                        )
 
                         if not normalized_fields:
                             # No fields to normalize; include as-is
@@ -3911,6 +3891,7 @@ def pdf_labeler_bulk_normalize():
                             form_field_cls=FormField,
                             field_type_enum=FieldType,
                             color_parser=HexColor,
+                            deduplicate_field_names=False,
                         )
                         explicit_background_fields = (
                             _collect_fields_with_explicit_background(normalized_fields)

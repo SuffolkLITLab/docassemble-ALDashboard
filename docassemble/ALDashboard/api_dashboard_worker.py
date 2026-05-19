@@ -5,6 +5,7 @@ from typing import Any, Dict
 from docassemble.webapp.worker_common import bg_context, workerapp  # type: ignore[import-untyped]
 
 from .api_dashboard_utils import (
+    alkiln_story_payload_from_options,
     autolabel_payload_from_options,
     bootstrap_payload_from_options,
     docx_labeler_suggest_payload_from_options,
@@ -34,6 +35,12 @@ def dashboard_translation_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_autolabel_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return autolabel_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_alkiln_story_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return alkiln_story_payload_from_options(payload)
 
 
 @workerapp.task

@@ -1653,6 +1653,77 @@ def yaml_reformat_payload_from_options(
     }
 
 
+def alkiln_story_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    return alkiln_story_payload_from_options(raw)
+
+
+def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    from .alkiln_story import (
+        DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME,
+        StoryOptions,
+        default_yaml_file_name,
+        story_from_docassemble_json,
+    )
+
+    raw = merge_raw_options(raw_options)
+    data = raw.get("data")
+    json_text = raw.get("json_text") or raw.get("json")
+    variables = raw.get("variables")
+
+    if data is None and json_text is not None:
+        if not isinstance(json_text, str) or not json_text.strip():
+            raise DashboardAPIValidationError("json_text must be non-empty JSON.")
+        try:
+            data = json.loads(json_text)
+        except json.JSONDecodeError as exc:
+            raise DashboardAPIValidationError("json_text must be valid JSON.") from exc
+    elif data is None and variables is not None:
+        data = {"variables": variables}
+    elif data is None and any(
+        key in raw
+        for key in (
+            "i",
+            "variables",
+        )
+    ):
+        data = raw
+
+    if not isinstance(data, dict):
+        raise DashboardAPIValidationError(
+            "Provide docassemble JSON as `data`, `json_text`, or `variables`."
+        )
+
+    ignore_anywhere = _load_string_list_field(
+        raw.get("ignore_anywhere_in_var_name"),
+        field_name="ignore_anywhere_in_var_name",
+    )
+    if ignore_anywhere is None:
+        ignore_anywhere = list(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME)
+
+    yaml_file_name = str(
+        raw.get("yaml_file_name")
+        or raw.get("interview_path")
+        or default_yaml_file_name(data)
+    ).strip()
+    question_id = str(raw.get("question_id") or "review_screen").strip()
+    feature_description = str(
+        raw.get("feature_description") or "Generated docassemble test"
+    ).strip()
+    scenario_description = str(
+        raw.get("scenario_description") or "Generated scenario"
+    ).strip()
+
+    options = StoryOptions(
+        feature_description=feature_description,
+        scenario_description=scenario_description,
+        yaml_file_name=yaml_file_name or "interview.yml",
+        question_id=question_id or "review_screen",
+        ignore_anywhere_in_var_name=ignore_anywhere,
+    )
+    return story_from_docassemble_json(data, options=options)
+
+
 def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.pdf")
@@ -2115,6 +2186,37 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
+            f"{DASHBOARD_API_BASE_PATH}/interview/story": {
+                "post": {
+                    "summary": "Convert docassemble interview JSON to an ALKiln story",
+                    "description": (
+                        "Accepts docassemble JSON as `data`, `json_text`, or `variables` "
+                        "and returns ALKiln table rows plus complete Gherkin feature text."
+                    ),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {"type": "object"},
+                                        "json_text": {"type": "string"},
+                                        "variables": {"type": "object"},
+                                        "yaml_file_name": {"type": "string"},
+                                        "question_id": {"type": "string"},
+                                        "feature_description": {"type": "string"},
+                                        "scenario_description": {"type": "string"},
+                                        "ignore_anywhere_in_var_name": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
                 "post": {
                     "summary": "Detect and optionally relabel PDF fields (alias)",
@@ -2216,6 +2318,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/lint</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/story</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/check</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/reformat</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>

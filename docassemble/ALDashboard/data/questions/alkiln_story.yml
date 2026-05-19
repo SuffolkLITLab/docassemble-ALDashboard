@@ -1,0 +1,85 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: ALKiln story generator
+  temporary session: True
+  required privileges:
+    - admin
+    - developer
+---
+modules:
+  - .alkiln_story
+---
+objects:
+  - story_download: DAFile
+---
+mandatory: True
+code: |
+  pasted_json
+  story_result
+  show_results
+---
+code: |
+  import json
+  default_ignore_anywhere_text = json.dumps(
+    sorted(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME),
+    indent=2,
+  )
+---
+question: |
+  Generate an ALKiln story
+subquestion: |
+  Paste the JSON output from a docassemble interview.
+fields:
+  - Docassemble JSON: pasted_json
+    input type: area
+    rows: 12
+  - YAML file name: yaml_file_name
+    default: interview.yml
+  - Question ID: question_id
+    default: review_screen
+  - Feature description: feature_description
+    default: Generated docassemble test
+  - Scenario description: scenario_description
+    default: Generated scenario
+  - Output file name: output_file_name
+    default: generated_story.feature
+  - Ignore variable names containing: ignore_anywhere_text
+    input type: area
+    rows: 8
+    default: ${ default_ignore_anywhere_text }
+    help: |
+      JSON list of strings. A generated row is skipped when its variable name
+      contains one of these strings.
+---
+code: |
+  import json
+  story_data = json.loads(pasted_json)
+  ignore_anywhere = json.loads(ignore_anywhere_text) if ignore_anywhere_text.strip() else []
+  story_options = StoryOptions(
+    feature_description=feature_description,
+    scenario_description=scenario_description,
+    yaml_file_name=yaml_file_name,
+    question_id=question_id,
+    ignore_anywhere_in_var_name=ignore_anywhere,
+  )
+  story_result = story_from_docassemble_json(story_data, options=story_options)
+  story_download.initialize(
+    filename=output_file_name if output_file_name.endswith(".feature") else output_file_name + ".feature"
+  )
+  story_download.write(story_result["feature_text"])
+  story_download.commit()
+---
+event: show_results
+question: |
+  ALKiln story
+subquestion: |
+  Rows generated: **${ story_result["row_count"] }**
+
+  **[Download story](${ story_download.url_for(attachment=True) })**
+
+  ```gherkin
+  ${ story_result["feature_text"] }
+  ```

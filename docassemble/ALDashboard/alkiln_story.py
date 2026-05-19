@@ -2,9 +2,10 @@ import ast
 import glob
 import json
 import os
+import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional
 
 from ruamel.yaml import YAML
@@ -266,6 +267,9 @@ COMMON_AL_PEOPLE_LISTS = {
     "plaintiffs",
     "petitioners",
 }
+
+
+_DEFAULT_YAML_SOURCE_PATH = object()
 
 FIELD_NON_VARIABLE_KEYS = {
     "label",
@@ -691,34 +695,82 @@ def _iter_include_strings(include_value: Any) -> List[str]:
     return []
 
 
+def _is_path_within_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == (
+            os.path.realpath(root)
+        )
+    except ValueError:
+        return False
+
+
+def _normalize_yaml_source_path(source_path: Optional[str]) -> Optional[str]:
+    path = str(source_path or "").strip()
+    if not path:
+        return None
+    normalized = os.path.abspath(path)
+    if not os.path.isfile(normalized):
+        return None
+    if not normalized.lower().endswith((".yml", ".yaml")):
+        return None
+    return normalized
+
+
+def _normalize_include_relative_path(include_path: str) -> Optional[str]:
+    normalized = str(include_path or "").strip().replace("\\", "/")
+    if not normalized:
+        return None
+    if posixpath.isabs(normalized):
+        return None
+    normalized = posixpath.normpath(normalized)
+    if normalized in {"", ".", ".."} or normalized.startswith("../"):
+        return None
+    if not normalized.lower().endswith((".yml", ".yaml")):
+        return None
+    return normalized
+
+
 def _resolve_local_include_path(include_ref: str, source_path: str) -> Optional[str]:
     include_ref = str(include_ref or "").strip()
     if not include_ref:
         return None
-    source_dir = os.path.dirname(os.path.abspath(source_path))
+    normalized_source_path = _normalize_yaml_source_path(source_path)
+    if not normalized_source_path:
+        return None
+    source_dir = os.path.realpath(os.path.dirname(normalized_source_path))
     if ":" not in include_ref:
-        candidate = os.path.abspath(os.path.join(source_dir, include_ref))
-        return candidate if os.path.exists(candidate) else None
+        relative_path = _normalize_include_relative_path(include_ref)
+        if not relative_path:
+            return None
+        candidate = os.path.realpath(
+            os.path.join(source_dir, *relative_path.split("/"))
+        )
+        if not _is_path_within_root(candidate, source_dir):
+            return None
+        return candidate if os.path.isfile(candidate) else None
 
     package_name, relative_path = include_ref.split(":", 1)
-    relative_path = relative_path.strip()
+    relative_path = _normalize_include_relative_path(relative_path)
     if not relative_path:
         return None
     package_path = os.path.join(*package_name.split("."))
     home_dir = os.path.expanduser("~")
-    repo_root = _repo_root_for_path(source_path)
+    repo_root = _repo_root_for_path(normalized_source_path)
     search_patterns = [
-        os.path.join(repo_root, package_path, relative_path),
-        os.path.join(repo_root, package_path, "data", "questions", relative_path),
-        os.path.join(home_dir, "docassemble-*", package_path, relative_path),
-        os.path.join(
-            home_dir, "docassemble-*", package_path, "data", "questions", relative_path
-        ),
+        os.path.join(repo_root, package_path),
+        os.path.join(repo_root, package_path, "data", "questions"),
+        os.path.join(home_dir, "docassemble-*", package_path),
+        os.path.join(home_dir, "docassemble-*", package_path, "data", "questions"),
     ]
     for pattern in search_patterns:
-        for candidate in glob.glob(pattern):
-            if os.path.exists(candidate):
-                return os.path.abspath(candidate)
+        for base_dir in glob.glob(pattern):
+            if not os.path.isdir(base_dir):
+                continue
+            candidate = os.path.realpath(
+                os.path.join(base_dir, *relative_path.split("/"))
+            )
+            if _is_path_within_root(candidate, base_dir) and os.path.isfile(candidate):
+                return candidate
     return None
 
 
@@ -729,11 +781,11 @@ def load_docassemble_yaml_text(
     _seen_paths: Optional[set[str]] = None,
 ) -> List[Mapping[str, Any]]:
     docs = _load_yaml_documents(yaml_text)
-    if not source_path or not os.path.exists(source_path):
+    normalized_source_path = _normalize_yaml_source_path(source_path)
+    if not normalized_source_path:
         return docs
 
     seen_paths = _seen_paths if _seen_paths is not None else set()
-    normalized_source_path = os.path.abspath(source_path)
     if normalized_source_path in seen_paths:
         return docs
     seen_paths.add(normalized_source_path)
@@ -1506,20 +1558,35 @@ def story_from_docassemble_yaml(
     yaml_text: str,
     *,
     filename: str = "interview.yml",
+    source_path: Optional[str] | object = _DEFAULT_YAML_SOURCE_PATH,
     options: Optional[StoryOptions] = None,
 ) -> Dict[str, Any]:
     yaml_file_name = _clean_yaml_filename(filename)
+    if source_path is _DEFAULT_YAML_SOURCE_PATH:
+        resolved_source_path = _normalize_yaml_source_path(filename)
+    else:
+        resolved_source_path = (
+            _normalize_yaml_source_path(source_path)
+            if isinstance(source_path, str)
+            else None
+        )
     if options is None:
         story_options = StoryOptions(
             yaml_file_name=yaml_file_name,
-            question_id=detect_yaml_ending_screen(yaml_text, source_path=filename),
+            question_id=detect_yaml_ending_screen(
+                yaml_text, source_path=resolved_source_path
+            ),
         )
     else:
-        story_options = options
+        story_options = (
+            options
+            if options.yaml_file_name == yaml_file_name
+            else replace(options, yaml_file_name=yaml_file_name)
+        )
     rows = rows_from_yaml_heuristics(
         yaml_text,
         options=story_options,
-        source_path=filename if os.path.exists(filename) else None,
+        source_path=resolved_source_path,
     )
     feature_text = build_feature_text(rows, story_options)
     return {

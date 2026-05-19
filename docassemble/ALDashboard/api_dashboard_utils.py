@@ -1916,7 +1916,8 @@ def alkiln_story_payload_from_options(
     if yaml_text is not None:
         return story_from_docassemble_yaml(
             yaml_text,
-            filename=yaml_source_path or yaml_file_name,
+            filename=yaml_file_name,
+            source_path=yaml_source_path,
             options=options,
         )
     assert docassemble_data is not None

@@ -435,6 +435,86 @@ question: Done
         self.assertIn("| users[0].address.address | 123 Main St |", result["rows"])
         self.assertIn("| users[0].address.city | Boston |", result["rows"])
 
+    def test_story_from_docassemble_yaml_blocks_parent_directory_includes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            nested_dir = temp_path / "nested"
+            nested_dir.mkdir()
+            shared_path = temp_path / "shared.yml"
+            shared_path.write_text(
+                """---
+question: Shared
+fields:
+  - Acknowledge: acknowledged_information_use
+    datatype: yesno
+""",
+                encoding="utf-8",
+            )
+            main_path = nested_dir / "main.yml"
+            main_path.write_text(
+                """---
+include:
+  - ../shared.yml
+---
+fields:
+  - Name: user_name
+---
+event: final_screen
+question: Done
+""",
+                encoding="utf-8",
+            )
+            result = story_from_docassemble_yaml(
+                main_path.read_text(encoding="utf-8"),
+                filename=str(main_path),
+                options=StoryOptions(
+                    yaml_file_name="main.yml",
+                    question_id="final_screen",
+                    ignore_anywhere_in_var_name=[],
+                ),
+            )
+        self.assertIn("| user_name | Sample answer |", result["rows"])
+        self.assertNotIn("| acknowledged_information_use | True |", result["rows"])
+
+    def test_story_from_docassemble_yaml_blocks_absolute_includes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_path = temp_path / "shared.yml"
+            shared_path.write_text(
+                """---
+question: Shared
+fields:
+  - Acknowledge: acknowledged_information_use
+    datatype: yesno
+""",
+                encoding="utf-8",
+            )
+            main_path = temp_path / "main.yml"
+            main_path.write_text(
+                f"""---
+include:
+  - {shared_path}
+---
+fields:
+  - Name: user_name
+---
+event: final_screen
+question: Done
+""",
+                encoding="utf-8",
+            )
+            result = story_from_docassemble_yaml(
+                main_path.read_text(encoding="utf-8"),
+                filename=str(main_path),
+                options=StoryOptions(
+                    yaml_file_name="main.yml",
+                    question_id="final_screen",
+                    ignore_anywhere_in_var_name=[],
+                ),
+            )
+        self.assertIn("| user_name | Sample answer |", result["rows"])
+        self.assertNotIn("| acknowledged_information_use | True |", result["rows"])
+
     def test_story_from_docassemble_yaml_detects_filename_and_ending_screen(self):
         yaml_text = """---
 id: intro
@@ -499,6 +579,31 @@ question: Done
         self.assertEqual(payload["yaml_file_name"], "uploaded_interview.yml")
         self.assertEqual(payload["question_id"], "final")
         self.assertIn("| user_name | Sample answer |", payload["rows"])
+
+    def test_api_payload_inline_yaml_does_not_expand_includes_from_yaml_file_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_path = temp_path / "existing.yml"
+            source_path.write_text("---\nquestion: Placeholder\n", encoding="utf-8")
+            (temp_path / "shared.yml").write_text(
+                """---
+question: Shared
+fields:
+  - Acknowledge: acknowledged_information_use
+    datatype: yesno
+""",
+                encoding="utf-8",
+            )
+            payload = alkiln_story_payload_from_options(
+                {
+                    "yaml_text": "---\ninclude:\n  - shared.yml\n---\nfields:\n  - Name: user_name\n---\nid: final\nquestion: Done\n",
+                    "yaml_file_name": str(source_path),
+                    "ignore_anywhere_in_var_name": [],
+                }
+            )
+        self.assertEqual(payload["yaml_file_name"], "existing.yml")
+        self.assertIn("| user_name | Sample answer |", payload["rows"])
+        self.assertNotIn("| acknowledged_information_use | True |", payload["rows"])
 
     def test_api_payload_rejects_arbitrary_source_token_paths(self):
         with self.assertRaises(DashboardAPIValidationError) as exc:

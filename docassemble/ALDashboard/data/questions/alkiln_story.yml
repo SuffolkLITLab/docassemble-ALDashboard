@@ -297,7 +297,8 @@ code: |
   if story_input_type == "yaml":
     story_result = story_from_docassemble_yaml(
       story_yaml_text,
-      filename=selected_playground_file if story_source == "playground" else yaml_file_name,
+      filename=story_default_yaml_file_name if story_source == "playground" else yaml_file_name,
+      source_path=selected_playground_file if story_source == "playground" else None,
       options=story_options,
     )
   else:

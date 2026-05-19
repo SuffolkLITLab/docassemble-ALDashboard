@@ -1,0 +1,320 @@
+---
+include:
+  - nav.yml
+---
+metadata:
+  title: ALKiln story generator
+  temporary session: True
+  required privileges:
+    - admin
+    - developer
+---
+modules:
+  - .alkiln_story
+  - .aldashboard
+  - .interview_linter
+---
+objects:
+  - story_download: DAFile
+  - yaml_upload: DAFile
+---
+mandatory: True
+code: |
+  story_source
+  if story_source == "session":
+    selected_interview_filename
+    skip_step_one_sessions
+    selected_session_id
+  elif story_source == "yaml_upload":
+    yaml_upload
+  elif story_source == "playground":
+    selected_playground_project
+    selected_playground_file
+  elif story_source == "pasted_yaml":
+    pasted_yaml
+  else:
+    pasted_json
+  story_result
+  show_results
+---
+code: |
+  import json
+  default_ignore_anywhere_text = json.dumps(
+    sorted(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME),
+    indent=2,
+  )
+---
+question: |
+  Generate an ALKiln story
+subquestion: |
+  Choose the source for the story table.
+fields:
+  - Source: story_source
+    datatype: radio
+    choices:
+      - Saved interview session: session
+      - Pasted JSON: pasted_json
+      - Uploaded YAML: yaml_upload
+      - YAML in playground: playground
+      - Pasted YAML: pasted_yaml
+    default: session
+---
+code: |
+  interviews = {interview["filename"]: interview for interview in interview_menu()}
+  story_interview_choices = {}
+  for interview_filename, interview_info in sorted(
+    interviews.items(),
+    key=lambda item: (
+      item[1].get("title") or item[0]
+      if isinstance(item[1], dict)
+      else item[0]
+    ),
+  ):
+    interview_title = (
+      interview_info.get("title")
+      if isinstance(interview_info, dict)
+      else interview_filename
+    )
+    story_interview_choices[interview_filename] = (
+      f"{interview_title} | {interview_filename}"
+    )
+---
+question: |
+  Select an interview
+subquestion: |
+  Pick the interview whose saved answers you want to convert.
+fields:
+  - Interview: selected_interview_filename
+    datatype: combobox
+    code: |
+      story_interview_choices
+  - Skip sessions that are still on the first page: skip_step_one_sessions
+    datatype: yesno
+    default: True
+---
+code: |
+  import json
+
+  def _story_progress_label(progress, num_keys):
+    if progress is not None and str(progress).strip():
+      try:
+        return f"{float(progress):.2f}%"
+      except Exception:
+        return str(progress)
+    return f"Step {num_keys}"
+
+  story_session_choices = {}
+  for saved_session in speedy_get_sessions(
+    filename=selected_interview_filename,
+    filter_step1=skip_step_one_sessions,
+  ):
+    session_title = saved_session.title or saved_session.auto_title or saved_session.key
+    story_session_choices[saved_session.key] = (
+      f"{session_title} | {saved_session.key} | "
+      f"{format_date(saved_session.modtime, 'MMM d YYYY')} | "
+      f"{_story_progress_label(saved_session.progress, saved_session.num_keys)}"
+    )
+---
+question: |
+  Select a session
+subquestion: |
+  The progress value is shown when the interview saved it, so you can pick a recent and fairly complete run.
+fields:
+  - Session: selected_session_id
+    datatype: combobox
+    code: |
+      story_session_choices
+validation code: |
+  if not story_session_choices:
+    validation_error("No saved sessions were found for this interview.")
+  try:
+    selected_session_variables = dashboard_get_session_variables(
+      session_id=selected_session_id,
+      filename=selected_interview_filename,
+    )
+  except Exception as err:
+    validation_error(
+      "Could not load variables for this session. It may be encrypted with "
+      "a key that is not available to the dashboard, or the session may not "
+      f"contain a complete interview dictionary. Details: {err}",
+      field="selected_session_id",
+    )
+---
+question: |
+  Generate an ALKiln story
+subquestion: |
+  Paste the JSON output from a docassemble interview.
+fields:
+  - Docassemble JSON: pasted_json
+    input type: area
+    rows: 12
+---
+question: |
+  Upload interview YAML
+fields:
+  - YAML file: yaml_upload
+    datatype: file
+---
+question: |
+  Select playground project
+fields:
+  - Playground project: selected_playground_project
+    datatype: combobox
+    code: |
+      list_playground_projects()
+---
+question: |
+  Select playground YAML
+fields:
+  - YAML file: selected_playground_file
+    datatype: combobox
+    code: |
+      {
+        item["token"]: item["label"]
+        for item in list_playground_yaml_files(selected_playground_project)
+      }
+validation code: |
+  if not selected_playground_file:
+    validation_error("Select a YAML file.")
+  allowed_playground_files = {
+    item["token"]: item["label"]
+    for item in list_playground_yaml_files(selected_playground_project)
+  }
+  if selected_playground_file not in allowed_playground_files:
+    validation_error(
+      "Select a YAML file from the chosen Playground project.",
+      field="selected_playground_file",
+    )
+---
+question: |
+  Paste interview YAML
+fields:
+  - Docassemble YAML: pasted_yaml
+    input type: area
+    rows: 12
+---
+question: |
+  Story options
+fields:
+  - YAML file name: yaml_file_name
+    default: ${ story_default_yaml_file_name }
+  - Question ID: question_id
+    default: ${ story_default_question_id }
+  - Feature description: feature_description
+    default: Generated docassemble test
+  - Scenario description: scenario_description
+    default: Generated scenario
+  - Output file name: output_file_name
+    default: generated_story.feature
+  - Include legacy trigger column: include_trigger_column
+    datatype: yesno
+    default: False
+    help: |
+      Current ALKiln supports 2-column story tables. Use this only when you
+      know you need the older 3-column table format.
+  - Add target_number rows for lists: synthesize_target_number
+    datatype: yesno
+    default: True
+    help: |
+      ALKiln uses target_number rows to safely handle lists that may ask
+      there_are_any or there_is_another questions.
+  - Ignore variable names containing: ignore_anywhere_text
+    input type: area
+    rows: 8
+    default: ${ default_ignore_anywhere_text }
+    help: |
+      JSON list of strings. A generated row is skipped when its variable name
+      contains one of these strings.
+---
+code: |
+  if story_source == "session":
+    story_default_yaml_file_name = selected_interview_filename
+    story_default_question_id = "review_screen"
+  elif story_source == "yaml_upload":
+    story_default_yaml_file_name = yaml_upload.filename
+    story_default_question_id = detect_yaml_ending_screen(yaml_upload.slurp())
+  elif story_source == "playground":
+    with open(selected_playground_file, "r", encoding="utf-8") as story_yaml_file:
+      selected_playground_yaml_text = story_yaml_file.read()
+    story_default_yaml_file_name = selected_playground_file.split("/")[-1]
+    story_default_question_id = detect_yaml_ending_screen(
+      selected_playground_yaml_text,
+      source_path=selected_playground_file,
+    )
+  elif story_source == "pasted_yaml":
+    story_default_yaml_file_name = "interview.yml"
+    story_default_question_id = detect_yaml_ending_screen(pasted_yaml)
+  else:
+    story_default_yaml_file_name = "interview.yml"
+    story_default_question_id = "review_screen"
+---
+code: |
+  import json
+  if story_source == "session":
+    story_data = {
+      "i": selected_interview_filename,
+      "variables": selected_session_variables,
+    }
+    story_input_type = "json"
+  elif story_source == "yaml_upload":
+    story_yaml_text = yaml_upload.slurp()
+    story_input_type = "yaml"
+  elif story_source == "playground":
+    story_yaml_text = selected_playground_yaml_text
+    story_input_type = "yaml"
+  elif story_source == "pasted_yaml":
+    story_yaml_text = pasted_yaml
+    story_input_type = "yaml"
+  else:
+    story_data = load_docassemble_json_text(pasted_json)
+    story_input_type = "json"
+  if ignore_anywhere_text.strip():
+    try:
+      ignore_anywhere = json.loads(ignore_anywhere_text)
+    except (ValueError, json.JSONDecodeError):
+      validation_error(
+        'Ignore Anywhere must be valid JSON, such as [] or ["name", "address"].',
+        field="ignore_anywhere_text",
+      )
+    if not isinstance(ignore_anywhere, list) or any(
+      not isinstance(item, str) for item in ignore_anywhere
+    ):
+      validation_error(
+        "Ignore Anywhere must be a JSON list of strings.",
+        field="ignore_anywhere_text",
+      )
+  else:
+    ignore_anywhere = []
+  story_options = StoryOptions(
+    feature_description=feature_description,
+    scenario_description=scenario_description,
+    yaml_file_name=yaml_file_name,
+    question_id=question_id,
+    include_trigger_column=include_trigger_column,
+    synthesize_target_number=synthesize_target_number,
+    ignore_anywhere_in_var_name=ignore_anywhere,
+  )
+  if story_input_type == "yaml":
+    story_result = story_from_docassemble_yaml(
+      story_yaml_text,
+      filename=story_default_yaml_file_name if story_source == "playground" else yaml_file_name,
+      source_path=selected_playground_file if story_source == "playground" else None,
+      options=story_options,
+    )
+  else:
+    story_result = story_from_docassemble_json(story_data, options=story_options)
+  story_download.initialize(
+    filename=output_file_name if output_file_name.endswith(".feature") else output_file_name + ".feature"
+  )
+  story_download.write(story_result["feature_text"])
+  story_download.commit()
+---
+event: show_results
+question: |
+  ALKiln story
+subquestion: |
+  Rows generated: **${ story_result["row_count"] }**
+
+  **[Download story](${ story_download.url_for(attachment=True) })**
+
+  ${ story_result["preview_markdown"] }

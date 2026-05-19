@@ -25,6 +25,7 @@ from .api_dashboard_utils import (
     DASHBOARD_API_BASE_PATH,
     DashboardAPIValidationError,
     _validate_upload_size,
+    alkiln_story_payload_from_request,
     autolabel_payload_from_request,
     bootstrap_payload_from_request,
     docx_runs_payload_from_request,
@@ -57,6 +58,7 @@ ASYNC_CELERY_MODULE = "docassemble.ALDashboard.api_dashboard_worker"
 if not in_celery:
     from .api_dashboard_worker import (
         dashboard_autolabel_task,
+        dashboard_alkiln_story_task,
         dashboard_bootstrap_task,
         dashboard_docx_runs_task,
         dashboard_interview_lint_task,
@@ -505,6 +507,13 @@ def dashboard_interview_lint():
     return _run_endpoint(
         interview_lint_payload_from_request, dashboard_interview_lint_task
     )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/kiln/story", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_kiln_story():
+    return _run_endpoint(alkiln_story_payload_from_request, dashboard_alkiln_story_task)
 
 
 @app.route(f"{DASHBOARD_API_BASE_PATH}/yaml/check", methods=["POST"])

@@ -38,11 +38,6 @@ license-files = [
 [project.urls]
 Homepage = "https://courtformsonline.org"
 
-[project.optional-dependencies]
-docassemble = [
-    "docassemble.webapp",
-]
-
 [tool.setuptools.packages.find]
 where = [
     ".",
@@ -219,4 +214,10 @@ dev = [
     "dayamlchecker",
     "types-lxml",
     "xmlschema>=4.3.1",
+]
+
+# Keep the full docassemble stack opt-in for uv without letting `uv sync --group dev`
+# drag `docassemble.webapp` into the default test environment.
+docassemble = [
+    "docassemble.webapp>=1.9.11",
 ]

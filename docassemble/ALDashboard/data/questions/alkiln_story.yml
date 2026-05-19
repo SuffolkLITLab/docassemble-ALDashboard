@@ -46,6 +46,18 @@ fields:
     default: Generated scenario
   - Output file name: output_file_name
     default: generated_story.feature
+  - Include legacy trigger column: include_trigger_column
+    datatype: yesno
+    default: False
+    help: |
+      Current ALKiln supports 2-column story tables. Use this only when you
+      know you need the older 3-column table format.
+  - Add target_number rows for lists: synthesize_target_number
+    datatype: yesno
+    default: True
+    help: |
+      ALKiln uses target_number rows to safely handle lists that may ask
+      there_are_any or there_is_another questions.
   - Ignore variable names containing: ignore_anywhere_text
     input type: area
     rows: 8
@@ -56,13 +68,15 @@ fields:
 ---
 code: |
   import json
-  story_data = json.loads(pasted_json)
+  story_data = load_docassemble_json_text(pasted_json)
   ignore_anywhere = json.loads(ignore_anywhere_text) if ignore_anywhere_text.strip() else []
   story_options = StoryOptions(
     feature_description=feature_description,
     scenario_description=scenario_description,
     yaml_file_name=yaml_file_name,
     question_id=question_id,
+    include_trigger_column=include_trigger_column,
+    synthesize_target_number=synthesize_target_number,
     ignore_anywhere_in_var_name=ignore_anywhere,
   )
   story_result = story_from_docassemble_json(story_data, options=story_options)

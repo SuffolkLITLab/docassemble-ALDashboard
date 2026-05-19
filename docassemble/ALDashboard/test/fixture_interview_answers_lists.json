@@ -1,0 +1,52 @@
+{
+  "users": {
+    "_class": "docassemble.base.core.DAList",
+    "instanceName": "users",
+    "elements": [
+      {
+        "_class": "docassemble.AssemblyLine.al_general.ALIndividual",
+        "name": {
+          "_class": "docassemble.base.util.IndividualName",
+          "first": "Ada",
+          "middle": "",
+          "last": "Lovelace",
+          "uses_parts": true
+        },
+        "address": {
+          "_class": "docassemble.AssemblyLine.al_general.ALAddress",
+          "address": "1 Main St",
+          "city": "WORCESTER",
+          "state": "MA",
+          "zip": "01605"
+        }
+      },
+      {
+        "_class": "docassemble.AssemblyLine.al_general.ALIndividual",
+        "name": {
+          "_class": "docassemble.base.util.IndividualName",
+          "first": "Grace",
+          "middle": "",
+          "last": "Hopper",
+          "uses_parts": true
+        },
+        "address": {
+          "_class": "docassemble.AssemblyLine.al_general.ALAddress",
+          "address": "2 Main St",
+          "city": "WORCESTER",
+          "state": "MA",
+          "zip": "01605"
+        }
+      }
+    ],
+    "there_are_any": true,
+    "gathered": true
+  },
+  "choices": {
+    "_class": "docassemble.base.core.DADict",
+    "elements": {
+      "apple": false,
+      "banana": false
+    },
+    "gathered": true
+  }
+}

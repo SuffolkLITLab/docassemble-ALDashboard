@@ -90,6 +90,8 @@ class StoryOptions:
     scenario_description: str = "Generated scenario"
     yaml_file_name: str = "interview.yml"
     question_id: str = "review_screen"
+    include_trigger_column: bool = False
+    synthesize_target_number: bool = True
     ignore_anywhere_in_var_name: Sequence[str] = tuple(
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME
     )
@@ -124,6 +126,8 @@ def _story_row(
     name: str,
     value: Any,
     ignore_anywhere: Sequence[str],
+    include_trigger_column: bool,
+    trigger: str = "",
 ) -> Optional[str]:
     if _is_ignored_name(name, ignore_anywhere):
         return None
@@ -138,7 +142,9 @@ def _story_row(
             "https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/"
             "automated_integrated_testing/#there_is_another-loop --- "
         )
-    return f"| {name} | {value} |  |"
+    if include_trigger_column:
+        return f"| {name} | {value} | {trigger} |"
+    return f"| {name} | {value} |"
 
 
 def _parse_value(name: str, value: Any, options: StoryOptions) -> List[str]:
@@ -165,17 +171,27 @@ def _parse_object(
     rows: List[str] = []
     class_name = value.get("_class")
     is_class = isinstance(class_name, str) and "DADict" not in class_name
+    elements = value.get("elements")
 
     instance_name = value.get("instanceName")
     if isinstance(instance_name, str) and instance_name and name != instance_name:
         rows.extend(_single_row(name, instance_name, options))
 
+    if isinstance(elements, list) and options.synthesize_target_number:
+        rows.extend(_single_row(f"{name}.target_number", len(elements), options))
+
     if "elements" in value:
-        rows.extend(_parse_elements(name, value["elements"], options))
+        rows.extend(_parse_elements(name, elements, options))
 
     for key, item in value.items():
         key_text = str(key)
         if key_text == "elements":
+            continue
+        if (
+            options.synthesize_target_number
+            and isinstance(elements, list)
+            and key_text in {"there_are_any", "there_is_another", "target_number"}
+        ):
             continue
         if key_text in options.ignore_if_is_key or _is_ignored_name(
             key_text, options.ignore_anywhere_in_var_name
@@ -232,6 +248,7 @@ def _single_row(name: str, value: Any, options: StoryOptions) -> List[str]:
         name=name,
         value=formatted_value,
         ignore_anywhere=options.ignore_anywhere_in_var_name,
+        include_trigger_column=options.include_trigger_column,
     )
     return [row] if row else []
 
@@ -257,6 +274,82 @@ def default_yaml_file_name(
     return fallback
 
 
+def load_docassemble_json_text(json_text: str) -> Dict[str, Any]:
+    """Load docassemble's variables JSON from pasted textarea text.
+
+    Some docassemble textarea submissions can contain literal control
+    characters inside string values where the original exported JSON had
+    escaped sequences such as ``\r\n``. Python's default JSON parser rejects
+    that, while the story generator should still accept the pasted export.
+    """
+    try:
+        data = json.loads(json_text)
+    except json.JSONDecodeError:
+        try:
+            data = json.loads(json_text, strict=False)
+        except json.JSONDecodeError:
+            data = json.loads(
+                _escape_likely_unescaped_inner_quotes(json_text),
+                strict=False,
+            )
+    if not isinstance(data, dict):
+        raise ValueError("Docassemble JSON must be a JSON object.")
+    return data
+
+
+def _is_escaped(text: str, index: int) -> bool:
+    slash_count = 0
+    pos = index - 1
+    while pos >= 0 and text[pos] == "\\":
+        slash_count += 1
+        pos -= 1
+    return slash_count % 2 == 1
+
+
+def _next_non_space(text: str, start: int) -> tuple[int, str]:
+    pos = start
+    while pos < len(text) and text[pos] in " \t\r\n":
+        pos += 1
+    if pos >= len(text):
+        return pos, ""
+    return pos, text[pos]
+
+
+def _escape_likely_unescaped_inner_quotes(json_text: str) -> str:
+    """Escape quotes that look like text inside a JSON string value.
+
+    This is intentionally a fallback for pasted docassemble exports. It leaves
+    normal JSON alone and handles textarea-shaped input where escaped quotes in
+    large descriptive strings have become bare quotes.
+    """
+    output: List[str] = []
+    in_string = False
+    for index, char in enumerate(json_text):
+        if char != '"' or _is_escaped(json_text, index):
+            output.append(char)
+            continue
+
+        if not in_string:
+            in_string = True
+            output.append(char)
+            continue
+
+        _next_index, next_char = _next_non_space(json_text, index + 1)
+        closes_string = next_char in {"", ":", "}", "]"}
+        if next_char == ",":
+            _after_comma_index, after_comma_char = _next_non_space(
+                json_text, _next_index + 1
+            )
+            closes_string = after_comma_char in {'"', "}", "]"}
+
+        if closes_string:
+            in_string = False
+            output.append(char)
+        else:
+            output.append('\\"')
+    return "".join(output)
+
+
 def build_feature_text(rows: Sequence[str], options: StoryOptions) -> str:
     lines = [
         f"Feature: {options.feature_description or options.scenario_description}",
@@ -264,8 +357,11 @@ def build_feature_text(rows: Sequence[str], options: StoryOptions) -> str:
         f"Scenario: {options.scenario_description}",
         f'  Given I start the interview at "{options.yaml_file_name}"',
         f'  And the user gets to "{options.question_id}" with this data:',
-        "    | var | value | trigger |",
     ]
+    if options.include_trigger_column:
+        lines.append("    | var | value | trigger |")
+    else:
+        lines.append("    | var | value |")
     lines.extend(f"    {row}" for row in rows)
     return "\n".join(lines)
 

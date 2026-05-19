@@ -1663,6 +1663,7 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME,
         StoryOptions,
         default_yaml_file_name,
+        load_docassemble_json_text,
         story_from_docassemble_json,
     )
 
@@ -1675,8 +1676,8 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
         if not isinstance(json_text, str) or not json_text.strip():
             raise DashboardAPIValidationError("json_text must be non-empty JSON.")
         try:
-            data = json.loads(json_text)
-        except json.JSONDecodeError as exc:
+            data = load_docassemble_json_text(json_text)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise DashboardAPIValidationError("json_text must be valid JSON.") from exc
     elif data is None and variables is not None:
         data = {"variables": variables}
@@ -1713,12 +1714,20 @@ def alkiln_story_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[st
     scenario_description = str(
         raw.get("scenario_description") or "Generated scenario"
     ).strip()
+    include_trigger_column = parse_bool(
+        raw.get("include_trigger_column"), default=False
+    )
+    synthesize_target_number = parse_bool(
+        raw.get("synthesize_target_number"), default=True
+    )
 
     options = StoryOptions(
         feature_description=feature_description,
         scenario_description=scenario_description,
         yaml_file_name=yaml_file_name or "interview.yml",
         question_id=question_id or "review_screen",
+        include_trigger_column=include_trigger_column,
+        synthesize_target_number=synthesize_target_number,
         ignore_anywhere_in_var_name=ignore_anywhere,
     )
     return story_from_docassemble_json(data, options=options)
@@ -2206,6 +2215,8 @@ def build_openapi_spec() -> Dict[str, Any]:
                                         "question_id": {"type": "string"},
                                         "feature_description": {"type": "string"},
                                         "scenario_description": {"type": "string"},
+                                        "include_trigger_column": {"type": "boolean"},
+                                        "synthesize_target_number": {"type": "boolean"},
                                         "ignore_anywhere_in_var_name": {
                                             "type": "array",
                                             "items": {"type": "string"},

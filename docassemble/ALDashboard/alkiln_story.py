@@ -520,8 +520,10 @@ def rows_from_variables(
             continue
         all_rows.extend(_parse_value(key_text, item, story_options))
     rows: List[str] = []
+    seen_rows: set[str] = set()
     for row in all_rows:
-        if isinstance(row, str) and row not in rows:
+        if isinstance(row, str) and row not in seen_rows:
+            seen_rows.add(row)
             rows.append(row)
     return rows
 
@@ -631,8 +633,7 @@ def build_feature_preview_markdown(feature_text: str) -> str:
     """Format feature text for docassemble's markdown preview as a code block."""
     normalized_text = str(feature_text).replace("\r\n", "\n").replace("\r", "\n")
     return "\n".join(
-        "    " if line == "" else f"    {line}"
-        for line in normalized_text.split("\n")
+        "    " if line == "" else f"    {line}" for line in normalized_text.split("\n")
     )
 
 
@@ -741,7 +742,9 @@ def load_docassemble_yaml_text(
     for doc in docs:
         expanded_docs.append(doc)
         for include_ref in _iter_include_strings(doc.get("include")):
-            include_path = _resolve_local_include_path(include_ref, normalized_source_path)
+            include_path = _resolve_local_include_path(
+                include_ref, normalized_source_path
+            )
             if not include_path or include_path in seen_paths:
                 continue
             try:
@@ -936,20 +939,26 @@ def _should_skip_heuristic_variable(name: str) -> bool:
     )
 
 
-def _add_related_variable_rows(rows: List[str], name: str, options: StoryOptions) -> None:
+def _add_related_variable_rows(
+    rows: List[str], name: str, options: StoryOptions
+) -> None:
     normalized_name = _normalize_index_placeholders(name)
     if normalized_name.endswith(".name.first"):
         _add_unique_row(
             rows,
             normalized_name[: -len(".first")] + ".last",
-            _default_value_for_variable_name(normalized_name[: -len(".first")] + ".last"),
+            _default_value_for_variable_name(
+                normalized_name[: -len(".first")] + ".last"
+            ),
             options,
         )
     elif normalized_name.endswith(".address.address"):
         base = normalized_name[: -len(".address")]
         for suffix in (".city", ".state", ".zip"):
             field_name = base + suffix
-            _add_unique_row(rows, field_name, _default_value_for_variable_name(field_name), options)
+            _add_unique_row(
+                rows, field_name, _default_value_for_variable_name(field_name), options
+            )
     elif normalized_name.endswith(".target_number"):
         list_name = normalized_name[: -len(".target_number")]
         _add_people_list_rows(rows, list_name, options)
@@ -1019,15 +1028,26 @@ def _field_rows(variable: str, field_info: Mapping[str, Any]) -> List[tuple[str,
         for index, choice in enumerate(choices):
             if isinstance(choice, (str, int, float, bool)):
                 checkbox_rows.append(
-                    (f"{normalized_variable}['{choice}']", True if index == 0 else False)
+                    (
+                        f"{normalized_variable}['{choice}']",
+                        True if index == 0 else False,
+                    )
                 )
         if checkbox_rows:
             return checkbox_rows
     first_choice = _first_choice_value(field_info)
-    if first_choice is not None and datatype not in {"yesno", "yesnowide", "truefalse", "boolean"}:
+    if first_choice is not None and datatype not in {
+        "yesno",
+        "yesnowide",
+        "truefalse",
+        "boolean",
+    }:
         return [(normalized_variable, first_choice)]
     return [
-        (normalized_variable, _default_value_for_yaml_field(normalized_variable, field_info))
+        (
+            normalized_variable,
+            _default_value_for_yaml_field(normalized_variable, field_info),
+        )
     ]
 
 
@@ -1121,24 +1141,32 @@ def _add_people_list_rows(
     rows: List[str], list_name: str, options: StoryOptions, *, target_number: int = 1
 ) -> None:
     normalized_list_name = _normalize_index_placeholders(list_name)
-    _add_unique_row(rows, f"{normalized_list_name}.target_number", target_number, options)
+    _add_unique_row(
+        rows, f"{normalized_list_name}.target_number", target_number, options
+    )
     _add_unique_row(rows, f"{normalized_list_name}[0].name.first", "Jane", options)
     _add_unique_row(rows, f"{normalized_list_name}[0].name.last", "Smith", options)
 
 
-def _doc_field_variable_and_info(doc: Mapping[str, Any]) -> tuple[Optional[str], Dict[str, Any]]:
+def _doc_field_variable_and_info(
+    doc: Mapping[str, Any],
+) -> tuple[Optional[str], Dict[str, Any]]:
     explicit = doc.get("field")
     if not _looks_like_variable_name(explicit):
         return (None, {})
     field_info = {
-        str(key): value for key, value in doc.items() if str(key) not in DOC_NON_FIELD_KEYS
+        str(key): value
+        for key, value in doc.items()
+        if str(key) not in DOC_NON_FIELD_KEYS
     }
     return (str(explicit).strip(), field_info)
 
 
 def _set_variables_from_doc(doc: Mapping[str, Any]) -> List[str]:
     variables: List[str] = []
-    has_prompt = isinstance(doc.get("question"), str) or isinstance(doc.get("subquestion"), str)
+    has_prompt = isinstance(doc.get("question"), str) or isinstance(
+        doc.get("subquestion"), str
+    )
     if not has_prompt:
         return variables
     for key in ("sets", "only sets"):
@@ -1154,7 +1182,9 @@ def _set_variables_from_doc(doc: Mapping[str, Any]) -> List[str]:
 
 def _resolve_code_reference(text: str, aliases: Mapping[str, str]) -> str:
     cleaned = text.strip()
-    for alias, replacement in sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True):
+    for alias, replacement in sorted(
+        aliases.items(), key=lambda item: len(item[0]), reverse=True
+    ):
         if cleaned == alias or cleaned.startswith(alias + "."):
             cleaned = replacement + cleaned[len(alias) :]
             break
@@ -1190,7 +1220,9 @@ def _parse_simple_python_expression(expression: str) -> Optional[Any]:
     return None
 
 
-def _parse_method_call_arguments(arguments_text: str) -> tuple[List[Any], Dict[str, Any]]:
+def _parse_method_call_arguments(
+    arguments_text: str,
+) -> tuple[List[Any], Dict[str, Any]]:
     if not arguments_text.strip():
         return ([], {})
     try:
@@ -1248,10 +1280,10 @@ def _al_fields_method_rows(
             if normalized_object_name.endswith(".address")
             else f"{normalized_object_name}.address"
         )
-        rows: List[tuple[str, Any]] = []
+        address_rows: List[tuple[str, Any]] = []
         if kwargs.get("allow_no_address") is True:
-            rows.append((f"{address_root}.has_no_address", False))
-        rows.extend(
+            address_rows.append((f"{address_root}.has_no_address", False))
+        address_rows.extend(
             [
                 (f"{address_root}.address", "123 Main St"),
                 (f"{address_root}.unit", "Sample answer"),
@@ -1261,12 +1293,12 @@ def _al_fields_method_rows(
             ]
         )
         if kwargs.get("show_county") is True:
-            rows.append((f"{address_root}.county", "Suffolk"))
+            address_rows.append((f"{address_root}.county", "Suffolk"))
         if kwargs.get("show_country") is True:
-            rows.append((f"{address_root}.country", "US"))
+            address_rows.append((f"{address_root}.country", "US"))
         if kwargs.get("ask_if_impounded") is True:
-            rows.append((f"{address_root}.impounded", False))
-        return rows
+            address_rows.append((f"{address_root}.impounded", False))
+        return address_rows
     if method_name == "gender_fields":
         return [(f"{normalized_object_name}.gender", "female")]
     if method_name == "language_fields":
@@ -1407,7 +1439,9 @@ def rows_from_yaml_heuristics(
 
         single_field_variable, single_field_info = _doc_field_variable_and_info(doc)
         if single_field_variable:
-            for row_name, row_value in _field_rows(single_field_variable, single_field_info):
+            for row_name, row_value in _field_rows(
+                single_field_variable, single_field_info
+            ):
                 _add_inferred_row(
                     rows,
                     row_name,

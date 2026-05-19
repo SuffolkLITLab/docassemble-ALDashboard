@@ -203,6 +203,58 @@ def _validate_upload_size(
         )
 
 
+def _read_text_file_with_size_limit(
+    path: str, *, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+) -> str:
+    try:
+        file_size = os.path.getsize(path)
+    except OSError as exc:
+        raise DashboardAPIValidationError(f"Could not inspect file {path!r}.") from exc
+    if file_size <= 0:
+        raise DashboardAPIValidationError("Source file is empty.")
+    if file_size > max_upload_bytes:
+        raise DashboardAPIValidationError(
+            f"Source file is larger than {max_upload_bytes} bytes.", status_code=413
+        )
+    with open(path, "r", encoding="utf-8") as source_file:
+        return source_file.read()
+
+
+def _find_playground_yaml_source(
+    playground_project: str, selected_value: str
+) -> Dict[str, str]:
+    from .interview_linter import list_playground_yaml_files
+
+    playground_files = list_playground_yaml_files(playground_project or "default")
+    selected_file = next(
+        (
+            item
+            for item in playground_files
+            if item.get("label") == selected_value
+            or item.get("token") == selected_value
+        ),
+        None,
+    )
+    if not selected_file:
+        raise DashboardAPIValidationError(
+            "Could not find the requested Playground YAML file."
+        )
+    source_path = str(selected_file.get("token") or "").strip()
+    source_name = str(
+        selected_file.get("label") or os.path.basename(source_path)
+    ).strip()
+    if not source_path or not os.path.exists(source_path):
+        raise DashboardAPIValidationError(
+            "Could not resolve the requested Playground YAML file."
+        )
+    if not source_name.lower().endswith((".yml", ".yaml")):
+        raise DashboardAPIValidationError(
+            "Only YAML sources are supported for heuristic story generation.",
+            status_code=415,
+        )
+    return {"path": source_path, "filename": source_name}
+
+
 def _read_single_upload(*, field_name: str = "file") -> Dict[str, Any]:
     if field_name in request.files:
         upload = request.files[field_name]
@@ -1704,52 +1756,53 @@ def alkiln_story_payload_from_options(
 
     if yaml_text is None and upload is not None:
         filename = str(upload.get("filename") or "upload.yml")
-        content = upload.get("content")
-        if not isinstance(content, (bytes, bytearray)):
+        upload_content = upload.get("content")
+        if not isinstance(upload_content, (bytes, bytearray)):
             raise DashboardAPIValidationError("Upload content must be bytes.")
         if not filename.lower().endswith((".yml", ".yaml")):
             raise DashboardAPIValidationError(
                 "Only YAML uploads are supported for heuristic story generation.",
                 status_code=415,
             )
-        yaml_text = bytes(content).decode("utf-8", errors="replace")
+        yaml_text = bytes(upload_content).decode("utf-8", errors="replace")
         yaml_source_filename = filename
 
     if yaml_text is None and source_token:
         from .interview_linter import _resolve_source_token
 
-        source_path = _resolve_source_token(source_token)
+        if source_token.startswith("ref:"):
+            source_path = _resolve_source_token(source_token)
+            yaml_source_filename = str(
+                raw.get("filename") or os.path.basename(str(source_path or ""))
+            ).strip()
+        else:
+            selected_source = _find_playground_yaml_source(
+                playground_project, source_token
+            )
+            source_path = selected_source["path"]
+            yaml_source_filename = str(
+                raw.get("filename") or selected_source["filename"]
+            ).strip()
         if not source_path or not os.path.exists(source_path):
             raise DashboardAPIValidationError(
                 f"Could not resolve YAML source token {source_token!r}."
             )
-        with open(source_path, "r", encoding="utf-8") as source_file:
-            yaml_text = source_file.read()
+        if not yaml_source_filename.lower().endswith((".yml", ".yaml")):
+            raise DashboardAPIValidationError(
+                "Only YAML sources are supported for heuristic story generation.",
+                status_code=415,
+            )
+        yaml_text = _read_text_file_with_size_limit(source_path)
         yaml_source_path = source_path
-        yaml_source_filename = raw.get("filename") or source_token
 
     if yaml_text is None and playground_yaml_file:
-        from .interview_linter import list_playground_yaml_files
-
-        playground_files = list_playground_yaml_files(playground_project or "default")
-        selected_file = next(
-            (
-                item
-                for item in playground_files
-                if item.get("label") == playground_yaml_file
-                or item.get("token") == playground_yaml_file
-            ),
-            None,
+        selected_source = _find_playground_yaml_source(
+            playground_project, playground_yaml_file
         )
-        if not selected_file:
-            raise DashboardAPIValidationError(
-                f"Could not find playground YAML file {playground_yaml_file!r}."
-            )
-        source_path = str(selected_file.get("token") or "")
-        with open(source_path, "r", encoding="utf-8") as source_file:
-            yaml_text = source_file.read()
+        source_path = selected_source["path"]
+        yaml_text = _read_text_file_with_size_limit(source_path)
         yaml_source_path = source_path
-        yaml_source_filename = str(selected_file.get("label") or playground_yaml_file)
+        yaml_source_filename = str(selected_source["filename"] or playground_yaml_file)
 
     if data is None and session_id:
         from .aldashboard import (
@@ -1800,12 +1853,15 @@ def alkiln_story_payload_from_options(
     ):
         data = raw
 
-    if yaml_text is None and not isinstance(data, dict):
-        raise DashboardAPIValidationError(
-            "Provide docassemble JSON as `data`, `json_text`, or `variables`, "
-            "or YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
-            "`source_token`, or `playground_project` with `playground_yaml_file`."
-        )
+    docassemble_data: Optional[Mapping[str, Any]] = None
+    if yaml_text is None:
+        if not isinstance(data, dict):
+            raise DashboardAPIValidationError(
+                "Provide docassemble JSON as `data`, `json_text`, or `variables`, "
+                "or YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
+                "`source_token`, or `playground_project` with `playground_yaml_file`."
+            )
+        docassemble_data = data
 
     ignore_anywhere = _load_string_list_field(
         raw.get("ignore_anywhere_in_var_name"),
@@ -1822,7 +1878,10 @@ def alkiln_story_payload_from_options(
             yaml_text, source_path=yaml_source_path
         )
     else:
-        yaml_default_name = raw.get("interview_path") or default_yaml_file_name(data)
+        assert docassemble_data is not None
+        yaml_default_name = raw.get("interview_path") or default_yaml_file_name(
+            docassemble_data
+        )
         question_default = "review_screen"
 
     if raw.get("yaml_file_name"):
@@ -1860,7 +1919,8 @@ def alkiln_story_payload_from_options(
             filename=yaml_source_path or yaml_file_name,
             options=options,
         )
-    return story_from_docassemble_json(data, options=options)
+    assert docassemble_data is not None
+    return story_from_docassemble_json(docassemble_data, options=options)
 
 
 def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:

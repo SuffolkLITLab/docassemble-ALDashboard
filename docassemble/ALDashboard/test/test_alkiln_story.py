@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from docassemble.ALDashboard.alkiln_story import (
     StoryOptions,
@@ -16,6 +17,8 @@ from docassemble.ALDashboard.alkiln_story import (
     story_from_docassemble_json,
 )
 from docassemble.ALDashboard.api_dashboard_utils import (
+    DEFAULT_MAX_UPLOAD_BYTES,
+    DashboardAPIValidationError,
     alkiln_story_payload_from_options,
     build_openapi_spec,
 )
@@ -158,6 +161,17 @@ class TestALKilnStory(unittest.TestCase):
             ),
         )
         self.assertEqual(rows, ["| name | Ada |  |"])
+
+    @patch("docassemble.ALDashboard.alkiln_story._parse_value")
+    def test_rows_from_variables_deduplicates_rows_without_quadratic_lookup(
+        self, mock_parse_value
+    ):
+        mock_parse_value.return_value = ["| name | Ada |", "| name | Ada |"]
+        rows = rows_from_variables(
+            {"name": "Ada"},
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertEqual(rows, ["| name | Ada |"])
 
     def test_story_from_docassemble_json_builds_feature_text(self):
         result = story_from_docassemble_json(
@@ -485,6 +499,82 @@ question: Done
         self.assertEqual(payload["yaml_file_name"], "uploaded_interview.yml")
         self.assertEqual(payload["question_id"], "final")
         self.assertIn("| user_name | Sample answer |", payload["rows"])
+
+    def test_api_payload_rejects_arbitrary_source_token_paths(self):
+        with self.assertRaises(DashboardAPIValidationError) as exc:
+            alkiln_story_payload_from_options({"source_token": "/etc/passwd"})
+        self.assertIn("Playground YAML file", str(exc.exception))
+
+    def test_api_payload_accepts_playground_source_token_listed_for_project(self):
+        yaml_text = (
+            "---\nfields:\n  - Name: user_name\n---\nid: final\nquestion: Done\n"
+        )
+        with tempfile.NamedTemporaryFile(suffix=".yml") as temp_yaml:
+            temp_yaml.write(yaml_text.encode("utf-8"))
+            temp_yaml.flush()
+            with patch(
+                "docassemble.ALDashboard.interview_linter.list_playground_yaml_files",
+                return_value=[{"label": "example.yml", "token": temp_yaml.name}],
+            ):
+                payload = alkiln_story_payload_from_options(
+                    {
+                        "playground_project": "demo",
+                        "playground_source_token": temp_yaml.name,
+                        "ignore_anywhere_in_var_name": [],
+                    }
+                )
+        self.assertEqual(payload["yaml_file_name"], "example.yml")
+        self.assertEqual(payload["question_id"], "final")
+        self.assertIn("| user_name | Sample answer |", payload["rows"])
+
+    def test_api_payload_rejects_oversized_ref_source_token_file(self):
+        yaml_text = (
+            "---\nfields:\n  - Name: user_name\n---\nid: final\nquestion: Done\n"
+        )
+        with tempfile.NamedTemporaryFile(suffix=".yml") as temp_yaml:
+            temp_yaml.write(yaml_text.encode("utf-8"))
+            temp_yaml.flush()
+            with (
+                patch(
+                    "docassemble.ALDashboard.interview_linter._resolve_source_token",
+                    return_value=temp_yaml.name,
+                ),
+                patch(
+                    "docassemble.ALDashboard.api_dashboard_utils.os.path.getsize",
+                    return_value=DEFAULT_MAX_UPLOAD_BYTES + 1,
+                ),
+            ):
+                with self.assertRaises(DashboardAPIValidationError) as exc:
+                    alkiln_story_payload_from_options(
+                        {"source_token": "ref:package:data/questions/example.yml"}
+                    )
+        self.assertEqual(exc.exception.status_code, 413)
+
+    def test_api_payload_rejects_oversized_playground_yaml_file(self):
+        yaml_text = (
+            "---\nfields:\n  - Name: user_name\n---\nid: final\nquestion: Done\n"
+        )
+        with tempfile.NamedTemporaryFile(suffix=".yml") as temp_yaml:
+            temp_yaml.write(yaml_text.encode("utf-8"))
+            temp_yaml.flush()
+            with (
+                patch(
+                    "docassemble.ALDashboard.interview_linter.list_playground_yaml_files",
+                    return_value=[{"label": "example.yml", "token": temp_yaml.name}],
+                ),
+                patch(
+                    "docassemble.ALDashboard.api_dashboard_utils.os.path.getsize",
+                    return_value=DEFAULT_MAX_UPLOAD_BYTES + 1,
+                ),
+            ):
+                with self.assertRaises(DashboardAPIValidationError) as exc:
+                    alkiln_story_payload_from_options(
+                        {
+                            "playground_project": "demo",
+                            "playground_yaml_file": "example.yml",
+                        }
+                    )
+        self.assertEqual(exc.exception.status_code, 413)
 
     def test_load_docassemble_json_text_accepts_fixture_textarea_newlines(self):
         json_text = read_fixture("fixture_interview_answers_textarea_newlines.json")

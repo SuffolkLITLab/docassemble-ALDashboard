@@ -176,6 +176,15 @@ fields:
 validation code: |
   if not selected_playground_file:
     validation_error("Select a YAML file.")
+  allowed_playground_files = {
+    item["token"]: item["label"]
+    for item in list_playground_yaml_files(selected_playground_project)
+  }
+  if selected_playground_file not in allowed_playground_files:
+    validation_error(
+      "Select a YAML file from the chosen Playground project.",
+      field="selected_playground_file",
+    )
 ---
 question: |
   Paste interview YAML
@@ -259,7 +268,23 @@ code: |
   else:
     story_data = load_docassemble_json_text(pasted_json)
     story_input_type = "json"
-  ignore_anywhere = json.loads(ignore_anywhere_text) if ignore_anywhere_text.strip() else []
+  if ignore_anywhere_text.strip():
+    try:
+      ignore_anywhere = json.loads(ignore_anywhere_text)
+    except (ValueError, json.JSONDecodeError):
+      validation_error(
+        'Ignore Anywhere must be valid JSON, such as [] or ["name", "address"].',
+        field="ignore_anywhere_text",
+      )
+    if not isinstance(ignore_anywhere, list) or any(
+      not isinstance(item, str) for item in ignore_anywhere
+    ):
+      validation_error(
+        "Ignore Anywhere must be a JSON list of strings.",
+        field="ignore_anywhere_text",
+      )
+  else:
+    ignore_anywhere = []
   story_options = StoryOptions(
     feature_description=feature_description,
     scenario_description=scenario_description,

@@ -2042,9 +2042,6 @@ def pdf_fields_detect_payload_from_options(
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
     model = str(raw.get("model") or "").strip() or None
-    tools_token = (
-        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
-    )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
     )
@@ -2077,7 +2074,6 @@ def pdf_fields_detect_payload_from_options(
             target_field_names=target_field_names,
             preferred_variable_names=preferred_variable_names,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
             model=model,
@@ -2133,9 +2129,6 @@ def pdf_fields_relabel_payload_from_options(
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
     model = str(raw.get("model") or "").strip() or None
-    tools_token = (
-        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
-    )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
     )
@@ -2166,7 +2159,6 @@ def pdf_fields_relabel_payload_from_options(
             target_field_names=target_field_names,
             relabel_with_ai=relabel_with_ai,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
             model=model,

@@ -238,7 +238,9 @@ continue button field: saw_done_screen
             options=StoryOptions(ignore_anywhere_in_var_name=[]),
         )
         self.assertIn("| users[0].name.first | Jane |", rows)
+        self.assertIn("| users[0].name.middle | Sample answer |", rows)
         self.assertIn("| users[0].name.last | Smith |", rows)
+        self.assertIn("| users[0].name.suffix | Jr. |", rows)
         self.assertIn("| is_active | True |", rows)
         self.assertIn("| saw_done_screen | True |", rows)
 
@@ -256,6 +258,33 @@ fields:
         )
         self.assertIn("| principal_signature_date | today |", rows)
         self.assertNotIn("| principal_signature_date | ${ today() } |", rows)
+
+    def test_rows_from_yaml_heuristics_treats_yesnoradio_as_boolean(self):
+        yaml_text = """---
+question: Active
+fields:
+  - Is active?: is_active
+    datatype: yesnoradio
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| is_active | True |", rows)
+
+    def test_rows_from_yaml_heuristics_prefers_false_for_unsafe_boolean_names(self):
+        yaml_text = """---
+question: Case type
+fields:
+  - no label: case_is_invalid_type
+    datatype: yesnoradio
+"""
+        rows = rows_from_yaml_heuristics(
+            yaml_text,
+            options=StoryOptions(ignore_anywhere_in_var_name=[]),
+        )
+        self.assertIn("| case_is_invalid_type | False |", rows)
+        self.assertNotIn("| case_is_invalid_type | True |", rows)
 
     def test_rows_from_yaml_heuristics_uses_examples_and_minlength(self):
         yaml_text = """---
@@ -329,6 +358,7 @@ question: Download
         )
         self.assertIn("| users.target_number | 1 |", rows)
         self.assertIn("| users[0].name.first | Jane |", rows)
+        self.assertIn("| users[0].name.middle | Sample answer |", rows)
         self.assertIn("| children.target_number | 1 |", rows)
         self.assertIn("| children[0].name.last | Smith |", rows)
 

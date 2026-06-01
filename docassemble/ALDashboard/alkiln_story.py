@@ -838,6 +838,38 @@ def _looks_like_variable_name(value: Any) -> bool:
     )
 
 
+BOOLEAN_FIELD_DATATYPES = {
+    "boolean",
+    "noyes",
+    "noyesradio",
+    "truefalse",
+    "yesno",
+    "yesnoradio",
+    "yesnowide",
+}
+
+
+def _prefers_false_boolean_value(name: str) -> bool:
+    lower_name = _normalize_index_placeholders(name).lower()
+    return any(
+        token in lower_name
+        for token in (
+            "confidential",
+            "disqual",
+            "does_not_qual",
+            "doesnt_qual",
+            "inelig",
+            "invalid",
+            "kickout",
+            "not_elig",
+            "not_qual",
+            "redacted",
+            "restricted",
+            "sealed",
+        )
+    )
+
+
 def _default_value_for_field(field_info: Mapping[str, Any]) -> Any:
     if "default" in field_info and field_info.get("default") not in (None, ""):
         value = field_info.get("default")
@@ -849,7 +881,7 @@ def _default_value_for_field(field_info: Mapping[str, Any]) -> Any:
                 return normalized_value
     datatype = str(field_info.get("datatype") or "").strip().lower()
     input_type = str(field_info.get("input type") or "").strip().lower()
-    if datatype in {"yesno", "yesnowide", "truefalse", "boolean"}:
+    if datatype in BOOLEAN_FIELD_DATATYPES:
         return True
     if datatype in {"integer", "number", "float", "currency", "range"}:
         return 1
@@ -885,6 +917,13 @@ def _example_value_from_field_info(field_info: Mapping[str, Any]) -> Optional[st
 
 
 def _default_value_for_yaml_field(variable: str, field_info: Mapping[str, Any]) -> Any:
+    datatype = str(field_info.get("datatype") or "").strip().lower()
+    if (
+        field_info.get("default") in (None, "")
+        and datatype in BOOLEAN_FIELD_DATATYPES
+        and _prefers_false_boolean_value(variable)
+    ):
+        return False
     base_value = _default_value_for_field(field_info)
     if base_value != "Sample answer":
         return base_value
@@ -996,14 +1035,15 @@ def _add_related_variable_rows(
 ) -> None:
     normalized_name = _normalize_index_placeholders(name)
     if normalized_name.endswith(".name.first"):
-        _add_unique_row(
-            rows,
-            normalized_name[: -len(".first")] + ".last",
-            _default_value_for_variable_name(
-                normalized_name[: -len(".first")] + ".last"
-            ),
-            options,
-        )
+        name_root = normalized_name[: -len(".first")]
+        for suffix in (".middle", ".last", ".suffix"):
+            field_name = name_root + suffix
+            _add_unique_row(
+                rows,
+                field_name,
+                _default_value_for_variable_name(field_name),
+                options,
+            )
     elif normalized_name.endswith(".address.address"):
         base = normalized_name[: -len(".address")]
         for suffix in (".city", ".state", ".zip"):
@@ -1088,12 +1128,7 @@ def _field_rows(variable: str, field_info: Mapping[str, Any]) -> List[tuple[str,
         if checkbox_rows:
             return checkbox_rows
     first_choice = _first_choice_value(field_info)
-    if first_choice is not None and datatype not in {
-        "yesno",
-        "yesnowide",
-        "truefalse",
-        "boolean",
-    }:
+    if first_choice is not None and datatype not in BOOLEAN_FIELD_DATATYPES:
         return [(normalized_variable, first_choice)]
     return [
         (
@@ -1197,6 +1232,9 @@ def _add_people_list_rows(
         rows, f"{normalized_list_name}.target_number", target_number, options
     )
     _add_unique_row(rows, f"{normalized_list_name}[0].name.first", "Jane", options)
+    _add_unique_row(
+        rows, f"{normalized_list_name}[0].name.middle", "Sample answer", options
+    )
     _add_unique_row(rows, f"{normalized_list_name}[0].name.last", "Smith", options)
 
 

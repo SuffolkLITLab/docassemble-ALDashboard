@@ -8,6 +8,7 @@ metadata:
   sessions are unique: True
   required privileges:
     - admin
+    - al_manage_users
   temporary session: True
 ---
 modules:
@@ -29,6 +30,17 @@ id: select user
 question: |
   Get password reset link
 subquestion: |
+  % if not user_has_privilege(["admin"]):
+  **Note**: make sure the role `al_manage_users` has the `edit_user_password` [permission](https://docassemble.org/docs/config.html#permissions)
+  in the global configuration:
+
+  ```
+  permissions:
+    al_manage_users:
+      - edit_user_password
+  ```
+  % endif
+
   Select the user who needs a password reset link.
 
   The link will be shown on the next screen.

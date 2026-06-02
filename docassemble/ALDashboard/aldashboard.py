@@ -42,6 +42,8 @@ from docassemble.base.util import (
     get_config,
     user_has_privilege,
     DACloudStorage,
+    user_info,
+    user_logged_in,
 )
 
 from ruamel.yaml import YAML
@@ -524,6 +526,16 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     Returns:
         A full password reset URL string, or None if the user is not found.
     """
+    if (
+        not user_logged_in()
+        or not user_has_privilege("admin")
+        or not user_info().permissions.get("edit_user_password")
+    ):
+        log(
+            f"get_password_reset_link: Current user does not have permission to reset passwords."
+        )
+        return None
+
     user = UserModel.query.filter(UserModel.id == user_id).first()
 
     if user is None:

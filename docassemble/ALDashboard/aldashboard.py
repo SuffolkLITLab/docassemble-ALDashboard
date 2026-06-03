@@ -449,7 +449,7 @@ def speedy_get_users() -> List[Dict[int, str]]:
 
 def get_users_and_name(limit_to_non_admin_or_developers: bool = False) -> List[Tuple[int, str, str, str]]:
     users = UserModel.query.with_entities(
-        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
+        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name, UserModel.nickname
     )
 
     if limit_to_non_admin_or_developers:
@@ -457,7 +457,7 @@ def get_users_and_name(limit_to_non_admin_or_developers: bool = False) -> List[T
             ~UserModel.roles.any(Role.name.in_(["admin", "developer"]))
         )
 
-    return users.all()
+    return [(u[0], u[1] or "", u[2] or u[4] or "", u[3] or "") for u in users.all()]
 
 
 def get_user_details(user_id: int) -> Optional[Dict]:
@@ -494,7 +494,7 @@ def get_user_details(user_id: int) -> Optional[Dict]:
     return {
         "id": user.id,
         "email": user.email,
-        "first_name": user.first_name,
+        "first_name": user.first_name or user.nickname,
         "last_name": user.last_name,
         "active": user.active,
         "account_type": account_type,
@@ -536,7 +536,7 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     if (
         not user_logged_in()
         or not user_has_privilege("admin")
-        or not user_info().permissions.get("edit_user_password")
+        or not ("edit_user_password" in user_info().permissions)
     ):
         log(
             f"get_password_reset_link: Current user does not have permission to reset passwords."
@@ -544,7 +544,7 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
         return None
     
     # Enforce that the user is not an admin or developer, unless the current user is an admin or developer
-    is_target_user_privileged = get_user_info(user_id).get("privileges", {}).get("admin") or get_user_info(user_id).get("privileges", {}).get("developer")
+    is_target_user_privileged = "admin" in get_user_info(user_id).get("privileges", []) or "developer" in get_user_info(user_id).get("privileges", [])
     if is_target_user_privileged and not user_has_privilege(["admin", "developer"]):
         log(
             f"get_password_reset_link: Cannot generate reset link for user {user_id} because target user is an admin or developer. Only admins can reset passwords for other admins or developers."

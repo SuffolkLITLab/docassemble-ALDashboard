@@ -2217,19 +2217,22 @@ def get_labeled_docx_runs(
         prompt_library_path=prompt_library_path,
     )
 
+    main_person = "users"
     custom_name_text = ""
     if custom_people_names is not None:
         if not isinstance(custom_people_names, list):
             raise ValueError(
                 "custom_people_names must be a list of [name, description] pairs."
             )
-        for item in custom_people_names:
+        for i, item in enumerate(custom_people_names):
             if not isinstance(item, (list, tuple)) or len(item) != 2:
                 raise ValueError(
                     "Each custom_people_names item must be a [name, description] pair."
                 )
             name, description = item
-            custom_name_text += f"    {name} ({description}), \n"
+            if i == 0:
+                main_person = name
+            custom_name_text += f"        {name} ({description})\n"
 
     preferred_name_text = ""
     if preferred_variable_names:
@@ -2277,8 +2280,7 @@ def get_labeled_docx_runs(
            asks for a specific person's or entity's actual name.
 
     List names for people:
-{custom_name_text}
-        users (for the person benefiting from the form, especially when for a pro se filer)
+{custom_name_text}{"        users (for the person benefiting from the form, especially when for a pro se filer)\n" if main_person == "users" else ""}
         other_parties (the opposing party in a lawsuit or transactional party)
         plaintiffs
         defendants
@@ -2299,50 +2301,50 @@ def get_labeled_docx_runs(
         interested_parties
 
         Name Forms:
-            users (full name of all users)
-            users[0] (full name of first user)
-            users[0].name.full() (Alternate full name of first user)
-            users[0].name.first (First name only)
-            users[0].name.middle (Middle name only)
-            users[0].name.middle_initial() (First letter of middle name)
-            users[0].name.last (Last name only)
-            users[0].name.suffix (Suffix of user's name only)
+            {main_person} (full name of all people in this list)
+            {main_person}[0] (full name of first person)
+            {main_person}[0].name.full() (Alternate full name of first person)
+            {main_person}[0].name.first (First name only)
+            {main_person}[0].name.middle (Middle name only)
+            {main_person}[0].name.middle_initial() (First letter of middle name)
+            {main_person}[0].name.last (Last name only)
+            {main_person}[0].name.suffix (Suffix of person's name only)
 
-    Attribute names (replace `users` with the appropriate list name):
+    Attribute names (replace `{main_person}` with the appropriate list name):
         Demographic Data:
-            users[0].birthdate (Birthdate)
-            users[0].age_in_years() (Calculated age based on birthdate)
-            users[0].gender (Gender)
-            users[0].gender_female (User is female, for checkbox field)
-            users[0].gender_male (User is male, for checkbox field)
-            users[0].gender_other (User is not male or female, for checkbox field)
-            users[0].gender_nonbinary (User identifies as nonbinary, for checkbox field)
-            users[0].gender_undisclosed (User chose not to disclose gender, for checkbox field)
-            users[0].gender_self_described (User chose to self-describe gender, for checkbox field)
-            user_needs_interpreter (User needs an interpreter, for checkbox field)
-            user_preferred_language (User's preferred language)
+            {main_person}[0].birthdate (Birthdate)
+            {main_person}[0].age_in_years() (Calculated age based on birthdate)
+            {main_person}[0].gender (Gender)
+            {main_person}[0].gender_female (Person is female, for checkbox field)
+            {main_person}[0].gender_male (Person is male, for checkbox field)
+            {main_person}[0].gender_other (Person is not male or female, for checkbox field)
+            {main_person}[0].gender_nonbinary (Person identifies as nonbinary, for checkbox field)
+            {main_person}[0].gender_undisclosed (Person chose not to disclose gender, for checkbox field)
+            {main_person}[0].gender_self_described (Person chose to self-describe gender, for checkbox field)
+            user_needs_interpreter (Person needs an interpreter, for checkbox field)
+            user_preferred_language (Person's preferred language)
 
         Addresses:
-            users[0].address.block() (Full address, on multiple lines)
-            users[0].address.on_one_line() (Full address on one line)
-            users[0].address.line_one() (Line one of the address, including unit or apartment number)
-            users[0].address.line_two() (Line two of the address, usually city, state, and Zip/postal code)
-            users[0].address.address (Street address)
-            users[0].address.unit (Apartment, unit, or suite)
-            users[0].address.city (City or town)
-            users[0].address.state (State, province, or sub-locality)
-            users[0].address.zip (Zip or postal code)
-            users[0].address.county (County or parish)
-            users[0].address.country (Country)
+            {main_person}[0].address.block() (Full address, on multiple lines)
+            {main_person}[0].address.on_one_line() (Full address on one line)
+            {main_person}[0].address.line_one() (Line one of the address, including unit or apartment number)
+            {main_person}[0].address.line_two() (Line two of the address, usually city, state, and Zip/postal code)
+            {main_person}[0].address.address (Street address)
+            {main_person}[0].address.unit (Apartment, unit, or suite)
+            {main_person}[0].address.city (City or town)
+            {main_person}[0].address.state (State, province, or sub-locality)
+            {main_person}[0].address.zip (Zip or postal code)
+            {main_person}[0].address.county (County or parish)
+            {main_person}[0].address.country (Country)
 
         Other Contact Information:
-            users[0].phone_number (Phone number)
-            users[0].mobile_number (A phone number explicitly labeled as the "mobile" number)
-            users[0].phone_numbers() (A list of both mobile and other phone numbers)
-            users[0].email (Email)
+            {main_person}[0].phone_number (Phone number)
+            {main_person}[0].mobile_number (A phone number explicitly labeled as the "mobile" number)
+            {main_person}[0].phone_numbers() (A list of both mobile and other phone numbers)
+            {main_person}[0].email (Email)
 
         Signatures:
-            users[0].signature (Signature)
+            {main_person}[0].signature (Signature)
             signature_date (Date the form is completed)
 
         Information about Court and Court Processes:

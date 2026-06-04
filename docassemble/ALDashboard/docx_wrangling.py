@@ -54,6 +54,15 @@ _IF_OPEN_PATTERN = re.compile(r"^(?:p\s+)?if\b", re.IGNORECASE)
 _IF_BRANCH_PATTERN = re.compile(r"^(?:p\s+)?(?:elif\b|else\b)", re.IGNORECASE)
 _IF_CLOSE_PATTERN = re.compile(r"^(?:p\s+)?endif\b", re.IGNORECASE)
 
+_XML_INVALID_CONTROL_CHARS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
+
+def _sanitize_xml_text(text: str) -> str:
+    """Remove control characters that are invalid in XML 1.0 to prevent lxml ValueError."""
+    if not text:
+        return ""
+    return _XML_INVALID_CONTROL_CHARS.sub("", text)
+
 
 def _get_docx_label_role_description(
     *,
@@ -313,7 +322,7 @@ def _append_text_content(run_element: Any, text: str) -> None:
         # Preserve leading/trailing spaces exactly when present.
         if part[:1].isspace() or part[-1:].isspace():
             text_element.set(qn("xml:space"), "preserve")
-        text_element.text = part
+        text_element.text = _sanitize_xml_text(part)
         run_element.append(text_element)
 
 
@@ -683,7 +692,7 @@ def defragment_docx_runs(
                 continue
 
             combined_text = "".join(el.text for el in group)
-            group[0].text = combined_text
+            group[0].text = _sanitize_xml_text(combined_text)
             for el in group[1:]:
                 el.getparent().remove(el)
                 stats["runs_removed"] += 1
@@ -903,7 +912,7 @@ def apply_docx_label_renames(
         for paragraph in _collect_target_paragraphs(document):
             for run in paragraph.runs:
                 if original in run.text:
-                    run.text = run.text.replace(original, replacement)
+                    run.text = _sanitize_xml_text(run.text.replace(original, replacement))
                     rename_count += 1
 
     return rename_count
@@ -2137,6 +2146,7 @@ def update_docx(
 
     paragraphs = _collect_target_paragraphs(document)
     for paragraph_number, run_number, modified_text, new_paragraph in normalized_runs:
+        modified_text = _sanitize_xml_text(modified_text)
         if paragraph_number >= len(paragraphs):
             continue  # Skip invalid paragraph index
 

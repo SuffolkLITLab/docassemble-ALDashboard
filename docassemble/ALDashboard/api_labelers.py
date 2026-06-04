@@ -2156,6 +2156,11 @@ def docx_labeler_suggest_labels() -> Response:
             elif isinstance(custom_people_raw, list):
                 custom_people_names = custom_people_raw
 
+        primary_person_variable = None
+        primary_person_raw = post_data.get("primary_person_variable")
+        if primary_person_raw and isinstance(primary_person_raw, str):
+            primary_person_variable = primary_person_raw.strip()
+
         (
             preferred_variable_names,
             interview_source_mode,
@@ -2179,6 +2184,7 @@ def docx_labeler_suggest_labels() -> Response:
             "openai_base_url": openai_base_url,
             "generator_models": generator_models,
             "custom_people_names": custom_people_names,
+            "primary_person_variable": primary_person_variable,
             "preferred_variable_names": preferred_variable_names,
             "interview_source_mode": interview_source_mode,
             "playground_project": selected_playground_project,

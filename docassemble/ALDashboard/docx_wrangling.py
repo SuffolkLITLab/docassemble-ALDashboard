@@ -1899,7 +1899,9 @@ def aggregate_docx_label_suggestion_runs(
 
 def get_voted_docx_label_suggestions(
     docx_path: str,
+    *,
     custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    primary_person_variable: Optional[str] = None,
     preferred_variable_names: Optional[Sequence[str]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
@@ -1921,6 +1923,7 @@ def get_voted_docx_label_suggestions(
     Args:
         docx_path: Path to the DOCX file to label.
         custom_people_names: Optional list of custom people-variable descriptions.
+        primary_person_variable: Optional override for the main 'users' equivalent variable.
         preferred_variable_names: Optional preferred variable names to bias prompts.
         openai_client: Optional initialized OpenAI client.
         openai_api: Optional API key override.
@@ -1957,6 +1960,7 @@ def get_voted_docx_label_suggestions(
         suggestions = get_labeled_docx_runs(
             docx_path=docx_path,
             custom_people_names=custom_people_names,
+            primary_person_variable=primary_person_variable,
             preferred_variable_names=preferred_variable_names,
             openai_client=openai_client,
             openai_api=openai_api,
@@ -2174,7 +2178,9 @@ def update_docx(
 
 def get_labeled_docx_runs(
     docx_path: str,
+    *,
     custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    primary_person_variable: Optional[str] = None,
     preferred_variable_names: Optional[Sequence[str]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
@@ -2193,6 +2199,7 @@ def get_labeled_docx_runs(
     Args:
         docx_path: Path to the DOCX file.
         custom_people_names: Optional list of custom ``(name, description)`` pairs.
+        primary_person_variable: Optional override for the main 'users' equivalent variable.
         preferred_variable_names: Optional preferred variable names to bias prompts.
         openai_client: Optional preconfigured OpenAI client.
         openai_api: Optional API key override.
@@ -2217,7 +2224,7 @@ def get_labeled_docx_runs(
         prompt_library_path=prompt_library_path,
     )
 
-    main_person = "users"
+    main_person = (primary_person_variable or "users").strip()
     custom_name_text = ""
     if custom_people_names is not None:
         if not isinstance(custom_people_names, list):
@@ -2230,8 +2237,6 @@ def get_labeled_docx_runs(
                     "Each custom_people_names item must be a [name, description] pair."
                 )
             name, description = item
-            if i == 0:
-                main_person = name
             custom_name_text += f"        {name} ({description})\n"
 
     preferred_name_text = ""

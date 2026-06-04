@@ -511,6 +511,8 @@ def docx_labeler_suggest_payload_from_options(
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = str(primary_person_raw).strip() if primary_person_raw is not None else None
     preferred_variable_names = _load_string_list_field(
         raw.get("preferred_variable_names"),
         field_name="preferred_variable_names",
@@ -559,6 +561,7 @@ def docx_labeler_suggest_payload_from_options(
         aggregated = get_voted_docx_label_suggestions(
             docx_path=temp_path,
             custom_people_names=cast(Any, custom_people_names),
+            primary_person_variable=primary_person_variable,
             preferred_variable_names=preferred_variable_names,
             openai_api=cast(Optional[str], openai_api),
             openai_base_url=cast(Optional[str], openai_base_url),
@@ -751,12 +754,15 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = str(primary_person_raw).strip() if primary_person_raw is not None else None
 
     temp_path = _write_temp_file(filename, content)
     try:
         guesses = get_labeled_docx_runs(
             temp_path,
             custom_people_names=custom_people_names,
+            primary_person_variable=primary_person_variable,
             openai_api=openai_api_override,
             openai_base_url=openai_base_url_override,
             model=openai_model_override or "gpt-5-nano",
@@ -1081,6 +1087,8 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = str(primary_person_raw).strip() if primary_person_raw is not None else None
 
     try:
         if raw_results is not None:
@@ -1097,6 +1105,7 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
                 for item in get_labeled_docx_runs(
                     temp_path,
                     custom_people_names=custom_people_names,
+                    primary_person_variable=primary_person_variable,
                     openai_api=openai_api_override,
                     openai_base_url=openai_base_url_override,
                     model=openai_model_override or "gpt-5-nano",

@@ -202,6 +202,7 @@
                 additionalInstructions: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.additionalInstructions) || '',
                 contextText: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.contextText) || '',
                 customPeople: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.customPeople) || '',
+                primaryPersonVariable: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.primaryPersonVariable) || '',
                 promptProfile: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.promptProfile) || 'standard',
                 model: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.model) || 'gpt-5-mini',
                 judgeModel: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.judgeModel) || '',
@@ -2655,6 +2656,7 @@
             if (state.settings.additionalInstructions) formData.append('additional_instructions', state.settings.additionalInstructions);
             if (state.settings.contextText) formData.append('context_text', state.settings.contextText);
             if (state.settings.customPeople) formData.append('custom_people_names', state.settings.customPeople);
+            if (state.settings.primaryPersonVariable) formData.append('primary_person_variable', state.settings.primaryPersonVariable);
             formData.append('prompt_profile', state.settings.promptProfile || 'standard');
             formData.append('model', state.settings.model);
             if (state.settings.judgeModel) formData.append('judge_model', state.settings.judgeModel);

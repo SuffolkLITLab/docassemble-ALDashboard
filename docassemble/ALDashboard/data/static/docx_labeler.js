@@ -199,17 +199,17 @@
                 editInterviewSourceInSettings: false
             },
             settings: {
-                additionalInstructions: '',
-                contextText: '',
-                customPeople: '',
-                promptProfile: 'standard',
-                model: 'gpt-5-mini',
-                judgeModel: '',
-                generationMethod: 'multi_run',
-                generatorModels: '',
-                defragmentRuns: true,
-                usePlaygroundVariables: false,
-                showLowConfidence: false
+                additionalInstructions: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.additionalInstructions) || '',
+                contextText: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.contextText) || '',
+                customPeople: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.customPeople) || '',
+                promptProfile: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.promptProfile) || 'standard',
+                model: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.model) || 'gpt-5-mini',
+                judgeModel: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.judgeModel) || '',
+                generationMethod: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.generationMethod) || 'multi_run',
+                generatorModels: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.generatorModels) || '',
+                defragmentRuns: DOCX_LABELER_CONFIG.settings && typeof DOCX_LABELER_CONFIG.settings.defragmentRuns === 'boolean' ? DOCX_LABELER_CONFIG.settings.defragmentRuns : true,
+                usePlaygroundVariables: DOCX_LABELER_CONFIG.settings && typeof DOCX_LABELER_CONFIG.settings.usePlaygroundVariables === 'boolean' ? DOCX_LABELER_CONFIG.settings.usePlaygroundVariables : false,
+                showLowConfidence: DOCX_LABELER_CONFIG.settings && typeof DOCX_LABELER_CONFIG.settings.showLowConfidence === 'boolean' ? DOCX_LABELER_CONFIG.settings.showLowConfidence : false
             },
             activeTab: 'existing',
             editingLabelId: null,
@@ -2027,7 +2027,10 @@
                 header.className = 'tree-item d-flex align-items-center gap-1 px-2 py-1 rounded small';
                 var leafValue = renderTarget;
                 var leafDescription = typeof leafValue === 'string' ? leafValue : (leafValue && leafValue._description ? leafValue._description : '');
-                var isSelectableLeaf = typeof value === 'string' || (typeof value === 'object' && !!value._variable) || (directSelectPath && !hasChildren);
+                var isSelectableLeaf = typeof value === 'string' || (value !== null && typeof value === 'object' && !!value._variable) || (directSelectPath && !hasChildren);
+                if (value === null) {
+                    return; // Skip null values completely, they are effectively deleted keys
+                }
                 if (isSelectableLeaf) {
                     header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + labelPath + '">' + labelPath + '</span><span class="text-muted small ms-1 text-truncate">' + leafDescription + '</span>';
                     header.querySelector('[data-var]').addEventListener('click', function(e) { e.stopPropagation(); onSelectVariable(labelPath); });

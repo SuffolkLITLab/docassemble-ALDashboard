@@ -202,6 +202,7 @@
                 additionalInstructions: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.additionalInstructions) || '',
                 contextText: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.contextText) || '',
                 customPeople: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.customPeople) || '',
+                primaryPersonVariable: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.primaryPersonVariable) || '',
                 promptProfile: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.promptProfile) || 'standard',
                 model: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.model) || 'gpt-5-mini',
                 judgeModel: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.judgeModel) || '',
@@ -823,14 +824,24 @@
 
         function getEffectiveVariableTree() {
             var sourceState = getActiveInterviewSourceState();
+            var baseTree = AL_VARIABLE_TREE;
+            
+            if (state.settings && state.settings.primaryPersonVariable && state.settings.primaryPersonVariable !== 'users') {
+                baseTree = cloneVariableTree(AL_VARIABLE_TREE);
+                if (baseTree['users']) {
+                    baseTree[state.settings.primaryPersonVariable] = baseTree['users'];
+                    delete baseTree['users'];
+                }
+            }
+
             if (!sourceState.variables.length) {
-                return AL_VARIABLE_TREE;
+                return baseTree;
             }
             return Object.assign(
                 {
                     'Selected interview variables': buildInterviewVariableTree(sourceState.variables)
                 },
-                AL_VARIABLE_TREE
+                baseTree
             );
         }
 
@@ -1595,10 +1606,11 @@
         }
 
         function updateSelectionModeInputHints() {
+            var mainPerson = (state.settings && state.settings.primaryPersonVariable && state.settings.primaryPersonVariable !== '') ? state.settings.primaryPersonVariable : 'users';
             if (_selectionMode === 'replace' || _selectionMode === 'insert') {
-                selVarInput.placeholder = '{{ users[0].name.first }}';
+                selVarInput.placeholder = '{{ ' + mainPerson + '[0].name.first }}';
             } else {
-                selVarInput.placeholder = 'users[0].is_active';
+                selVarInput.placeholder = mainPerson + '[0].is_active';
             }
             if (_selMatch && _selMatch.isInsertion) {
                 selOriginalText.textContent = '(insert at cursor)';
@@ -2655,6 +2667,7 @@
             if (state.settings.additionalInstructions) formData.append('additional_instructions', state.settings.additionalInstructions);
             if (state.settings.contextText) formData.append('context_text', state.settings.contextText);
             if (state.settings.customPeople) formData.append('custom_people_names', state.settings.customPeople);
+            if (state.settings.primaryPersonVariable) formData.append('primary_person_variable', state.settings.primaryPersonVariable);
             formData.append('prompt_profile', state.settings.promptProfile || 'standard');
             formData.append('model', state.settings.model);
             if (state.settings.judgeModel) formData.append('judge_model', state.settings.judgeModel);

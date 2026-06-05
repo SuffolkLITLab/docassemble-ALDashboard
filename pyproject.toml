@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docassemble.ALDashboard"
-version = "2.2.0"
+version = "2.2.1"
 description= "Dashboard for some admin tasks"
 readme = "README.md"
 requires-python = ">=3.12"

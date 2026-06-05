@@ -313,7 +313,6 @@ class TestPDFExportUtils(unittest.TestCase):
             ["same_name", "same_name__1", "other", "same_name__2"],
         )
 
-
     def test_bulk_normalize_keeps_auto_size_only_when_font_size_is_not_normalized(self):
         detected = [
             [

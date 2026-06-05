@@ -414,9 +414,7 @@ def normalize_signature_fields(
     """
     import pikepdf
 
-    targets = {
-        str(name).strip() for name in signature_field_names if str(name).strip()
-    }
+    targets = {str(name).strip() for name in signature_field_names if str(name).strip()}
     if not targets:
         if input_pdf_path != output_pdf_path:
             shutil.copy2(input_pdf_path, output_pdf_path)

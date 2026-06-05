@@ -465,7 +465,7 @@ def normalize_signature_fields(
 
             if converted and hasattr(pdf.Root, "AcroForm"):
                 try:
-                    existing_flags = int(pdf.Root.AcroForm.get("/SigFlags", 0) or 0)
+                    existing_flags = int(pdf.Root.AcroForm.get("/SigFlags") or 0)
                 except (TypeError, ValueError):
                     existing_flags = 0
                 pdf.Root.AcroForm["/SigFlags"] = existing_flags | 3

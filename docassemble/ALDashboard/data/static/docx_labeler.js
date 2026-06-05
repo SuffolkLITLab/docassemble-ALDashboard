@@ -824,14 +824,24 @@
 
         function getEffectiveVariableTree() {
             var sourceState = getActiveInterviewSourceState();
+            var baseTree = AL_VARIABLE_TREE;
+            
+            if (state.settings && state.settings.primaryPersonVariable && state.settings.primaryPersonVariable !== 'users') {
+                baseTree = cloneVariableTree(AL_VARIABLE_TREE);
+                if (baseTree['users']) {
+                    baseTree[state.settings.primaryPersonVariable] = baseTree['users'];
+                    delete baseTree['users'];
+                }
+            }
+
             if (!sourceState.variables.length) {
-                return AL_VARIABLE_TREE;
+                return baseTree;
             }
             return Object.assign(
                 {
                     'Selected interview variables': buildInterviewVariableTree(sourceState.variables)
                 },
-                AL_VARIABLE_TREE
+                baseTree
             );
         }
 

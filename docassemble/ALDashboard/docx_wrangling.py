@@ -93,6 +93,7 @@ def _get_docx_label_rules_addendum(
     *,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
     prompt_library_path: Optional[str] = None,
+    primary_person_variable: Optional[str] = None,
 ) -> str:
     """Resolve extra prompt rules for the active DOCX prompt profile.
 
@@ -107,7 +108,11 @@ def _get_docx_label_rules_addendum(
         prompt_profile,
         prompt_library_path=prompt_library_path,
     )
-    return str(profile_config.get("rules_addendum") or "")
+    addendum = str(profile_config.get("rules_addendum") or "")
+    if primary_person_variable and primary_person_variable != "users":
+        # safely replace 'users' with the customized primary person in the addendum
+        addendum = addendum.replace("users", primary_person_variable)
+    return addendum
 
 
 def _get_docx_label_temperature(
@@ -2376,6 +2381,7 @@ def get_labeled_docx_runs(
     rules += _get_docx_label_rules_addendum(
         prompt_profile=prompt_profile,
         prompt_library_path=prompt_library_path,
+        primary_person_variable=primary_person_variable,
     )
     if optional_context and optional_context.strip():
         role_description += (

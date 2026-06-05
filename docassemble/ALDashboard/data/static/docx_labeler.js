@@ -1606,10 +1606,11 @@
         }
 
         function updateSelectionModeInputHints() {
+            var mainPerson = (state.settings && state.settings.primaryPersonVariable && state.settings.primaryPersonVariable !== '') ? state.settings.primaryPersonVariable : 'users';
             if (_selectionMode === 'replace' || _selectionMode === 'insert') {
-                selVarInput.placeholder = '{{ users[0].name.first }}';
+                selVarInput.placeholder = '{{ ' + mainPerson + '[0].name.first }}';
             } else {
-                selVarInput.placeholder = 'users[0].is_active';
+                selVarInput.placeholder = mainPerson + '[0].is_active';
             }
             if (_selMatch && _selMatch.isInsertion) {
                 selOriginalText.textContent = '(insert at cursor)';

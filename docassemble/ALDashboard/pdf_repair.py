@@ -134,6 +134,9 @@ _CHECKBOX_CAPTION_TO_STYLE = {
     "N": "star",
     "u": "diamond",
 }
+_CHECKBOX_STYLE_TO_CAPTION = {
+    style: caption for caption, style in _CHECKBOX_CAPTION_TO_STYLE.items()
+}
 
 
 def _checkbox_mark_style(widget: Any, parent: Optional[Any]) -> str:
@@ -149,6 +152,23 @@ def _checkbox_mark_style(widget: Any, parent: Optional[Any]) -> str:
         if style:
             return style
     return "check"
+
+
+def _set_checkbox_mark_style(
+    widget: Any, parent: Optional[Any], style: str, pikepdf_module: Any
+) -> None:
+    """Write checkbox caption metadata that matches the synthesized mark style."""
+    caption = _CHECKBOX_STYLE_TO_CAPTION.get(style)
+    if not caption:
+        return
+    for obj in (widget, parent):
+        if obj is None or not hasattr(obj, "get"):
+            continue
+        mk = obj.get("/MK")
+        if not isinstance(mk, pikepdf_module.Dictionary):
+            mk = pikepdf_module.Dictionary()
+            obj["/MK"] = mk
+        mk["/CA"] = pikepdf_module.String(caption)
 
 
 _CHECKBOX_BORDER_WIDTHS = {
@@ -344,8 +364,13 @@ def restore_checkbox_appearances(
                         continue
                     checked += 1
 
+                    checked_state = _checkbox_checked_state(widget, parent, pikepdf)
                     normal_ap = _normal_appearance_dict(widget)
-                    if normal_ap is not None and "/Off" in normal_ap:
+                    if (
+                        normal_ap is not None
+                        and "/Off" in normal_ap
+                        and str(checked_state) in normal_ap
+                    ):
                         skipped_existing += 1
                         continue
 
@@ -356,7 +381,6 @@ def restore_checkbox_appearances(
                     except (TypeError, ValueError, IndexError):
                         width = height = 12.0
 
-                    checked_state = _checkbox_checked_state(widget, parent, pikepdf)
                     mark_style = _checkbox_mark_style(widget, parent)
                     field_name_obj = _pdf_obj_value(
                         parent, "/T", _pdf_obj_value(widget, "/T", "")
@@ -377,8 +401,12 @@ def restore_checkbox_appearances(
                         streams["checked"]
                     )
                     widget["/AP"] = pikepdf.Dictionary({"/N": normal_states})
+                    _set_checkbox_mark_style(widget, parent, mark_style, pikepdf)
                     restored += 1
 
+            acroform = pdf.Root.get("/AcroForm")
+            if isinstance(acroform, pikepdf.Dictionary) and "/NeedAppearances" in acroform:
+                del acroform["/NeedAppearances"]
             pdf.save(tmp_path)
 
         _assert_pdf(tmp_path, label="restore checkbox appearances")

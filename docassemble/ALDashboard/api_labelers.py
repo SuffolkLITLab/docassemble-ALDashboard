@@ -334,6 +334,14 @@ def _apply_pdf_field_visual_defaults(
             if len(mk) == 0:
                 del obj["/MK"]
 
+    def _ensure_standard_text_da(obj: Any) -> None:
+        if obj is None or not hasattr(obj, "get"):
+            return
+        if str(obj.get("/FT", "")) not in {"/Tx", "/Ch"}:
+            return
+        if "/DA" not in obj:
+            obj["/DA"] = pikepdf.String("/Helv 12 Tf 0 g")
+
     def _is_button_widget(named_parent: Optional[Any]) -> bool:
         if named_parent is None or not hasattr(named_parent, "get"):
             return False
@@ -341,9 +349,6 @@ def _apply_pdf_field_visual_defaults(
 
     with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
         acroform = pdf.Root.get("/AcroForm")
-        if isinstance(acroform, pikepdf.Dictionary):
-            acroform["/NeedAppearances"] = True
-
         for page in pdf.pages:
             if "/Annots" not in page:
                 continue
@@ -360,6 +365,9 @@ def _apply_pdf_field_visual_defaults(
                     _set_no_border(annot)
                     if named_parent and named_parent is not annot:
                         _set_no_border(named_parent)
+                    _ensure_standard_text_da(annot)
+                    if named_parent and named_parent is not annot:
+                        _ensure_standard_text_da(named_parent)
 
                     is_button_widget = _is_button_widget(named_parent)
                     if field_name in explicit and (
@@ -382,6 +390,14 @@ def _apply_pdf_field_visual_defaults(
                             del annot["/AP"]
                 except Exception:  # nosec B112
                     continue
+
+        if isinstance(acroform, pikepdf.Dictionary):
+            # Rebuild standard text/list appearances now, then clear the flag so
+            # button widgets keep their authoritative saved /AP streams.
+            acroform["/NeedAppearances"] = True
+            pdf.generate_appearance_streams()
+            if "/NeedAppearances" in acroform:
+                del acroform["/NeedAppearances"]
 
         pdf.save(pdf_path)
 

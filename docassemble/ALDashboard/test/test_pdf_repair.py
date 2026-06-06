@@ -287,7 +287,14 @@ class TestQpdfRepair(unittest.TestCase):
 
 
 class TestRestoreCheckboxAppearances(unittest.TestCase):
-    def _make_form_pdf(self, path: str, *, checkbox_has_ap: bool = False) -> None:
+    def _make_form_pdf(
+        self,
+        path: str,
+        *,
+        checkbox_has_ap: bool = False,
+        checkbox_has_partial_ap: bool = False,
+        has_need_appearances: bool = False,
+    ) -> None:
         import pikepdf
         from pikepdf import Array, Dictionary, Name, String
 
@@ -314,6 +321,16 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
                         {
                             "/Off": pikepdf.Stream(pdf, b"q Q"),
                             "/Yes": pikepdf.Stream(pdf, b"q Q"),
+                        }
+                    )
+                }
+            )
+        elif checkbox_has_partial_ap:
+            checkbox["/AP"] = Dictionary(
+                {
+                    "/N": Dictionary(
+                        {
+                            "/Off": pikepdf.Stream(pdf, b"q Q"),
                         }
                     )
                 }
@@ -346,9 +363,10 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
         )
 
         page.obj["/Annots"] = Array([checkbox_ref, text_field, radio])
-        pdf.Root["/AcroForm"] = Dictionary(
-            {"/Fields": Array([checkbox_ref, text_field, radio])}
-        )
+        acroform = Dictionary({"/Fields": Array([checkbox_ref, text_field, radio])})
+        if has_need_appearances:
+            acroform["/NeedAppearances"] = True
+        pdf.Root["/AcroForm"] = acroform
         pdf.save(path)
         pdf.close()
 
@@ -392,6 +410,13 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
                     }
                 )
         return widgets
+
+    def _has_need_appearances(self, path: str) -> bool:
+        import pikepdf
+
+        with pikepdf.open(path) as pdf:
+            acroform = pdf.Root.get("/AcroForm")
+            return isinstance(acroform, pikepdf.Dictionary) and "/NeedAppearances" in acroform
 
     def test_restores_only_missing_checkbox_appearances(self):
         try:
@@ -445,6 +470,59 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
             self.assertEqual(result["checkbox_fields_checked"], 1)
             self.assertEqual(result["appearances_restored"], 0)
             self.assertEqual(result["existing_appearances_skipped"], 1)
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_repairs_partial_checkbox_appearances(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path, checkbox_has_partial_ap=True)
+            result = restore_checkbox_appearances(in_path, out_path)
+
+            self.assertEqual(result["checkbox_fields_checked"], 1)
+            self.assertEqual(result["appearances_restored"], 1)
+            self.assertEqual(result["existing_appearances_skipped"], 0)
+
+            widgets = {item["name"]: item for item in self._read_widget_flags(out_path)}
+            self.assertEqual(
+                widgets["needs_appearance"]["normal_states"], ["/Off", "/Yes"]
+            )
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_clears_need_appearances_after_checkbox_repair(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(
+                in_path,
+                checkbox_has_ap=True,
+                has_need_appearances=True,
+            )
+            result = restore_checkbox_appearances(in_path, out_path)
+
+            self.assertEqual(result["checkbox_fields_checked"], 1)
+            self.assertEqual(result["existing_appearances_skipped"], 1)
+            self.assertFalse(self._has_need_appearances(out_path))
         finally:
             if os.path.exists(in_path):
                 os.remove(in_path)

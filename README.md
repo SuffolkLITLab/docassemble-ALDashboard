@@ -130,9 +130,10 @@ celery modules:
   - Output: Relabeled PDF and resulting field names; optional parse stats/base64 output.
 - `POST /al/api/v1/dashboard/pdf/repair`
   - Run a single repair action on an uploaded PDF. Omit `action` to list available actions.
-  - `action` values: `ghostscript_reprint`, `qpdf_repair`, `unlock`, `repair_metadata`, `ocr`.
+  - `action` values: `ghostscript_reprint`, `qpdf_repair`, `restore_checkbox_appearances`, `unlock`, `repair_metadata`, `ocr`.
   - `ghostscript_reprint`: Re-distill through Ghostscript. Optional `preserve_fields=true` to extract and re-apply field locations.
   - `qpdf_repair`: Fix cross-reference tables and rebuild the page tree via pikepdf.
+  - `restore_checkbox_appearances`: Add missing checkbox appearance streams without changing text field appearances.
   - `unlock`: Remove encryption/permissions. Optional `password` parameter.
   - `repair_metadata`: Fix broken catalog/metadata entries (pikepdf, then pdfrw fallback).
   - `ocr`: Add searchable text layer via ocrmypdf. Optional `language` (default `eng`) and `skip_text` (default `true`).

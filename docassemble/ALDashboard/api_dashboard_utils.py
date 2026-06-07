@@ -512,7 +512,9 @@ def docx_labeler_suggest_payload_from_options(
         expected_type=list,
     )
     primary_person_raw = raw.get("primary_person_variable")
-    primary_person_variable = str(primary_person_raw).strip() if primary_person_raw is not None else None
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
     preferred_variable_names = _load_string_list_field(
         raw.get("preferred_variable_names"),
         field_name="preferred_variable_names",
@@ -755,7 +757,9 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         expected_type=list,
     )
     primary_person_raw = raw.get("primary_person_variable")
-    primary_person_variable = str(primary_person_raw).strip() if primary_person_raw is not None else None
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
 
     temp_path = _write_temp_file(filename, content)
     try:
@@ -1088,7 +1092,9 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
         expected_type=list,
     )
     primary_person_raw = raw.get("primary_person_variable")
-    primary_person_variable = str(primary_person_raw).strip() if primary_person_raw is not None else None
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
 
     try:
         if raw_results is not None:
@@ -2474,7 +2480,8 @@ def build_openapi_spec() -> Dict[str, Any]:
                         "Run a single repair action on an uploaded PDF. "
                         "Send without `action` to list available actions. "
                         "Actions: ghostscript_reprint (re-distill, optionally preserve fields), "
-                        "qpdf_repair (fix xref/page tree), unlock (remove encryption), "
+                        "qpdf_repair (fix xref/page tree), restore_checkbox_appearances "
+                        "(restore missing checkbox appearances), unlock (remove encryption), "
                         "repair_metadata (fix catalog/metadata), ocr (add text layer)."
                     ),
                 }
@@ -2566,7 +2573,7 @@ def build_docs_html() -> str:
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
     <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>; responses include renamed <code>fields</code>, optional positioned fields, and optional <code>pdf_base64</code>.</li>
     <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>; responses include <code>fields</code>, <code>fields_old</code>, and optional <code>pdf_base64</code>.</li>
-    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
+    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, restore_checkbox_appearances, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
   </ul>
   <h2>DOCX Modes</h2>
   <ul>

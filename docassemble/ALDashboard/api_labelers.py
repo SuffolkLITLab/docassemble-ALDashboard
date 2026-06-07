@@ -266,6 +266,29 @@ def _collect_fields_with_explicit_background(
     return explicit
 
 
+def _collect_checkbox_border_widths(
+    fields_data: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Collect opt-in checkbox border widths keyed by PDF field name."""
+    widths: Dict[str, str] = {}
+    for field in fields_data:
+        try:
+            if str(field.get("type", "")).lower() != "checkbox":
+                continue
+            if not parse_bool(field.get("checkboxBorder"), default=False):
+                continue
+            name = str(field.get("name", "")).strip()
+            if not name:
+                continue
+            width = str(field.get("checkboxBorderWidth") or "thin").strip().lower()
+            if width not in {"thin", "medium", "thick"}:
+                width = "thin"
+            widths[name] = width
+        except Exception:  # nosec B112
+            continue
+    return widths
+
+
 def _apply_pdf_field_visual_defaults(
     pdf_path: str,
     *,
@@ -311,6 +334,14 @@ def _apply_pdf_field_visual_defaults(
             if len(mk) == 0:
                 del obj["/MK"]
 
+    def _ensure_standard_text_da(obj: Any) -> None:
+        if obj is None or not hasattr(obj, "get"):
+            return
+        if str(obj.get("/FT", "")) not in {"/Tx", "/Ch"}:
+            return
+        if "/DA" not in obj:
+            obj["/DA"] = pikepdf.String("/Helv 12 Tf 0 g")
+
     def _is_button_widget(named_parent: Optional[Any]) -> bool:
         if named_parent is None or not hasattr(named_parent, "get"):
             return False
@@ -318,9 +349,6 @@ def _apply_pdf_field_visual_defaults(
 
     with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
         acroform = pdf.Root.get("/AcroForm")
-        if isinstance(acroform, pikepdf.Dictionary):
-            acroform["/NeedAppearances"] = True
-
         for page in pdf.pages:
             if "/Annots" not in page:
                 continue
@@ -337,8 +365,14 @@ def _apply_pdf_field_visual_defaults(
                     _set_no_border(annot)
                     if named_parent and named_parent is not annot:
                         _set_no_border(named_parent)
+                    _ensure_standard_text_da(annot)
+                    if named_parent and named_parent is not annot:
+                        _ensure_standard_text_da(named_parent)
 
-                    if field_name in explicit:
+                    is_button_widget = _is_button_widget(named_parent)
+                    if field_name in explicit and (
+                        preserve_button_appearances or not is_button_widget
+                    ):
                         continue
 
                     _clear_background(annot)
@@ -352,12 +386,18 @@ def _apply_pdf_field_visual_defaults(
                     # unchecked visual states that PDF viewers cannot reliably
                     # reconstruct on their own.
                     if "/AP" in annot:
-                        if not preserve_button_appearances or not _is_button_widget(
-                            named_parent
-                        ):
+                        if not preserve_button_appearances or not is_button_widget:
                             del annot["/AP"]
                 except Exception:  # nosec B112
                     continue
+
+        if isinstance(acroform, pikepdf.Dictionary):
+            # Rebuild standard text/list appearances now, then clear the flag so
+            # button widgets keep their authoritative saved /AP streams.
+            acroform["/NeedAppearances"] = True
+            pdf.generate_appearance_streams()
+            if "/NeedAppearances" in acroform:
+                del acroform["/NeedAppearances"]
 
         pdf.save(pdf_path)
 
@@ -3217,6 +3257,13 @@ def pdf_labeler_apply_fields() -> Response:
             explicit_background_fields = _collect_fields_with_explicit_background(
                 fields_data
             )
+            checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
+            signature_field_names = [
+                str(field.get("name", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "signature"
+                and str(field.get("name", "")).strip()
+            ]
 
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
@@ -3233,9 +3280,23 @@ def pdf_labeler_apply_fields() -> Response:
 
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
+            from .pdf_repair import normalize_signature_fields
+
+            normalize_signature_fields(
+                output_path,
+                output_path,
+                signature_field_names,
+            )
             _apply_pdf_field_visual_defaults(
                 output_path,
                 explicit_background_fields=explicit_background_fields,
+            )
+            from .pdf_repair import restore_checkbox_appearances
+
+            restore_checkbox_appearances(
+                output_path,
+                output_path,
+                checkbox_border_widths=checkbox_border_widths,
             )
 
             accessibility_payload = _parse_optional_json_field(
@@ -3902,6 +3963,15 @@ def pdf_labeler_bulk_normalize():
                         explicit_background_fields = (
                             _collect_fields_with_explicit_background(normalized_fields)
                         )
+                        checkbox_border_widths = _collect_checkbox_border_widths(
+                            normalized_fields
+                        )
+                        signature_field_names = [
+                            str(field.get("name", "")).strip()
+                            for field in normalized_fields
+                            if str(field.get("type", "")).lower() == "signature"
+                            and str(field.get("name", "")).strip()
+                        ]
 
                         with tempfile.NamedTemporaryFile(
                             suffix=".pdf", delete=False
@@ -3921,9 +3991,23 @@ def pdf_labeler_bulk_normalize():
                         }
                         if checkbox_values:
                             _apply_checkbox_export_values(output_path, checkbox_values)
+                        from .pdf_repair import normalize_signature_fields
+
+                        normalize_signature_fields(
+                            output_path,
+                            output_path,
+                            signature_field_names,
+                        )
                         _apply_pdf_field_visual_defaults(
                             output_path,
                             explicit_background_fields=explicit_background_fields,
+                        )
+                        from .pdf_repair import restore_checkbox_appearances
+
+                        restore_checkbox_appearances(
+                            output_path,
+                            output_path,
+                            checkbox_border_widths=checkbox_border_widths,
                         )
 
                         # Strip embedded fonts if requested

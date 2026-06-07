@@ -54,7 +54,7 @@ _IF_OPEN_PATTERN = re.compile(r"^(?:p\s+)?if\b", re.IGNORECASE)
 _IF_BRANCH_PATTERN = re.compile(r"^(?:p\s+)?(?:elif\b|else\b)", re.IGNORECASE)
 _IF_CLOSE_PATTERN = re.compile(r"^(?:p\s+)?endif\b", re.IGNORECASE)
 
-_XML_INVALID_CONTROL_CHARS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+_XML_INVALID_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def _sanitize_xml_text(text: str) -> str:
@@ -917,7 +917,9 @@ def apply_docx_label_renames(
         for paragraph in _collect_target_paragraphs(document):
             for run in paragraph.runs:
                 if original in run.text:
-                    run.text = _sanitize_xml_text(run.text.replace(original, replacement))
+                    run.text = _sanitize_xml_text(
+                        run.text.replace(original, replacement)
+                    )
                     rename_count += 1
 
     return rename_count

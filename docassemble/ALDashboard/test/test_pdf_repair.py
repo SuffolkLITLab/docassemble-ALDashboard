@@ -407,6 +407,13 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
                             and "/Off" in annot["/AP"]["/N"]
                             else ""
                         ),
+                        "mark_caption": (
+                            str(annot["/MK"]["/CA"])
+                            if "/MK" in annot
+                            and isinstance(annot["/MK"], pikepdf.Dictionary)
+                            and "/CA" in annot["/MK"]
+                            else ""
+                        ),
                     }
                 )
         return widgets
@@ -446,6 +453,7 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
             self.assertIn("3.000 17.000 l", widgets["needs_appearance"]["yes_stream"])
             self.assertNotIn(" re", widgets["needs_appearance"]["yes_stream"])
             self.assertNotIn(" re", widgets["needs_appearance"]["off_stream"])
+            self.assertEqual(widgets["needs_appearance"]["mark_caption"], "8")
             self.assertFalse(widgets["text_field"]["has_ap"])
             self.assertFalse(widgets["radio_field"]["has_ap"])
         finally:
@@ -470,6 +478,8 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
             self.assertEqual(result["checkbox_fields_checked"], 1)
             self.assertEqual(result["appearances_restored"], 0)
             self.assertEqual(result["existing_appearances_skipped"], 1)
+            widgets = {item["name"]: item for item in self._read_widget_flags(out_path)}
+            self.assertEqual(widgets["needs_appearance"]["mark_caption"], "8")
         finally:
             if os.path.exists(in_path):
                 os.remove(in_path)

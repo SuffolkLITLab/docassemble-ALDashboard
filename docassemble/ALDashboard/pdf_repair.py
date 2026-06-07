@@ -127,15 +127,23 @@ def _checkbox_checked_state(
     return pikepdf_module.Name("/Yes")
 
 
+_CHECKBOX_STYLE_CAPTIONS = {
+    # Prefer Acrobat's standard captions when writing metadata, but continue to
+    # recognize ReportLab's legacy caption values when reading older PDFs.
+    "check": ("4",),
+    "cross": ("8", "5"),
+    "circle": ("l",),
+    "star": ("H", "N"),
+    "diamond": ("u",),
+    "square": ("n",),
+}
 _CHECKBOX_CAPTION_TO_STYLE = {
-    "4": "check",
-    "5": "cross",
-    "l": "circle",
-    "N": "star",
-    "u": "diamond",
+    caption: style
+    for style, captions in _CHECKBOX_STYLE_CAPTIONS.items()
+    for caption in captions
 }
 _CHECKBOX_STYLE_TO_CAPTION = {
-    style: caption for caption, style in _CHECKBOX_CAPTION_TO_STYLE.items()
+    style: captions[0] for style, captions in _CHECKBOX_STYLE_CAPTIONS.items()
 }
 
 
@@ -365,12 +373,14 @@ def restore_checkbox_appearances(
                     checked += 1
 
                     checked_state = _checkbox_checked_state(widget, parent, pikepdf)
+                    mark_style = _checkbox_mark_style(widget, parent)
                     normal_ap = _normal_appearance_dict(widget)
                     if (
                         normal_ap is not None
                         and "/Off" in normal_ap
                         and str(checked_state) in normal_ap
                     ):
+                        _set_checkbox_mark_style(widget, parent, mark_style, pikepdf)
                         skipped_existing += 1
                         continue
 
@@ -381,7 +391,6 @@ def restore_checkbox_appearances(
                     except (TypeError, ValueError, IndexError):
                         width = height = 12.0
 
-                    mark_style = _checkbox_mark_style(widget, parent)
                     field_name_obj = _pdf_obj_value(
                         parent, "/T", _pdf_obj_value(widget, "/T", "")
                     )

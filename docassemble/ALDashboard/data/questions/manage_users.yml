@@ -70,7 +70,7 @@ fields:
     datatype: integer
     input type: combobox
     code: |
-      [{user[0]: f"{user[2]} {user[3]} ({user[1]})".strip()} for user in get_users_and_name()]
+      [{user[0]: f"{user[2]} {user[3]} ({user[1]})".strip()} for user in get_users_and_name(limit_to_non_admin_or_developers=not user_has_privilege(["admin", "developer"]) )]
     exclude:
       - "2"
     # User ID 2 is the "cron" user and should not be managed here        

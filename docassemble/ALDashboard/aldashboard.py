@@ -535,8 +535,8 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     # Check top level authority
     if (
         not user_logged_in()
-        or not user_has_privilege("admin")
-        or not ("edit_user_password" in user_info().permissions)
+        or (not user_has_privilege("admin")
+        and not ("edit_user_password" in user_info().permissions))
     ):
         log(
             f"get_password_reset_link: Current user does not have permission to reset passwords."

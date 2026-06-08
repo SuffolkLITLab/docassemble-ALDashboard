@@ -18,6 +18,7 @@ modules:
 ---
 #mandatory: True # Use while developing in playground
 continue button field: playground_splash
+id: splash screen
 question: |
   Splash screen
 ---
@@ -49,6 +50,7 @@ code: |
   else:
     current_usage_rows = []
 ---
+id: select interview
 question: |
   What interview do you want to view sessions for?
 subquestion: |
@@ -176,6 +178,7 @@ code: |
 ---
 mandatory: True
 event: load_answer
+id: session list
 question: |
   % if filename:
   Recently started sessions for ${ nicer_interview_filename(interviews.get(filename, {"title": filename}).get('title', filename)) }

@@ -192,7 +192,11 @@ print("done")
             annot = pdf.pages[0]["/Annots"][0]
             acroform = pdf.Root.get("/AcroForm")
             ap_stream = ""
-            if "/AP" in annot and hasattr(annot.get("/AP"), "get") and "/N" in annot["/AP"]:
+            if (
+                "/AP" in annot
+                and hasattr(annot.get("/AP"), "get")
+                and "/N" in annot["/AP"]
+            ):
                 try:
                     ap_stream = annot["/AP"]["/N"].read_bytes().decode("latin1")
                 except (AttributeError, pikepdf.PdfError):

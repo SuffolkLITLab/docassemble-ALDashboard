@@ -233,6 +233,7 @@ code: |
   do_disable_mfa = True
 ---
 event: ending_screen
+id: task complete
 question: |
   Task is done
 subquestion: |

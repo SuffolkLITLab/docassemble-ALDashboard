@@ -16,6 +16,7 @@ features:
   css: al_dashboard.css
 ---
 mandatory: True
+id: dashboard menu
 question: |
   ALDashboard 
 Subquestion: |

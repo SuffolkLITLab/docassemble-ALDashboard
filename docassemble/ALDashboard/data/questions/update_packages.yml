@@ -28,6 +28,7 @@ code: |
   else:
     waiting_screen
 ---
+id: select packages to update
 question: |
   What packages do you want to update?
 fields:
@@ -73,6 +74,7 @@ code: |
   background_response()
 ---  
 event: waiting_screen
+id: update wait screen
 question: |
   Wait here while we start the installation process
 reload: True
@@ -83,6 +85,7 @@ code: |
   background_response()
 ---
 event: ending_screen
+id: package update started
 question: |
   Your packages are installing
 subquestion: |

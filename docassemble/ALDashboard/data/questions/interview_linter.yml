@@ -146,6 +146,7 @@ code: |
 
   severity_rank = {"red": 0, "yellow": 1, "green": 2}
   severity_label = {"red": "Fix required", "yellow": "Warning", "green": "Advisory"}
+  severity_class = {"red": "required", "yellow": "warning", "green": "advisory"}
 
 
   def _safe_id(value, prefix="id"):
@@ -171,6 +172,14 @@ code: |
     return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "  ")
 
 
+  def _severity_class(value):
+    return severity_class.get(str(value or "").lower(), "warning")
+
+
+  def _severity_label(value):
+    return severity_label.get(str(value or "").lower(), "Warning")
+
+
   lint_reports_ui = []
   for report_idx, report in enumerate(lint_reports):
     name = str(report.get("name") or "unknown")
@@ -184,7 +193,7 @@ code: |
           "name": name,
           "file_anchor": file_anchor,
           "error": error or "Unknown error",
-          "counts": {"red": 0, "yellow": 0, "green": 0},
+          "counts": {"required": 0, "warning": 0, "advisory": 0},
           "priority_findings": [],
           "screens": [],
           "orphan_findings": [],
@@ -198,9 +207,9 @@ code: |
 
     findings = _sort_findings(result.get("findings", []))
     counts = {
-      "red": len(result.get("findings_by_severity", {}).get("red", [])),
-      "yellow": len(result.get("findings_by_severity", {}).get("yellow", [])),
-      "green": len(result.get("findings_by_severity", {}).get("green", [])),
+      "required": len(result.get("findings_by_severity", {}).get("red", [])),
+      "warning": len(result.get("findings_by_severity", {}).get("yellow", [])),
+      "advisory": len(result.get("findings_by_severity", {}).get("green", [])),
     }
     screen_catalog = result.get("screen_catalog", [])
     by_screen = {str(screen.get("screen_id") or ""): [] for screen in screen_catalog}
@@ -261,21 +270,21 @@ subquestion: |
       <details id="${ report['file_anchor'] }" open>
         <summary>
           ${ html.escape(report['name']) }
-          <span class="al-lint-badge red">Red ${ report['counts']['red'] }</span>
-          <span class="al-lint-badge yellow">Yellow ${ report['counts']['yellow'] }</span>
-          <span class="al-lint-badge green">Green ${ report['counts']['green'] }</span>
+          <span class="al-lint-badge required">Fix required ${ report['counts']['required'] }</span>
+          <span class="al-lint-badge warning">Warnings ${ report['counts']['warning'] }</span>
+          <span class="al-lint-badge advisory">Advisories ${ report['counts']['advisory'] }</span>
         </summary>
         <div class="al-lint-file-body">
           <div>
             % if report['error']:
-            <div class="al-lint-finding red">${ html.escape(report['error']) }</div>
+            <div class="al-lint-finding required">${ html.escape(report['error']) }</div>
             % else:
             <div class="al-lint-priority-inline">
               <strong>Priority:</strong>
               % if report['priority_findings']:
               % for finding in report['priority_findings']:
               <a class="al-lint-priority-item" href="#${ report['file_anchor'] }-screen-${ _safe_id(finding.get('screen_id'), prefix='screen') if finding.get('screen_id') else report['file_anchor'] }">
-                <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
+                <span class="al-lint-badge ${ _severity_class(finding.get('severity')) }">${ html.escape(_severity_label(finding.get('severity'))) }</span>
                 % if finding.get('screen_id'):
                 <code>${ html.escape(str(finding.get('screen_id'))) }</code>
                 % else:
@@ -290,7 +299,7 @@ subquestion: |
             <div class="al-lint-meta-line">
               Readability: <strong>${ html.escape(str(report['readability'].get('consensus', 'N/A'))) }</strong>
               % if report['readability'].get('warning'):
-              <span class="al-lint-badge ${ report['readability'].get('severity') or 'yellow' }">${ html.escape(str(report['readability'].get('warning')))}</span>
+              <span class="al-lint-badge ${ _severity_class(report['readability'].get('severity')) }">${ html.escape(str(report['readability'].get('warning')))}</span>
               % endif
             </div>
             % if report['misspelled']:
@@ -305,14 +314,14 @@ subquestion: |
               </div>
 
               % for finding in screen['findings']:
-              <div class="al-lint-finding ${ str(finding.get('severity') or 'yellow') }">
-                <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
+              <div class="al-lint-finding ${ _severity_class(finding.get('severity')) }">
+                <span class="al-lint-badge ${ _severity_class(finding.get('severity')) }">${ html.escape(_severity_label(finding.get('severity'))) }</span>
                 ${ "✨ " if finding.get("source") == "llm" else "" }${ html.escape(_display_text(finding.get('message'))) }
                 % if finding.get("confidence"):
                 <em>(confidence: ${ html.escape(str(finding.get("confidence"))) })</em>
                 % endif
                 % if finding.get("url"):
-                <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference</a>
+                <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference (opens in new tab)</a>
                 % endif
                 % if finding.get("problematic_text"):
                 <div class="al-lint-problem">${ html.escape(_display_text(finding.get("problematic_text"))) }</div>
@@ -336,11 +345,11 @@ subquestion: |
             <article class="al-lint-screen">
               <div class="al-lint-screen-header"><strong>General findings (no section id)</strong></div>
               % for finding in report['orphan_findings']:
-              <div class="al-lint-finding ${ str(finding.get('severity') or 'yellow') }">
-                <span class="al-lint-badge ${ str(finding.get('severity') or 'yellow') }">${ html.escape(severity_label.get(str(finding.get('severity') or '').lower(), 'Warning')) }</span>
+              <div class="al-lint-finding ${ _severity_class(finding.get('severity')) }">
+                <span class="al-lint-badge ${ _severity_class(finding.get('severity')) }">${ html.escape(_severity_label(finding.get('severity'))) }</span>
                 ${ html.escape(_display_text(finding.get('message'))) }
                 % if finding.get("url"):
-                <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference</a>
+                <a href="${ html.escape(str(finding.get('url'))) }" target="_blank" rel="noopener noreferrer">Reference (opens in new tab)</a>
                 % endif
                 % if finding.get("problematic_text"):
                 <div class="al-lint-problem">${ html.escape(_display_text(finding.get("problematic_text"))) }</div>
@@ -354,10 +363,10 @@ subquestion: |
             <article class="al-lint-screen">
               <div class="al-lint-screen-header"><strong>Additional warnings</strong></div>
               % for warning in report['headings_warnings']:
-              <div class="al-lint-finding yellow">${ html.escape(_display_text(warning)) }</div>
+              <div class="al-lint-finding warning">${ html.escape(_display_text(warning)) }</div>
               % endfor
               % for warning in report['style_warnings']:
-              <div class="al-lint-finding yellow">${ html.escape(_display_text(warning.get("message") or "")) } <a href="${ html.escape(str(warning.get('url') or '')) }" target="_blank" rel="noopener noreferrer">Read more</a></div>
+              <div class="al-lint-finding warning">${ html.escape(_display_text(warning.get("message") or "")) } <a href="${ html.escape(str(warning.get('url') or '')) }" target="_blank" rel="noopener noreferrer">Style guidance (opens in new tab)</a></div>
               % endfor
             </article>
             % endif

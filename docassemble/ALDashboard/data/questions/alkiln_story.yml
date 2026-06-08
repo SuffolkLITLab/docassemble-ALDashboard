@@ -39,6 +39,7 @@ code: |
 ---
 code: |
   import json
+
   default_ignore_anywhere_text = json.dumps(
     sorted(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME),
     indent=2,
@@ -66,9 +67,7 @@ code: |
   for interview_filename, interview_info in sorted(
     interviews.items(),
     key=lambda item: (
-      item[1].get("title") or item[0]
-      if isinstance(item[1], dict)
-      else item[0]
+      item[1].get("title") or item[0] if isinstance(item[1], dict) else item[0]
     ),
   ):
     interview_title = (
@@ -97,6 +96,7 @@ fields:
 code: |
   import json
 
+
   def _story_progress_label(progress, num_keys):
     if progress is not None and str(progress).strip():
       try:
@@ -104,6 +104,7 @@ code: |
       except Exception:
         return str(progress)
     return f"Step {num_keys}"
+
 
   story_session_choices = {}
   for saved_session in speedy_get_sessions(
@@ -259,6 +260,7 @@ code: |
 ---
 code: |
   import json
+
   if story_source == "session":
     story_data = {
       "i": selected_interview_filename,
@@ -306,14 +308,22 @@ code: |
   if story_input_type == "yaml":
     story_result = story_from_docassemble_yaml(
       story_yaml_text,
-      filename=story_default_yaml_file_name if story_source == "playground" else yaml_file_name,
+      filename=(
+        story_default_yaml_file_name
+        if story_source == "playground"
+        else yaml_file_name
+      ),
       source_path=selected_playground_file if story_source == "playground" else None,
       options=story_options,
     )
   else:
     story_result = story_from_docassemble_json(story_data, options=story_options)
   story_download.initialize(
-    filename=output_file_name if output_file_name.endswith(".feature") else output_file_name + ".feature"
+    filename=(
+      output_file_name
+      if output_file_name.endswith(".feature")
+      else output_file_name + ".feature"
+    )
   )
   story_download.write(story_result["feature_text"])
   story_download.commit()

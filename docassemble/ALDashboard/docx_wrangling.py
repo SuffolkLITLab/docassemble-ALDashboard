@@ -54,6 +54,15 @@ _IF_OPEN_PATTERN = re.compile(r"^(?:p\s+)?if\b", re.IGNORECASE)
 _IF_BRANCH_PATTERN = re.compile(r"^(?:p\s+)?(?:elif\b|else\b)", re.IGNORECASE)
 _IF_CLOSE_PATTERN = re.compile(r"^(?:p\s+)?endif\b", re.IGNORECASE)
 
+_XML_INVALID_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _sanitize_xml_text(text: str) -> str:
+    """Remove control characters that are invalid in XML 1.0 to prevent lxml ValueError."""
+    if not text:
+        return ""
+    return _XML_INVALID_CONTROL_CHARS.sub("", text)
+
 
 def _get_docx_label_role_description(
     *,
@@ -84,6 +93,7 @@ def _get_docx_label_rules_addendum(
     *,
     prompt_profile: str = DEFAULT_DOCX_PROMPT_PROFILE,
     prompt_library_path: Optional[str] = None,
+    primary_person_variable: Optional[str] = None,
 ) -> str:
     """Resolve extra prompt rules for the active DOCX prompt profile.
 
@@ -98,7 +108,11 @@ def _get_docx_label_rules_addendum(
         prompt_profile,
         prompt_library_path=prompt_library_path,
     )
-    return str(profile_config.get("rules_addendum") or "")
+    addendum = str(profile_config.get("rules_addendum") or "")
+    if primary_person_variable and primary_person_variable != "users":
+        # safely replace 'users' with the customized primary person in the addendum
+        addendum = addendum.replace("users", primary_person_variable)
+    return addendum
 
 
 def _get_docx_label_temperature(
@@ -313,7 +327,7 @@ def _append_text_content(run_element: Any, text: str) -> None:
         # Preserve leading/trailing spaces exactly when present.
         if part[:1].isspace() or part[-1:].isspace():
             text_element.set(qn("xml:space"), "preserve")
-        text_element.text = part
+        text_element.text = _sanitize_xml_text(part)
         run_element.append(text_element)
 
 
@@ -683,7 +697,7 @@ def defragment_docx_runs(
                 continue
 
             combined_text = "".join(el.text for el in group)
-            group[0].text = combined_text
+            group[0].text = _sanitize_xml_text(combined_text)
             for el in group[1:]:
                 el.getparent().remove(el)
                 stats["runs_removed"] += 1
@@ -903,7 +917,9 @@ def apply_docx_label_renames(
         for paragraph in _collect_target_paragraphs(document):
             for run in paragraph.runs:
                 if original in run.text:
-                    run.text = run.text.replace(original, replacement)
+                    run.text = _sanitize_xml_text(
+                        run.text.replace(original, replacement)
+                    )
                     rename_count += 1
 
     return rename_count
@@ -1890,7 +1906,9 @@ def aggregate_docx_label_suggestion_runs(
 
 def get_voted_docx_label_suggestions(
     docx_path: str,
+    *,
     custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    primary_person_variable: Optional[str] = None,
     preferred_variable_names: Optional[Sequence[str]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
@@ -1912,6 +1930,7 @@ def get_voted_docx_label_suggestions(
     Args:
         docx_path: Path to the DOCX file to label.
         custom_people_names: Optional list of custom people-variable descriptions.
+        primary_person_variable: Optional override for the main 'users' equivalent variable.
         preferred_variable_names: Optional preferred variable names to bias prompts.
         openai_client: Optional initialized OpenAI client.
         openai_api: Optional API key override.
@@ -1948,6 +1967,7 @@ def get_voted_docx_label_suggestions(
         suggestions = get_labeled_docx_runs(
             docx_path=docx_path,
             custom_people_names=custom_people_names,
+            primary_person_variable=primary_person_variable,
             preferred_variable_names=preferred_variable_names,
             openai_client=openai_client,
             openai_api=openai_api,
@@ -2137,6 +2157,7 @@ def update_docx(
 
     paragraphs = _collect_target_paragraphs(document)
     for paragraph_number, run_number, modified_text, new_paragraph in normalized_runs:
+        modified_text = _sanitize_xml_text(modified_text)
         if paragraph_number >= len(paragraphs):
             continue  # Skip invalid paragraph index
 
@@ -2164,7 +2185,9 @@ def update_docx(
 
 def get_labeled_docx_runs(
     docx_path: str,
+    *,
     custom_people_names: Optional[List[Tuple[str, str]]] = None,
+    primary_person_variable: Optional[str] = None,
     preferred_variable_names: Optional[Sequence[str]] = None,
     openai_client: Optional[Any] = None,
     openai_api: Optional[str] = None,
@@ -2183,6 +2206,7 @@ def get_labeled_docx_runs(
     Args:
         docx_path: Path to the DOCX file.
         custom_people_names: Optional list of custom ``(name, description)`` pairs.
+        primary_person_variable: Optional override for the main 'users' equivalent variable.
         preferred_variable_names: Optional preferred variable names to bias prompts.
         openai_client: Optional preconfigured OpenAI client.
         openai_api: Optional API key override.
@@ -2207,19 +2231,20 @@ def get_labeled_docx_runs(
         prompt_library_path=prompt_library_path,
     )
 
+    main_person = (primary_person_variable or "users").strip()
     custom_name_text = ""
     if custom_people_names is not None:
         if not isinstance(custom_people_names, list):
             raise ValueError(
                 "custom_people_names must be a list of [name, description] pairs."
             )
-        for item in custom_people_names:
+        for i, item in enumerate(custom_people_names):
             if not isinstance(item, (list, tuple)) or len(item) != 2:
                 raise ValueError(
                     "Each custom_people_names item must be a [name, description] pair."
                 )
             name, description = item
-            custom_name_text += f"    {name} ({description}), \n"
+            custom_name_text += f"        {name} ({description})\n"
 
     preferred_name_text = ""
     if preferred_variable_names:
@@ -2267,8 +2292,7 @@ def get_labeled_docx_runs(
            asks for a specific person's or entity's actual name.
 
     List names for people:
-{custom_name_text}
-        users (for the person benefiting from the form, especially when for a pro se filer)
+{custom_name_text}{"        users (for the person benefiting from the form, especially when for a pro se filer)\n" if main_person == "users" else ""}
         other_parties (the opposing party in a lawsuit or transactional party)
         plaintiffs
         defendants
@@ -2289,50 +2313,50 @@ def get_labeled_docx_runs(
         interested_parties
 
         Name Forms:
-            users (full name of all users)
-            users[0] (full name of first user)
-            users[0].name.full() (Alternate full name of first user)
-            users[0].name.first (First name only)
-            users[0].name.middle (Middle name only)
-            users[0].name.middle_initial() (First letter of middle name)
-            users[0].name.last (Last name only)
-            users[0].name.suffix (Suffix of user's name only)
+            {main_person} (full name of all people in this list)
+            {main_person}[0] (full name of first person)
+            {main_person}[0].name.full() (Alternate full name of first person)
+            {main_person}[0].name.first (First name only)
+            {main_person}[0].name.middle (Middle name only)
+            {main_person}[0].name.middle_initial() (First letter of middle name)
+            {main_person}[0].name.last (Last name only)
+            {main_person}[0].name.suffix (Suffix of person's name only)
 
-    Attribute names (replace `users` with the appropriate list name):
+    Attribute names (replace `{main_person}` with the appropriate list name):
         Demographic Data:
-            users[0].birthdate (Birthdate)
-            users[0].age_in_years() (Calculated age based on birthdate)
-            users[0].gender (Gender)
-            users[0].gender_female (User is female, for checkbox field)
-            users[0].gender_male (User is male, for checkbox field)
-            users[0].gender_other (User is not male or female, for checkbox field)
-            users[0].gender_nonbinary (User identifies as nonbinary, for checkbox field)
-            users[0].gender_undisclosed (User chose not to disclose gender, for checkbox field)
-            users[0].gender_self_described (User chose to self-describe gender, for checkbox field)
-            user_needs_interpreter (User needs an interpreter, for checkbox field)
-            user_preferred_language (User's preferred language)
+            {main_person}[0].birthdate (Birthdate)
+            {main_person}[0].age_in_years() (Calculated age based on birthdate)
+            {main_person}[0].gender (Gender)
+            {main_person}[0].gender_female (Person is female, for checkbox field)
+            {main_person}[0].gender_male (Person is male, for checkbox field)
+            {main_person}[0].gender_other (Person is not male or female, for checkbox field)
+            {main_person}[0].gender_nonbinary (Person identifies as nonbinary, for checkbox field)
+            {main_person}[0].gender_undisclosed (Person chose not to disclose gender, for checkbox field)
+            {main_person}[0].gender_self_described (Person chose to self-describe gender, for checkbox field)
+            user_needs_interpreter (Person needs an interpreter, for checkbox field)
+            user_preferred_language (Person's preferred language)
 
         Addresses:
-            users[0].address.block() (Full address, on multiple lines)
-            users[0].address.on_one_line() (Full address on one line)
-            users[0].address.line_one() (Line one of the address, including unit or apartment number)
-            users[0].address.line_two() (Line two of the address, usually city, state, and Zip/postal code)
-            users[0].address.address (Street address)
-            users[0].address.unit (Apartment, unit, or suite)
-            users[0].address.city (City or town)
-            users[0].address.state (State, province, or sub-locality)
-            users[0].address.zip (Zip or postal code)
-            users[0].address.county (County or parish)
-            users[0].address.country (Country)
+            {main_person}[0].address.block() (Full address, on multiple lines)
+            {main_person}[0].address.on_one_line() (Full address on one line)
+            {main_person}[0].address.line_one() (Line one of the address, including unit or apartment number)
+            {main_person}[0].address.line_two() (Line two of the address, usually city, state, and Zip/postal code)
+            {main_person}[0].address.address (Street address)
+            {main_person}[0].address.unit (Apartment, unit, or suite)
+            {main_person}[0].address.city (City or town)
+            {main_person}[0].address.state (State, province, or sub-locality)
+            {main_person}[0].address.zip (Zip or postal code)
+            {main_person}[0].address.county (County or parish)
+            {main_person}[0].address.country (Country)
 
         Other Contact Information:
-            users[0].phone_number (Phone number)
-            users[0].mobile_number (A phone number explicitly labeled as the "mobile" number)
-            users[0].phone_numbers() (A list of both mobile and other phone numbers)
-            users[0].email (Email)
+            {main_person}[0].phone_number (Phone number)
+            {main_person}[0].mobile_number (A phone number explicitly labeled as the "mobile" number)
+            {main_person}[0].phone_numbers() (A list of both mobile and other phone numbers)
+            {main_person}[0].email (Email)
 
         Signatures:
-            users[0].signature (Signature)
+            {main_person}[0].signature (Signature)
             signature_date (Date the form is completed)
 
         Information about Court and Court Processes:
@@ -2359,6 +2383,7 @@ def get_labeled_docx_runs(
     rules += _get_docx_label_rules_addendum(
         prompt_profile=prompt_profile,
         prompt_library_path=prompt_library_path,
+        primary_person_variable=primary_person_variable,
     )
     if optional_context and optional_context.strip():
         role_description += (

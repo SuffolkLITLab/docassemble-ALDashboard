@@ -199,17 +199,18 @@
                 editInterviewSourceInSettings: false
             },
             settings: {
-                additionalInstructions: '',
-                contextText: '',
-                customPeople: '',
-                promptProfile: 'standard',
-                model: 'gpt-5-mini',
-                judgeModel: '',
-                generationMethod: 'multi_run',
-                generatorModels: '',
-                defragmentRuns: true,
-                usePlaygroundVariables: false,
-                showLowConfidence: false
+                additionalInstructions: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.additionalInstructions) || '',
+                contextText: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.contextText) || '',
+                customPeople: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.customPeople) || '',
+                primaryPersonVariable: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.primaryPersonVariable) || '',
+                promptProfile: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.promptProfile) || 'standard',
+                model: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.model) || 'gpt-5-mini',
+                judgeModel: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.judgeModel) || '',
+                generationMethod: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.generationMethod) || 'multi_run',
+                generatorModels: (DOCX_LABELER_CONFIG.settings && DOCX_LABELER_CONFIG.settings.generatorModels) || '',
+                defragmentRuns: DOCX_LABELER_CONFIG.settings && typeof DOCX_LABELER_CONFIG.settings.defragmentRuns === 'boolean' ? DOCX_LABELER_CONFIG.settings.defragmentRuns : true,
+                usePlaygroundVariables: DOCX_LABELER_CONFIG.settings && typeof DOCX_LABELER_CONFIG.settings.usePlaygroundVariables === 'boolean' ? DOCX_LABELER_CONFIG.settings.usePlaygroundVariables : false,
+                showLowConfidence: DOCX_LABELER_CONFIG.settings && typeof DOCX_LABELER_CONFIG.settings.showLowConfidence === 'boolean' ? DOCX_LABELER_CONFIG.settings.showLowConfidence : false
             },
             activeTab: 'existing',
             editingLabelId: null,
@@ -823,14 +824,24 @@
 
         function getEffectiveVariableTree() {
             var sourceState = getActiveInterviewSourceState();
+            var baseTree = AL_VARIABLE_TREE;
+            
+            if (state.settings && state.settings.primaryPersonVariable && state.settings.primaryPersonVariable !== 'users') {
+                baseTree = cloneVariableTree(AL_VARIABLE_TREE);
+                if (baseTree['users']) {
+                    baseTree[state.settings.primaryPersonVariable] = baseTree['users'];
+                    delete baseTree['users'];
+                }
+            }
+
             if (!sourceState.variables.length) {
-                return AL_VARIABLE_TREE;
+                return baseTree;
             }
             return Object.assign(
                 {
                     'Selected interview variables': buildInterviewVariableTree(sourceState.variables)
                 },
-                AL_VARIABLE_TREE
+                baseTree
             );
         }
 
@@ -1595,10 +1606,11 @@
         }
 
         function updateSelectionModeInputHints() {
+            var mainPerson = (state.settings && state.settings.primaryPersonVariable && state.settings.primaryPersonVariable !== '') ? state.settings.primaryPersonVariable : 'users';
             if (_selectionMode === 'replace' || _selectionMode === 'insert') {
-                selVarInput.placeholder = '{{ users[0].name.first }}';
+                selVarInput.placeholder = '{{ ' + mainPerson + '[0].name.first }}';
             } else {
-                selVarInput.placeholder = 'users[0].is_active';
+                selVarInput.placeholder = mainPerson + '[0].is_active';
             }
             if (_selMatch && _selMatch.isInsertion) {
                 selOriginalText.textContent = '(insert at cursor)';
@@ -2027,7 +2039,10 @@
                 header.className = 'tree-item d-flex align-items-center gap-1 px-2 py-1 rounded small';
                 var leafValue = renderTarget;
                 var leafDescription = typeof leafValue === 'string' ? leafValue : (leafValue && leafValue._description ? leafValue._description : '');
-                var isSelectableLeaf = typeof value === 'string' || (typeof value === 'object' && !!value._variable) || (directSelectPath && !hasChildren);
+                var isSelectableLeaf = typeof value === 'string' || (value !== null && typeof value === 'object' && !!value._variable) || (directSelectPath && !hasChildren);
+                if (value === null) {
+                    return; // Skip null values completely, they are effectively deleted keys
+                }
                 if (isSelectableLeaf) {
                     header.innerHTML = '<span class="tree-toggle text-muted">\u00B7</span><span class="font-monospace text-primary cursor-pointer" data-var="' + labelPath + '">' + labelPath + '</span><span class="text-muted small ms-1 text-truncate">' + leafDescription + '</span>';
                     header.querySelector('[data-var]').addEventListener('click', function(e) { e.stopPropagation(); onSelectVariable(labelPath); });
@@ -2652,6 +2667,7 @@
             if (state.settings.additionalInstructions) formData.append('additional_instructions', state.settings.additionalInstructions);
             if (state.settings.contextText) formData.append('context_text', state.settings.contextText);
             if (state.settings.customPeople) formData.append('custom_people_names', state.settings.customPeople);
+            if (state.settings.primaryPersonVariable) formData.append('primary_person_variable', state.settings.primaryPersonVariable);
             formData.append('prompt_profile', state.settings.promptProfile || 'standard');
             formData.append('model', state.settings.model);
             if (state.settings.judgeModel) formData.append('judge_model', state.settings.judgeModel);

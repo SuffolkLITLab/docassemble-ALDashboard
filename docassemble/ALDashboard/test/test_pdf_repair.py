@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from unittest import mock
+from typing import Any, Dict, List
 
 from docassemble.ALDashboard.pdf_repair import (
     PDFRepairError,
@@ -21,8 +22,10 @@ from docassemble.ALDashboard.pdf_repair import (
     ghostscript_reprint,
     list_repair_actions,
     ocr_pdf,
+    normalize_signature_fields,
     qpdf_repair,
     repair_metadata,
+    restore_checkbox_appearances,
     run_repair,
     unlock_pdf,
 )
@@ -116,6 +119,7 @@ class TestListRepairActions(unittest.TestCase):
                 "auto",
                 "ghostscript_reprint",
                 "qpdf_repair",
+                "restore_checkbox_appearances",
                 "unlock",
                 "repair_metadata",
                 "ocr",
@@ -275,6 +279,362 @@ class TestQpdfRepair(unittest.TestCase):
             self.assertEqual(result["original_page_count"], 1)
             self.assertEqual(result["repaired_page_count"], 1)
             self.assertTrue(os.path.isfile(out_path))
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+
+class TestRestoreCheckboxAppearances(unittest.TestCase):
+    def _make_form_pdf(
+        self,
+        path: str,
+        *,
+        checkbox_has_ap: bool = False,
+        checkbox_has_partial_ap: bool = False,
+        has_need_appearances: bool = False,
+    ) -> None:
+        import pikepdf
+        from pikepdf import Array, Dictionary, Name, String
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+
+        checkbox = Dictionary(
+            {
+                "/FT": Name("/Btn"),
+                "/Ff": 0,
+                "/T": String("needs_appearance"),
+                "/V": Name("/Off"),
+                "/AS": Name("/Off"),
+                "/Type": Name("/Annot"),
+                "/Subtype": Name("/Widget"),
+                "/Rect": Array([10, 10, 30, 30]),
+                "/MK": Dictionary({"/CA": String("5")}),
+            }
+        )
+        if checkbox_has_ap:
+            checkbox["/AP"] = Dictionary(
+                {
+                    "/N": Dictionary(
+                        {
+                            "/Off": pikepdf.Stream(pdf, b"q Q"),
+                            "/Yes": pikepdf.Stream(pdf, b"q Q"),
+                        }
+                    )
+                }
+            )
+        elif checkbox_has_partial_ap:
+            checkbox["/AP"] = Dictionary(
+                {
+                    "/N": Dictionary(
+                        {
+                            "/Off": pikepdf.Stream(pdf, b"q Q"),
+                        }
+                    )
+                }
+            )
+        checkbox_ref = pdf.make_indirect(checkbox)
+
+        text_field = pdf.make_indirect(
+            Dictionary(
+                {
+                    "/FT": Name("/Tx"),
+                    "/T": String("text_field"),
+                    "/Type": Name("/Annot"),
+                    "/Subtype": Name("/Widget"),
+                    "/Rect": Array([40, 10, 120, 30]),
+                }
+            )
+        )
+
+        radio = pdf.make_indirect(
+            Dictionary(
+                {
+                    "/FT": Name("/Btn"),
+                    "/Ff": 1 << 15,
+                    "/T": String("radio_field"),
+                    "/Type": Name("/Annot"),
+                    "/Subtype": Name("/Widget"),
+                    "/Rect": Array([130, 10, 150, 30]),
+                }
+            )
+        )
+
+        page.obj["/Annots"] = Array([checkbox_ref, text_field, radio])
+        acroform = Dictionary({"/Fields": Array([checkbox_ref, text_field, radio])})
+        if has_need_appearances:
+            acroform["/NeedAppearances"] = True
+        pdf.Root["/AcroForm"] = acroform
+        pdf.save(path)
+        pdf.close()
+
+    def _read_widget_flags(self, path: str) -> List[Dict[str, Any]]:
+        import pikepdf
+
+        with pikepdf.open(path) as pdf:
+            widgets = []
+            annots: Any = pdf.pages[0]["/Annots"]
+            for annot in annots:
+                widgets.append(
+                    {
+                        "name": str(annot.get("/T", "")),
+                        "type": str(annot.get("/FT", "")),
+                        "flags": int(annot.get("/Ff", 0) or 0),
+                        "has_ap": "/AP" in annot,
+                        "normal_states": sorted(
+                            str(key)
+                            for key in (
+                                annot.get("/AP", {}).get("/N", {}).keys()
+                                if "/AP" in annot
+                                and hasattr(annot.get("/AP"), "get")
+                                and hasattr(annot.get("/AP").get("/N"), "keys")
+                                else []
+                            )
+                        ),
+                        "yes_stream": (
+                            annot["/AP"]["/N"]["/Yes"].read_bytes().decode("ascii")
+                            if "/AP" in annot
+                            and "/N" in annot["/AP"]
+                            and "/Yes" in annot["/AP"]["/N"]
+                            else ""
+                        ),
+                        "off_stream": (
+                            annot["/AP"]["/N"]["/Off"].read_bytes().decode("ascii")
+                            if "/AP" in annot
+                            and "/N" in annot["/AP"]
+                            and "/Off" in annot["/AP"]["/N"]
+                            else ""
+                        ),
+                    }
+                )
+        return widgets
+
+    def _has_need_appearances(self, path: str) -> bool:
+        import pikepdf
+
+        with pikepdf.open(path) as pdf:
+            acroform = pdf.Root.get("/AcroForm")
+            return isinstance(acroform, pikepdf.Dictionary) and "/NeedAppearances" in acroform
+
+    def test_restores_only_missing_checkbox_appearances(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path)
+            result = restore_checkbox_appearances(in_path, out_path)
+
+            self.assertEqual(result["action"], "restore_checkbox_appearances")
+            self.assertEqual(result["checkbox_fields_checked"], 1)
+            self.assertEqual(result["appearances_restored"], 1)
+
+            widgets = {item["name"]: item for item in self._read_widget_flags(out_path)}
+            self.assertTrue(widgets["needs_appearance"]["has_ap"])
+            self.assertEqual(
+                widgets["needs_appearance"]["normal_states"], ["/Off", "/Yes"]
+            )
+            self.assertIn("3.000 3.000 m", widgets["needs_appearance"]["yes_stream"])
+            self.assertIn("17.000 17.000 l", widgets["needs_appearance"]["yes_stream"])
+            self.assertIn("17.000 3.000 m", widgets["needs_appearance"]["yes_stream"])
+            self.assertIn("3.000 17.000 l", widgets["needs_appearance"]["yes_stream"])
+            self.assertNotIn(" re", widgets["needs_appearance"]["yes_stream"])
+            self.assertNotIn(" re", widgets["needs_appearance"]["off_stream"])
+            self.assertFalse(widgets["text_field"]["has_ap"])
+            self.assertFalse(widgets["radio_field"]["has_ap"])
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_skips_checkbox_with_existing_appearances(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path, checkbox_has_ap=True)
+            result = restore_checkbox_appearances(in_path, out_path)
+
+            self.assertEqual(result["checkbox_fields_checked"], 1)
+            self.assertEqual(result["appearances_restored"], 0)
+            self.assertEqual(result["existing_appearances_skipped"], 1)
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_repairs_partial_checkbox_appearances(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path, checkbox_has_partial_ap=True)
+            result = restore_checkbox_appearances(in_path, out_path)
+
+            self.assertEqual(result["checkbox_fields_checked"], 1)
+            self.assertEqual(result["appearances_restored"], 1)
+            self.assertEqual(result["existing_appearances_skipped"], 0)
+
+            widgets = {item["name"]: item for item in self._read_widget_flags(out_path)}
+            self.assertEqual(
+                widgets["needs_appearance"]["normal_states"], ["/Off", "/Yes"]
+            )
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_clears_need_appearances_after_checkbox_repair(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(
+                in_path,
+                checkbox_has_ap=True,
+                has_need_appearances=True,
+            )
+            result = restore_checkbox_appearances(in_path, out_path)
+
+            self.assertEqual(result["checkbox_fields_checked"], 1)
+            self.assertEqual(result["existing_appearances_skipped"], 1)
+            self.assertFalse(self._has_need_appearances(out_path))
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_restores_opt_in_checkbox_border(self):
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path)
+            result = restore_checkbox_appearances(
+                in_path,
+                out_path,
+                checkbox_border_widths={"needs_appearance": "medium"},
+            )
+
+            self.assertEqual(result["appearances_restored"], 1)
+
+            widgets = {item["name"]: item for item in self._read_widget_flags(out_path)}
+            self.assertIn("2.000 w", widgets["needs_appearance"]["off_stream"])
+            self.assertIn(
+                "1.000 1.000 18.000 18.000 re",
+                widgets["needs_appearance"]["off_stream"],
+            )
+            self.assertIn("2.000 w", widgets["needs_appearance"]["yes_stream"])
+            self.assertIn(
+                "1.000 1.000 18.000 18.000 re",
+                widgets["needs_appearance"]["yes_stream"],
+            )
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+
+class TestNormalizeSignatureFields(unittest.TestCase):
+    def _make_text_signature_pdf(self, path: str) -> None:
+        import pikepdf
+        from pikepdf import Array, Dictionary, Name, String
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        signature_as_text = pdf.make_indirect(
+            Dictionary(
+                {
+                    "/FT": Name("/Tx"),
+                    "/T": String("users1_signature"),
+                    "/Type": Name("/Annot"),
+                    "/Subtype": Name("/Widget"),
+                    "/Rect": Array([72, 600, 220, 630]),
+                    "/V": String(""),
+                    "/DV": String(""),
+                    "/DA": String("/Helv 12 Tf 0 0 0 rg"),
+                }
+            )
+        )
+        ordinary_text = pdf.make_indirect(
+            Dictionary(
+                {
+                    "/FT": Name("/Tx"),
+                    "/T": String("users1_name"),
+                    "/Type": Name("/Annot"),
+                    "/Subtype": Name("/Widget"),
+                    "/Rect": Array([72, 560, 220, 580]),
+                    "/V": String(""),
+                }
+            )
+        )
+        page.obj["/Annots"] = Array([signature_as_text, ordinary_text])
+        pdf.Root["/AcroForm"] = Dictionary(
+            {"/Fields": Array([signature_as_text, ordinary_text])}
+        )
+        pdf.save(path)
+        pdf.close()
+
+    def test_converts_target_text_widget_to_signature_field(self):
+        try:
+            import pikepdf
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".signature.pdf"
+        try:
+            self._make_text_signature_pdf(in_path)
+            result = normalize_signature_fields(
+                in_path,
+                out_path,
+                ["users1_signature"],
+            )
+
+            self.assertEqual(result["fields_converted"], 1)
+
+            with pikepdf.open(out_path) as pdf:
+                fields = {
+                    str(field.get("/T")): field for field in pdf.Root.AcroForm.Fields
+                }
+                self.assertEqual(str(fields["users1_signature"].get("/FT")), "/Sig")
+                self.assertNotIn("/V", fields["users1_signature"])
+                self.assertNotIn("/DV", fields["users1_signature"])
+                self.assertEqual(str(fields["users1_name"].get("/FT")), "/Tx")
+                self.assertIn("/V", fields["users1_name"])
+                self.assertEqual(int(pdf.Root.AcroForm.get("/SigFlags", 0)), 3)
         finally:
             if os.path.exists(in_path):
                 os.remove(in_path)

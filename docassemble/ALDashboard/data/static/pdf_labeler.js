@@ -2675,6 +2675,9 @@
             if (repairResult.fields_restored) {
                 summaryParts.push(repairResult.fields_restored + ' fields restored');
             }
+            if (repairResult.appearances_restored) {
+                summaryParts.push(repairResult.appearances_restored + ' appearances restored');
+            }
             if (repairResult.warnings && repairResult.warnings.length) {
                 summaryParts.push(repairResult.warnings.join('; '));
             }
@@ -2943,7 +2946,7 @@
                         font: settings.normalizeFont ? settings.fontName : nextField.font,
                         fontSize: settings.normalizeFontSize ? settings.fontSizePt : nextField.fontSize,
                         autoSize: false,
-                        checkboxStyle: (settings.normalizeCheckboxStyle && settings.checkboxStyle) || nextField.checkboxStyle || 'check',
+                        checkboxStyle: (settings.normalizeCheckboxStyle && settings.checkboxStyle) || nextField.checkboxStyle || 'cross',
                         checkboxExportValue: (settings.normalizeCheckboxStyle && settings.checkboxExportValue) || nextField.checkboxExportValue || 'Yes',
                         allowScroll: false
                     });
@@ -3073,8 +3076,8 @@
                             '<div>' +
                                 '<label class="form-label small text-muted mb-1" for="field-checkbox-style-' + escapeHtml(field.id) + '">Style</label>' +
                                 '<select id="field-checkbox-style-' + escapeHtml(field.id) + '" class="form-select form-select-sm" data-action="field-checkbox-style" data-field-id="' + escapeHtml(field.id) + '">' +
-                                    '<option value="cross"' + ((field.checkboxStyle || 'check') === 'cross' ? ' selected' : '') + '>Cross</option>' +
-                                    '<option value="check"' + ((field.checkboxStyle || 'check') === 'check' ? ' selected' : '') + '>Check</option>' +
+                                    '<option value="cross"' + ((field.checkboxStyle || 'cross') === 'cross' ? ' selected' : '') + '>Cross</option>' +
+                                    '<option value="check"' + ((field.checkboxStyle || 'cross') === 'check' ? ' selected' : '') + '>Check</option>' +
                                     '<option value="circle"' + (field.checkboxStyle === 'circle' ? ' selected' : '') + '>Circle</option>' +
                                     '<option value="star"' + (field.checkboxStyle === 'star' ? ' selected' : '') + '>Star</option>' +
                                     '<option value="diamond"' + (field.checkboxStyle === 'diamond' ? ' selected' : '') + '>Diamond</option>' +
@@ -3084,6 +3087,18 @@
                             '<div>' +
                                 '<label class="form-label small text-muted mb-1" for="field-checkbox-export-value-' + escapeHtml(field.id) + '">Export value</label>' +
                                 '<input id="field-checkbox-export-value-' + escapeHtml(field.id) + '" type="text" class="form-control form-control-sm font-monospace" data-action="field-checkbox-export-value" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.checkboxExportValue || 'Yes')) + '">' +
+                            '</div>' +
+                            '<label class="form-check small mb-0 align-self-end">' +
+                                '<input class="form-check-input" type="checkbox" data-action="field-checkbox-border" data-field-id="' + escapeHtml(field.id) + '"' + (field.checkboxBorder ? ' checked' : '') + '>' +
+                                '<span class="form-check-label">Border</span>' +
+                            '</label>' +
+                            '<div>' +
+                                '<label class="form-label small text-muted mb-1" for="field-checkbox-border-width-' + escapeHtml(field.id) + '">Border width</label>' +
+                                '<select id="field-checkbox-border-width-' + escapeHtml(field.id) + '" class="form-select form-select-sm" data-action="field-checkbox-border-width" data-field-id="' + escapeHtml(field.id) + '"' + (field.checkboxBorder ? '' : ' disabled') + '>' +
+                                    '<option value="thin"' + ((field.checkboxBorderWidth || 'thin') === 'thin' ? ' selected' : '') + '>Thin</option>' +
+                                    '<option value="medium"' + (field.checkboxBorderWidth === 'medium' ? ' selected' : '') + '>Medium</option>' +
+                                    '<option value="thick"' + (field.checkboxBorderWidth === 'thick' ? ' selected' : '') + '>Thick</option>' +
+                                '</select>' +
                             '</div>' +
                         '</div>' +
                     '</div>'
@@ -3264,6 +3279,10 @@
                     previewDiv.style.fontSize = Math.max(8, boxPx * 0.8) + 'px';
                     previewDiv.style.lineHeight = '1';
                     previewDiv.style.color = '#000';
+                    if (field.checkboxBorder) {
+                        var borderWidths = { thin: 1, medium: 2, thick: 3 };
+                        previewDiv.style.border = (borderWidths[field.checkboxBorderWidth || 'thin'] || 1) + 'px solid #000';
+                    }
                 } else if (field.type === 'signature') {
                     previewDiv.classList.add('preview-signature');
                     if (_signatureDataUrl) {
@@ -3411,6 +3430,8 @@
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle || undefined,
                 checkboxExportValue: field.checkboxExportValue || undefined,
+                checkboxBorder: !!field.checkboxBorder,
+                checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor || undefined,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined,
@@ -3462,7 +3483,10 @@
             font: getSessionDefault('font'),
             fontSize: getSessionDefault('fontSize'),
             autoSize: type === 'text' || type === 'multiline',
+            checkboxStyle: type === 'checkbox' ? (getSessionDefault('checkboxStyle') || 'cross') : undefined,
             checkboxExportValue: type === 'checkbox' ? getSessionDefault('checkboxExportValue') : undefined,
+            checkboxBorder: false,
+            checkboxBorderWidth: 'thin',
             options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined,
             nameSuggestions: nameSuggestions,
             tooltip: ''
@@ -3880,6 +3904,8 @@
             autoSize: field.autoSize !== false,
             checkboxStyle: field.checkboxStyle,
             checkboxExportValue: field.checkboxExportValue,
+            checkboxBorder: !!field.checkboxBorder,
+            checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
             allowScroll: field.allowScroll !== false,
             backgroundColor: field.backgroundColor,
             options: Array.isArray(field.options) ? field.options.slice() : undefined,
@@ -3956,6 +3982,8 @@
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle,
                 checkboxExportValue: field.checkboxExportValue,
+                checkboxBorder: !!field.checkboxBorder,
+                checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined,
@@ -5487,8 +5515,10 @@
                 delete field.options;
             }
             if (newType === 'checkbox') {
-                field.checkboxStyle = field.checkboxStyle || 'check';
+                field.checkboxStyle = field.checkboxStyle || (getSessionDefault('checkboxStyle') || 'cross');
                 field.checkboxExportValue = field.checkboxExportValue || 'Yes';
+                field.checkboxBorder = !!field.checkboxBorder;
+                field.checkboxBorderWidth = field.checkboxBorderWidth || 'thin';
             }
             if (!(newType === 'text' || newType === 'multiline')) {
                 field.autoSize = true;
@@ -5502,7 +5532,18 @@
             return;
         }
         if (target.dataset.action === 'field-checkbox-style') {
-            field.checkboxStyle = target.value || 'check';
+            field.checkboxStyle = target.value || 'cross';
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-checkbox-border') {
+            field.checkboxBorder = !!target.checked;
+            field.checkboxBorderWidth = field.checkboxBorderWidth || 'thin';
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-checkbox-border-width') {
+            field.checkboxBorderWidth = target.value || 'thin';
             markDirtyAndRender();
             return;
         }

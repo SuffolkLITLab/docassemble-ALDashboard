@@ -40,6 +40,8 @@ fields:
   - Short name or alias (no spaces): packages[i].alias
     validate: |
       lambda y: y.isidentifier()
+    validation messages:
+      invalid: Use only letters, numbers, and underscores, and start with a letter or underscore.
     show if: packages[i].add_alias
 ---
 code: |

@@ -1,0 +1,4 @@
+# plocket should know about changes to ALKiln related features
+/docassemble/ALDashboard/data/questions/alkiln_story.yml  @plocket
+/docassemble/ALDashboard/test/test_alkiln_story.py  @plocket
+/docassemble/ALDashboard/alkiln_story.py  @plocket

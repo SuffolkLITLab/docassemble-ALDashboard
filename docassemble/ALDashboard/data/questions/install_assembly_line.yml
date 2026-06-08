@@ -99,6 +99,7 @@ code: |
 code: |
   backup_file = da_get_config_as_file()
 ---
+id: enable answer sets
 question: |
   Do you want to enable answer sets?
 subquestion: |
@@ -125,6 +126,7 @@ fields:
     datatype: yesnoradio
     default: False
 ---
+id: custom interview list page
 question: |
   Use a custom interview list page?
 subquestion: |
@@ -1016,6 +1018,7 @@ code: |
     reset(pkgname)
   al_install_done = True
 ---
+id: select packages to install
 question: |
   What packages do you want to install or update?
 continue button label: Install Assembly Line
@@ -1102,6 +1105,7 @@ fields:
     all of the above: True
 ---
 event: end_screen
+id: installation complete
 question: |
   Installation complete
 subquestion: |

@@ -21,6 +21,7 @@ code: |
   else:
     waiting_screen
 ---
+id: select packages to install
 question: |
   What packages do you want to install?
 list collect: True
@@ -38,7 +39,7 @@ fields:
     show if: packages[i].add_alias
   - Short name or alias (no spaces): packages[i].alias
     validate: |
-      lambda y: y.isidentifier()
+      lambda y: y.isidentifier() or validation_error("Use only letters, numbers, and underscores, and start with a letter or underscore.")
     show if: packages[i].add_alias
 ---
 code: |
@@ -74,6 +75,7 @@ code: |
   background_response()
 ---  
 event: waiting_screen
+id: installation wait screen
 question: |
   Wait here while we start the installation process
 reload: True
@@ -84,6 +86,7 @@ code: |
   background_response()
 ---
 event: ending_screen
+id: installation complete
 question: |
   All done
 subquestion: |

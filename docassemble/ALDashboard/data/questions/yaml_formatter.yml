@@ -31,6 +31,7 @@ code: |
 code: |
   black_release_status = get_black_release_status()
 ---
+id: yaml formatter
 question: |
   Reformat YAML and playground Python
 subquestion: |
@@ -72,12 +73,14 @@ fields:
     help: |
       If enabled, code blocks indented with 4 spaces are converted to 2-space indentation.
 ---
+id: upload yaml file
 question: |
   Upload YAML file
 fields:
   - YAML file: uploaded_yaml_file
     datatype: file
 ---
+id: select playground project
 question: |
   Select playground project
 fields:
@@ -85,6 +88,7 @@ fields:
     code: |
       list_playground_projects()
 ---
+id: select playground files
 question: |
   Select playground files to reformat
 subquestion: |
@@ -131,6 +135,7 @@ code: |
   )
 ---
 event: show_results
+id: yaml formatter results
 question: |
   YAML formatter results
 subquestion: |

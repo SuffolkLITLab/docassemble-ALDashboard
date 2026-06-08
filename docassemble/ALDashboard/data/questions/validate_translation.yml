@@ -2,6 +2,7 @@
 include:
   - nav.yml
 ---
+id: upload translation file
 question: |
   Upload a translation file
 fields:
@@ -143,6 +144,7 @@ code: |
 need:
   - load_all_errors
 mandatory: True
+id: translation validation results
 question: |
   % if len(errors):
   ${ len(errors) } potential errors found
@@ -165,4 +167,3 @@ subquestion: |
   
   Rows ${ comma_and_list(empty_rows) } have untranslated text.
   % endif
-  

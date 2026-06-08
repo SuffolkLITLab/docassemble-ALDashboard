@@ -416,7 +416,10 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
 
         with pikepdf.open(path) as pdf:
             acroform = pdf.Root.get("/AcroForm")
-            return isinstance(acroform, pikepdf.Dictionary) and "/NeedAppearances" in acroform
+            return (
+                isinstance(acroform, pikepdf.Dictionary)
+                and "/NeedAppearances" in acroform
+            )
 
     def test_restores_only_missing_checkbox_appearances(self):
         try:

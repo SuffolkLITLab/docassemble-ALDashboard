@@ -169,6 +169,7 @@ buttons:
 attachments:
   - name: Package Scanner Report    
     docx template file: pkg_scanner_report.docx
+    tagged pdf: True
     valid formats:
       - pdf
 ---

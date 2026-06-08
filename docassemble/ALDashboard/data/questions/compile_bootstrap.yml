@@ -152,6 +152,7 @@ content: |
   ${ output_file.slurp() }
 ---
 event: error_screen
+id: scss compilation error
 question: We weren't able to compile your SCSS
 subquestion: |
   Bootstrap returned this output when we tried to create your Bootstrap CSS file.
@@ -172,9 +173,9 @@ subquestion: |
   **[Bootstrap CSS file](${output_file.url_for(attachment=True)})**
 
   % if upload_choice == "type_out":
-  **[:download: SCSS source file](${ output_scss.url_for(attachment=True) })**
+  **[:download: Generated SCSS source file](${ output_scss.url_for(attachment=True) })**
   % else:
-  **[:download: SCSS source file](${ uploaded_file.url_for(attachment=True) })**
+  **[:download: Uploaded SCSS source file](${ uploaded_file.url_for(attachment=True) })**
   % endif
 
   <br>

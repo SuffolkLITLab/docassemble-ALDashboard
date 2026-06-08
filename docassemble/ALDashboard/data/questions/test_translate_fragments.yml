@@ -24,6 +24,7 @@ code: |
     ),
   )
 ---
+id: test translation
 question: |
   Click to test the translation
 subquestion: |
@@ -33,6 +34,7 @@ subquestion: |
 continue button field: intro_screen
 ---
 continue button field: show_results
+id: translation test results
 question: |
   Here are the results
 subquestion: |

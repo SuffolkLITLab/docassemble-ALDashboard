@@ -50,6 +50,7 @@ code: |
     chat_response = chat_completion("you are a helpful assistant", test_chat_message)
   api_results
 ---
+id: test api key
 question: |
   Test an API key
 subquestion: |
@@ -139,6 +140,7 @@ code: |
   a = 1 / 0
 ---
 event: api_results
+id: api test results
 question: |
   Results
 subquestion: |

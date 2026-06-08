@@ -34,6 +34,7 @@ code: |
   lint_reports
   show_results
 ---
+id: interview text linter
 question: |
   Interview text linter
 subquestion: |
@@ -68,6 +69,7 @@ code: |
   installed_package_map = list_question_files_in_docassemble_packages()
   installed_package_names = sorted(installed_package_map.keys())
 ---
+id: upload yaml files
 question: |
   Upload YAML files
 fields:
@@ -76,6 +78,7 @@ fields:
     accept: |
       ".yml,.yaml,text/yaml,text/x-yaml"
 ---
+id: select installed package
 question: |
   Select installed package
 fields:
@@ -83,6 +86,7 @@ fields:
     code: |
       installed_package_names
 ---
+id: select installed package files
 question: |
   Select installed package files to lint
 fields:
@@ -96,6 +100,7 @@ fields:
         if filename.lower().endswith((".yml", ".yaml"))
       ]
 ---
+id: select playground project
 question: |
   Select playground project
 fields:
@@ -103,6 +108,7 @@ fields:
     code: |
       list_playground_projects()
 ---
+id: select playground files
 question: |
   Select playground files to lint
 fields:
@@ -242,6 +248,7 @@ code: |
     )
 ---
 event: show_results
+id: interview suggestions
 question: |
   Interview Suggestions
 subquestion: |

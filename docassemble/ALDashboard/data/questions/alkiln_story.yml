@@ -44,6 +44,7 @@ code: |
     indent=2,
   )
 ---
+id: generate story from server
 question: |
   Generate an ALKiln story
 subquestion: |
@@ -79,6 +80,7 @@ code: |
       f"{interview_title} | {interview_filename}"
     )
 ---
+id: select interview
 question: |
   Select an interview
 subquestion: |
@@ -115,6 +117,7 @@ code: |
       f"{_story_progress_label(saved_session.progress, saved_session.num_keys)}"
     )
 ---
+id: select session
 question: |
   Select a session
 subquestion: |
@@ -140,6 +143,7 @@ validation code: |
       field="selected_session_id",
     )
 ---
+id: generate story from source
 question: |
   Generate an ALKiln story
 subquestion: |
@@ -149,12 +153,14 @@ fields:
     input type: area
     rows: 12
 ---
+id: upload interview yaml
 question: |
   Upload interview YAML
 fields:
   - YAML file: yaml_upload
     datatype: file
 ---
+id: select playground project
 question: |
   Select playground project
 fields:
@@ -163,6 +169,7 @@ fields:
     code: |
       list_playground_projects()
 ---
+id: select playground yaml
 question: |
   Select playground YAML
 fields:
@@ -186,6 +193,7 @@ validation code: |
       field="selected_playground_file",
     )
 ---
+id: paste interview yaml
 question: |
   Paste interview YAML
 fields:
@@ -193,6 +201,7 @@ fields:
     input type: area
     rows: 12
 ---
+id: story options
 question: |
   Story options
 fields:
@@ -310,6 +319,7 @@ code: |
   story_download.commit()
 ---
 event: show_results
+id: alkiln story result
 question: |
   ALKiln story
 subquestion: |

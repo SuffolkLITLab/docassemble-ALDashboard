@@ -152,6 +152,7 @@ content: |
   ${ output_file.slurp() }
 ---
 event: error_screen
+id: scss compilation error
 question: We weren't able to compile your SCSS
 subquestion: |
   Bootstrap returned this output when we tried to create your Bootstrap CSS file.

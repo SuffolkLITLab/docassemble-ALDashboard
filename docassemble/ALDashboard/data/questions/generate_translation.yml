@@ -29,6 +29,7 @@ code: |
   the_task = background_action("translate_file")
 ---
 event: waiting_screen
+id: translation wait screen
 question: |
   Please wait while we translate your file
 subquestion: |
@@ -64,6 +65,7 @@ code: |
   translations = action_argument("translations")
   background_response()
 ---
+id: select file to translate
 question: |
   What file do you want to translate?
 fields:
@@ -111,6 +113,7 @@ fields:
         not gpt_is_available()
 ---
 event: show_translation_results
+id: translation results
 question: |
   Translation results
 subquestion: |
@@ -137,6 +140,7 @@ code: |
   background_response("handled_error")
 ---
 event: error_screen
+id: translation error
 question: |
   There was an error.
 subquestion: |

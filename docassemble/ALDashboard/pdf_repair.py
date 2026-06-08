@@ -405,7 +405,10 @@ def restore_checkbox_appearances(
                     restored += 1
 
             acroform = pdf.Root.get("/AcroForm")
-            if isinstance(acroform, pikepdf.Dictionary) and "/NeedAppearances" in acroform:
+            if (
+                isinstance(acroform, pikepdf.Dictionary)
+                and "/NeedAppearances" in acroform
+            ):
                 del acroform["/NeedAppearances"]
             pdf.save(tmp_path)
 

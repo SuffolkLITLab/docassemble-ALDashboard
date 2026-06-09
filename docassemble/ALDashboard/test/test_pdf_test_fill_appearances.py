@@ -40,7 +40,9 @@ class TestPdfTestFillAppearances(unittest.TestCase):
         self.assertIn("restore_checkbox_appearances", call_names)
 
         visual_defaults = next(
-            call for call in calls if _call_name(call) == "_apply_pdf_field_visual_defaults"
+            call
+            for call in calls
+            if _call_name(call) == "_apply_pdf_field_visual_defaults"
         )
         self.assertIn(
             "explicit_background_fields",
@@ -69,9 +71,7 @@ class TestPdfTestFillAppearances(unittest.TestCase):
             call for call in _calls(function) if _call_name(call) == "fill_template"
         )
         editable = next(
-            keyword.value
-            for keyword in fill_call.keywords
-            if keyword.arg == "editable"
+            keyword.value for keyword in fill_call.keywords if keyword.arg == "editable"
         )
         self.assertIsInstance(editable, ast.Constant)
         self.assertIs(editable.value, False)

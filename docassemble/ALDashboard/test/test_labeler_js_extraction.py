@@ -194,6 +194,15 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("showFieldRenameSummary", self.js)
         self.assertIn("field-rename-summary-modal", self.html)
 
+    def test_field_count_refreshes_duplicate_warning(self):
+        match = re.search(
+            r"function updateFieldCount\(\) \{(?P<body>.*?)\n    \}",
+            self.js,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        self.assertIn("updateDuplicateFieldWarning();", match.group("body"))
+
     def test_pdf_attachment_block_utility_is_wired_into_ui(self):
         self.assertIn("/pdf-labeler/api/attachment-block", self.js)
         self.assertIn("util-attachment-generate", self.html)

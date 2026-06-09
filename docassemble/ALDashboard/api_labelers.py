@@ -69,6 +69,7 @@ from .api_dashboard_utils import (
 )
 from .pdf_export_utils import (
     build_normalized_pdf_field_definitions,
+    build_pdf_preview_fill_data,
     build_pdf_export_fields_per_page,
     deduplicate_fields_data_with_renames,
 )
@@ -3423,6 +3424,134 @@ def pdf_labeler_apply_fields() -> Response:
             },
             500,
         )
+
+
+@app.route("/pdf-labeler/api/test-fill", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/test-fill", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_test_fill() -> Response:
+    request_id = str(uuid.uuid4())
+    try:
+        import formfyxer  # type: ignore[import-not-found]
+        from formfyxer.pdf_wrangling import FormField, FieldType, set_fields
+        from reportlab.lib.colors import HexColor
+        from docassemble.base.pdftk import fill_template, read_fields
+        import pikepdf
+
+        filename, content, post_data = _read_pdf_labeler_file_request()
+        fields_raw = post_data.get("fields")
+        if isinstance(fields_raw, str):
+            fields_data = json.loads(fields_raw)
+        elif isinstance(fields_raw, list):
+            fields_data = fields_raw
+        else:
+            raise DashboardAPIValidationError("fields is required and must be a list.")
+            
+        deduplicate_field_names = parse_bool(
+            post_data.get("deduplicate_field_names"), default=False
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+
+        output_path = None
+        try:
+            with pikepdf.open(input_path) as pdf:
+                page_count = len(pdf.pages)
+
+            if deduplicate_field_names:
+                fields_data, _ = deduplicate_fields_data_with_renames(fields_data)
+
+            checkbox_export_values = {
+                str(field.get("name", "")): str(field.get("checkboxExportValue", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "checkbox"
+                and str(field.get("checkboxExportValue", "")).strip()
+            }
+            explicit_background_fields = _collect_fields_with_explicit_background(
+                fields_data
+            )
+            checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
+
+            fields_per_page = build_pdf_export_fields_per_page(
+                fields_data,
+                page_count=page_count,
+                form_field_cls=FormField,
+                field_type_enum=FieldType,
+                color_parser=HexColor,
+                deduplicate_field_names=False,
+            )
+
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+                output_path = tmp_out.name
+
+            signature_field_names = [
+                str(field.get("name", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "signature"
+                and str(field.get("name", "")).strip()
+            ]
+
+            set_fields(input_path, output_path, fields_per_page, overwrite=True)
+            _apply_checkbox_export_values(output_path, checkbox_export_values)
+            from .pdf_repair import normalize_signature_fields
+            normalize_signature_fields(output_path, output_path, signature_field_names)
+            _apply_pdf_field_visual_defaults(
+                output_path,
+                explicit_background_fields=explicit_background_fields,
+            )
+            from .pdf_repair import restore_checkbox_appearances
+
+            restore_checkbox_appearances(
+                output_path,
+                output_path,
+                checkbox_border_widths=checkbox_border_widths,
+            )
+
+            the_fields = read_fields(output_path)
+            signature_image_path = os.path.join(
+                os.path.dirname(__file__),
+                "data",
+                "static",
+                "placeholder_signature.png",
+            )
+            data_strings, images = build_pdf_preview_fill_data(
+                the_fields,
+                signature_image_path=signature_image_path,
+            )
+                    
+            filled_path = fill_template(
+                output_path,
+                data_strings=data_strings,
+                images=images,
+                editable=False,
+            )
+
+            with open(filled_path, "rb") as f:
+                output_bytes = f.read()
+
+            return jsonify({
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "filename": filename.replace(".pdf", "-test-filled.pdf"),
+                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                }
+            })
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if output_path and os.path.exists(output_path):
+                os.remove(output_path)
+            if 'filled_path' in locals() and os.path.exists(filled_path):
+                os.remove(filled_path)
+                
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status({"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}}, exc.status_code)
+    except Exception as exc:
+        return jsonify_with_status({"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}}, 500)
 
 
 @app.route("/pdf-labeler/api/attachment-block", methods=["POST"])

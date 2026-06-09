@@ -87,6 +87,41 @@ def deduplicate_pdf_field_names(
     return deduplicated, renames
 
 
+def build_pdf_preview_fill_data(
+    pdf_field_tuples: Iterable[Tuple[Any, ...]],
+    *,
+    signature_image_path: Optional[str] = None,
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, Dict[str, str]]]]:
+    """Build the placeholder values used by ALWeaver's flattened PDF previews.
+
+    This mirrors ``ALWeaver.interview_generator.reflect_fields`` while returning
+    the ``data_strings`` and ``images`` collections accepted by docassemble's
+    ``fill_template`` helper.
+    """
+    data_strings: List[Tuple[str, str]] = []
+    images: List[Tuple[str, Dict[str, str]]] = []
+    mapped_field_names: set[str] = set()
+
+    for field in pdf_field_tuples:
+        field_name = str(field[0])
+        field_type = str(field[4])
+        if field_type in {"/Btn", "/'Btn'"}:
+            export_value = str(field[5] if len(field) >= 6 and field[5] else "")
+            if export_value.lower() in {"yes", "on", "true", ""}:
+                data_strings.append((field_name, "Yes"))
+            elif field_name not in mapped_field_names:
+                data_strings.append((field_name, export_value))
+            mapped_field_names.add(field_name)
+        elif field_type in {"/Sig", "/'Sig'"} and signature_image_path:
+            images.append((field_name, {"fullpath": signature_image_path}))
+            mapped_field_names.add(field_name)
+        else:
+            data_strings.append((field_name, field_name))
+            mapped_field_names.add(field_name)
+
+    return data_strings, images
+
+
 def _looks_like_single_line_auto_size_field(field_name: Any) -> bool:
     return bool(
         re.search(

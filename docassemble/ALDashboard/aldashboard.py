@@ -530,13 +530,14 @@ def disable_user_mfa(user_id: int) -> bool:
     return True
 
 
-def is_user_privileged(user_id: int) -> bool:
+def is_user_privileged(user_id: int) -> Optional[bool]:
     """Check if a user has admin, developer, or cron privileges.
 
     Args:
         user_id: The database ID of the user.
     Returns:
-        True if the user has any of the privileged roles, False otherwise or None if user not found.
+        True if the user has any of the privileged roles, False if not, or None
+        if the user could not be retrieved.
     """
     try:
         target_user_info = get_user_info(user_id)
@@ -545,11 +546,13 @@ def is_user_privileged(user_id: int) -> bool:
             f"is_user_privileged: Error retrieving user info for user_id {user_id}: {ex}"
         )
         return None
-    return target_user_info is not None and {
-        "admin",
-        "developer",
-        "cron",
-    }.intersection(target_user_info.get("privileges", []))
+    if target_user_info is None:
+        return None
+    return bool(
+        {"admin", "developer", "cron"}.intersection(
+            target_user_info.get("privileges", [])
+        )
+    )
 
 
 def get_password_reset_link(user_id: int) -> Optional[str]:
@@ -572,7 +575,7 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
         return None
 
     # Enforce that the user is not an admin or developer, unless the current user is an admin or developer
-    
+
     if is_user_privileged(user_id) and not user_has_privilege(["admin", "developer"]):
         log(
             f"get_password_reset_link: Cannot generate reset link for user {user_id} because target user is an admin or developer. Only admins can reset passwords for other admins or developers."

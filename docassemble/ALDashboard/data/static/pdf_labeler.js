@@ -313,6 +313,9 @@
     const a11yTagStructure = document.getElementById('a11y-tag-structure');
     const utilitiesModal = document.getElementById('utilities-modal');
     const utilitiesCloseBtn = document.getElementById('utilities-close');
+    const fieldRenameSummaryModal = document.getElementById('field-rename-summary-modal');
+    const fieldRenameSummaryContext = document.getElementById('field-rename-summary-context');
+    const fieldRenameSummaryList = document.getElementById('field-rename-summary-list');
     const pageManagerModal = document.getElementById('page-manager-modal');
     const closePageManagerBtn = document.getElementById('close-page-manager');
     const pageManagerStatus = document.getElementById('page-manager-status');
@@ -1295,8 +1298,10 @@
     function getDuplicateFieldNames() {
         const counts = new Map();
         state.fields.forEach(function (field) {
-            const normalized = normalizePdfFieldName(field.name || 'field') || 'field';
-            counts.set(normalized, (counts.get(normalized) || 0) + 1);
+            const name = field.name === null || field.name === undefined || field.name === ''
+                ? 'field'
+                : String(field.name);
+            counts.set(name, (counts.get(name) || 0) + 1);
         });
         const duplicates = [];
         counts.forEach(function (count, name) {
@@ -2148,6 +2153,7 @@
         try {
             // First export to get the latest PDF with field changes applied
             var pdfContent;
+            var saveRenamedFields = [];
             var saveDeduplicateFieldNames = document.getElementById('save-pg-deduplicate-field-names').checked;
             if (state.fields.length > 0 && (state.hasUnsavedChanges || saveDeduplicateFieldNames)) {
                 var formData = new FormData();
@@ -2155,6 +2161,7 @@
                 var saveNameMap = buildExportNameMap({
                     deduplicate: saveDeduplicateFieldNames
                 });
+                saveRenamedFields = getRenamedFields(saveNameMap);
                 formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)));
                 formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(saveNameMap)));
                 formData.append('deduplicate_field_names', saveDeduplicateFieldNames ? 'true' : 'false');
@@ -2185,6 +2192,10 @@
             setDirty(false);
             showPdfWorkspace();
             showSuccess((data.data && data.data.created ? 'Created' : 'Updated') + ' ' + filename + ' in Playground.');
+            showFieldRenameSummary(
+                saveRenamedFields,
+                'The PDF was saved after these exact duplicate field names were made unique.'
+            );
         } catch (error) {
             showPdfWorkspace();
             showError('Save to Playground failed: ' + (error.message || 'Unknown error.'));
@@ -2693,7 +2704,7 @@
         const rawName = String(field.name || '').trim();
         const normalized = normalizePdfFieldName(rawName);
         const duplicateExists = state.fields.some(function (candidate) {
-            return candidate.id !== field.id && normalizePdfFieldName(candidate.name) === normalized;
+            return candidate.id !== field.id && String(candidate.name || '') === String(field.name || '');
         });
 
         if (!rawName) {
@@ -3943,21 +3954,63 @@
     function buildExportNameMap(options) {
         const deduplicate = !!(options && options.deduplicate);
         const exportNameMap = new Map();
+        const originalNames = state.fields.map(function (field) {
+            return field.name === null || field.name === undefined || field.name === ''
+                ? 'field'
+                : String(field.name);
+        });
+        const reservedOriginalNames = new Set(originalNames);
         const used = new Set();
-        state.fields.forEach(function (field) {
-            const base = normalizePdfFieldName(field.name || 'field') || 'field';
+        const suffixByName = new Map();
+        state.fields.forEach(function (field, index) {
+            const base = originalNames[index];
             let candidate = base;
             if (deduplicate) {
-                let suffix = 1;
+                let suffix = suffixByName.get(base) || 0;
                 while (used.has(candidate)) {
-                    candidate = base + '__' + suffix;
                     suffix += 1;
+                    candidate = base + '__' + suffix;
+                    while (reservedOriginalNames.has(candidate) || used.has(candidate)) {
+                        suffix += 1;
+                        candidate = base + '__' + suffix;
+                    }
                 }
+                suffixByName.set(base, suffix);
             }
             used.add(candidate);
             exportNameMap.set(field.id, candidate);
         });
         return exportNameMap;
+    }
+
+    function getRenamedFields(exportNameMap) {
+        const renames = [];
+        state.fields.forEach(function (field, index) {
+            const oldName = field.name === null || field.name === undefined || field.name === ''
+                ? 'field'
+                : String(field.name);
+            const newName = exportNameMap.get(field.id) || oldName;
+            if (newName !== oldName) {
+                renames.push({
+                    index: index,
+                    old_name: oldName,
+                    new_name: newName
+                });
+            }
+        });
+        return renames;
+    }
+
+    function showFieldRenameSummary(renames, contextText) {
+        if (!Array.isArray(renames) || renames.length === 0) return;
+        fieldRenameSummaryContext.textContent = contextText || 'The following exact duplicate field names were renamed.';
+        fieldRenameSummaryList.innerHTML = renames.map(function (rename) {
+            return '<div class="border rounded p-2">' +
+                '<div class="small text-muted">Field ' + String(Number(rename.index) + 1) + '</div>' +
+                '<div><code>' + escapeHtml(rename.old_name) + '</code> &rarr; <code>' + escapeHtml(rename.new_name) + '</code></div>' +
+                '</div>';
+        }).join('');
+        fieldRenameSummaryModal.classList.remove('hidden');
     }
 
     function buildUniqueExportNameMap() {
@@ -3968,7 +4021,11 @@
         const nameMap = exportNameMap || buildUniqueExportNameMap();
         return state.fields.map(function (field) {
             const pageSize = state.pageSizes[field.pageIndex];
-            const safeName = nameMap.get(field.id) || normalizePdfFieldName(field.name || 'field');
+            const safeName = nameMap.get(field.id) || (
+                field.name === null || field.name === undefined || field.name === ''
+                    ? 'field'
+                    : String(field.name)
+            );
             return {
                 name: safeName,
                 type: field.type,
@@ -4184,6 +4241,7 @@
             formData.append('file', getPdfFileForRequests());
             const deduplicateFieldNames = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
             const exportNameMap = buildExportNameMap({ deduplicate: deduplicateFieldNames });
+            const renamedFields = getRenamedFields(exportNameMap);
             formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)));
             formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(exportNameMap)));
             formData.append('deduplicate_field_names', deduplicateFieldNames ? 'true' : 'false');
@@ -4220,6 +4278,10 @@
             setDirty(false);
             showPdfWorkspace();
             showSuccess('PDF exported successfully.');
+            showFieldRenameSummary(
+                renamedFields,
+                'The exported PDF contains these renamed exact duplicate fields.'
+            );
         } catch (error) {
             console.error('Error exporting:', error);
             showPdfWorkspace();
@@ -4980,6 +5042,10 @@
         document.getElementById('util-bulk-status').classList.add('hidden');
         document.getElementById('util-bulk-size-warning').classList.add('hidden');
         document.getElementById('util-bulk-files').value = '';
+        document.getElementById('util-attachment-status').classList.add('hidden');
+        document.getElementById('util-attachment-output').value = '';
+        document.getElementById('util-attachment-generate').disabled = state.fields.length === 0;
+        document.getElementById('util-attachment-copy').disabled = true;
         bulkFiles = [];
         updateBulkState();
         updateUtilActiveButtons();
@@ -4988,6 +5054,59 @@
     });
     utilitiesCloseBtn.addEventListener('click', function () {
         utilitiesModal.classList.add('hidden');
+    });
+    [
+        document.getElementById('field-rename-summary-close'),
+        document.getElementById('field-rename-summary-done')
+    ].forEach(function (button) {
+        button.addEventListener('click', function () {
+            fieldRenameSummaryModal.classList.add('hidden');
+        });
+    });
+
+    document.getElementById('util-attachment-generate').addEventListener('click', function () {
+        var statusEl = document.getElementById('util-attachment-status');
+        var outputEl = document.getElementById('util-attachment-output');
+        var copyBtn = document.getElementById('util-attachment-copy');
+        statusEl.className = 'alert alert-info small mb-2';
+        statusEl.textContent = 'Generating attachment block...';
+        statusEl.classList.remove('hidden');
+        fetch(apiUrl('/pdf-labeler/api/attachment-block'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                field_names: state.fields.map(function (field) { return field.name; }),
+                filename: state.fileName || 'template.pdf'
+            })
+        })
+        .then(function (response) { return parseApiResponse(response); })
+        .then(function (data) {
+            if (!data.success || !data.data) {
+                throw new Error((data.error && data.error.message) || 'Generation failed.');
+            }
+            outputEl.value = data.data.attachment_block || 'fields:';
+            copyBtn.disabled = false;
+            statusEl.className = 'alert alert-success small mb-2';
+            statusEl.textContent = 'Attachment block generated.';
+        })
+        .catch(function (error) {
+            statusEl.className = 'alert alert-danger small mb-2';
+            statusEl.textContent = 'Error: ' + (error && error.message ? error.message : 'Unknown error.');
+        });
+    });
+    document.getElementById('util-attachment-copy').addEventListener('click', function () {
+        var outputEl = document.getElementById('util-attachment-output');
+        var copyPromise = navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(outputEl.value)
+            : Promise.reject(new Error('Clipboard API unavailable'));
+        copyPromise.then(function () {
+            showSuccess('Attachment fields block copied.');
+        }).catch(function () {
+            outputEl.focus();
+            outputEl.select();
+            document.execCommand('copy');
+            showSuccess('Attachment fields block copied.');
+        });
     });
 
     document.getElementById('util-copy-source-file').addEventListener('change', function (e) {

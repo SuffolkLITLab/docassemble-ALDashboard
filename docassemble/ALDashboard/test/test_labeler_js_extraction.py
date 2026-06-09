@@ -189,6 +189,15 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def test_js_references_JSZip_global(self):
         self.assertIn("JSZip", self.js)
 
+    def test_pdf_deduplication_contract_is_wired_into_ui(self):
+        self.assertIn("reservedOriginalNames", self.js)
+        self.assertIn("showFieldRenameSummary", self.js)
+        self.assertIn("field-rename-summary-modal", self.html)
+
+    def test_pdf_attachment_block_utility_is_wired_into_ui(self):
+        self.assertIn("/pdf-labeler/api/attachment-block", self.js)
+        self.assertIn("util-attachment-generate", self.html)
+
 
 class TestLabelerTemplateRendering(unittest.TestCase):
     """Verify that the template-reading helpers still work after refactoring."""

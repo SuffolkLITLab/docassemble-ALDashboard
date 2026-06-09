@@ -4,6 +4,8 @@ import unittest
 from docassemble.ALDashboard.pdf_export_utils import (
     build_normalized_pdf_field_definitions,
     build_pdf_export_fields_per_page,
+    deduplicate_fields_data,
+    deduplicate_pdf_field_names,
 )
 
 
@@ -28,6 +30,40 @@ class FakeFormField:
 
 
 class TestPDFExportUtils(unittest.TestCase):
+    def test_deduplication_preserves_unique_double_underscore_suffixes(self):
+        names, renames = deduplicate_pdf_field_names(
+            ["users1_name", "users1_name", "users1_name__1", "users1_name__27"]
+        )
+
+        self.assertEqual(
+            names,
+            ["users1_name", "users1_name__2", "users1_name__1", "users1_name__27"],
+        )
+        self.assertEqual(
+            renames,
+            [
+                {
+                    "index": 1,
+                    "old_name": "users1_name",
+                    "new_name": "users1_name__2",
+                }
+            ],
+        )
+
+    def test_deduplication_changes_only_later_exact_matches(self):
+        fields = [
+            {"name": "name"},
+            {"name": "name_1"},
+            {"name": "name__1"},
+            {"name": "name"},
+            {"name": "name__1"},
+        ]
+
+        self.assertEqual(
+            [field["name"] for field in deduplicate_fields_data(fields)],
+            ["name", "name_1", "name__1", "name__2", "name__1__1"],
+        )
+
     def test_renamed_text_field_export_keeps_name_and_auto_size(self):
         fields_per_page = build_pdf_export_fields_per_page(
             [

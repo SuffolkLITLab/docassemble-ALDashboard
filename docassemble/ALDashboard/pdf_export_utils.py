@@ -1,5 +1,6 @@
 import re
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from collections import Counter
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
 def _parse_bool(value: Any, *, default: bool = False) -> bool:
@@ -30,15 +31,60 @@ def _parse_bool(value: Any, *, default: bool = False) -> bool:
     raise ValueError(f"Could not parse boolean value {value!r}.")
 
 
-def _dedupe_pdf_field_name(raw_name: Any, used_names: set[str]) -> str:
-    base_name = str(raw_name or "").strip() or "field"
-    candidate = base_name
-    suffix = 1
-    while candidate in used_names:
-        candidate = f"{base_name}__{suffix}"
-        suffix += 1
-    used_names.add(candidate)
-    return candidate
+def _pdf_field_name(raw_name: Any) -> str:
+    """Return the submitted field name without normalizing valid characters."""
+    if raw_name is None or raw_name == "":
+        return "field"
+    return str(raw_name)
+
+
+def deduplicate_pdf_field_names(
+    raw_names: Iterable[Any],
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Make only exactly repeated PDF field names unique.
+
+    This is the PDF labeler's deduplication contract:
+
+    * A duplicate is a complete, exact string match. Similar names are unrelated.
+    * Every unique submitted name stays byte-for-byte unchanged. In particular,
+      ``name__1`` and ``name__27`` are valid names, not suffixes to renumber.
+    * Keep the first occurrence of a repeated name. Rename only later occurrences
+      by appending ``__N`` for an available positive integer.
+    * Reserve all original names before generating names. Therefore
+      ``["name", "name", "name__1"]`` becomes
+      ``["name", "name__2", "name__1"]``; the unique ``name__1`` is untouched.
+
+    Empty or missing names use the existing ``field`` fallback because PDF field
+    objects require a usable name.
+    """
+    names = [_pdf_field_name(name) for name in raw_names]
+    original_names = set(names)
+    used_names: set[str] = set()
+    suffixes: Counter[str] = Counter()
+    deduplicated: List[str] = []
+    renames: List[Dict[str, Any]] = []
+
+    for index, original_name in enumerate(names):
+        if original_name not in used_names:
+            candidate = original_name
+        else:
+            suffix = suffixes[original_name] + 1
+            candidate = f"{original_name}__{suffix}"
+            while candidate in original_names or candidate in used_names:
+                suffix += 1
+                candidate = f"{original_name}__{suffix}"
+            suffixes[original_name] = suffix
+            renames.append(
+                {
+                    "index": index,
+                    "old_name": original_name,
+                    "new_name": candidate,
+                }
+            )
+        used_names.add(candidate)
+        deduplicated.append(candidate)
+
+    return deduplicated, renames
 
 
 def _looks_like_single_line_auto_size_field(field_name: Any) -> bool:
@@ -54,7 +100,7 @@ def _looks_like_single_line_auto_size_field(field_name: Any) -> bool:
 def deduplicate_fields_data(
     fields_data: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Return a copy of fields_data with duplicate field names suffixed.
+    """Return a copy of fields_data with only exact duplicate names suffixed.
 
     Applies the same ``__N`` suffix strategy used by
     :func:`build_pdf_export_fields_per_page` so that side-channel metadata
@@ -67,15 +113,34 @@ def deduplicate_fields_data(
     Returns:
         List[Dict[str, Any]]: New list with each field's ``name`` key uniquified.
     """
-    used_names: set[str] = set()
+    names, _renames = deduplicate_pdf_field_names(
+        field.get("name", "field") for field in fields_data
+    )
     result: List[Dict[str, Any]] = []
-    for field in fields_data:
-        raw_name = str(field.get("name", "field") or "").strip() or "field"
-        deduped_name = _dedupe_pdf_field_name(raw_name, used_names)
+    for field, deduped_name in zip(fields_data, names):
+        raw_name = _pdf_field_name(field.get("name", "field"))
         if deduped_name != raw_name:
             field = {**field, "name": deduped_name}
         result.append(field)
     return result
+
+
+def deduplicate_fields_data_with_renames(
+    fields_data: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Return deduplicated fields and an occurrence-level rename log."""
+    names, renames = deduplicate_pdf_field_names(
+        field.get("name", "field") for field in fields_data
+    )
+    result: List[Dict[str, Any]] = []
+    for field, deduplicated_name in zip(fields_data, names):
+        original_name = _pdf_field_name(field.get("name", "field"))
+        result.append(
+            {**field, "name": deduplicated_name}
+            if deduplicated_name != original_name
+            else field
+        )
+    return result, renames
 
 
 def _field_value(field: Any, key: str, default: Any = None) -> Any:
@@ -133,20 +198,28 @@ def build_normalized_pdf_field_definitions(
 ) -> List[Dict[str, Any]]:
     """Convert detected FormFyxer fields into normalized export definitions."""
     normalized_fields: List[Dict[str, Any]] = []
-    used_names: set[str] = set()
+    detected_pages = [
+        list(page_fields or []) for page_fields in detected_fields_per_page
+    ]
+    all_raw_names = [
+        _pdf_field_name(_field_value(field, "name", "field"))
+        for page_fields in detected_pages
+        for field in page_fields
+    ]
+    deduplicated_names, _renames = deduplicate_pdf_field_names(all_raw_names)
+    name_index = 0
 
-    for page_idx, page_fields in enumerate(detected_fields_per_page):
+    for page_idx, page_fields in enumerate(detected_pages):
         if page_idx < 0 or page_idx >= page_count:
             continue
         for field in page_fields or []:
-            raw_field_name = (
-                str(_field_value(field, "name", "field") or "").strip() or "field"
-            )
+            raw_field_name = _pdf_field_name(_field_value(field, "name", "field"))
             field_name = (
-                _dedupe_pdf_field_name(raw_field_name, used_names)
+                deduplicated_names[name_index]
                 if deduplicate_field_names
                 else raw_field_name
             )
+            name_index += 1
             field_type_str = _normalize_detected_field_type(
                 _field_value(field, "type", "text")
             )
@@ -213,9 +286,12 @@ def build_pdf_export_fields_per_page(
         List[List[Any]]: Form field objects grouped by page index.
     """
     fields_per_page: List[List[Any]] = [[] for _ in range(page_count)]
-    used_names: set[str] = set()
+    fields_list = list(fields_data)
+    deduplicated_names, _renames = deduplicate_pdf_field_names(
+        field_data.get("name", "field") for field_data in fields_list
+    )
 
-    for field_data in fields_data:
+    for field_index, field_data in enumerate(fields_list):
         page_idx = int(field_data.get("pageIndex", 0))
         if page_idx < 0 or page_idx >= page_count:
             continue
@@ -337,10 +413,10 @@ def build_pdf_export_fields_per_page(
             )
             field_configs["selected"] = False
 
-        raw_field_name = str(field_data.get("name", "field") or "").strip() or "field"
+        raw_field_name = _pdf_field_name(field_data.get("name", "field"))
         form_field = form_field_cls(
             field_name=(
-                _dedupe_pdf_field_name(raw_field_name, used_names)
+                deduplicated_names[field_index]
                 if deduplicate_field_names
                 else raw_field_name
             ),

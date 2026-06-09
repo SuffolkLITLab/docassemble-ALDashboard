@@ -1,6 +1,7 @@
 ---
 include:
   - nav.yml
+  - docassemble.ALToolbox:copy_button.yml
 ---
 metadata:
   title: Manage users
@@ -18,8 +19,19 @@ mandatory: True
 id: interview order
 code: |
   chosen_user
+  if not user_has_privilege("admin"):
+    if is_user_privileged(chosen_user) and user_task in (
+      "reset_password",
+      "get_reset_link",
+      "elevate_permissions",
+      "disable_mfa",
+      "edit_profile"
+    ):
+      exit_cant_manage_privileged_user
   if user_task == "reset_password":
     do_update_password
+  elif user_task == "get_reset_link":
+    display_reset_link_screen
   elif user_task == "elevate_permissions":
     do_update_privileges
   elif user_task == "download_playground":
@@ -33,10 +45,17 @@ code: |
     edit_profile_screen
   ending_screen
 ---
+id: exit_cant_manage_privileged_user
+event: exit_cant_manage_privileged_user
+question: |
+  You cannot manage a user with admin, developer, or cron privileges
+subquestion: |
+  Only users with the `admin` privilege are allowed to edit privileged accounts.
+---
 code: |
   user_lookup = {}
   for user in get_users_and_name():
-    user_lookup[user[0]] = user[3]
+    user_lookup[user[0]] = f"{user[2]} {user[3]} ({user[1]})".strip()
 ---
 code: |
   user_details = get_user_details(chosen_user)
@@ -46,7 +65,8 @@ question: |
   Manage users
 subquestion: |
   % if not user_has_privilege(["admin"]):
-  **Note**: make sure the role `al_manage_users` any of the the following desired [permissions](https://docassemble.org/docs/config.html#permissions)
+  % if hasattr(user_info(), "permissions") and not 'access_user_info' in user_info().permissions:  
+  **Note**: make sure the role `al_manage_users` has any of the the following desired [permissions](https://docassemble.org/docs/config.html#permissions)
   in the global configuration:
 
   ```
@@ -62,20 +82,22 @@ subquestion: |
       - edit_user_privileges
   ```
   % endif
+  % endif
 fields:
   - User: chosen_user
     datatype: integer
     input type: combobox
     code: |
-      [{user[0]: f"{user[1]} {user[2]} {user[3]}"} for user in get_users_and_name()]
+      [{user[0]: f"{user[2]} {user[3]} ({user[1]})".strip()} for user in get_users_and_name(limit_to_non_admin_or_developers=not user_has_privilege(["admin", "developer"]) )]
     exclude:
       - "2"
-    # User ID 2 is the "cron" user and should not be managed here        
+    # User ID 2 is the "cron" user and should not be managed here
   - What do you want to do?: user_task
     datatype: radio
     choices:
       - View user information: view_user_info
       - Reset password: reset_password
+      - Get password reset link: get_reset_link
       - Download playground files: download_playground
       - Change user permissions: elevate_permissions
       - Disable two-factor authentication: disable_mfa
@@ -95,15 +117,22 @@ fields:
   - New permissions: new_permission_level
     datatype: multiselect
     code: |
-      manage_privileges("list")
+      manage_privileges("list") if 'access_privileges' in user_info().permissions else []
     exclude: |
       'cron'
     show if:
       variable: user_task
       is: elevate_permissions
+      code: |
+        'access_privileges' in user_info().permissions
     help: |
       The user's permissions will be completely reset to match the new
       list of permissions. Use "ctrl" to select multiple.
+  - note: |
+      You do not have permission to view or change user privileges.
+    show if:
+      code: |
+        not 'access_privileges' in user_info().permissions
 validation code: |
   if user_task == "reset_password" and new_user_password != new_user_password_2:
     validation_error("The passwords do not match", field="new_user_password_2")
@@ -218,6 +247,33 @@ subquestion: |
   % endif
   % elif user_task == 'reset_password':
   The password has been reset.
+  % endif
+buttons:
+  - Restart: restart
+---
+code: |
+  # This does not send an email, it only generates the URL for the admin to send manually
+  password_reset_link = get_password_reset_link(chosen_user)
+---
+id: display reset link
+event: display_reset_link_screen
+question: |
+  Password reset link for ${ user_lookup.get(chosen_user, "this user") }
+subquestion: |
+  % if password_reset_link:
+  Copy the link below and send it to the user directly.
+
+  **This link is private and should only be accessed by the intended user**
+
+  ${ copy_button_html(password_reset_link, text_before="Reset link:") }
+  % else:
+  <div class="alert alert-danger" role="alert">
+  Could not generate a reset link. Check logs for more information.
+  % if not user_has_privilege(["admin", "developer"]):
+  Note: only admin or developer accounts with the `access_user_info` permission can generate password reset links for
+  users with the admin, developer, or cron privileges.
+  </div>
+  % endif
   % endif
 buttons:
   - Restart: restart

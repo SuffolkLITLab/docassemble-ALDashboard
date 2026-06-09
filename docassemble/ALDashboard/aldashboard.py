@@ -4,7 +4,7 @@ import subprocess
 import re
 import requests
 from importlib.metadata import distributions
-from docassemble.webapp.users.models import UserModel
+from docassemble.webapp.users.models import UserModel, Role
 from docassemble.webapp.db_object import init_sqlalchemy
 from github import Github  # PyGithub
 from flask import current_app
@@ -42,6 +42,9 @@ from docassemble.base.util import (
     get_config,
     user_has_privilege,
     DACloudStorage,
+    user_info,
+    user_logged_in,
+    get_user_info,
 )
 
 from ruamel.yaml import YAML
@@ -82,6 +85,7 @@ __all__ = [
     "get_user_details",
     "disable_user_mfa",
     "get_password_reset_link",
+    "is_user_privileged",
 ]
 
 
@@ -444,12 +448,23 @@ def speedy_get_users() -> List[Dict[int, str]]:
     return [{user[0]: user[1]} for user in the_users]
 
 
-def get_users_and_name() -> List[Tuple[int, str, str, str]]:
+def get_users_and_name(
+    limit_to_non_admin_or_developers: bool = False,
+) -> List[Tuple[int, str, str, str]]:
     users = UserModel.query.with_entities(
-        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
+        UserModel.id,
+        UserModel.email,
+        UserModel.first_name,
+        UserModel.last_name,
+        UserModel.nickname,
     )
 
-    return users
+    if limit_to_non_admin_or_developers:
+        users = users.filter(
+            ~UserModel.roles.any(Role.name.in_(["admin", "developer"]))
+        )
+
+    return [(u[0], u[1] or "", u[2] or u[4] or "", u[3] or "") for u in users.all()]
 
 
 def get_user_details(user_id: int) -> Optional[Dict]:
@@ -486,7 +501,7 @@ def get_user_details(user_id: int) -> Optional[Dict]:
     return {
         "id": user.id,
         "email": user.email,
-        "first_name": user.first_name,
+        "first_name": user.first_name or user.nickname,
         "last_name": user.last_name,
         "active": user.active,
         "account_type": account_type,
@@ -515,6 +530,31 @@ def disable_user_mfa(user_id: int) -> bool:
     return True
 
 
+def is_user_privileged(user_id: int) -> Optional[bool]:
+    """Check if a user has admin, developer, or cron privileges.
+
+    Args:
+        user_id: The database ID of the user.
+    Returns:
+        True if the user has any of the privileged roles, False if not, or None
+        if the user could not be retrieved.
+    """
+    try:
+        target_user_info = get_user_info(user_id)
+    except Exception as ex:
+        log(
+            f"is_user_privileged: Error retrieving user info for user_id {user_id}: {ex}"
+        )
+        return None
+    if target_user_info is None:
+        return None
+    return bool(
+        {"admin", "developer", "cron"}.intersection(
+            target_user_info.get("privileges", [])
+        )
+    )
+
+
 def get_password_reset_link(user_id: int) -> Optional[str]:
     """Generate a password reset link for a specific user without sending an email.
 
@@ -524,6 +564,24 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     Returns:
         A full password reset URL string, or None if the user is not found.
     """
+    # Check top level authority
+    if not user_logged_in() or (
+        not user_has_privilege("admin")
+        and not ("edit_user_password" in user_info().permissions)
+    ):
+        log(
+            f"get_password_reset_link: Current user does not have permission to reset passwords."
+        )
+        return None
+
+    # Enforce that the user is not an admin or developer, unless the current user is an admin or developer
+
+    if is_user_privileged(user_id) and not user_has_privilege(["admin", "developer"]):
+        log(
+            f"get_password_reset_link: Cannot generate reset link for user {user_id} because target user is an admin or developer. Only admins can reset passwords for other admins or developers."
+        )
+        return None
+
     user = UserModel.query.filter(UserModel.id == user_id).first()
 
     if user is None:

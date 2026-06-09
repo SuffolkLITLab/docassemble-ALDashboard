@@ -159,7 +159,8 @@
             email: '',
             loginUrl: '/user/sign-in',
             logoutUrl: '/user/sign-out',
-            aiEnabled: false
+            aiEnabled: false,
+            menuItems: []
         },
         playgroundSource: {
             project: '',
@@ -232,6 +233,10 @@
         _saveSessionDefaults(defaults);
     }
 
+    function looksLikeSingleLineAutoSizeField(fieldName) {
+        return /(name|address|street|city|state|zip|postal|phone|phone_number|email|cell)/i.test(String(fieldName || ''));
+    }
+
     let draftState = null;
     let dragState = null;
     let resizeState = null;
@@ -241,6 +246,7 @@
     let fieldsListManualScrollUntil = 0;
     let pageManagerState = null;
     let pageManagerDragPageId = null;
+    let a11yDragFieldId = null;
 
     const fileInput = document.getElementById('file-input');
     const pdfContainer = document.getElementById('pdf-container');
@@ -272,7 +278,10 @@
     const autoDetectBtn = document.getElementById('auto-detect-btn');
     const relabelBtn = document.getElementById('relabel-btn');
     const sidebarRelabelBtn = document.getElementById('sidebar-relabel-btn');
+    const exportDeduplicateFieldNamesInput = document.getElementById('export-deduplicate-field-names');
+    const duplicateFieldWarning = document.getElementById('duplicate-field-warning');
     const exportBtn = document.getElementById('export-btn');
+    const testFillingBtn = document.getElementById('test-filling-btn');
     const normalizePassBtn = document.getElementById('normalize-pass-btn');
     const errorToast = document.getElementById('error-toast');
     const errorToastMessage = document.getElementById('error-toast-message');
@@ -310,6 +319,9 @@
     const a11yTagStructure = document.getElementById('a11y-tag-structure');
     const utilitiesModal = document.getElementById('utilities-modal');
     const utilitiesCloseBtn = document.getElementById('utilities-close');
+    const fieldRenameSummaryModal = document.getElementById('field-rename-summary-modal');
+    const fieldRenameSummaryContext = document.getElementById('field-rename-summary-context');
+    const fieldRenameSummaryList = document.getElementById('field-rename-summary-list');
     const pageManagerModal = document.getElementById('page-manager-modal');
     const closePageManagerBtn = document.getElementById('close-page-manager');
     const pageManagerStatus = document.getElementById('page-manager-status');
@@ -504,7 +516,6 @@
         name = name.replace(/[^a-zA-Z0-9_]+/g, '_');
         name = name.replace(/_+/g, '_');
         name = name.replace(/^_+|_+$/g, '');
-        name = name.toLowerCase();
         if (!name) name = 'field';
         if (/^[0-9]/.test(name)) {
             name = 'field_' + name;
@@ -941,6 +952,16 @@
         }, typeof timeoutMs === 'number' ? timeoutMs : 3200);
     }
 
+    function updateDuplicateFieldWarning() {
+        const duplicateNames = getDuplicateFieldNames();
+        if (duplicateFieldWarning) {
+            duplicateFieldWarning.classList.toggle('hidden', duplicateNames.length === 0);
+            duplicateFieldWarning.title = duplicateNames.length
+                ? 'Repeated names: ' + duplicateNames.slice(0, 5).join(', ') + (duplicateNames.length > 5 ? ' ...' : '')
+                : '';
+        }
+    }
+
     function updateFieldCount() {
         const totalCount = state.fields.length;
         const filteredCount = totalCount === 0 ? 0 : getDisplayedFields().length;
@@ -955,7 +976,9 @@
         fieldsEmpty.classList.toggle('hidden', totalCount !== 0);
         fieldsList.classList.toggle('hidden', totalCount === 0);
         floatingToolPicker.classList.toggle('hidden', !state.pdfBytes);
+        autoDetectBtn.disabled = !state.pdfBytes;
         exportBtn.disabled = !state.pdfBytes || totalCount === 0;
+        if (testFillingBtn) testFillingBtn.disabled = !state.pdfBytes || totalCount === 0;
         savePlaygroundBtn.disabled = !state.pdfBytes || totalCount === 0;
         normalizePassBtn.disabled = !state.pdfBytes || totalCount === 0;
         repairBtn.disabled = !state.pdfBytes;
@@ -974,6 +997,7 @@
             document.getElementById('preview-icon-open').classList.remove('hidden');
             document.getElementById('preview-icon-closed').classList.add('hidden');
         }
+        updateDuplicateFieldWarning();
         updateZoomControls();
     }
 
@@ -1082,11 +1106,14 @@
             const field = state.fields.find(function (candidate) { return candidate.id === fieldId; });
             if (!field) return;
             const row = document.createElement('div');
-            row.className = 'border rounded p-2';
+            row.className = 'a11y-field-row border rounded p-2';
             row.dataset.fieldId = field.id;
             row.innerHTML =
                 '<div class="d-flex align-items-center justify-content-between gap-2 mb-2">' +
-                    '<div class="small fw-semibold">' + escapeHtml(field.name) + '</div>' +
+                    '<div class="d-flex align-items-center gap-1">' +
+                        '<span class="a11y-drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span>' +
+                        '<div class="small fw-semibold">' + escapeHtml(field.name) + '</div>' +
+                    '</div>' +
                     '<div class="btn-group btn-group-sm">' +
                         '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' + escapeHtml(field.id) + '"' + (index === 0 ? ' disabled' : '') + '>Up</button>' +
                         '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' + escapeHtml(field.id) + '"' + (index === state.accessibility.fieldOrder.length - 1 ? ' disabled' : '') + '>Down</button>' +
@@ -1274,6 +1301,21 @@
     function bumpFieldNamesVersion() {
         state.fieldNamesVersion = (Number(state.fieldNamesVersion) || 0) + 1;
         invalidateBulkRenamePreview();
+    }
+
+    function getDuplicateFieldNames() {
+        const counts = new Map();
+        state.fields.forEach(function (field) {
+            const name = field.name === null || field.name === undefined || field.name === ''
+                ? 'field'
+                : String(field.name);
+            counts.set(name, (counts.get(name) || 0) + 1);
+        });
+        const duplicates = [];
+        counts.forEach(function (count, name) {
+            if (count > 1) duplicates.push(name);
+        });
+        return duplicates;
     }
 
     function setFieldsPanelMode(nextMode) {
@@ -1604,6 +1646,7 @@
             }
         }
         syncQuickFieldEditor({ preserveInput: source === 'quick' });
+        updateDuplicateFieldWarning();
     }
 
     function syncQuickFieldEditor(options) {
@@ -1711,10 +1754,15 @@
         if (!authControls) return;
         if (state.auth.isAuthenticated) {
             const emailText = state.auth.email || 'Account';
+            const menuItems = Array.isArray(state.auth.menuItems) && state.auth.menuItems.length
+                ? state.auth.menuItems
+                : [{ label: 'Sign Out', url: state.auth.logoutUrl || '/user/sign-out' }];
             authControls.innerHTML =
                 '<button id="auth-menu-btn" class="btn btn-outline-light btn-sm dropdown-toggle" type="button" aria-expanded="false">' + escapeHtml(emailText) + '</button>' +
                 '<div id="auth-menu" class="dropdown-menu dropdown-menu-end header-auth-menu">' +
-                    '<a class="dropdown-item" href="' + escapeHtml(state.auth.logoutUrl || '/user/sign-out') + '">Log out</a>' +
+                    menuItems.map(function (item) {
+                        return '<a class="dropdown-item" href="' + escapeHtml(item.url || '#') + '">' + escapeHtml(item.label || '') + '</a>';
+                    }).join('') +
                 '</div>';
             const menuBtn = document.getElementById('auth-menu-btn');
             const menu = document.getElementById('auth-menu');
@@ -1775,6 +1823,7 @@
                 state.auth.loginUrl = data.data.login_url || '/user/sign-in';
                 state.auth.logoutUrl = data.data.logout_url || '/user/sign-out';
                 state.auth.aiEnabled = !!data.data.ai_enabled;
+                state.auth.menuItems = Array.isArray(data.data.menu_items) ? data.data.menu_items : [];
             }
         } catch (_error) {
             state.auth = {
@@ -1782,7 +1831,8 @@
                 email: '',
                 loginUrl: '/user/sign-in',
                 logoutUrl: '/user/sign-out',
-                aiEnabled: false
+                aiEnabled: false,
+                menuItems: []
             };
         }
         renderAuthControls();
@@ -2072,6 +2122,18 @@
         savePgFilename.value = state.playgroundSource.filename || state.fileName || 'template.pdf';
         if (!savePgFilename.value.toLowerCase().endsWith('.pdf'))
             savePgFilename.value += '.pdf';
+        var duplicateNames = getDuplicateFieldNames();
+        var saveDedupeInput = document.getElementById('save-pg-deduplicate-field-names');
+        var saveDuplicateWarning = document.getElementById('save-pg-duplicate-warning');
+        if (saveDedupeInput) {
+            saveDedupeInput.checked = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
+        }
+        if (saveDuplicateWarning) {
+            saveDuplicateWarning.classList.toggle('hidden', duplicateNames.length === 0);
+            if (duplicateNames.length) {
+                saveDuplicateWarning.textContent = 'Duplicate PDF field names detected: ' + duplicateNames.slice(0, 5).join(', ') + (duplicateNames.length > 5 ? ' ...' : '') + '. Some PDF viewers handle duplicate names unpredictably.';
+            }
+        }
         savePgStatus.classList.add('hidden');
         savePlaygroundModalEl.classList.remove('hidden');
         // Load projects in background
@@ -2106,12 +2168,18 @@
         try {
             // First export to get the latest PDF with field changes applied
             var pdfContent;
-            if (state.hasUnsavedChanges && state.fields.length > 0) {
+            var saveRenamedFields = [];
+            var saveDeduplicateFieldNames = document.getElementById('save-pg-deduplicate-field-names').checked;
+            if (state.fields.length > 0 && (state.hasUnsavedChanges || saveDeduplicateFieldNames)) {
                 var formData = new FormData();
                 formData.append('file', getPdfFileForRequests());
-                var saveNameMap = buildUniqueExportNameMap();
+                var saveNameMap = buildExportNameMap({
+                    deduplicate: saveDeduplicateFieldNames
+                });
+                saveRenamedFields = getRenamedFields(saveNameMap);
                 formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)));
                 formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(saveNameMap)));
+                formData.append('deduplicate_field_names', saveDeduplicateFieldNames ? 'true' : 'false');
                 var exportResponse = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), { method: 'POST', headers: { 'Accept': 'application/json' }, body: formData });
                 var exportData = await parseApiResponse(exportResponse);
                 if (!exportData.success || !exportData.data || !exportData.data.pdf_base64) {
@@ -2139,6 +2207,10 @@
             setDirty(false);
             showPdfWorkspace();
             showSuccess((data.data && data.data.created ? 'Created' : 'Updated') + ' ' + filename + ' in Playground.');
+            showFieldRenameSummary(
+                saveRenamedFields,
+                'The PDF was saved after these exact duplicate field names were made unique.'
+            );
         } catch (error) {
             showPdfWorkspace();
             showError('Save to Playground failed: ' + (error.message || 'Unknown error.'));
@@ -2629,6 +2701,9 @@
             if (repairResult.fields_restored) {
                 summaryParts.push(repairResult.fields_restored + ' fields restored');
             }
+            if (repairResult.appearances_restored) {
+                summaryParts.push(repairResult.appearances_restored + ' appearances restored');
+            }
             if (repairResult.warnings && repairResult.warnings.length) {
                 summaryParts.push(repairResult.warnings.join('; '));
             }
@@ -2644,7 +2719,7 @@
         const rawName = String(field.name || '').trim();
         const normalized = normalizePdfFieldName(rawName);
         const duplicateExists = state.fields.some(function (candidate) {
-            return candidate.id !== field.id && normalizePdfFieldName(candidate.name) === normalized;
+            return candidate.id !== field.id && String(candidate.name || '') === String(field.name || '');
         });
 
         if (!rawName) {
@@ -2656,7 +2731,7 @@
         if (duplicateExists) {
             return {
                 level: 'warning',
-                html: 'Another field already uses this PDF label. Rename it before export to avoid automatic suffixes.'
+                html: 'Another field already uses this PDF label. Some PDF viewers handle duplicate names unpredictably.'
             };
         }
         if (rawName !== normalized && /[\[\].()]/.test(rawName)) {
@@ -2855,7 +2930,8 @@
             multilineTallFields: document.getElementById('norm-multiline-tall').checked,
             multilineThresholdLines: Number(document.getElementById('norm-multiline-lines').value || 2.2),
             multilineWhiteBackground: document.getElementById('norm-multiline-white').checked,
-            removeEmbeddedFonts: document.getElementById('norm-remove-embedded-fonts').checked
+            removeEmbeddedFonts: document.getElementById('norm-remove-embedded-fonts').checked,
+            lowercaseNames: document.getElementById('norm-lowercase-names').checked
         };
     }
 
@@ -2896,7 +2972,7 @@
                         font: settings.normalizeFont ? settings.fontName : nextField.font,
                         fontSize: settings.normalizeFontSize ? settings.fontSizePt : nextField.fontSize,
                         autoSize: false,
-                        checkboxStyle: (settings.normalizeCheckboxStyle && settings.checkboxStyle) || nextField.checkboxStyle || 'check',
+                        checkboxStyle: (settings.normalizeCheckboxStyle && settings.checkboxStyle) || nextField.checkboxStyle || 'cross',
                         checkboxExportValue: (settings.normalizeCheckboxStyle && settings.checkboxExportValue) || nextField.checkboxExportValue || 'Yes',
                         allowScroll: false
                     });
@@ -2932,8 +3008,10 @@
                 nextField.autoSize = false;
             }
 
-            if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
+            if (!settings.normalizeFontSize && settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.autoSize = true;
+            }
+            if (settings.autoSizeNameAddress && nextField.type === 'text' && looksLikeNameOrAddressField(nextField.name)) {
                 nextField.height = ptToNormalizedLength(settings.fixedTextHeightPt, nextField.pageIndex, 'y');
             }
 
@@ -2957,6 +3035,9 @@
         }
         if (settings.alignColumns) {
             alignFieldsByColumn(transformed, settings.alignColumnThresholdPt);
+        }
+        if (settings.lowercaseNames) {
+            transformed.forEach(function (field) { field.name = field.name.toLowerCase(); });
         }
         return dedupeNormalizedFieldNames(transformed);
     }
@@ -3021,8 +3102,8 @@
                             '<div>' +
                                 '<label class="form-label small text-muted mb-1" for="field-checkbox-style-' + escapeHtml(field.id) + '">Style</label>' +
                                 '<select id="field-checkbox-style-' + escapeHtml(field.id) + '" class="form-select form-select-sm" data-action="field-checkbox-style" data-field-id="' + escapeHtml(field.id) + '">' +
-                                    '<option value="cross"' + ((field.checkboxStyle || 'check') === 'cross' ? ' selected' : '') + '>Cross</option>' +
-                                    '<option value="check"' + ((field.checkboxStyle || 'check') === 'check' ? ' selected' : '') + '>Check</option>' +
+                                    '<option value="cross"' + ((field.checkboxStyle || 'cross') === 'cross' ? ' selected' : '') + '>Cross</option>' +
+                                    '<option value="check"' + ((field.checkboxStyle || 'cross') === 'check' ? ' selected' : '') + '>Check</option>' +
                                     '<option value="circle"' + (field.checkboxStyle === 'circle' ? ' selected' : '') + '>Circle</option>' +
                                     '<option value="star"' + (field.checkboxStyle === 'star' ? ' selected' : '') + '>Star</option>' +
                                     '<option value="diamond"' + (field.checkboxStyle === 'diamond' ? ' selected' : '') + '>Diamond</option>' +
@@ -3032,6 +3113,18 @@
                             '<div>' +
                                 '<label class="form-label small text-muted mb-1" for="field-checkbox-export-value-' + escapeHtml(field.id) + '">Export value</label>' +
                                 '<input id="field-checkbox-export-value-' + escapeHtml(field.id) + '" type="text" class="form-control form-control-sm font-monospace" data-action="field-checkbox-export-value" data-field-id="' + escapeHtml(field.id) + '" value="' + escapeHtml(String(field.checkboxExportValue || 'Yes')) + '">' +
+                            '</div>' +
+                            '<label class="form-check small mb-0 align-self-end">' +
+                                '<input class="form-check-input" type="checkbox" data-action="field-checkbox-border" data-field-id="' + escapeHtml(field.id) + '"' + (field.checkboxBorder ? ' checked' : '') + '>' +
+                                '<span class="form-check-label">Border</span>' +
+                            '</label>' +
+                            '<div>' +
+                                '<label class="form-label small text-muted mb-1" for="field-checkbox-border-width-' + escapeHtml(field.id) + '">Border width</label>' +
+                                '<select id="field-checkbox-border-width-' + escapeHtml(field.id) + '" class="form-select form-select-sm" data-action="field-checkbox-border-width" data-field-id="' + escapeHtml(field.id) + '"' + (field.checkboxBorder ? '' : ' disabled') + '>' +
+                                    '<option value="thin"' + ((field.checkboxBorderWidth || 'thin') === 'thin' ? ' selected' : '') + '>Thin</option>' +
+                                    '<option value="medium"' + (field.checkboxBorderWidth === 'medium' ? ' selected' : '') + '>Medium</option>' +
+                                    '<option value="thick"' + (field.checkboxBorderWidth === 'thick' ? ' selected' : '') + '>Thick</option>' +
+                                '</select>' +
                             '</div>' +
                         '</div>' +
                     '</div>'
@@ -3046,6 +3139,10 @@
                 '<div class="field-card-actions">' +
                     '<button type="button" class="btn btn-outline-secondary btn-sm" data-action="duplicate-field" data-field-id="' + escapeHtml(field.id) + '">Duplicate</button>' +
                     '<button type="button" class="btn btn-outline-danger btn-sm" data-action="delete-field" data-field-id="' + escapeHtml(field.id) + '">Delete</button>' +
+                    '<select class="form-select form-select-sm d-inline-block w-auto ms-1" data-action="move-field-page" data-field-id="' + escapeHtml(field.id) + '" aria-label="Move to page">' +
+                        '<option value="">Move to page...</option>' +
+                        Array.apply(null, Array(state.pageCount)).map(function (_, i) { return '<option value="' + i + '"' + (field.pageIndex === i ? ' disabled' : '') + '>Page ' + (i + 1) + '</option>'; }).join('') +
+                    '</select>' +
                 '</div>' +
             '</div>';
     }
@@ -3212,6 +3309,10 @@
                     previewDiv.style.fontSize = Math.max(8, boxPx * 0.8) + 'px';
                     previewDiv.style.lineHeight = '1';
                     previewDiv.style.color = '#000';
+                    if (field.checkboxBorder) {
+                        var borderWidths = { thin: 1, medium: 2, thick: 3 };
+                        previewDiv.style.border = (borderWidths[field.checkboxBorderWidth || 'thin'] || 1) + 'px solid #000';
+                    }
                 } else if (field.type === 'signature') {
                     previewDiv.classList.add('preview-signature');
                     if (_signatureDataUrl) {
@@ -3242,8 +3343,8 @@
                         // Max font size based on field height (single-line text, ~15% padding)
                         var maxPxSize = fieldHeightPx * 0.85 / 1.15;  // Account for line-height
                         
-                        // Start with the smaller of declared size or height-based max
-                        pxSize = Math.min(pxSize, maxPxSize);
+                        // PDF auto-size derives its starting size from the widget height.
+                        pxSize = maxPxSize;
                         
                         // Now check if text width fits; scale down if needed
                         var fontStr = css.weight + ' ' + Math.round(pxSize) + 'px ' + css.family;
@@ -3359,6 +3460,8 @@
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle || undefined,
                 checkboxExportValue: field.checkboxExportValue || undefined,
+                checkboxBorder: !!field.checkboxBorder,
+                checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor || undefined,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined,
@@ -3409,8 +3512,13 @@
             height: rect.height,
             font: getSessionDefault('font'),
             fontSize: getSessionDefault('fontSize'),
-            autoSize: type === 'text' || type === 'multiline',
+            autoSize: type === 'text' && looksLikeSingleLineAutoSizeField(
+                nameSuggestions[0] ? nameSuggestions[0].name : getDefaultFieldName(type)
+            ),
+            checkboxStyle: type === 'checkbox' ? (getSessionDefault('checkboxStyle') || 'cross') : undefined,
             checkboxExportValue: type === 'checkbox' ? getSessionDefault('checkboxExportValue') : undefined,
+            checkboxBorder: false,
+            checkboxBorderWidth: 'thin',
             options: OPTION_TYPES.has(type) ? DEFAULT_OPTION_LIST.slice() : undefined,
             nameSuggestions: nameSuggestions,
             tooltip: ''
@@ -3828,6 +3936,8 @@
             autoSize: field.autoSize !== false,
             checkboxStyle: field.checkboxStyle,
             checkboxExportValue: field.checkboxExportValue,
+            checkboxBorder: !!field.checkboxBorder,
+            checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
             allowScroll: field.allowScroll !== false,
             backgroundColor: field.backgroundColor,
             options: Array.isArray(field.options) ? field.options.slice() : undefined,
@@ -3862,16 +3972,31 @@
         syncQuickFieldEditor();
     }
 
-    function buildUniqueExportNameMap() {
+    function buildExportNameMap(options) {
+        const deduplicate = !!(options && options.deduplicate);
         const exportNameMap = new Map();
+        const originalNames = state.fields.map(function (field) {
+            return field.name === null || field.name === undefined || field.name === ''
+                ? 'field'
+                : String(field.name);
+        });
+        const reservedOriginalNames = new Set(originalNames);
         const used = new Set();
-        state.fields.forEach(function (field) {
-            const base = normalizePdfFieldName(field.name || 'field') || 'field';
+        const suffixByName = new Map();
+        state.fields.forEach(function (field, index) {
+            const base = originalNames[index];
             let candidate = base;
-            let suffix = 2;
-            while (used.has(candidate)) {
-                candidate = base + '__' + suffix;
-                suffix += 1;
+            if (deduplicate) {
+                let suffix = suffixByName.get(base) || 0;
+                while (used.has(candidate)) {
+                    suffix += 1;
+                    candidate = base + '__' + suffix;
+                    while (reservedOriginalNames.has(candidate) || used.has(candidate)) {
+                        suffix += 1;
+                        candidate = base + '__' + suffix;
+                    }
+                }
+                suffixByName.set(base, suffix);
             }
             used.add(candidate);
             exportNameMap.set(field.id, candidate);
@@ -3879,11 +4004,49 @@
         return exportNameMap;
     }
 
+    function getRenamedFields(exportNameMap) {
+        const renames = [];
+        state.fields.forEach(function (field, index) {
+            const oldName = field.name === null || field.name === undefined || field.name === ''
+                ? 'field'
+                : String(field.name);
+            const newName = exportNameMap.get(field.id) || oldName;
+            if (newName !== oldName) {
+                renames.push({
+                    index: index,
+                    old_name: oldName,
+                    new_name: newName
+                });
+            }
+        });
+        return renames;
+    }
+
+    function showFieldRenameSummary(renames, contextText) {
+        if (!Array.isArray(renames) || renames.length === 0) return;
+        fieldRenameSummaryContext.textContent = contextText || 'The following exact duplicate field names were renamed.';
+        fieldRenameSummaryList.innerHTML = renames.map(function (rename) {
+            return '<div class="border rounded p-2">' +
+                '<div class="small text-muted">Field ' + String(Number(rename.index) + 1) + '</div>' +
+                '<div><code>' + escapeHtml(rename.old_name) + '</code> &rarr; <code>' + escapeHtml(rename.new_name) + '</code></div>' +
+                '</div>';
+        }).join('');
+        fieldRenameSummaryModal.classList.remove('hidden');
+    }
+
+    function buildUniqueExportNameMap() {
+        return buildExportNameMap({ deduplicate: true });
+    }
+
     function convertFieldsToAbsoluteCoordinates(exportNameMap) {
         const nameMap = exportNameMap || buildUniqueExportNameMap();
         return state.fields.map(function (field) {
             const pageSize = state.pageSizes[field.pageIndex];
-            const safeName = nameMap.get(field.id) || normalizePdfFieldName(field.name || 'field');
+            const safeName = nameMap.get(field.id) || (
+                field.name === null || field.name === undefined || field.name === ''
+                    ? 'field'
+                    : String(field.name)
+            );
             return {
                 name: safeName,
                 type: field.type,
@@ -3897,6 +4060,8 @@
                 autoSize: field.autoSize !== false,
                 checkboxStyle: field.checkboxStyle,
                 checkboxExportValue: field.checkboxExportValue,
+                checkboxBorder: !!field.checkboxBorder,
+                checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
                 allowScroll: field.allowScroll !== false,
                 backgroundColor: field.backgroundColor,
                 options: Array.isArray(field.options) ? field.options.slice() : undefined,
@@ -4095,9 +4260,12 @@
         try {
             const formData = new FormData();
             formData.append('file', getPdfFileForRequests());
-            const exportNameMap = buildUniqueExportNameMap();
+            const deduplicateFieldNames = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
+            const exportNameMap = buildExportNameMap({ deduplicate: deduplicateFieldNames });
+            const renamedFields = getRenamedFields(exportNameMap);
             formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)));
             formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(exportNameMap)));
+            formData.append('deduplicate_field_names', deduplicateFieldNames ? 'true' : 'false');
 
             const response = await fetch(apiUrl('/pdf-labeler/api/apply-fields'), {
                 method: 'POST',
@@ -4131,6 +4299,10 @@
             setDirty(false);
             showPdfWorkspace();
             showSuccess('PDF exported successfully.');
+            showFieldRenameSummary(
+                renamedFields,
+                'The exported PDF contains these renamed exact duplicate fields.'
+            );
         } catch (error) {
             console.error('Error exporting:', error);
             showPdfWorkspace();
@@ -4891,6 +5063,10 @@
         document.getElementById('util-bulk-status').classList.add('hidden');
         document.getElementById('util-bulk-size-warning').classList.add('hidden');
         document.getElementById('util-bulk-files').value = '';
+        document.getElementById('util-attachment-status').classList.add('hidden');
+        document.getElementById('util-attachment-output').value = '';
+        document.getElementById('util-attachment-generate').disabled = state.fields.length === 0;
+        document.getElementById('util-attachment-copy').disabled = true;
         bulkFiles = [];
         updateBulkState();
         updateUtilActiveButtons();
@@ -4899,6 +5075,59 @@
     });
     utilitiesCloseBtn.addEventListener('click', function () {
         utilitiesModal.classList.add('hidden');
+    });
+    [
+        document.getElementById('field-rename-summary-close'),
+        document.getElementById('field-rename-summary-done')
+    ].forEach(function (button) {
+        button.addEventListener('click', function () {
+            fieldRenameSummaryModal.classList.add('hidden');
+        });
+    });
+
+    document.getElementById('util-attachment-generate').addEventListener('click', function () {
+        var statusEl = document.getElementById('util-attachment-status');
+        var outputEl = document.getElementById('util-attachment-output');
+        var copyBtn = document.getElementById('util-attachment-copy');
+        statusEl.className = 'alert alert-info small mb-2';
+        statusEl.textContent = 'Generating attachment block...';
+        statusEl.classList.remove('hidden');
+        fetch(apiUrl('/pdf-labeler/api/attachment-block'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                field_names: state.fields.map(function (field) { return field.name; }),
+                filename: state.fileName || 'template.pdf'
+            })
+        })
+        .then(function (response) { return parseApiResponse(response); })
+        .then(function (data) {
+            if (!data.success || !data.data) {
+                throw new Error((data.error && data.error.message) || 'Generation failed.');
+            }
+            outputEl.value = data.data.attachment_block || 'fields:';
+            copyBtn.disabled = false;
+            statusEl.className = 'alert alert-success small mb-2';
+            statusEl.textContent = 'Attachment block generated.';
+        })
+        .catch(function (error) {
+            statusEl.className = 'alert alert-danger small mb-2';
+            statusEl.textContent = 'Error: ' + (error && error.message ? error.message : 'Unknown error.');
+        });
+    });
+    document.getElementById('util-attachment-copy').addEventListener('click', function () {
+        var outputEl = document.getElementById('util-attachment-output');
+        var copyPromise = navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(outputEl.value)
+            : Promise.reject(new Error('Clipboard API unavailable'));
+        copyPromise.then(function () {
+            showSuccess('Attachment fields block copied.');
+        }).catch(function () {
+            outputEl.focus();
+            outputEl.select();
+            document.execCommand('copy');
+            showSuccess('Attachment fields block copied.');
+        });
     });
 
     document.getElementById('util-copy-source-file').addEventListener('change', function (e) {
@@ -5188,6 +5417,57 @@
         renderAccessibilityFieldList();
         setDirty(true);
     });
+    a11yFieldList.addEventListener('dragstart', function (event) {
+        if (!event.target.closest('.a11y-drag-handle')) return;
+        var row = event.target.closest('[data-field-id]');
+        if (!row) return;
+        a11yDragFieldId = row.dataset.fieldId;
+        row.classList.add('a11y-dragging');
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+        }
+    });
+    a11yFieldList.addEventListener('dragend', function () {
+        a11yDragFieldId = null;
+        a11yFieldList.querySelectorAll('.a11y-dragging, .a11y-drag-over').forEach(function (el) {
+            el.classList.remove('a11y-dragging', 'a11y-drag-over');
+        });
+    });
+    a11yFieldList.addEventListener('dragover', function (event) {
+        if (!a11yDragFieldId) return;
+        event.preventDefault();
+        var row = event.target.closest('[data-field-id]');
+        a11yFieldList.querySelectorAll('.a11y-drag-over').forEach(function (el) {
+            el.classList.remove('a11y-drag-over');
+        });
+        if (row && row.dataset.fieldId !== a11yDragFieldId) {
+            row.classList.add('a11y-drag-over');
+        }
+    });
+    a11yFieldList.addEventListener('drop', function (event) {
+        if (!a11yDragFieldId) return;
+        event.preventDefault();
+        var targetRow = event.target.closest('[data-field-id]');
+        var order = state.accessibility.fieldOrder.slice();
+        var fromIndex = order.indexOf(a11yDragFieldId);
+        if (fromIndex < 0) return;
+        var toIndex;
+        if (targetRow && targetRow.dataset.fieldId !== a11yDragFieldId) {
+            toIndex = order.indexOf(targetRow.dataset.fieldId);
+            if (toIndex < 0) return;
+        } else if (!targetRow) {
+            toIndex = order.length;
+        } else {
+            return;
+        }
+        order.splice(fromIndex, 1);
+        var adjustedIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
+        order.splice(adjustedIndex, 0, a11yDragFieldId);
+        state.accessibility.fieldOrder = order;
+        a11yDragFieldId = null;
+        renderAccessibilityFieldList();
+        setDirty(true);
+    });
     a11yImageList.addEventListener('input', function (event) {
         var target = event.target;
         if (!target || !target.dataset) return;
@@ -5375,8 +5655,10 @@
                 delete field.options;
             }
             if (newType === 'checkbox') {
-                field.checkboxStyle = field.checkboxStyle || 'check';
+                field.checkboxStyle = field.checkboxStyle || (getSessionDefault('checkboxStyle') || 'cross');
                 field.checkboxExportValue = field.checkboxExportValue || 'Yes';
+                field.checkboxBorder = !!field.checkboxBorder;
+                field.checkboxBorderWidth = field.checkboxBorderWidth || 'thin';
             }
             if (!(newType === 'text' || newType === 'multiline')) {
                 field.autoSize = true;
@@ -5390,7 +5672,26 @@
             return;
         }
         if (target.dataset.action === 'field-checkbox-style') {
-            field.checkboxStyle = target.value || 'check';
+            field.checkboxStyle = target.value || 'cross';
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'move-field-page') {
+            const newPage = parseInt(target.value, 10);
+            if (!isNaN(newPage) && newPage >= 0 && newPage < state.pageCount) {
+                field.pageIndex = newPage;
+                markDirtyAndRender();
+            }
+            return;
+        }
+        if (target.dataset.action === 'field-checkbox-border') {
+            field.checkboxBorder = !!target.checked;
+            field.checkboxBorderWidth = field.checkboxBorderWidth || 'thin';
+            markDirtyAndRender();
+            return;
+        }
+        if (target.dataset.action === 'field-checkbox-border-width') {
+            field.checkboxBorderWidth = target.value || 'thin';
             markDirtyAndRender();
             return;
         }
@@ -5434,6 +5735,57 @@
         sidebarRelabelBtn.addEventListener('click', relabelFields);
     }
     exportBtn.addEventListener('click', exportPdf);
+
+    if (testFillingBtn) {
+        testFillingBtn.addEventListener('click', async function () {
+            if (!state.pdfBytes) return;
+            const originalText = testFillingBtn.textContent;
+            testFillingBtn.textContent = 'Generating...';
+            testFillingBtn.disabled = true;
+            try {
+                const formData = new FormData();
+                formData.append('file', getPdfFileForRequests());
+                
+                const saveNameMap = buildExportNameMap({
+                    deduplicate: exportDeduplicateFieldNamesInput ? exportDeduplicateFieldNamesInput.checked : true
+                });
+                formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)));
+                if (exportDeduplicateFieldNamesInput && exportDeduplicateFieldNamesInput.checked) {
+                    formData.append('deduplicate_field_names', 'true');
+                }
+
+                const response = await fetch(apiUrl('/pdf-labeler/api/test-fill'), {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json' },
+                    body: formData
+                });
+                const data = await parseApiResponse(response);
+                if (!data.success || !data.data || !data.data.pdf_base64) {
+                    throw new Error((data.error && data.error.message) || 'Test fill failed.');
+                }
+                const b64 = data.data.pdf_base64;
+                const binary = window.atob(b64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const blob = new Blob([bytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = data.data.filename || 'test_fill.pdf';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function () {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+            } catch (err) {
+                showError('Error testing PDF fill: ' + err.message);
+            } finally {
+                testFillingBtn.textContent = originalText;
+                testFillingBtn.disabled = false;
+            }
+        });
+    }
 
     // Playground event listeners
     openPlaygroundBtn.addEventListener('click', openPlaygroundModal);

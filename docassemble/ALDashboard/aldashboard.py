@@ -5,7 +5,7 @@ import re
 import requests
 import calendar
 from importlib.metadata import distributions
-from docassemble.webapp.users.models import UserModel
+from docassemble.webapp.users.models import UserModel, Role, UserDict, UserRoles
 from docassemble.webapp.db_object import init_sqlalchemy
 from github import Github  # PyGithub
 from flask import current_app
@@ -44,16 +44,17 @@ from docassemble.base.util import (
     get_config,
     user_has_privilege,
     DACloudStorage,
+    user_info,
+    user_logged_in,
+    get_user_info,
 )
 
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import werkzeug
 import importlib.resources
-from datetime import datetime, timedelta
-from flask_login import current_user
+from datetime import datetime, timedelta, timezone
 from docassemble.webapp.files import SavedFile
-from docassemble.webapp.users.models import Role, UserDict, UserRoles
 
 db = init_sqlalchemy()
 
@@ -74,6 +75,7 @@ __all__ = [
     "install_fonts",
     "list_installed_fonts",
     "dashboard_get_session_variables",
+    "dashboard_find_session_filename",
     "dashboard_session_activity",
     "make_usage_rows",
     "compute_heatmap_styles",
@@ -89,6 +91,7 @@ __all__ = [
     "inactive_developer_login_summary",
     "inactive_developer_account_report",
     "delete_inactive_developer_accounts",
+    "is_user_privileged",
 ]
 
 
@@ -451,12 +454,23 @@ def speedy_get_users() -> List[Dict[int, str]]:
     return [{user[0]: user[1]} for user in the_users]
 
 
-def get_users_and_name() -> List[Tuple[int, str, str, str]]:
+def get_users_and_name(
+    limit_to_non_admin_or_developers: bool = False,
+) -> List[Tuple[int, str, str, str]]:
     users = UserModel.query.with_entities(
-        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
+        UserModel.id,
+        UserModel.email,
+        UserModel.first_name,
+        UserModel.last_name,
+        UserModel.nickname,
     )
 
-    return users
+    if limit_to_non_admin_or_developers:
+        users = users.filter(
+            ~UserModel.roles.any(Role.name.in_(["admin", "developer"]))
+        )
+
+    return [(u[0], u[1] or "", u[2] or u[4] or "", u[3] or "") for u in users.all()]
 
 
 def get_user_details(user_id: int) -> Optional[Dict]:
@@ -493,7 +507,7 @@ def get_user_details(user_id: int) -> Optional[Dict]:
     return {
         "id": user.id,
         "email": user.email,
-        "first_name": user.first_name,
+        "first_name": user.first_name or user.nickname,
         "last_name": user.last_name,
         "active": user.active,
         "account_type": account_type,
@@ -522,6 +536,31 @@ def disable_user_mfa(user_id: int) -> bool:
     return True
 
 
+def is_user_privileged(user_id: int) -> Optional[bool]:
+    """Check if a user has admin, developer, or cron privileges.
+
+    Args:
+        user_id: The database ID of the user.
+    Returns:
+        True if the user has any of the privileged roles, False if not, or None
+        if the user could not be retrieved.
+    """
+    try:
+        target_user_info = get_user_info(user_id)
+    except Exception as ex:
+        log(
+            f"is_user_privileged: Error retrieving user info for user_id {user_id}: {ex}"
+        )
+        return None
+    if target_user_info is None:
+        return None
+    return bool(
+        {"admin", "developer", "cron"}.intersection(
+            target_user_info.get("privileges", [])
+        )
+    )
+
+
 def get_password_reset_link(user_id: int) -> Optional[str]:
     """Generate a password reset link for a specific user without sending an email.
 
@@ -531,6 +570,24 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     Returns:
         A full password reset URL string, or None if the user is not found.
     """
+    # Check top level authority
+    if not user_logged_in() or (
+        not user_has_privilege("admin")
+        and not ("edit_user_password" in user_info().permissions)
+    ):
+        log(
+            f"get_password_reset_link: Current user does not have permission to reset passwords."
+        )
+        return None
+
+    # Enforce that the user is not an admin or developer, unless the current user is an admin or developer
+
+    if is_user_privileged(user_id) and not user_has_privilege(["admin", "developer"]):
+        log(
+            f"get_password_reset_link: Cannot generate reset link for user {user_id} because target user is an admin or developer. Only admins can reset passwords for other admins or developers."
+        )
+        return None
+
     user = UserModel.query.filter(UserModel.id == user_id).first()
 
     if user is None:
@@ -566,7 +623,7 @@ def _format_optional_datetime(value: Optional[datetime]) -> str:
 def _epoch_to_datetime(epoch_value: Optional[float]) -> Optional[datetime]:
     if epoch_value is None:
         return None
-    return datetime.fromtimestamp(epoch_value)
+    return datetime.fromtimestamp(epoch_value, timezone.utc).replace(tzinfo=None)
 
 
 def _latest_datetime(*values: Optional[datetime]) -> Optional[datetime]:
@@ -577,12 +634,23 @@ def _latest_datetime(*values: Optional[datetime]) -> Optional[datetime]:
 
 
 def _months_ago(months: int) -> datetime:
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     month_index = now.month - months - 1
     year = now.year + month_index // 12
     month = month_index % 12 + 1
     day = min(now.day, calendar.monthrange(year, month)[1])
     return now.replace(year=year, month=month, day=day)
+
+
+def _resolve_current_user_id() -> Optional[int]:
+    try:
+        current_user_info = user_info()
+        user_id = getattr(current_user_info, "id", None)
+        if user_id is None and isinstance(current_user_info, dict):
+            user_id = current_user_info.get("id")
+        return int(user_id) if user_id is not None else None
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return None
 
 
 def _user_session_summary(user_id: int) -> Dict[str, Any]:
@@ -641,13 +709,13 @@ def inactive_developer_login_summary(months: int = 18) -> Dict[str, Any]:
         .distinct()
         .count(),
         "developer_users_not_logged_in_since_cutoff": developer_query.filter(
-            or_(UserModel.last_login == None, UserModel.last_login < cutoff_date)
+            or_(UserModel.last_login.is_(None), UserModel.last_login < cutoff_date)
         )
         .with_entities(UserModel.id)
         .distinct()
         .count(),
         "developer_users_never_logged_in": developer_query.filter(
-            UserModel.last_login == None
+            UserModel.last_login.is_(None)
         )
         .with_entities(UserModel.id)
         .distinct()
@@ -713,12 +781,21 @@ def _playground_summary(user_id: int) -> Dict[str, Any]:
 def _developer_user_rows() -> List[Any]:
     return (
         UserModel.query.options(joinedload(UserModel.roles))
-        .filter(UserModel.id.notin_([1, 2]))
+        .join(UserRoles, UserRoles.user_id == UserModel.id)
+        .join(Role, Role.id == UserRoles.role_id)
+        .filter(
+            Role.name == "developer",
+            UserModel.id.notin_([1, 2]),
+            ~UserModel.social_id.startswith("disabled$"),
+        )
+        .distinct()
         .all()
     )
 
 
-def inactive_developer_account_report(months: int = 18) -> List[Dict[str, Any]]:
+def inactive_developer_account_report(
+    months: int = 18, requesting_user_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
     """Return developer accounts with no recent login, session, or playground activity."""
     try:
         months = max(1, int(months))
@@ -726,16 +803,14 @@ def inactive_developer_account_report(months: int = 18) -> List[Dict[str, Any]]:
         months = 18
 
     cutoff_date = _months_ago(months)
+    if requesting_user_id is None:
+        requesting_user_id = _resolve_current_user_id()
     rows: List[Dict[str, Any]] = []
 
     for user in _developer_user_rows():
-        if getattr(user, "social_id", "").startswith("disabled$"):
-            continue
-        if current_user.is_authenticated and user.id == current_user.id:
+        if requesting_user_id is not None and user.id == requesting_user_id:
             continue
         privileges = sorted(role.name for role in user.roles)
-        if "developer" not in privileges:
-            continue
 
         session_summary = _user_session_summary(user.id)
         playground_summary = _playground_summary(user.id)
@@ -782,13 +857,19 @@ def delete_inactive_developer_accounts(
     months: int = 18,
     delete_shared: bool = False,
     restart_if_needed: bool = True,
+    requesting_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Delete selected stale developer accounts through docassemble's built-in cleanup."""
     from docassemble.webapp.backend import delete_user_data
     from docassemble.webapp.server import r, r_user, user_interviews
 
+    if requesting_user_id is None:
+        requesting_user_id = _resolve_current_user_id()
     candidate_lookup = {
-        int(row["id"]): row for row in inactive_developer_account_report(months)
+        int(row["id"]): row
+        for row in inactive_developer_account_report(
+            months, requesting_user_id=requesting_user_id
+        )
     }
     deleted: List[Dict[str, Any]] = []
     skipped: List[int] = []
@@ -800,9 +881,7 @@ def delete_inactive_developer_accounts(
         except Exception:
             continue
         row = candidate_lookup.get(user_id)
-        if row is None or user_id in (1, 2) or (
-            current_user.is_authenticated and user_id == current_user.id
-        ):
+        if row is None or user_id in (1, 2) or user_id == requesting_user_id:
             skipped.append(user_id)
             continue
         restart_needed = restart_needed or bool(row.get("has_python_modules"))
@@ -915,6 +994,36 @@ def dashboard_get_session_variables(session_id: str, filename: str):
     """
     user_dict = get_session_variables(filename, session_id, secret=None, simplify=False)
     return serializable_dict(user_dict, include_internal=False)
+
+
+def dashboard_find_session_filename(session_id: str) -> Optional[str]:
+    """
+    Return the filename for a saved interview session key, when it can be
+    identified unambiguously.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return None
+
+    find_session_query = text("""
+SELECT
+    filename,
+    MAX(modtime) AS modtime
+FROM
+    userdict
+WHERE
+    key = :session_id
+GROUP BY
+    filename
+ORDER BY
+    modtime DESC;
+        """)
+    with db.connect() as con:
+        rows = list(con.execute(find_session_query, {"session_id": session_id}))
+
+    if len(rows) == 1:
+        return str(rows[0].filename)
+    return None
 
 
 class ALPackageInstaller(DAObject):

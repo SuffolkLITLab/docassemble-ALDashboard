@@ -16,6 +16,7 @@ features:
   css: al_dashboard.css
 ---
 mandatory: True
+id: dashboard menu
 question: |
   ALDashboard 
 Subquestion: |
@@ -35,11 +36,6 @@ data:
   - name: Inactive developer accounts
     url: ${ interview_url(i=user_info().package + ":inactive_developer_accounts.yml", reset=1) }
     image: user-clock
-    privilege:
-      - admin
-  - name: Get password reset link
-    url: ${ interview_url(i=user_info().package + ":get_reset_link.yml", reset=1) }
-    image: key
     privilege:
       - admin
   - name: Usage stats
@@ -109,6 +105,9 @@ data:
   - name: Interview style check (lint)
     url: ${ interview_url(i=user_info().package + ":interview_linter.yml", reset=1) }
     image: spell-check
+  - name: Generate an ALKiln story
+    url: ${ interview_url(i=user_info().package + ":alkiln_story.yml", reset=1) }
+    image: book
   - name: Reformat YAML and Python
     url: ${ interview_url(i=user_info().package + ":yaml_formatter.yml", reset=1) }
     image: magic

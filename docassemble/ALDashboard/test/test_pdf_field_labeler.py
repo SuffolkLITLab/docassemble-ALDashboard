@@ -200,12 +200,18 @@ class TestPDFFieldLabeler(unittest.TestCase):
                 rename_pdf_fields_with_context=fake_rename_with_context,
                 rename_pdf_fields=fake_rename,
             )
-            with patch.dict("sys.modules", {"formfyxer": fake_module}), patch(
-                "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
-                side_effect=AssertionError("ordered AI path should not be used"),
-            ), patch(
-                "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
-                side_effect=AssertionError("ordered rewrite path should not be used"),
+            with (
+                patch.dict("sys.modules", {"formfyxer": fake_module}),
+                patch(
+                    "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
+                    side_effect=AssertionError("ordered AI path should not be used"),
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
+                    side_effect=AssertionError(
+                        "ordered rewrite path should not be used"
+                    ),
+                ),
             ):
                 result = relabel_existing_pdf_fields(
                     input_pdf_path=input_path,
@@ -294,12 +300,16 @@ class TestPDFFieldLabeler(unittest.TestCase):
                     encoding="utf-8",
                 ),
             )
-            with patch.dict("sys.modules", {"formfyxer": fake_module}), patch(
-                "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
-                side_effect=fake_generate,
-            ), patch(
-                "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
-                side_effect=fake_rewrite,
+            with (
+                patch.dict("sys.modules", {"formfyxer": fake_module}),
+                patch(
+                    "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
+                    side_effect=fake_generate,
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
+                    side_effect=fake_rewrite,
+                ),
             ):
                 result = relabel_existing_pdf_fields(
                     input_pdf_path=input_path,
@@ -362,12 +372,16 @@ class TestPDFFieldLabeler(unittest.TestCase):
                     encoding="utf-8",
                 ),
             )
-            with patch.dict("sys.modules", {"formfyxer": fake_module}), patch(
-                "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
-                return_value=["docket_number", "docket_number__2"],
-            ), patch(
-                "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
-                side_effect=fake_rewrite,
+            with (
+                patch.dict("sys.modules", {"formfyxer": fake_module}),
+                patch(
+                    "docassemble.ALDashboard.pdf_field_labeler._generate_ai_relabel_target_field_names",
+                    return_value=["docket_number", "docket_number__2"],
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_field_labeler._rewrite_pdf_fields_in_order",
+                    side_effect=fake_rewrite,
+                ),
             ):
                 result = relabel_existing_pdf_fields(
                     input_pdf_path=input_path,

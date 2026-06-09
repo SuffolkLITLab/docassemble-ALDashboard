@@ -5,7 +5,8 @@ These tests verify that:
 - Red border color metadata (/MK[BC]) is removed from checkbox widgets.
 - With preserve_button_appearances=True the /AP stream is kept for /Btn fields.
 - Without the flag the old behavior is preserved (AP deleted for all widgets).
-- /AP is still removed from text (/Tx) widgets regardless of the flag.
+- Text fields get a regenerated standard /AP stream after cleanup.
+- /NeedAppearances is cleared so viewers keep the saved button appearance.
 """
 
 import os
@@ -79,16 +80,21 @@ def _run_probe(probe_code: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"Subprocess failed.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"Subprocess failed.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     return result.stdout.strip()
 
 
 class TestApplyPDFFieldVisualDefaultsButtonPreservation(unittest.TestCase):
     """_apply_pdf_field_visual_defaults: preserve_button_appearances behavior."""
 
-    def _make_pdf_with_checkbox(self, has_ap: bool = True, has_red_border: bool = True) -> str:
+    def _make_pdf_with_checkbox(
+        self,
+        has_ap: bool = True,
+        has_red_border: bool = True,
+        has_need_appearances: bool = False,
+    ) -> str:
         """Create a minimal PDF with a checkbox widget.  Returns the file path."""
         import pikepdf
         from pikepdf import Array, Dictionary, Name, String
@@ -122,7 +128,10 @@ class TestApplyPDFFieldVisualDefaultsButtonPreservation(unittest.TestCase):
 
         field = pdf.make_indirect(Dictionary(field_dict))
         page.obj["/Annots"] = Array([field])
-        pdf.Root["/AcroForm"] = Dictionary({"/Fields": Array([field])})
+        acroform = Dictionary({"/Fields": Array([field])})
+        if has_need_appearances:
+            acroform["/NeedAppearances"] = True
+        pdf.Root["/AcroForm"] = acroform
         pdf.save(pdf_path)
         pdf.close()
         return pdf_path
@@ -178,8 +187,20 @@ print("done")
 
     def _read_first_widget(self, pdf_path: str) -> dict:
         import pikepdf
+
         with pikepdf.open(pdf_path) as pdf:
             annot = pdf.pages[0]["/Annots"][0]
+            acroform = pdf.Root.get("/AcroForm")
+            ap_stream = ""
+            if (
+                "/AP" in annot
+                and hasattr(annot.get("/AP"), "get")
+                and "/N" in annot["/AP"]
+            ):
+                try:
+                    ap_stream = annot["/AP"]["/N"].read_bytes().decode("latin1")
+                except (AttributeError, pikepdf.PdfError):
+                    ap_stream = ""
             result = {
                 "has_ap": "/AP" in annot,
                 "has_mk_bc": (
@@ -187,6 +208,11 @@ print("done")
                     and isinstance(annot["/MK"], pikepdf.Dictionary)
                     and "/BC" in annot["/MK"]
                 ),
+                "has_need_appearances": (
+                    isinstance(acroform, pikepdf.Dictionary)
+                    and "/NeedAppearances" in acroform
+                ),
+                "ap_stream": ap_stream,
             }
         return result
 
@@ -200,7 +226,9 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_mk_bc"], "/MK[BC] (red border) should have been removed")
+            self.assertFalse(
+                widget["has_mk_bc"], "/MK[BC] (red border) should have been removed"
+            )
         finally:
             os.unlink(pdf_path)
 
@@ -210,7 +238,27 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertTrue(widget["has_ap"], "/AP should be preserved for checkbox when preserve_button_appearances=True")
+            self.assertTrue(
+                widget["has_ap"],
+                "/AP should be preserved for checkbox when preserve_button_appearances=True",
+            )
+        finally:
+            os.unlink(pdf_path)
+
+    def test_checkbox_need_appearances_cleared(self):
+        """The redraw flag is removed so viewers keep the saved checkbox /AP."""
+        pdf_path = self._make_pdf_with_checkbox(
+            has_ap=True,
+            has_red_border=True,
+            has_need_appearances=True,
+        )
+        try:
+            self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
+            widget = self._read_first_widget(pdf_path)
+            self.assertFalse(
+                widget["has_need_appearances"],
+                "/NeedAppearances should be cleared for final output PDFs",
+            )
         finally:
             os.unlink(pdf_path)
 
@@ -220,17 +268,25 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=False)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_ap"], "/AP should be deleted when preserve_button_appearances=False")
+            self.assertFalse(
+                widget["has_ap"],
+                "/AP should be deleted when preserve_button_appearances=False",
+            )
         finally:
             os.unlink(pdf_path)
 
-    def test_text_field_ap_always_deleted(self):
-        """/AP is removed from text (/Tx) widgets regardless of the flag."""
+    def test_text_field_ap_rebuilt_with_standard_stream(self):
+        """Text fields get a clean regenerated appearance stream."""
         pdf_path = self._make_pdf_with_text_field(has_ap=True)
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_ap"], "/AP should be removed from text fields even with preserve_button_appearances=True")
+            self.assertTrue(
+                widget["has_ap"],
+                "/AP should be regenerated for text fields",
+            )
+            self.assertIn("/Helv", widget["ap_stream"])
+            self.assertIn("() Tj", widget["ap_stream"])
         finally:
             os.unlink(pdf_path)
 
@@ -240,7 +296,9 @@ print("done")
         try:
             self._run_visual_defaults(pdf_path, preserve_button_appearances=True)
             widget = self._read_first_widget(pdf_path)
-            self.assertFalse(widget["has_mk_bc"], "/MK[BC] should be removed from text fields")
+            self.assertFalse(
+                widget["has_mk_bc"], "/MK[BC] should be removed from text fields"
+            )
         finally:
             os.unlink(pdf_path)
 

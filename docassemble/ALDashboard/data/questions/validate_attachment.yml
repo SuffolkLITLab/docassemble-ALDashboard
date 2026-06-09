@@ -5,6 +5,7 @@ include:
 modules:
   - .validate_attachment
 ---
+id: paste attachment block
 question: |
   Paste the contents of a long attachment block
   (beginning with the line `fields:`)
@@ -23,6 +24,7 @@ code: |
 need:
   - load_all_errors
 mandatory: True
+id: attachment validation results
 question: |
   % if len(errors):
   ${ len(errors) } potential errors found

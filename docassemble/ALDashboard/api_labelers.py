@@ -21,10 +21,12 @@ from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional, Set
 
-from flask import Response, jsonify, request
+from flask import Response, jsonify, request, url_for
+
 try:
     from flask_cors import cross_origin
 except ImportError:  # pragma: no cover - exercised by subprocess import tests
+
     def cross_origin(*args: Any, **kwargs: Any):
         if args and callable(args[0]) and len(args) == 1 and not kwargs:
             return args[0]
@@ -33,6 +35,8 @@ except ImportError:  # pragma: no cover - exercised by subprocess import tests
             return func
 
         return decorator
+
+
 try:
     from flask_login import current_user
 except ImportError:  # pragma: no cover - exercised by subprocess import tests
@@ -63,7 +67,12 @@ from .api_dashboard_utils import (
     parse_bool,
     validate_docx_payload_from_options,
 )
-from .pdf_export_utils import build_pdf_export_fields_per_page
+from .pdf_export_utils import (
+    build_normalized_pdf_field_definitions,
+    build_pdf_preview_fill_data,
+    build_pdf_export_fields_per_page,
+    deduplicate_fields_data_with_renames,
+)
 
 __all__ = []
 
@@ -235,7 +244,9 @@ def _apply_checkbox_export_values(
         pdf.save(pdf_path)
 
 
-def _collect_fields_with_explicit_background(fields_data: List[Dict[str, Any]]) -> Set[str]:
+def _collect_fields_with_explicit_background(
+    fields_data: List[Dict[str, Any]],
+) -> Set[str]:
     """Collect field names where the client explicitly set a background color.
 
     Args:
@@ -254,6 +265,29 @@ def _collect_fields_with_explicit_background(fields_data: List[Dict[str, Any]]) 
         except Exception:  # nosec B112
             continue
     return explicit
+
+
+def _collect_checkbox_border_widths(
+    fields_data: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Collect opt-in checkbox border widths keyed by PDF field name."""
+    widths: Dict[str, str] = {}
+    for field in fields_data:
+        try:
+            if str(field.get("type", "")).lower() != "checkbox":
+                continue
+            if not parse_bool(field.get("checkboxBorder"), default=False):
+                continue
+            name = str(field.get("name", "")).strip()
+            if not name:
+                continue
+            width = str(field.get("checkboxBorderWidth") or "thin").strip().lower()
+            if width not in {"thin", "medium", "thick"}:
+                width = "thin"
+            widths[name] = width
+        except Exception:  # nosec B112
+            continue
+    return widths
 
 
 def _apply_pdf_field_visual_defaults(
@@ -301,6 +335,14 @@ def _apply_pdf_field_visual_defaults(
             if len(mk) == 0:
                 del obj["/MK"]
 
+    def _ensure_standard_text_da(obj: Any) -> None:
+        if obj is None or not hasattr(obj, "get"):
+            return
+        if str(obj.get("/FT", "")) not in {"/Tx", "/Ch"}:
+            return
+        if "/DA" not in obj:
+            obj["/DA"] = pikepdf.String("/Helv 10 Tf 0 g")
+
     def _is_button_widget(named_parent: Optional[Any]) -> bool:
         if named_parent is None or not hasattr(named_parent, "get"):
             return False
@@ -308,9 +350,6 @@ def _apply_pdf_field_visual_defaults(
 
     with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
         acroform = pdf.Root.get("/AcroForm")
-        if isinstance(acroform, pikepdf.Dictionary):
-            acroform["/NeedAppearances"] = True
-
         for page in pdf.pages:
             if "/Annots" not in page:
                 continue
@@ -324,11 +363,21 @@ def _apply_pdf_field_visual_defaults(
                     if named_parent and hasattr(named_parent, "T"):
                         field_name = str(named_parent.T).strip()
 
+                    # Set the page reference explicitly so fields render on the correct page
+                    # rather than falling back to the first page.
+                    annot["/P"] = page.obj
+
                     _set_no_border(annot)
                     if named_parent and named_parent is not annot:
                         _set_no_border(named_parent)
+                    _ensure_standard_text_da(annot)
+                    if named_parent and named_parent is not annot:
+                        _ensure_standard_text_da(named_parent)
 
-                    if field_name in explicit:
+                    is_button_widget = _is_button_widget(named_parent)
+                    if field_name in explicit and (
+                        preserve_button_appearances or not is_button_widget
+                    ):
                         continue
 
                     _clear_background(annot)
@@ -342,12 +391,18 @@ def _apply_pdf_field_visual_defaults(
                     # unchecked visual states that PDF viewers cannot reliably
                     # reconstruct on their own.
                     if "/AP" in annot:
-                        if not preserve_button_appearances or not _is_button_widget(
-                            named_parent
-                        ):
+                        if not preserve_button_appearances or not is_button_widget:
                             del annot["/AP"]
                 except Exception:  # nosec B112
                     continue
+
+        if isinstance(acroform, pikepdf.Dictionary):
+            # Rebuild standard text/list appearances now, then clear the flag so
+            # button widgets keep their authoritative saved /AP streams.
+            acroform["/NeedAppearances"] = True
+            pdf.generate_appearance_streams()
+            if "/NeedAppearances" in acroform:
+                del acroform["/NeedAppearances"]
 
         pdf.save(pdf_path)
 
@@ -443,6 +498,80 @@ def _labeler_session_identity() -> Dict[str, Any]:
     except Exception:  # nosec B110
         pass
     return {"is_authenticated": False, "email": None, "user_id": None}
+
+
+def _labeler_account_menu_items(logout_url: str) -> List[Dict[str, str]]:
+    """Return docassemble's standard account links for the current user."""
+    if not _labeler_session_identity().get("is_authenticated"):
+        return []
+
+    items: List[Dict[str, str]] = []
+
+    def add_item(
+        label: str, endpoint: Optional[str] = None, href: Optional[str] = None
+    ) -> None:
+        try:
+            target = href or (url_for(endpoint) if endpoint else "")
+        except Exception:  # nosec B110
+            return
+        if target:
+            items.append({"label": str(label), "url": str(target)})
+
+    def has_roles(*roles: str) -> bool:
+        try:
+            return bool(current_user.has_roles(list(roles)))
+        except Exception:
+            try:
+                return bool(current_user.has_role(*roles))
+            except Exception:
+                return False
+
+    if has_roles("admin", "advocate") and app.config.get("ENABLE_MONITOR"):
+        add_item("Monitor", "monitor")
+    if has_roles("admin", "developer", "trainer") and app.config.get("ENABLE_TRAINING"):
+        add_item("Train", "train")
+    if has_roles("admin", "developer"):
+        if app.config.get("ALLOW_UPDATES") and (
+            app.config.get("DEVELOPER_CAN_INSTALL") or has_roles("admin")
+        ):
+            add_item("Package Management", "update_package")
+        if app.config.get("ALLOW_LOG_VIEWING"):
+            add_item("Logs", "logs")
+        if app.config.get("ENABLE_PLAYGROUND"):
+            add_item("Playground", "playground_page")
+        add_item("Utilities", "utilities")
+    try:
+        can_access_users = bool(current_user.can_do("access_user_info"))
+    except Exception:
+        can_access_users = False
+    if has_roles("admin", "advocate") or can_access_users:
+        add_item("User List", "user_list")
+    if has_roles("admin") and app.config.get("ALLOW_CONFIGURATION_EDITING"):
+        add_item("Configuration", "config_page")
+    if app.config.get("SHOW_DISPATCH"):
+        add_item("Available Interviews", "interview_start")
+
+    for item in app.config.get("ADMIN_INTERVIEWS", []):
+        try:
+            if item.can_use():
+                add_item(
+                    item.get_title(docassemble.base.functions.get_language()),
+                    href=item.get_url(),
+                )
+        except Exception:  # nosec B112
+            continue
+
+    if app.config.get("SHOW_MY_INTERVIEWS") or has_roles("admin"):
+        add_item("My Interviews", "interview_list")
+    if app.config.get("SHOW_PROFILE") or has_roles("admin", "developer"):
+        add_item("Profile", "user_profile_page")
+    else:
+        social_id = str(getattr(current_user, "social_id", "") or "")
+        if social_id.startswith("local") and app.config.get("ALLOW_CHANGING_PASSWORD"):
+            add_item("Change Password", "user.change_password")
+
+    add_item("Sign Out", href=logout_url)
+    return items
 
 
 def _labeler_ai_auth_check() -> bool:
@@ -1853,6 +1982,7 @@ def labeler_auth_status() -> Response:
                 "login_url": login_url,
                 "logout_url": logout_url,
                 "ai_enabled": _labeler_ai_auth_check(),
+                "menu_items": _labeler_account_menu_items(logout_url),
             },
         }
     )
@@ -2146,6 +2276,11 @@ def docx_labeler_suggest_labels() -> Response:
             elif isinstance(custom_people_raw, list):
                 custom_people_names = custom_people_raw
 
+        primary_person_variable = None
+        primary_person_raw = post_data.get("primary_person_variable")
+        if primary_person_raw and isinstance(primary_person_raw, str):
+            primary_person_variable = primary_person_raw.strip()
+
         (
             preferred_variable_names,
             interview_source_mode,
@@ -2169,6 +2304,7 @@ def docx_labeler_suggest_labels() -> Response:
             "openai_base_url": openai_base_url,
             "generator_models": generator_models,
             "custom_people_names": custom_people_names,
+            "primary_person_variable": primary_person_variable,
             "preferred_variable_names": preferred_variable_names,
             "interview_source_mode": interview_source_mode,
             "playground_project": selected_playground_project,
@@ -3171,6 +3307,9 @@ def pdf_labeler_apply_fields() -> Response:
             fields_data = fields_raw
         else:
             raise DashboardAPIValidationError("fields is required and must be a list.")
+        deduplicate_field_names = parse_bool(
+            post_data.get("deduplicate_field_names"), default=False
+        )
 
         # Get page count from original PDF
         import pikepdf
@@ -3184,6 +3323,12 @@ def pdf_labeler_apply_fields() -> Response:
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
 
+            renamed_fields: List[Dict[str, Any]] = []
+            if deduplicate_field_names:
+                fields_data, renamed_fields = deduplicate_fields_data_with_renames(
+                    fields_data
+                )
+
             checkbox_export_values = {
                 str(field.get("name", "")): str(
                     field.get("checkboxExportValue", "")
@@ -3195,6 +3340,13 @@ def pdf_labeler_apply_fields() -> Response:
             explicit_background_fields = _collect_fields_with_explicit_background(
                 fields_data
             )
+            checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
+            signature_field_names = [
+                str(field.get("name", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "signature"
+                and str(field.get("name", "")).strip()
+            ]
 
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
@@ -3202,6 +3354,7 @@ def pdf_labeler_apply_fields() -> Response:
                 form_field_cls=FormField,
                 field_type_enum=FieldType,
                 color_parser=HexColor,
+                deduplicate_field_names=False,
             )
 
             # Apply fields using FormFyxer
@@ -3210,9 +3363,23 @@ def pdf_labeler_apply_fields() -> Response:
 
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
+            from .pdf_repair import normalize_signature_fields
+
+            normalize_signature_fields(
+                output_path,
+                output_path,
+                signature_field_names,
+            )
             _apply_pdf_field_visual_defaults(
                 output_path,
                 explicit_background_fields=explicit_background_fields,
+            )
+            from .pdf_repair import restore_checkbox_appearances
+
+            restore_checkbox_appearances(
+                output_path,
+                output_path,
+                checkbox_border_widths=checkbox_border_widths,
             )
 
             accessibility_payload = _parse_optional_json_field(
@@ -3304,6 +3471,7 @@ def pdf_labeler_apply_fields() -> Response:
                     "data": {
                         "filename": output_filename,
                         "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                        "renamed_fields": renamed_fields,
                     },
                 }
             )
@@ -3330,6 +3498,197 @@ def pdf_labeler_apply_fields() -> Response:
                 "error": {"type": "server_error", "message": str(exc)},
             },
             500,
+        )
+
+
+@app.route("/pdf-labeler/api/test-fill", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/test-fill", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_test_fill() -> Response:
+    request_id = str(uuid.uuid4())
+    try:
+        import formfyxer  # type: ignore[import-not-found]
+        from formfyxer.pdf_wrangling import FormField, FieldType, set_fields
+        from reportlab.lib.colors import HexColor
+        from docassemble.base.pdftk import fill_template, read_fields
+        import pikepdf
+
+        filename, content, post_data = _read_pdf_labeler_file_request()
+        fields_raw = post_data.get("fields")
+        if isinstance(fields_raw, str):
+            fields_data = json.loads(fields_raw)
+        elif isinstance(fields_raw, list):
+            fields_data = fields_raw
+        else:
+            raise DashboardAPIValidationError("fields is required and must be a list.")
+
+        deduplicate_field_names = parse_bool(
+            post_data.get("deduplicate_field_names"), default=False
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+
+        output_path = None
+        try:
+            with pikepdf.open(input_path) as pdf:
+                page_count = len(pdf.pages)
+
+            if deduplicate_field_names:
+                fields_data, _ = deduplicate_fields_data_with_renames(fields_data)
+
+            checkbox_export_values = {
+                str(field.get("name", "")): str(
+                    field.get("checkboxExportValue", "")
+                ).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "checkbox"
+                and str(field.get("checkboxExportValue", "")).strip()
+            }
+            explicit_background_fields = _collect_fields_with_explicit_background(
+                fields_data
+            )
+            checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
+
+            fields_per_page = build_pdf_export_fields_per_page(
+                fields_data,
+                page_count=page_count,
+                form_field_cls=FormField,
+                field_type_enum=FieldType,
+                color_parser=HexColor,
+                deduplicate_field_names=False,
+            )
+
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+                output_path = tmp_out.name
+
+            signature_field_names = [
+                str(field.get("name", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "signature"
+                and str(field.get("name", "")).strip()
+            ]
+
+            set_fields(input_path, output_path, fields_per_page, overwrite=True)
+            _apply_checkbox_export_values(output_path, checkbox_export_values)
+            from .pdf_repair import normalize_signature_fields
+
+            normalize_signature_fields(output_path, output_path, signature_field_names)
+            _apply_pdf_field_visual_defaults(
+                output_path,
+                explicit_background_fields=explicit_background_fields,
+            )
+            from .pdf_repair import restore_checkbox_appearances
+
+            restore_checkbox_appearances(
+                output_path,
+                output_path,
+                checkbox_border_widths=checkbox_border_widths,
+            )
+
+            the_fields = read_fields(output_path)
+            signature_image_path = os.path.join(
+                os.path.dirname(__file__),
+                "data",
+                "static",
+                "placeholder_signature.png",
+            )
+            data_strings, images = build_pdf_preview_fill_data(
+                the_fields,
+                signature_image_path=signature_image_path,
+            )
+
+            filled_path = fill_template(
+                output_path,
+                data_strings=data_strings,
+                images=images,
+                editable=False,
+            )
+
+            with open(filled_path, "rb") as f:
+                output_bytes = f.read()
+
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename.replace(".pdf", "-test-filled.pdf"),
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
+                }
+            )
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if output_path and os.path.exists(output_path):
+                os.remove(output_path)
+            if "filled_path" in locals() and os.path.exists(filled_path):
+                os.remove(filled_path)
+
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route("/pdf-labeler/api/attachment-block", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/attachment-block", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_attachment_block() -> Response:
+    """Generate an AssemblyLine-style attachment ``fields:`` block."""
+    request_id = str(uuid.uuid4())
+    try:
+        payload = request.get_json(silent=True) or {}
+        field_names = payload.get("field_names")
+        pdf_filename = payload.get("filename")
+        if not isinstance(field_names, list):
+            raise DashboardAPIValidationError(
+                "field_names is required and must be a list."
+            )
+        if not isinstance(pdf_filename, str) or not pdf_filename.strip():
+            raise DashboardAPIValidationError(
+                "filename is required and must be a PDF filename."
+            )
+        from .pdf_attachment_block import generate_attachment_block
+
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "attachment_block": generate_attachment_block(
+                        field_names,
+                        pdf_filename=pdf_filename,
+                    )
+                },
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
         )
 
 
@@ -3567,11 +3926,10 @@ def pdf_labeler_copy_fields() -> Response:
                 "Only PDF files are supported.", status_code=415
             )
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".pdf", delete=False
-        ) as tmp_src, tempfile.NamedTemporaryFile(
-            suffix=".pdf", delete=False
-        ) as tmp_dst:
+        with (
+            tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_src,
+            tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_dst,
+        ):
             tmp_src.write(source_bytes)
             source_path = tmp_src.name
             tmp_dst.write(dest_bytes)
@@ -3593,6 +3951,26 @@ def pdf_labeler_copy_fields() -> Response:
             _apply_pdf_field_visual_defaults(
                 output_path, preserve_button_appearances=True
             )
+
+            # Preserve the source PDF's per-page tab order setting (/Tabs).
+            # Without this, viewers fall back to visual row order even though
+            # copy_pdf_fields already copied the Annots array in source order.
+            import pikepdf as _pikepdf
+
+            with (
+                _pikepdf.open(source_path) as _src_pdf,
+                _pikepdf.open(output_path, allow_overwriting_input=True) as _out_pdf,
+            ):
+                _src_page_count = len(_src_pdf.pages)
+                for _page_index, _out_page in enumerate(_out_pdf.pages):
+                    if (
+                        _page_index < _src_page_count
+                        and "/Tabs" in _src_pdf.pages[_page_index]
+                    ):
+                        _out_page["/Tabs"] = _src_pdf.pages[_page_index]["/Tabs"]
+                    elif "/Tabs" in _out_page:
+                        del _out_page["/Tabs"]  # type: ignore[operator]
+                _out_pdf.save(output_path)
 
             from .pdf_accessibility import (
                 apply_pdf_accessibility_settings,
@@ -3782,6 +4160,9 @@ def pdf_labeler_bulk_normalize():
         remove_embedded_fonts_flag = parse_bool(
             options.get("removeEmbeddedFonts"), default=False
         )
+        deduplicate_field_names = parse_bool(
+            options.get("deduplicateFieldNames"), default=False
+        )
 
         import zipfile as _zipfile
 
@@ -3823,56 +4204,22 @@ def pdf_labeler_bulk_normalize():
                         if not detected:
                             detected = []
 
-                        # Build normalized field definitions
-                        normalized_fields: list[dict[str, Any]] = []
-                        for field in detected:
-                            f: dict[str, Any] = (
-                                dict(field) if isinstance(field, dict) else {}
-                            )
-                            field_name = str(f.get("name", f.get("var_name", "field")))
-                            field_type_str = str(f.get("type", "text")).lower()
-                            page_idx = int(f.get("page", f.get("pageIndex", 0)))
-                            if page_idx >= page_count:
-                                page_idx = 0
-
-                            nf: dict[str, Any] = {
-                                "name": field_name,
-                                "type": field_type_str,
-                                "pageIndex": page_idx,
-                                "x": float(f.get("x", 0)),
-                                "y": float(f.get("y", 0)),
-                                "width": float(f.get("width", 100)),
-                                "height": float(f.get("height", 20)),
-                                "font": (
-                                    norm_font_name
-                                    if norm_font
-                                    else str(f.get("font", "Helvetica"))
-                                ),
-                                "fontSize": (
-                                    font_size_pt
-                                    if norm_font_size
-                                    else int(f.get("fontSize", 12) or 12)
-                                ),
-                                "autoSize": False,
-                            }
-
-                            if field_type_str == "checkbox" and norm_checkbox_style:
-                                nf["checkboxStyle"] = checkbox_style
-                                nf["checkboxExportValue"] = checkbox_export_value
-                            if field_type_str == "checkbox" and uniform_checkbox_size:
-                                nf["width"] = checkbox_size_pt
-                                nf["height"] = checkbox_size_pt
-                            if (
-                                auto_size_name_address
-                                and field_type_str == "text"
-                                and _looks_like_name_email_address_phone_field(
-                                    field_name
-                                )
-                            ):
-                                nf["autoSize"] = True
-                                nf["height"] = fixed_text_height_pt
-
-                            normalized_fields.append(nf)
+                        normalized_fields = build_normalized_pdf_field_definitions(
+                            detected,
+                            page_count=page_count,
+                            normalize_font=norm_font,
+                            font_name=norm_font_name,
+                            normalize_font_size=norm_font_size,
+                            font_size_pt=font_size_pt,
+                            normalize_checkbox_style=norm_checkbox_style,
+                            checkbox_style=checkbox_style,
+                            checkbox_export_value=checkbox_export_value,
+                            uniform_checkbox_size=uniform_checkbox_size,
+                            checkbox_size_pt=checkbox_size_pt,
+                            auto_size_name_address=auto_size_name_address,
+                            fixed_text_height_pt=fixed_text_height_pt,
+                            deduplicate_field_names=deduplicate_field_names,
+                        )
 
                         if not normalized_fields:
                             # No fields to normalize; include as-is
@@ -3886,12 +4233,20 @@ def pdf_labeler_bulk_normalize():
                             form_field_cls=FormField,
                             field_type_enum=FieldType,
                             color_parser=HexColor,
+                            deduplicate_field_names=False,
                         )
                         explicit_background_fields = (
-                            _collect_fields_with_explicit_background(
-                                normalized_fields
-                            )
+                            _collect_fields_with_explicit_background(normalized_fields)
                         )
+                        checkbox_border_widths = _collect_checkbox_border_widths(
+                            normalized_fields
+                        )
+                        signature_field_names = [
+                            str(field.get("name", "")).strip()
+                            for field in normalized_fields
+                            if str(field.get("type", "")).lower() == "signature"
+                            and str(field.get("name", "")).strip()
+                        ]
 
                         with tempfile.NamedTemporaryFile(
                             suffix=".pdf", delete=False
@@ -3911,9 +4266,23 @@ def pdf_labeler_bulk_normalize():
                         }
                         if checkbox_values:
                             _apply_checkbox_export_values(output_path, checkbox_values)
+                        from .pdf_repair import normalize_signature_fields
+
+                        normalize_signature_fields(
+                            output_path,
+                            output_path,
+                            signature_field_names,
+                        )
                         _apply_pdf_field_visual_defaults(
                             output_path,
                             explicit_background_fields=explicit_background_fields,
+                        )
+                        from .pdf_repair import restore_checkbox_appearances
+
+                        restore_checkbox_appearances(
+                            output_path,
+                            output_path,
+                            checkbox_border_widths=checkbox_border_widths,
                         )
 
                         # Strip embedded fonts if requested

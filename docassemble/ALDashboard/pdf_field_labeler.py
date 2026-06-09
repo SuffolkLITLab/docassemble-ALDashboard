@@ -57,7 +57,6 @@ def _parse_form_with_optional_model(
     in_file: str,
     title: str,
     jur: str,
-    tools_token: Optional[str],
     openai_api: Optional[str],
     openai_base_url: Optional[str],
     model: Optional[str],
@@ -70,7 +69,6 @@ def _parse_form_with_optional_model(
         in_file: Path to the input PDF to parse.
         title: Title passed through to FormFyxer.
         jur: Jurisdiction code used for labeling heuristics.
-        tools_token: API token for tools.suffolklitlab.org, if available.
         openai_api: OpenAI API key override, if available.
         openai_base_url: Optional OpenAI-compatible base URL.
         model: Optional model name to request when FormFyxer supports it.
@@ -83,7 +81,6 @@ def _parse_form_with_optional_model(
         "jur": jur,
         "normalize": True,
         "rewrite": rewrite,
-        "tools_token": tools_token,
         "openai_api_key": openai_api,
     }
     if openai_base_url:
@@ -369,35 +366,18 @@ def _flatten_field_names(fields_per_page: List[List[Any]]) -> List[str]:
 
 def _resolve_formfyxer_credentials(
     *,
-    tools_token: Optional[str],
     openai_api: Optional[str],
     openai_base_url: Optional[str],
 ) -> Dict[str, Optional[str]]:
     """Resolve FormFyxer credentials from request values, config, and environment.
 
     Args:
-        tools_token: Optional tools token supplied by the caller.
         openai_api: Optional OpenAI API key supplied by the caller.
         openai_base_url: Optional OpenAI base URL supplied by the caller.
 
     Returns:
         Dict[str, Optional[str]]: Resolved credentials and source labels for logging.
     """
-    resolved_tools_token = tools_token
-    tools_token_source = "request" if resolved_tools_token else None
-    if not resolved_tools_token:
-        resolved_tools_token = get_config("assembly line", {}).get(
-            "tools.suffolklitlab.org api key"
-        )
-        if resolved_tools_token:
-            tools_token_source = (
-                "config:assembly line.tools.suffolklitlab.org api key"  # nosec B105
-            )
-    if not resolved_tools_token:
-        resolved_tools_token = os.getenv("TOOLS_TOKEN") or os.getenv("SPOT_TOKEN")
-        if resolved_tools_token:
-            tools_token_source = "env"  # nosec B105
-
     resolved_openai_api = openai_api
     openai_api_source = "request" if resolved_openai_api else None
     if not resolved_openai_api:
@@ -439,14 +419,10 @@ def _resolve_formfyxer_credentials(
             openai_base_url_source = "env"
 
     return {
-        "tools_token": (
-            str(resolved_tools_token).strip() if resolved_tools_token else None
-        ),
         "openai_api": str(resolved_openai_api).strip() if resolved_openai_api else None,
         "openai_base_url": (
             str(resolved_openai_base_url).strip() if resolved_openai_base_url else None
         ),
-        "tools_token_source": tools_token_source,
         "openai_api_source": openai_api_source,
         "openai_base_url_source": openai_base_url_source,
     }
@@ -472,7 +448,6 @@ def _log_formfyxer_resolution(
         + action
         + " FormFyxer credential resolution "
         + f"(jur={jur}, model={model or 'default'}, "
-        + f"tools_token={'yes' if resolved.get('tools_token') else 'no'} from {resolved.get('tools_token_source') or 'none'}, "
         + f"openai_api={'yes' if resolved.get('openai_api') else 'no'} from {resolved.get('openai_api_source') or 'none'}, "
         + f"openai_base_url={'yes' if resolved.get('openai_base_url') else 'no'} from {resolved.get('openai_base_url_source') or 'none'})",
         "info",
@@ -524,7 +499,6 @@ def relabel_existing_pdf_fields(
     target_field_names: Optional[List[str]] = None,
     relabel_with_ai: bool = False,
     jur: str = "MA",
-    tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
@@ -538,7 +512,6 @@ def relabel_existing_pdf_fields(
         target_field_names: Ordered replacement names aligned with detected fields.
         relabel_with_ai: Whether to ask FormFyxer to relabel with AI.
         jur: Jurisdiction code used for FormFyxer heuristics.
-        tools_token: Optional tools.suffolklitlab.org token override.
         openai_api: Optional OpenAI API key override.
         openai_base_url: Optional OpenAI-compatible base URL override.
         model: Optional model override for FormFyxer.
@@ -571,7 +544,6 @@ def relabel_existing_pdf_fields(
         )
     elif relabel_with_ai:
         resolved = _resolve_formfyxer_credentials(
-            tools_token=tools_token,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
         )
@@ -664,7 +636,6 @@ def apply_formfyxer_pdf_labeling(
     normalize_fields: bool = True,
     preferred_variable_names: Optional[List[str]] = None,
     jur: str = "MA",
-    tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
@@ -677,7 +648,6 @@ def apply_formfyxer_pdf_labeling(
         add_fields: Whether to detect and add new fields before normalization.
         normalize_fields: Whether to run FormFyxer normalization after field creation.
         jur: Jurisdiction code used for FormFyxer heuristics.
-        tools_token: Optional tools.suffolklitlab.org token override.
         openai_api: Optional OpenAI API key override.
         openai_base_url: Optional OpenAI-compatible base URL override.
         model: Optional model override for FormFyxer.
@@ -688,7 +658,6 @@ def apply_formfyxer_pdf_labeling(
     import formfyxer  # type: ignore[import-not-found]
 
     resolved = _resolve_formfyxer_credentials(
-        tools_token=tools_token,
         openai_api=openai_api,
         openai_base_url=openai_base_url,
     )
@@ -723,7 +692,6 @@ def apply_formfyxer_pdf_labeling(
         in_file=str(output_path),
         title=output_path.stem,
         jur=jur,
-        tools_token=resolved["tools_token"],
         openai_api=resolved["openai_api"],
         openai_base_url=resolved["openai_base_url"],
         model=model,
@@ -741,7 +709,6 @@ def detect_pdf_fields_and_optionally_relabel(
     target_field_names: Optional[List[str]] = None,
     preferred_variable_names: Optional[List[str]] = None,
     jur: str = "MA",
-    tools_token: Optional[str] = None,
     openai_api: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     model: Optional[str] = None,
@@ -754,7 +721,6 @@ def detect_pdf_fields_and_optionally_relabel(
         relabel_with_ai: Whether to run FormFyxer AI relabeling.
         target_field_names: Optional ordered field names to apply after detection.
         jur: Jurisdiction code used for FormFyxer heuristics.
-        tools_token: Optional tools.suffolklitlab.org token override.
         openai_api: Optional OpenAI API key override.
         openai_base_url: Optional OpenAI-compatible base URL override.
         model: Optional model override for FormFyxer.
@@ -769,7 +735,6 @@ def detect_pdf_fields_and_optionally_relabel(
         normalize_fields=relabel_with_ai,
         preferred_variable_names=preferred_variable_names,
         jur=jur,
-        tools_token=tools_token,
         openai_api=openai_api,
         openai_base_url=openai_base_url,
         model=model,
@@ -780,7 +745,6 @@ def detect_pdf_fields_and_optionally_relabel(
             output_pdf_path=output_pdf_path,
             target_field_names=target_field_names,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
             model=model,

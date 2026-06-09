@@ -57,17 +57,17 @@
   font-weight: 600;
 }
 
-.al-lint-badge.red {
+.al-lint-badge.required {
   background: #fde2e2;
   color: #922;
 }
 
-.al-lint-badge.yellow {
+.al-lint-badge.warning {
   background: #fff3d6;
   color: #7a5700;
 }
 
-.al-lint-badge.green {
+.al-lint-badge.advisory {
   background: #e0f7ea;
   color: #165d33;
 }
@@ -115,17 +115,17 @@
   font-size: 0.92rem;
 }
 
-.al-lint-finding.red {
+.al-lint-finding.required {
   border-left-color: #c53030;
   background: #fff5f5;
 }
 
-.al-lint-finding.yellow {
+.al-lint-finding.warning {
   border-left-color: #b7791f;
   background: #fffbf0;
 }
 
-.al-lint-finding.green {
+.al-lint-finding.advisory {
   border-left-color: #2f855a;
   background: #f2fff7;
 }

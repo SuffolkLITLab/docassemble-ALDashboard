@@ -304,10 +304,13 @@ def translation_file(
                 the_xlsx_file = docassemble.base.functions.package_data_filename(item)
                 if not os.path.isfile(the_xlsx_file):
                     continue
+                # Translation workbooks are fixed to A:H; keep reads narrow so stray cells
+                # in later columns do not inflate the imported sheet width.
                 df = pandas.read_excel(
                     the_xlsx_file,
                     na_values=["NaN", "-NaN", "#NA", "#N/A"],
                     keep_default_na=False,
+                    usecols="A:H",
                 )
                 invalid = False
                 for column_name in (

@@ -23,4 +23,6 @@ fields:
 ---
 id: ask_yesno
 question: Are you filing?
-yesno: is_filing
+fields:
+  - Are you filing?: is_filing
+    datatype: yesno

@@ -189,6 +189,49 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def test_js_references_JSZip_global(self):
         self.assertIn("JSZip", self.js)
 
+    def test_pdf_deduplication_contract_is_wired_into_ui(self):
+        self.assertIn("reservedOriginalNames", self.js)
+        self.assertIn("showFieldRenameSummary", self.js)
+        self.assertIn("field-rename-summary-modal", self.html)
+
+    def test_field_count_refreshes_duplicate_warning(self):
+        match = re.search(
+            r"function updateFieldCount\(\) \{(?P<body>.*?)\n    \}",
+            self.js,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        self.assertIn("updateDuplicateFieldWarning();", match.group("body"))
+
+    def test_pdf_attachment_block_utility_is_wired_into_ui(self):
+        self.assertIn("/pdf-labeler/api/attachment-block", self.js)
+        self.assertIn("util-attachment-generate", self.html)
+
+    def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
+        self.assertIn("data.data.menu_items", self.js)
+        self.assertIn("state.auth.menuItems", self.js)
+        self.assertGreater(
+            self.html.index('id="auth-controls"'),
+            self.html.index('id="save-playground-btn"'),
+        )
+
+    def test_new_text_fields_only_auto_size_name_and_address_like_names(self):
+        self.assertIn("function looksLikeSingleLineAutoSizeField", self.js)
+        self.assertIn(
+            "autoSize: type === 'text' && looksLikeSingleLineAutoSizeField(",
+            self.js,
+        )
+
+    def test_auto_size_preview_starts_from_field_height(self):
+        self.assertIn("pxSize = maxPxSize;", self.js)
+        self.assertNotIn("pxSize = Math.min(pxSize, maxPxSize);", self.js)
+
+    def test_pdf_field_default_is_ten_point_helvetica(self):
+        self.assertIn(
+            "HARD_DEFAULTS = { font: 'Helvetica', fontSize: 10",
+            self.js,
+        )
+
 
 class TestLabelerTemplateRendering(unittest.TestCase):
     """Verify that the template-reading helpers still work after refactoring."""

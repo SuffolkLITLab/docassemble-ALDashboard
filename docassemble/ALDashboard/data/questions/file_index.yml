@@ -19,6 +19,7 @@ code: |
 code: |
   latest_s3_folder = get_latest_s3_folder("files/")
 ---
+id: view file index status
 question: |
   View status of S3 /files vs latest index values
 subquestion: |
@@ -37,6 +38,7 @@ fields:
     default: 5000
 ---
 event: show_results
+id: file index update result
 question: |
   New value is ${ get_current_index_value() }
 subquestion: |

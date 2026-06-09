@@ -13,7 +13,7 @@ import shutil
 import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 class PDFRepairError(RuntimeError):
@@ -59,6 +59,464 @@ def _copy_if_same(src: str, dst: str) -> None:
     """If *src* == *dst* do nothing, otherwise copy."""
     if os.path.abspath(src) != os.path.abspath(dst):
         shutil.copy2(src, dst)
+
+
+def _get_pdf_field_parent(field_obj: Any) -> Optional[Any]:
+    """Return the nearest named field container for a widget annotation."""
+    if not hasattr(field_obj, "get"):
+        return None
+    if "/T" in field_obj:
+        return field_obj
+    parent = field_obj.get("/Parent")
+    if parent is None:
+        return None
+    try:
+        parent_obj = parent.resolve() if hasattr(parent, "resolve") else parent
+    except Exception:  # nosec B112
+        return None
+    return _get_pdf_field_parent(parent_obj)
+
+
+def _pdf_obj_value(obj: Any, key: str, default: Any = None) -> Any:
+    """Read a PDF dictionary key with a small guard against malformed objects."""
+    try:
+        if hasattr(obj, "get"):
+            return obj.get(key, default)
+    except Exception:  # nosec B112
+        return default
+    return default
+
+
+def _is_checkbox_like_button(widget: Any, parent: Optional[Any]) -> bool:
+    """Return True for checkbox-style button fields, excluding radio/push buttons."""
+    ft = _pdf_obj_value(widget, "/FT", _pdf_obj_value(parent, "/FT"))
+    if str(ft) != "/Btn":
+        return False
+
+    try:
+        flags = int(
+            _pdf_obj_value(widget, "/Ff", _pdf_obj_value(parent, "/Ff", 0)) or 0
+        )
+    except (TypeError, ValueError):
+        flags = 0
+
+    pushbutton_flag = 1 << 16
+    radio_flag = 1 << 15
+    return not bool(flags & (pushbutton_flag | radio_flag))
+
+
+def _normal_appearance_dict(widget: Any) -> Optional[Any]:
+    """Return a widget's normal appearance dictionary when it already has one."""
+    ap = _pdf_obj_value(widget, "/AP")
+    if ap is None or not hasattr(ap, "get"):
+        return None
+    normal = ap.get("/N")
+    if normal is None or not hasattr(normal, "keys"):
+        return None
+    return normal
+
+
+def _checkbox_checked_state(
+    widget: Any, parent: Optional[Any], pikepdf_module: Any
+) -> Any:
+    """Choose the checked export state that should have a matching appearance."""
+    for key in ("/AS", "/V", "/DV"):
+        value = _pdf_obj_value(widget, key, _pdf_obj_value(parent, key))
+        if value is not None and str(value) and str(value) != "/Off":
+            return pikepdf_module.Name(str(value))
+    return pikepdf_module.Name("/Yes")
+
+
+_CHECKBOX_CAPTION_TO_STYLE = {
+    "4": "check",
+    "5": "cross",
+    "l": "circle",
+    "N": "star",
+    "u": "diamond",
+}
+_CHECKBOX_STYLE_TO_CAPTION = {
+    style: caption for caption, style in _CHECKBOX_CAPTION_TO_STYLE.items()
+}
+
+
+def _checkbox_mark_style(widget: Any, parent: Optional[Any]) -> str:
+    """Infer the checkbox mark style from reportlab/Acrobat button metadata."""
+    for obj in (widget, parent):
+        mk = _pdf_obj_value(obj, "/MK")
+        if mk is None or not hasattr(mk, "get"):
+            continue
+        caption = mk.get("/CA")
+        if caption is None:
+            continue
+        style = _CHECKBOX_CAPTION_TO_STYLE.get(str(caption))
+        if style:
+            return style
+    return "check"
+
+
+def _set_checkbox_mark_style(
+    widget: Any, parent: Optional[Any], style: str, pikepdf_module: Any
+) -> None:
+    """Write checkbox caption metadata that matches the synthesized mark style."""
+    caption = _CHECKBOX_STYLE_TO_CAPTION.get(style)
+    if not caption:
+        return
+    for obj in (widget, parent):
+        if obj is None or not hasattr(obj, "get"):
+            continue
+        mk = obj.get("/MK")
+        if not isinstance(mk, pikepdf_module.Dictionary):
+            mk = pikepdf_module.Dictionary()
+            obj["/MK"] = mk
+        mk["/CA"] = pikepdf_module.String(caption)
+
+
+_CHECKBOX_BORDER_WIDTHS = {
+    "thin": 1.0,
+    "medium": 2.0,
+    "thick": 3.0,
+}
+
+
+def _checkbox_border_width(value: Any) -> float:
+    """Normalize a checkbox border-width option into points."""
+    if value is None or value is False:
+        return 0.0
+    if value is True:
+        return _CHECKBOX_BORDER_WIDTHS["thin"]
+    if isinstance(value, (int, float)):
+        return max(float(value), 0.0)
+    normalized = str(value or "").strip().lower()
+    if normalized in {"", "none", "off", "false", "0"}:
+        return 0.0
+    return _CHECKBOX_BORDER_WIDTHS.get(normalized, _CHECKBOX_BORDER_WIDTHS["thin"])
+
+
+def _checkbox_mark_ops(
+    style: str, width: float, height: float, border_width: float
+) -> str:
+    """Return PDF path operations for a borderless checkbox mark."""
+    inset = max(3.0, border_width + 2.0)
+    left = inset
+    right = max(width - inset, left)
+    bottom = inset
+    top = max(height - inset, bottom)
+    mid_x = width / 2.0
+    mid_y = height / 2.0
+    r_x = max((right - left) / 2.0, 1.0)
+    r_y = max((top - bottom) / 2.0, 1.0)
+
+    if style == "cross":
+        return (
+            f"{left:.3f} {bottom:.3f} m\n"
+            f"{right:.3f} {top:.3f} l\n"
+            f"{right:.3f} {bottom:.3f} m\n"
+            f"{left:.3f} {top:.3f} l\n"
+        )
+    if style == "circle":
+        c = 0.5522847498
+        return (
+            f"{mid_x + r_x:.3f} {mid_y:.3f} m\n"
+            f"{mid_x + r_x:.3f} {mid_y + c * r_y:.3f} "
+            f"{mid_x + c * r_x:.3f} {mid_y + r_y:.3f} "
+            f"{mid_x:.3f} {mid_y + r_y:.3f} c\n"
+            f"{mid_x - c * r_x:.3f} {mid_y + r_y:.3f} "
+            f"{mid_x - r_x:.3f} {mid_y + c * r_y:.3f} "
+            f"{mid_x - r_x:.3f} {mid_y:.3f} c\n"
+            f"{mid_x - r_x:.3f} {mid_y - c * r_y:.3f} "
+            f"{mid_x - c * r_x:.3f} {mid_y - r_y:.3f} "
+            f"{mid_x:.3f} {mid_y - r_y:.3f} c\n"
+            f"{mid_x + c * r_x:.3f} {mid_y - r_y:.3f} "
+            f"{mid_x + r_x:.3f} {mid_y - c * r_y:.3f} "
+            f"{mid_x + r_x:.3f} {mid_y:.3f} c\n"
+        )
+    if style == "diamond":
+        return (
+            f"{mid_x:.3f} {top:.3f} m\n"
+            f"{right:.3f} {mid_y:.3f} l\n"
+            f"{mid_x:.3f} {bottom:.3f} l\n"
+            f"{left:.3f} {mid_y:.3f} l\n"
+            "h\n"
+        )
+    if style == "star":
+        points = [
+            (0.50, 1.00),
+            (0.62, 0.62),
+            (1.00, 0.62),
+            (0.69, 0.40),
+            (0.81, 0.00),
+            (0.50, 0.25),
+            (0.19, 0.00),
+            (0.31, 0.40),
+            (0.00, 0.62),
+            (0.38, 0.62),
+        ]
+        ops = []
+        for index, (px, py) in enumerate(points):
+            x = left + px * (right - left)
+            y = bottom + py * (top - bottom)
+            ops.append(f"{x:.3f} {y:.3f} {'m' if index == 0 else 'l'}")
+        ops.append("h")
+        return "\n".join(ops) + "\n"
+    return (
+        f"{left:.3f} {mid_y:.3f} m\n"
+        f"{width * 0.42:.3f} {height * 0.20:.3f} l\n"
+        f"{right:.3f} {top:.3f} l\n"
+    )
+
+
+def _make_checkbox_appearance_streams(
+    pdf: Any,
+    width: float,
+    height: float,
+    *,
+    style: str = "check",
+    border_width: float = 0.0,
+) -> Dict[str, Any]:
+    """Create minimal Off/checked appearance XObjects for a checkbox widget."""
+    import pikepdf
+
+    border_ops = ""
+    if border_width > 0:
+        half = border_width / 2.0
+        box_width = max(width - border_width, 0.0)
+        box_height = max(height - border_width, 0.0)
+        border_ops = (
+            "0 0 0 RG\n"
+            f"{border_width:.3f} w\n"
+            f"{half:.3f} {half:.3f} {box_width:.3f} {box_height:.3f} re\n"
+            "S\n"
+        )
+
+    off_stream = pikepdf.Stream(pdf, f"q\n{border_ops}Q\n".encode("ascii"))
+    off_stream["/Type"] = pikepdf.Name("/XObject")
+    off_stream["/Subtype"] = pikepdf.Name("/Form")
+    off_stream["/FormType"] = 1
+    off_stream["/BBox"] = pikepdf.Array([0, 0, width, height])
+    off_stream["/Matrix"] = pikepdf.Array([1, 0, 0, 1, 0, 0])
+
+    checked_ops = (
+        "q\n"
+        f"{border_ops}"
+        "0 0 0 RG\n"
+        "1.8 w\n"
+        f"{_checkbox_mark_ops(style, width, height, border_width)}"
+        "S\n"
+        "Q\n"
+    ).encode("ascii")
+    checked_stream = pikepdf.Stream(pdf, checked_ops)
+    checked_stream["/Type"] = pikepdf.Name("/XObject")
+    checked_stream["/Subtype"] = pikepdf.Name("/Form")
+    checked_stream["/FormType"] = 1
+    checked_stream["/BBox"] = pikepdf.Array([0, 0, width, height])
+    checked_stream["/Matrix"] = pikepdf.Array([1, 0, 0, 1, 0, 0])
+    return {"off": off_stream, "checked": checked_stream}
+
+
+def restore_checkbox_appearances(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    *,
+    checkbox_border_widths: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Restore missing checkbox appearance streams without touching text fields.
+
+    This repair is intentionally narrow: it only synthesizes normal appearances
+    for checkbox-like ``/Btn`` widget annotations that are missing ``/AP``.
+    Text-field appearances are left alone because deleting those streams is how
+    the labeler avoids reportlab's opaque blue backgrounds and thick borders.
+    """
+    import pikepdf
+
+    restored = 0
+    checked = 0
+    skipped_existing = 0
+    skipped_non_checkbox = 0
+    border_widths = {
+        str(name): _checkbox_border_width(value)
+        for name, value in (checkbox_border_widths or {}).items()
+        if str(name).strip()
+    }
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        with pikepdf.open(input_pdf_path) as pdf:
+            for page in pdf.pages:
+                annots = page.get("/Annots")
+                if annots is None:
+                    continue
+                for annot in annots:  # type: ignore[attr-defined]
+                    try:
+                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                    except Exception:  # nosec B112
+                        continue
+                    try:
+                        if widget.get("/Subtype") != pikepdf.Name("/Widget"):
+                            continue
+                    except Exception:  # nosec B112
+                        continue
+
+                    parent = _get_pdf_field_parent(widget)
+                    if not _is_checkbox_like_button(widget, parent):
+                        skipped_non_checkbox += 1
+                        continue
+                    checked += 1
+
+                    checked_state = _checkbox_checked_state(widget, parent, pikepdf)
+                    normal_ap = _normal_appearance_dict(widget)
+                    if (
+                        normal_ap is not None
+                        and "/Off" in normal_ap
+                        and str(checked_state) in normal_ap
+                    ):
+                        skipped_existing += 1
+                        continue
+
+                    rect = widget.get("/Rect", [0, 0, 12, 12])
+                    try:
+                        width = max(float(rect[2]) - float(rect[0]), 1.0)
+                        height = max(float(rect[3]) - float(rect[1]), 1.0)
+                    except (TypeError, ValueError, IndexError):
+                        width = height = 12.0
+
+                    mark_style = _checkbox_mark_style(widget, parent)
+                    field_name_obj = _pdf_obj_value(
+                        parent, "/T", _pdf_obj_value(widget, "/T", "")
+                    )
+                    field_name = str(field_name_obj or "")
+                    border_width = border_widths.get(field_name, 0.0)
+                    streams = _make_checkbox_appearance_streams(
+                        pdf,
+                        width,
+                        height,
+                        style=mark_style,
+                        border_width=border_width,
+                    )
+                    normal_states = pikepdf.Dictionary(
+                        {"/Off": pdf.make_indirect(streams["off"])}
+                    )
+                    normal_states[str(checked_state)] = pdf.make_indirect(
+                        streams["checked"]
+                    )
+                    widget["/AP"] = pikepdf.Dictionary({"/N": normal_states})
+                    _set_checkbox_mark_style(widget, parent, mark_style, pikepdf)
+                    restored += 1
+
+            acroform = pdf.Root.get("/AcroForm")
+            if (
+                isinstance(acroform, pikepdf.Dictionary)
+                and "/NeedAppearances" in acroform
+            ):
+                del acroform["/NeedAppearances"]
+            pdf.save(tmp_path)
+
+        _assert_pdf(tmp_path, label="restore checkbox appearances")
+        _copy_if_same(tmp_path, output_pdf_path)
+    except PDFRepairError:
+        raise
+    except Exception as exc:
+        raise PDFRepairError(f"Checkbox appearance repair failed: {exc}") from exc
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    return {
+        "action": "restore_checkbox_appearances",
+        "checkbox_fields_checked": checked,
+        "appearances_restored": restored,
+        "existing_appearances_skipped": skipped_existing,
+        "non_checkbox_widgets_skipped": skipped_non_checkbox,
+    }
+
+
+def normalize_signature_fields(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    signature_field_names: Iterable[str],
+) -> Dict[str, Any]:
+    """Convert ReportLab-created text widgets into real signature fields.
+
+    FormFyxer currently asks ReportLab to draw signature fields as text fields
+    because ReportLab does not expose a signature widget API. The labeler still
+    needs exported PDFs to contain ``/FT /Sig`` so external PDF editors recognize
+    those widgets as signature fields.
+    """
+    import pikepdf
+
+    targets = {str(name).strip() for name in signature_field_names if str(name).strip()}
+    if not targets:
+        if input_pdf_path != output_pdf_path:
+            shutil.copy2(input_pdf_path, output_pdf_path)
+        return {"action": "normalize_signature_fields", "fields_converted": 0}
+
+    converted = 0
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    def _normalize_obj(obj: Any) -> bool:
+        nonlocal converted
+        if obj is None or not hasattr(obj, "get"):
+            return False
+        field_name = str(obj.get("/T", "") or "").strip()
+        if field_name not in targets:
+            return False
+        if str(obj.get("/FT", "")) != "/Sig":
+            converted += 1
+        obj["/FT"] = pikepdf.Name("/Sig")
+        for key in ("/V", "/DV", "/MaxLen", "/Q", "/DS", "/RV"):
+            if key in obj:
+                del obj[key]
+        return True
+
+    try:
+        with pikepdf.open(input_pdf_path) as pdf:
+            for page in pdf.pages:
+                annots = page.get("/Annots")
+                if annots is None:
+                    continue
+                for annot in annots:  # type: ignore[attr-defined]
+                    try:
+                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                    except Exception:  # nosec B112
+                        continue
+                    try:
+                        if widget.get("/Subtype") != pikepdf.Name("/Widget"):
+                            continue
+                    except Exception:  # nosec B112
+                        continue
+                    parent = _get_pdf_field_parent(widget)
+                    if _normalize_obj(parent):
+                        if parent is not widget and hasattr(widget, "get"):
+                            widget["/FT"] = pikepdf.Name("/Sig")
+                    else:
+                        _normalize_obj(widget)
+
+            if converted and hasattr(pdf.Root, "AcroForm"):
+                try:
+                    existing_flags = int(pdf.Root.AcroForm.get("/SigFlags") or 0)
+                except (TypeError, ValueError):
+                    existing_flags = 0
+                pdf.Root.AcroForm["/SigFlags"] = existing_flags | 3
+
+            pdf.save(tmp_path)
+
+        _assert_pdf(tmp_path, label="normalize signature fields")
+        _copy_if_same(tmp_path, output_pdf_path)
+    except PDFRepairError:
+        raise
+    except Exception as exc:
+        raise PDFRepairError(f"Signature field normalization failed: {exc}") from exc
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    return {
+        "action": "normalize_signature_fields",
+        "fields_converted": converted,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +1088,7 @@ REPAIR_ACTIONS: Dict[str, Any] = {
     "auto": auto_repair,
     "ghostscript_reprint": ghostscript_reprint,
     "qpdf_repair": qpdf_repair,
+    "restore_checkbox_appearances": restore_checkbox_appearances,
     "unlock": unlock_pdf,
     "repair_metadata": repair_metadata,
     "ocr": ocr_pdf,
@@ -647,6 +1106,10 @@ REPAIR_ACTION_HELP = {
     "qpdf_repair": (
         "Run pikepdf/qpdf repair mode to fix cross-reference tables "
         "and rebuild the page tree."
+    ),
+    "restore_checkbox_appearances": (
+        "Restore missing checkbox appearance streams only for checkbox fields. "
+        "Leaves text field appearances unchanged."
     ),
     "unlock": (
         "Remove encryption and permission restrictions so the PDF "

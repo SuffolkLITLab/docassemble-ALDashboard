@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docassemble.ALDashboard"
-version = "2.1.0"
+version = "2.2.1"
 description= "Dashboard for some admin tasks"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,11 +37,6 @@ license-files = [
 
 [project.urls]
 Homepage = "https://courtformsonline.org"
-
-[project.optional-dependencies]
-docassemble = [
-    "docassemble.webapp",
-]
 
 [tool.setuptools.packages.find]
 where = [
@@ -219,4 +214,10 @@ dev = [
     "dayamlchecker",
     "types-lxml",
     "xmlschema>=4.3.1",
+]
+
+# Keep the full docassemble stack opt-in for uv without letting `uv sync --group dev`
+# drag `docassemble.webapp` into the default test environment.
+docassemble = [
+    "docassemble.webapp>=1.9.11",
 ]

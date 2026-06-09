@@ -44,7 +44,7 @@ def _format_pdf_fields_for_ui_payload(
                     "y": field.y,
                     "width": field.configs.get("width", 100),
                     "height": field.configs.get("height", 20),
-                    "fontSize": 12 if auto_size else (raw_font_size or 12),
+                    "fontSize": 10 if auto_size else (raw_font_size or 10),
                     "autoSize": auto_size,
                 }
             )
@@ -201,6 +201,58 @@ def _validate_upload_size(
         raise DashboardAPIValidationError(
             f"Uploaded file is larger than {max_upload_bytes} bytes.", status_code=413
         )
+
+
+def _read_text_file_with_size_limit(
+    path: str, *, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+) -> str:
+    try:
+        file_size = os.path.getsize(path)
+    except OSError as exc:
+        raise DashboardAPIValidationError(f"Could not inspect file {path!r}.") from exc
+    if file_size <= 0:
+        raise DashboardAPIValidationError("Source file is empty.")
+    if file_size > max_upload_bytes:
+        raise DashboardAPIValidationError(
+            f"Source file is larger than {max_upload_bytes} bytes.", status_code=413
+        )
+    with open(path, "r", encoding="utf-8") as source_file:
+        return source_file.read()
+
+
+def _find_playground_yaml_source(
+    playground_project: str, selected_value: str
+) -> Dict[str, str]:
+    from .interview_linter import list_playground_yaml_files
+
+    playground_files = list_playground_yaml_files(playground_project or "default")
+    selected_file = next(
+        (
+            item
+            for item in playground_files
+            if item.get("label") == selected_value
+            or item.get("token") == selected_value
+        ),
+        None,
+    )
+    if not selected_file:
+        raise DashboardAPIValidationError(
+            "Could not find the requested Playground YAML file."
+        )
+    source_path = str(selected_file.get("token") or "").strip()
+    source_name = str(
+        selected_file.get("label") or os.path.basename(source_path)
+    ).strip()
+    if not source_path or not os.path.exists(source_path):
+        raise DashboardAPIValidationError(
+            "Could not resolve the requested Playground YAML file."
+        )
+    if not source_name.lower().endswith((".yml", ".yaml")):
+        raise DashboardAPIValidationError(
+            "Only YAML sources are supported for heuristic story generation.",
+            status_code=415,
+        )
+    return {"path": source_path, "filename": source_name}
 
 
 def _read_single_upload(*, field_name: str = "file") -> Dict[str, Any]:
@@ -459,6 +511,10 @@ def docx_labeler_suggest_payload_from_options(
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
     preferred_variable_names = _load_string_list_field(
         raw.get("preferred_variable_names"),
         field_name="preferred_variable_names",
@@ -507,6 +563,7 @@ def docx_labeler_suggest_payload_from_options(
         aggregated = get_voted_docx_label_suggestions(
             docx_path=temp_path,
             custom_people_names=cast(Any, custom_people_names),
+            primary_person_variable=primary_person_variable,
             preferred_variable_names=preferred_variable_names,
             openai_api=cast(Optional[str], openai_api),
             openai_base_url=cast(Optional[str], openai_base_url),
@@ -699,12 +756,17 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
 
     temp_path = _write_temp_file(filename, content)
     try:
         guesses = get_labeled_docx_runs(
             temp_path,
             custom_people_names=custom_people_names,
+            primary_person_variable=primary_person_variable,
             openai_api=openai_api_override,
             openai_base_url=openai_base_url_override,
             model=openai_model_override or "gpt-5-nano",
@@ -1029,6 +1091,10 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
 
     try:
         if raw_results is not None:
@@ -1045,6 +1111,7 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
                 for item in get_labeled_docx_runs(
                     temp_path,
                     custom_people_names=custom_people_names,
+                    primary_person_variable=primary_person_variable,
                     openai_api=openai_api_override,
                     openai_base_url=openai_base_url_override,
                     model=openai_model_override or "gpt-5-nano",
@@ -1653,6 +1720,225 @@ def yaml_reformat_payload_from_options(
     }
 
 
+def alkiln_story_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    upload: Optional[Dict[str, Any]] = None
+    if "file" in request.files:
+        upload = _read_single_upload(field_name="file")
+    elif "files" in request.files:
+        uploads = _read_multi_uploads(field_name="files")
+        upload = uploads[0] if uploads else None
+    return alkiln_story_payload_from_options(raw, upload=upload)
+
+
+def alkiln_story_payload_from_options(
+    raw_options: Mapping[str, Any], *, upload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    from .alkiln_story import (
+        DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME,
+        StoryOptions,
+        default_yaml_file_name,
+        load_docassemble_json_text,
+        story_from_docassemble_yaml,
+        story_from_docassemble_json,
+        detect_yaml_ending_screen,
+    )
+
+    raw = merge_raw_options(raw_options)
+    data = raw.get("data")
+    json_text = raw.get("json_text") or raw.get("json")
+    yaml_text = raw.get("yaml_text") or raw.get("yaml_content")
+    variables = raw.get("variables")
+    session_id = str(raw.get("session_id") or raw.get("key") or "").strip()
+    source_token = str(
+        raw.get("source_token")
+        or raw.get("playground_source_token")
+        or raw.get("yaml_source_token")
+        or ""
+    ).strip()
+    playground_project = str(raw.get("playground_project") or "").strip()
+    playground_yaml_file = str(raw.get("playground_yaml_file") or "").strip()
+    yaml_source_filename = str(
+        raw.get("filename") or raw.get("yaml_file_name") or ""
+    ).strip()
+    yaml_source_path: Optional[str] = None
+
+    if upload is None and raw.get("file_content_base64") is not None:
+        filename = str(raw.get("filename") or "upload.yml")
+        content = decode_base64_content(raw.get("file_content_base64"))
+        _validate_upload_size(content)
+        upload = {"filename": filename, "content": content}
+
+    if yaml_text is None and upload is not None:
+        filename = str(upload.get("filename") or "upload.yml")
+        upload_content = upload.get("content")
+        if not isinstance(upload_content, (bytes, bytearray)):
+            raise DashboardAPIValidationError("Upload content must be bytes.")
+        if not filename.lower().endswith((".yml", ".yaml")):
+            raise DashboardAPIValidationError(
+                "Only YAML uploads are supported for heuristic story generation.",
+                status_code=415,
+            )
+        yaml_text = bytes(upload_content).decode("utf-8", errors="replace")
+        yaml_source_filename = filename
+
+    if yaml_text is None and source_token:
+        from .interview_linter import _resolve_source_token
+
+        if source_token.startswith("ref:"):
+            source_path = _resolve_source_token(source_token)
+            yaml_source_filename = str(
+                raw.get("filename") or os.path.basename(str(source_path or ""))
+            ).strip()
+        else:
+            selected_source = _find_playground_yaml_source(
+                playground_project, source_token
+            )
+            source_path = selected_source["path"]
+            yaml_source_filename = str(
+                raw.get("filename") or selected_source["filename"]
+            ).strip()
+        if not source_path or not os.path.exists(source_path):
+            raise DashboardAPIValidationError(
+                f"Could not resolve YAML source token {source_token!r}."
+            )
+        if not yaml_source_filename.lower().endswith((".yml", ".yaml")):
+            raise DashboardAPIValidationError(
+                "Only YAML sources are supported for heuristic story generation.",
+                status_code=415,
+            )
+        yaml_text = _read_text_file_with_size_limit(source_path)
+        yaml_source_path = source_path
+
+    if yaml_text is None and playground_yaml_file:
+        selected_source = _find_playground_yaml_source(
+            playground_project, playground_yaml_file
+        )
+        source_path = selected_source["path"]
+        yaml_text = _read_text_file_with_size_limit(source_path)
+        yaml_source_path = source_path
+        yaml_source_filename = str(selected_source["filename"] or playground_yaml_file)
+
+    if data is None and session_id:
+        from .aldashboard import (
+            dashboard_find_session_filename,
+            dashboard_get_session_variables,
+        )
+
+        session_filename = str(
+            raw.get("filename") or raw.get("interview_path") or ""
+        ).strip()
+        if not session_filename:
+            found_filename = dashboard_find_session_filename(session_id)
+            if not found_filename:
+                raise DashboardAPIValidationError(
+                    "filename or interview_path is required when session_id cannot be resolved unambiguously."
+                )
+            session_filename = found_filename
+        try:
+            data = {
+                "i": session_filename,
+                "variables": dashboard_get_session_variables(
+                    session_id=session_id,
+                    filename=session_filename,
+                ),
+            }
+        except Exception as exc:
+            raise DashboardAPIValidationError(
+                "Could not load variables for the requested session."
+            ) from exc
+    elif data is None and yaml_text is not None:
+        if not isinstance(yaml_text, str) or not yaml_text.strip():
+            raise DashboardAPIValidationError("yaml_text must be non-empty YAML.")
+    elif data is None and json_text is not None:
+        if not isinstance(json_text, str) or not json_text.strip():
+            raise DashboardAPIValidationError("json_text must be non-empty JSON.")
+        try:
+            data = load_docassemble_json_text(json_text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise DashboardAPIValidationError("json_text must be valid JSON.") from exc
+    elif data is None and variables is not None:
+        data = {"variables": variables}
+    elif data is None and any(
+        key in raw
+        for key in (
+            "i",
+            "variables",
+        )
+    ):
+        data = raw
+
+    docassemble_data: Optional[Mapping[str, Any]] = None
+    if yaml_text is None:
+        if not isinstance(data, dict):
+            raise DashboardAPIValidationError(
+                "Provide docassemble JSON as `data`, `json_text`, or `variables`, "
+                "or YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
+                "`source_token`, or `playground_project` with `playground_yaml_file`."
+            )
+        docassemble_data = data
+
+    ignore_anywhere = _load_string_list_field(
+        raw.get("ignore_anywhere_in_var_name"),
+        field_name="ignore_anywhere_in_var_name",
+    )
+    if ignore_anywhere is None:
+        ignore_anywhere = list(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME)
+
+    if yaml_text is not None:
+        yaml_default_name = (
+            yaml_source_filename or raw.get("interview_path") or "interview.yml"
+        )
+        question_default = detect_yaml_ending_screen(
+            yaml_text, source_path=yaml_source_path
+        )
+    else:
+        assert docassemble_data is not None
+        yaml_default_name = raw.get("interview_path") or default_yaml_file_name(
+            docassemble_data
+        )
+        question_default = "review_screen"
+
+    if raw.get("yaml_file_name"):
+        yaml_file_name = str(raw.get("yaml_file_name")).strip()
+    elif yaml_text is not None:
+        yaml_file_name = os.path.basename(str(yaml_default_name).rsplit(":", 1)[-1])
+    else:
+        yaml_file_name = str(yaml_default_name).strip()
+    question_id = str(raw.get("question_id") or question_default).strip()
+    feature_description = str(
+        raw.get("feature_description") or "Generated docassemble test"
+    ).strip()
+    scenario_description = str(
+        raw.get("scenario_description") or "Generated scenario"
+    ).strip()
+    include_trigger_column = parse_bool(
+        raw.get("include_trigger_column"), default=False
+    )
+    synthesize_target_number = parse_bool(
+        raw.get("synthesize_target_number"), default=True
+    )
+
+    options = StoryOptions(
+        feature_description=feature_description,
+        scenario_description=scenario_description,
+        yaml_file_name=yaml_file_name or "interview.yml",
+        question_id=question_id or "review_screen",
+        include_trigger_column=include_trigger_column,
+        synthesize_target_number=synthesize_target_number,
+        ignore_anywhere_in_var_name=ignore_anywhere,
+    )
+    if yaml_text is not None:
+        return story_from_docassemble_yaml(
+            yaml_text,
+            filename=yaml_file_name,
+            source_path=yaml_source_path,
+            options=options,
+        )
+    assert docassemble_data is not None
+    return story_from_docassemble_json(docassemble_data, options=options)
+
+
 def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.pdf")
@@ -1771,9 +2057,6 @@ def pdf_fields_detect_payload_from_options(
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
     model = str(raw.get("model") or "").strip() or None
-    tools_token = (
-        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
-    )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
     )
@@ -1806,7 +2089,6 @@ def pdf_fields_detect_payload_from_options(
             target_field_names=target_field_names,
             preferred_variable_names=preferred_variable_names,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
             model=model,
@@ -1862,9 +2144,6 @@ def pdf_fields_relabel_payload_from_options(
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
     model = str(raw.get("model") or "").strip() or None
-    tools_token = (
-        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
-    )
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
     )
@@ -1895,7 +2174,6 @@ def pdf_fields_relabel_payload_from_options(
             target_field_names=target_field_names,
             relabel_with_ai=relabel_with_ai,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
             openai_base_url=openai_base_url,
             model=model,
@@ -2115,6 +2393,59 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
+            f"{DASHBOARD_API_BASE_PATH}/kiln/story": {
+                "post": {
+                    "summary": "Convert docassemble JSON, YAML, or a saved session to an ALKiln story",
+                    "description": (
+                        "Accepts docassemble JSON as `data`, `json_text`, or `variables`, "
+                        "a saved interview `session_id`, or interview YAML via `yaml_text`, "
+                        "upload, source token, or playground selection. YAML input uses "
+                        "heuristics to create table rows and detect the ending screen."
+                    ),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {"type": "object"},
+                                        "json_text": {"type": "string"},
+                                        "yaml_text": {"type": "string"},
+                                        "file_content_base64": {"type": "string"},
+                                        "source_token": {"type": "string"},
+                                        "playground_project": {"type": "string"},
+                                        "playground_yaml_file": {"type": "string"},
+                                        "variables": {"type": "object"},
+                                        "session_id": {
+                                            "type": "string",
+                                            "description": (
+                                                "Saved docassemble session key to convert directly."
+                                            ),
+                                        },
+                                        "filename": {
+                                            "type": "string",
+                                            "description": (
+                                                "Interview filename for session_id, for example "
+                                                "docassemble.pkg:data/questions/interview.yml."
+                                            ),
+                                        },
+                                        "yaml_file_name": {"type": "string"},
+                                        "question_id": {"type": "string"},
+                                        "feature_description": {"type": "string"},
+                                        "scenario_description": {"type": "string"},
+                                        "include_trigger_column": {"type": "boolean"},
+                                        "synthesize_target_number": {"type": "boolean"},
+                                        "ignore_anywhere_in_var_name": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
                 "post": {
                     "summary": "Detect and optionally relabel PDF fields (alias)",
@@ -2149,7 +2480,8 @@ def build_openapi_spec() -> Dict[str, Any]:
                         "Run a single repair action on an uploaded PDF. "
                         "Send without `action` to list available actions. "
                         "Actions: ghostscript_reprint (re-distill, optionally preserve fields), "
-                        "qpdf_repair (fix xref/page tree), unlock (remove encryption), "
+                        "qpdf_repair (fix xref/page tree), restore_checkbox_appearances "
+                        "(restore missing checkbox appearances), unlock (remove encryption), "
                         "repair_metadata (fix catalog/metadata), ocr (add text layer)."
                     ),
                 }
@@ -2216,6 +2548,7 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/lint</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/kiln/story</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/check</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/reformat</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
@@ -2233,13 +2566,14 @@ def build_docs_html() -> str:
     <li><code>/docx/relabel</code> can replace or skip labels by index and add labels via explicit updates or paragraph-range rules.</li>
     <li><code>/yaml/check</code> runs DAYamlChecker and classifies returned issues into <code>errors</code> and <code>warnings</code>.</li>
     <li><code>/yaml/reformat</code> uses DAYamlChecker's formatter and returns the updated YAML as <code>formatted_yaml</code>.</li>
+    <li><code>/kiln/story</code> accepts docassemble JSON or <code>session_id</code> with optional <code>filename</code>/<code>interview_path</code>, then converts the variables into ALKiln feature text.</li>
     <li><code>/jobs/&lt;job_id&gt;/download</code> streams file outputs from async job results. Use <code>?index=1</code> or <code>?field=...</code> when multiple file artifacts exist.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
     <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>; responses include renamed <code>fields</code>, optional positioned fields, and optional <code>pdf_base64</code>.</li>
     <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>; responses include <code>fields</code>, <code>fields_old</code>, and optional <code>pdf_base64</code>.</li>
-    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
+    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, restore_checkbox_appearances, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
   </ul>
   <h2>DOCX Modes</h2>
   <ul>

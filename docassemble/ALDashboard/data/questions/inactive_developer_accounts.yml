@@ -69,14 +69,27 @@ code: |
   inactive_developer_report_task = background_action(
     "generate_inactive_developer_report",
     months=inactive_developer_months,
+    requesting_user_id=user_info().id,
   )
 ---
 event: generate_inactive_developer_report
 code: |
-  months = int(action_argument("months"))
+  months_arg = action_argument("months")
+  try:
+    months = max(1, int(months_arg))
+  except (TypeError, ValueError):
+    months = 1
+  requesting_user_id_arg = action_argument("requesting_user_id")
+  try:
+    requesting_user_id = int(requesting_user_id_arg)
+  except (TypeError, ValueError):
+    requesting_user_id = None
   background_response(
     {
-      "candidates": inactive_developer_account_report(months),
+      "candidates": inactive_developer_account_report(
+        months,
+        requesting_user_id=requesting_user_id,
+      ),
       "login_summary": inactive_developer_login_summary(months),
     }
   )
@@ -225,19 +238,40 @@ code: |
     user_ids=selected_inactive_developer_ids,
     months=inactive_developer_months,
     delete_shared=delete_shared_sessions,
+    requesting_user_id=user_info().id,
   )
 ---
 event: delete_inactive_developer_accounts_in_background
 code: |
   delete_shared_arg = action_argument("delete_shared")
-  background_response(
-    delete_inactive_developer_accounts(
-      action_argument("user_ids"),
-      months=int(action_argument("months")),
-      delete_shared=delete_shared_arg is True or str(delete_shared_arg).lower() in ("true", "1", "yes"),
-      restart_if_needed=True,
+  raw_months = action_argument("months")
+  requesting_user_id_arg = action_argument("requesting_user_id")
+  try:
+    months = max(1, int(raw_months))
+  except (TypeError, ValueError):
+    background_response(
+      {
+        "deleted_count": 0,
+        "skipped": [],
+        "restart_requested": False,
+        "error_type": "Invalid deletion request",
+        "error_message": "Invalid or missing months value: {}".format(raw_months),
+      }
     )
-  )
+  else:
+    try:
+      requesting_user_id = int(requesting_user_id_arg)
+    except (TypeError, ValueError):
+      requesting_user_id = None
+    background_response(
+      delete_inactive_developer_accounts(
+        action_argument("user_ids"),
+        months=months,
+        delete_shared=delete_shared_arg is True or str(delete_shared_arg).lower() in ("true", "1", "yes"),
+        restart_if_needed=True,
+        requesting_user_id=requesting_user_id,
+      )
+    )
 ---
 event: inactive_developer_delete_waiting
 question: |

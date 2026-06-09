@@ -392,6 +392,21 @@
     text-align: center;
 }
 .drag-over { background: #cad8eb !important; }
+.a11y-drag-handle {
+    cursor: grab;
+    padding: 0 0.15rem;
+    color: #aaa;
+    user-select: none;
+    font-size: 1.1em;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.a11y-drag-handle:active { cursor: grabbing; }
+.a11y-field-row.a11y-dragging { opacity: 0.4; }
+.a11y-field-row.a11y-drag-over {
+    border-color: #114a8b !important;
+    box-shadow: 0 0 0 2px rgba(17, 74, 139, 0.12);
+}
 .loading-spinner { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .pdf-page-shell {

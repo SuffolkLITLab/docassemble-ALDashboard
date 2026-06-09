@@ -362,6 +362,10 @@ def _apply_pdf_field_visual_defaults(
                     if named_parent and hasattr(named_parent, "T"):
                         field_name = str(named_parent.T).strip()
 
+                    # Set the page reference explicitly so fields render on the correct page
+                    # rather than falling back to the first page.
+                    annot["/P"] = page.obj
+
                     _set_no_border(annot)
                     if named_parent and named_parent is not annot:
                         _set_no_border(named_parent)

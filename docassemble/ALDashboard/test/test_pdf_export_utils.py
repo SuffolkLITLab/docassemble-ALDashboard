@@ -163,7 +163,7 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(field.type, FakeFieldType.CHECK_BOX)
         self.assertEqual(field.x, 16)
         self.assertEqual(field.y, 20)
-        self.assertEqual(field.font_size, 12)
+        self.assertEqual(field.font_size, 10)
         self.assertEqual(field.configs["size"], 18.0)
         self.assertEqual(field.configs["buttonStyle"], "cross")
         self.assertNotIn("width", field.configs)
@@ -412,7 +412,7 @@ class TestPDFExportUtils(unittest.TestCase):
 
         self.assertEqual(normalized_fixed[0]["fontSize"], 10)
         self.assertFalse(normalized_fixed[0]["autoSize"])
-        self.assertEqual(normalized_auto[0]["fontSize"], 12)
+        self.assertEqual(normalized_auto[0]["fontSize"], 10)
         self.assertTrue(normalized_auto[0]["autoSize"])
         self.assertEqual(normalized_auto[0]["height"], 14)
 

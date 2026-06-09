@@ -159,7 +159,8 @@
             email: '',
             loginUrl: '/user/sign-in',
             logoutUrl: '/user/sign-out',
-            aiEnabled: false
+            aiEnabled: false,
+            menuItems: []
         },
         playgroundSource: {
             project: '',
@@ -230,6 +231,10 @@
         const defaults = _loadSessionDefaults();
         defaults[key] = value;
         _saveSessionDefaults(defaults);
+    }
+
+    function looksLikeSingleLineAutoSizeField(fieldName) {
+        return /(name|address|street|city|state|zip|postal|phone|phone_number|email|cell)/i.test(String(fieldName || ''));
     }
 
     let draftState = null;
@@ -1749,10 +1754,15 @@
         if (!authControls) return;
         if (state.auth.isAuthenticated) {
             const emailText = state.auth.email || 'Account';
+            const menuItems = Array.isArray(state.auth.menuItems) && state.auth.menuItems.length
+                ? state.auth.menuItems
+                : [{ label: 'Sign Out', url: state.auth.logoutUrl || '/user/sign-out' }];
             authControls.innerHTML =
                 '<button id="auth-menu-btn" class="btn btn-outline-light btn-sm dropdown-toggle" type="button" aria-expanded="false">' + escapeHtml(emailText) + '</button>' +
                 '<div id="auth-menu" class="dropdown-menu dropdown-menu-end header-auth-menu">' +
-                    '<a class="dropdown-item" href="' + escapeHtml(state.auth.logoutUrl || '/user/sign-out') + '">Log out</a>' +
+                    menuItems.map(function (item) {
+                        return '<a class="dropdown-item" href="' + escapeHtml(item.url || '#') + '">' + escapeHtml(item.label || '') + '</a>';
+                    }).join('') +
                 '</div>';
             const menuBtn = document.getElementById('auth-menu-btn');
             const menu = document.getElementById('auth-menu');
@@ -1813,6 +1823,7 @@
                 state.auth.loginUrl = data.data.login_url || '/user/sign-in';
                 state.auth.logoutUrl = data.data.logout_url || '/user/sign-out';
                 state.auth.aiEnabled = !!data.data.ai_enabled;
+                state.auth.menuItems = Array.isArray(data.data.menu_items) ? data.data.menu_items : [];
             }
         } catch (_error) {
             state.auth = {
@@ -1820,7 +1831,8 @@
                 email: '',
                 loginUrl: '/user/sign-in',
                 logoutUrl: '/user/sign-out',
-                aiEnabled: false
+                aiEnabled: false,
+                menuItems: []
             };
         }
         renderAuthControls();
@@ -3331,8 +3343,8 @@
                         // Max font size based on field height (single-line text, ~15% padding)
                         var maxPxSize = fieldHeightPx * 0.85 / 1.15;  // Account for line-height
                         
-                        // Start with the smaller of declared size or height-based max
-                        pxSize = Math.min(pxSize, maxPxSize);
+                        // PDF auto-size derives its starting size from the widget height.
+                        pxSize = maxPxSize;
                         
                         // Now check if text width fits; scale down if needed
                         var fontStr = css.weight + ' ' + Math.round(pxSize) + 'px ' + css.family;
@@ -3500,7 +3512,9 @@
             height: rect.height,
             font: getSessionDefault('font'),
             fontSize: getSessionDefault('fontSize'),
-            autoSize: type === 'text' || type === 'multiline',
+            autoSize: type === 'text' && looksLikeSingleLineAutoSizeField(
+                nameSuggestions[0] ? nameSuggestions[0].name : getDefaultFieldName(type)
+            ),
             checkboxStyle: type === 'checkbox' ? (getSessionDefault('checkboxStyle') || 'cross') : undefined,
             checkboxExportValue: type === 'checkbox' ? getSessionDefault('checkboxExportValue') : undefined,
             checkboxBorder: false,

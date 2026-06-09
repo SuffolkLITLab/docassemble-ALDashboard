@@ -258,7 +258,7 @@ def build_normalized_pdf_field_definitions(
             field_type_str = _normalize_detected_field_type(
                 _field_value(field, "type", "text")
             )
-            raw_font_size = _field_value(field, "fontSize", 12)
+            raw_font_size = _field_value(field, "fontSize", 10)
             auto_size = raw_font_size == 0
             nf: Dict[str, Any] = {
                 "name": field_name,
@@ -274,7 +274,7 @@ def build_normalized_pdf_field_definitions(
                     else str(_field_value(field, "font", "Helvetica") or "Helvetica")
                 ),
                 "fontSize": (
-                    font_size_pt if normalize_font_size else int(raw_font_size or 12)
+                    font_size_pt if normalize_font_size else int(raw_font_size or 10)
                 ),
                 "autoSize": False if normalize_font_size else auto_size,
             }
@@ -359,7 +359,7 @@ def build_pdf_export_fields_per_page(
         auto_size = _parse_bool(field_data.get("autoSize"), default=False)
         allow_scroll = _parse_bool(field_data.get("allowScroll"), default=True)
         font_size_raw = field_data.get("fontSize")
-        font_size = 0 if auto_size else int(font_size_raw or 12)
+        font_size = 0 if auto_size else int(font_size_raw or 10)
         field_configs: Dict[str, Any] = {}
         field_flag_parts: List[str] = []
 
@@ -381,7 +381,7 @@ def build_pdf_export_fields_per_page(
             field_configs["fontName"] = font_name
         elif field_type in (field_type_enum.CHOICE, field_type_enum.LIST_BOX):
             field_configs["fontName"] = font_name
-            field_configs["fontSize"] = font_size or 12
+            field_configs["fontSize"] = font_size or 10
         elif field_type in (field_type_enum.CHECK_BOX, field_type_enum.RADIO):
             widget_size = max(1.0, min(width, height))
             x_position += max(0.0, (width - widget_size) / 2.0)

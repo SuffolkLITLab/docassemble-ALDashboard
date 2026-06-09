@@ -3447,7 +3447,7 @@ def pdf_labeler_test_fill() -> Response:
             fields_data = fields_raw
         else:
             raise DashboardAPIValidationError("fields is required and must be a list.")
-            
+
         deduplicate_field_names = parse_bool(
             post_data.get("deduplicate_field_names"), default=False
         )
@@ -3465,7 +3465,9 @@ def pdf_labeler_test_fill() -> Response:
                 fields_data, _ = deduplicate_fields_data_with_renames(fields_data)
 
             checkbox_export_values = {
-                str(field.get("name", "")): str(field.get("checkboxExportValue", "")).strip()
+                str(field.get("name", "")): str(
+                    field.get("checkboxExportValue", "")
+                ).strip()
                 for field in fields_data
                 if str(field.get("type", "")).lower() == "checkbox"
                 and str(field.get("checkboxExportValue", "")).strip()
@@ -3497,6 +3499,7 @@ def pdf_labeler_test_fill() -> Response:
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
             from .pdf_repair import normalize_signature_fields
+
             normalize_signature_fields(output_path, output_path, signature_field_names)
             _apply_pdf_field_visual_defaults(
                 output_path,
@@ -3521,7 +3524,7 @@ def pdf_labeler_test_fill() -> Response:
                 the_fields,
                 signature_image_path=signature_image_path,
             )
-                    
+
             filled_path = fill_template(
                 output_path,
                 data_strings=data_strings,
@@ -3532,26 +3535,42 @@ def pdf_labeler_test_fill() -> Response:
             with open(filled_path, "rb") as f:
                 output_bytes = f.read()
 
-            return jsonify({
-                "success": True,
-                "request_id": request_id,
-                "data": {
-                    "filename": filename.replace(".pdf", "-test-filled.pdf"),
-                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": {
+                        "filename": filename.replace(".pdf", "-test-filled.pdf"),
+                        "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    },
                 }
-            })
+            )
         finally:
             if os.path.exists(input_path):
                 os.remove(input_path)
             if output_path and os.path.exists(output_path):
                 os.remove(output_path)
-            if 'filled_path' in locals() and os.path.exists(filled_path):
+            if "filled_path" in locals() and os.path.exists(filled_path):
                 os.remove(filled_path)
-                
+
     except DashboardAPIValidationError as exc:
-        return jsonify_with_status({"success": False, "request_id": request_id, "error": {"type": "validation_error", "message": exc.message}}, exc.status_code)
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
     except Exception as exc:
-        return jsonify_with_status({"success": False, "request_id": request_id, "error": {"type": "server_error", "message": str(exc)}}, 500)
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
 
 
 @app.route("/pdf-labeler/api/attachment-block", methods=["POST"])

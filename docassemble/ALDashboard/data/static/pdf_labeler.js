@@ -992,6 +992,7 @@
             document.getElementById('preview-icon-open').classList.remove('hidden');
             document.getElementById('preview-icon-closed').classList.add('hidden');
         }
+        updateDuplicateFieldWarning();
         updateZoomControls();
     }
 

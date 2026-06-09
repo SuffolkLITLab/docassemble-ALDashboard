@@ -3,6 +3,7 @@ import unittest
 
 from docassemble.ALDashboard.pdf_export_utils import (
     build_normalized_pdf_field_definitions,
+    build_pdf_preview_fill_data,
     build_pdf_export_fields_per_page,
     deduplicate_fields_data,
     deduplicate_pdf_field_names,
@@ -30,6 +31,38 @@ class FakeFormField:
 
 
 class TestPDFExportUtils(unittest.TestCase):
+    def test_preview_fill_data_matches_alweaver_reflect_fields(self):
+        data_strings, images = build_pdf_preview_fill_data(
+            [
+                ("name", "", 1, (), "/Tx", None),
+                ("agrees", "", 1, (), "/Btn", "Yes"),
+                ("choice", "", 1, (), "/Btn", "First"),
+                ("choice", "", 1, (), "/Btn", "Second"),
+                ("signature", "", 1, (), "/Sig", None),
+                ("selection", "", 1, (), "/Ch", None),
+            ],
+            signature_image_path="/tmp/placeholder_signature.png",
+        )
+
+        self.assertEqual(
+            data_strings,
+            [
+                ("name", "name"),
+                ("agrees", "Yes"),
+                ("choice", "First"),
+                ("selection", "selection"),
+            ],
+        )
+        self.assertEqual(
+            images,
+            [
+                (
+                    "signature",
+                    {"fullpath": "/tmp/placeholder_signature.png"},
+                )
+            ],
+        )
+
     def test_deduplication_preserves_unique_double_underscore_suffixes(self):
         names, renames = deduplicate_pdf_field_names(
             ["users1_name", "users1_name", "users1_name__1", "users1_name__27"]

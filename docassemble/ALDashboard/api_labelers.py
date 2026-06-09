@@ -69,6 +69,7 @@ from .api_dashboard_utils import (
 )
 from .pdf_export_utils import (
     build_normalized_pdf_field_definitions,
+    build_pdf_preview_fill_data,
     build_pdf_export_fields_per_page,
     deduplicate_fields_data_with_renames,
 )
@@ -3469,6 +3470,10 @@ def pdf_labeler_test_fill() -> Response:
                 if str(field.get("type", "")).lower() == "checkbox"
                 and str(field.get("checkboxExportValue", "")).strip()
             }
+            explicit_background_fields = _collect_fields_with_explicit_background(
+                fields_data
+            )
+            checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
 
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
@@ -3482,33 +3487,46 @@ def pdf_labeler_test_fill() -> Response:
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
                 output_path = tmp_out.name
 
+            signature_field_names = [
+                str(field.get("name", "")).strip()
+                for field in fields_data
+                if str(field.get("type", "")).lower() == "signature"
+                and str(field.get("name", "")).strip()
+            ]
+
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
             from .pdf_repair import normalize_signature_fields
-            normalize_signature_fields(output_path)
-            _apply_pdf_field_visual_defaults(output_path)
+            normalize_signature_fields(output_path, output_path, signature_field_names)
+            _apply_pdf_field_visual_defaults(
+                output_path,
+                explicit_background_fields=explicit_background_fields,
+            )
+            from .pdf_repair import restore_checkbox_appearances
 
-            data_strings = []
-            images = []
-            sig_img_path = os.path.join(os.path.dirname(__file__), "data", "static", "placeholder_signature.png")
-            
+            restore_checkbox_appearances(
+                output_path,
+                output_path,
+                checkbox_border_widths=checkbox_border_widths,
+            )
+
             the_fields = read_fields(output_path)
-            for field, default, pageno, rect, field_type, export_value in the_fields:
-                field_type_str = str(field_type)
-                if field_type_str == "/Tx":
-                    data_strings.append((field, field))
-                elif field_type_str in ("/Btn", "/'Btn'"):
-                    data_strings.append((field, export_value or "Yes"))
-                elif field_type_str == "/Ch":
-                    data_strings.append((field, field))
-                elif field_type_str in ("/Sig", "/'Sig'"):
-                    images.append((field, {'fullpath': sig_img_path}))
+            signature_image_path = os.path.join(
+                os.path.dirname(__file__),
+                "data",
+                "static",
+                "placeholder_signature.png",
+            )
+            data_strings, images = build_pdf_preview_fill_data(
+                the_fields,
+                signature_image_path=signature_image_path,
+            )
                     
             filled_path = fill_template(
                 output_path,
                 data_strings=data_strings,
                 images=images,
-                editable=True
+                editable=False,
             )
 
             with open(filled_path, "rb") as f:

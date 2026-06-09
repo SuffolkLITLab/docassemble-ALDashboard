@@ -40,7 +40,7 @@ class TestDashboardAPIUtils(unittest.TestCase):
         payload = _format_pdf_fields_for_ui_payload([[field]])
         self.assertEqual(len(payload), 1)
         self.assertTrue(payload[0]["autoSize"])
-        self.assertEqual(payload[0]["fontSize"], 12)
+        self.assertEqual(payload[0]["fontSize"], 10)
 
     def test_format_pdf_fields_sets_auto_size_false_for_fixed_font_size(self):
         field = SimpleNamespace(

@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
 from typing import Any, Dict, List, Optional, Set
 
-from flask import Response, jsonify, request
+from flask import Response, jsonify, request, url_for
 
 try:
     from flask_cors import cross_origin
@@ -341,7 +341,7 @@ def _apply_pdf_field_visual_defaults(
         if str(obj.get("/FT", "")) not in {"/Tx", "/Ch"}:
             return
         if "/DA" not in obj:
-            obj["/DA"] = pikepdf.String("/Helv 12 Tf 0 g")
+            obj["/DA"] = pikepdf.String("/Helv 10 Tf 0 g")
 
     def _is_button_widget(named_parent: Optional[Any]) -> bool:
         if named_parent is None or not hasattr(named_parent, "get"):
@@ -498,6 +498,80 @@ def _labeler_session_identity() -> Dict[str, Any]:
     except Exception:  # nosec B110
         pass
     return {"is_authenticated": False, "email": None, "user_id": None}
+
+
+def _labeler_account_menu_items(logout_url: str) -> List[Dict[str, str]]:
+    """Return docassemble's standard account links for the current user."""
+    if not _labeler_session_identity().get("is_authenticated"):
+        return []
+
+    items: List[Dict[str, str]] = []
+
+    def add_item(
+        label: str, endpoint: Optional[str] = None, href: Optional[str] = None
+    ) -> None:
+        try:
+            target = href or (url_for(endpoint) if endpoint else "")
+        except Exception:  # nosec B110
+            return
+        if target:
+            items.append({"label": str(label), "url": str(target)})
+
+    def has_roles(*roles: str) -> bool:
+        try:
+            return bool(current_user.has_roles(list(roles)))
+        except Exception:
+            try:
+                return bool(current_user.has_role(*roles))
+            except Exception:
+                return False
+
+    if has_roles("admin", "advocate") and app.config.get("ENABLE_MONITOR"):
+        add_item("Monitor", "monitor")
+    if has_roles("admin", "developer", "trainer") and app.config.get("ENABLE_TRAINING"):
+        add_item("Train", "train")
+    if has_roles("admin", "developer"):
+        if app.config.get("ALLOW_UPDATES") and (
+            app.config.get("DEVELOPER_CAN_INSTALL") or has_roles("admin")
+        ):
+            add_item("Package Management", "update_package")
+        if app.config.get("ALLOW_LOG_VIEWING"):
+            add_item("Logs", "logs")
+        if app.config.get("ENABLE_PLAYGROUND"):
+            add_item("Playground", "playground_page")
+        add_item("Utilities", "utilities")
+    try:
+        can_access_users = bool(current_user.can_do("access_user_info"))
+    except Exception:
+        can_access_users = False
+    if has_roles("admin", "advocate") or can_access_users:
+        add_item("User List", "user_list")
+    if has_roles("admin") and app.config.get("ALLOW_CONFIGURATION_EDITING"):
+        add_item("Configuration", "config_page")
+    if app.config.get("SHOW_DISPATCH"):
+        add_item("Available Interviews", "interview_start")
+
+    for item in app.config.get("ADMIN_INTERVIEWS", []):
+        try:
+            if item.can_use():
+                add_item(
+                    item.get_title(docassemble.base.functions.get_language()),
+                    href=item.get_url(),
+                )
+        except Exception:  # nosec B112
+            continue
+
+    if app.config.get("SHOW_MY_INTERVIEWS") or has_roles("admin"):
+        add_item("My Interviews", "interview_list")
+    if app.config.get("SHOW_PROFILE") or has_roles("admin", "developer"):
+        add_item("Profile", "user_profile_page")
+    else:
+        social_id = str(getattr(current_user, "social_id", "") or "")
+        if social_id.startswith("local") and app.config.get("ALLOW_CHANGING_PASSWORD"):
+            add_item("Change Password", "user.change_password")
+
+    add_item("Sign Out", href=logout_url)
+    return items
 
 
 def _labeler_ai_auth_check() -> bool:
@@ -1908,6 +1982,7 @@ def labeler_auth_status() -> Response:
                 "login_url": login_url,
                 "logout_url": logout_url,
                 "ai_enabled": _labeler_ai_auth_check(),
+                "menu_items": _labeler_account_menu_items(logout_url),
             },
         }
     )

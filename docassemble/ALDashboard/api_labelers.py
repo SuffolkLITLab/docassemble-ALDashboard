@@ -70,7 +70,7 @@ from .api_dashboard_utils import (
 from .pdf_export_utils import (
     build_normalized_pdf_field_definitions,
     build_pdf_export_fields_per_page,
-    deduplicate_fields_data,
+    deduplicate_fields_data_with_renames,
 )
 
 __all__ = []
@@ -3243,8 +3243,11 @@ def pdf_labeler_apply_fields() -> Response:
             with pikepdf.open(input_path) as pdf:
                 page_count = len(pdf.pages)
 
+            renamed_fields: List[Dict[str, Any]] = []
             if deduplicate_field_names:
-                fields_data = deduplicate_fields_data(fields_data)
+                fields_data, renamed_fields = deduplicate_fields_data_with_renames(
+                    fields_data
+                )
 
             checkbox_export_values = {
                 str(field.get("name", "")): str(
@@ -3388,6 +3391,7 @@ def pdf_labeler_apply_fields() -> Response:
                     "data": {
                         "filename": output_filename,
                         "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                        "renamed_fields": renamed_fields,
                     },
                 }
             )
@@ -3414,6 +3418,50 @@ def pdf_labeler_apply_fields() -> Response:
                 "error": {"type": "server_error", "message": str(exc)},
             },
             500,
+        )
+
+
+@app.route("/pdf-labeler/api/attachment-block", methods=["POST"])
+@app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/attachment-block", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_attachment_block() -> Response:
+    """Generate an AssemblyLine-style attachment ``fields:`` block."""
+    request_id = str(uuid.uuid4())
+    try:
+        payload = request.get_json(silent=True) or {}
+        field_names = payload.get("field_names")
+        pdf_filename = payload.get("filename")
+        if not isinstance(field_names, list):
+            raise DashboardAPIValidationError(
+                "field_names is required and must be a list."
+            )
+        if not isinstance(pdf_filename, str) or not pdf_filename.strip():
+            raise DashboardAPIValidationError(
+                "filename is required and must be a PDF filename."
+            )
+        from .pdf_attachment_block import generate_attachment_block
+
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "attachment_block": generate_attachment_block(
+                        field_names,
+                        pdf_filename=pdf_filename,
+                    )
+                },
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
         )
 
 

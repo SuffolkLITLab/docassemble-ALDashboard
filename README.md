@@ -8,6 +8,7 @@ A single tool and interview to centralize some tedious Docassemble admin configu
 
 1. Install the Document Assembly Line packages (support files for [Court Forms Online](https://courtformsonline.org))
 1. Searchable user management - reset passwords and change privileges.
+1. Report on and delete stale developer accounts, including their playground files.
 1. Installing or updating several packages at once.
 1. Listing and viewing the contents of an (unencrypted) interview to facilitate debugging errors on production servers.
 1. View analytics/stats captured with `store_variable_snapshot`.

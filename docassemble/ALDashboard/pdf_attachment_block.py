@@ -76,7 +76,7 @@ def assembly_line_expression(field_name: Any) -> str:
     """Map a PDF field name to an ALWeaver-style attachment expression."""
     raw_name = str(field_name or "")
     try:
-        from docassemble.ALWeaver.interview_generator import (
+        from docassemble.ALWeaver.interview_generator import (  # type: ignore[import-untyped]
             map_raw_to_final_display,
         )
 

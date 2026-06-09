@@ -179,8 +179,9 @@ fields:
       - Delete all listed accounts: all
       - Choose accounts to delete: selected
     default: none
-    show if: |
-      len(inactive_developer_candidates) > 0
+    show if:
+      code: |
+        len(inactive_developer_candidates) > 0
   - Accounts to delete: selected_inactive_developers
     datatype: checkboxes
     code: |

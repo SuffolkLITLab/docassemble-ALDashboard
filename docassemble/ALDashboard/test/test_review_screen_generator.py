@@ -1,6 +1,8 @@
 # do not pre-load
 import unittest
 
+from ruamel.yaml import YAML
+
 from docassemble.ALDashboard.review_screen_generator import generate_review_screen_yaml
 
 
@@ -63,6 +65,21 @@ objects:
         output = generate_review_screen_yaml([sample])
 
         self.assertIn("id: revisit offices", output)
+
+    def test_generated_yaml_is_valid_with_long_column_labels(self):
+        sample = """
+---
+objects:
+  children: ChildList
+---
+question: Tax dependency
+fields:
+  - Who should be allowed to claim ${ children[i].name_full() } as a tax deduction in even years?: children[i].tax_dependency_even
+  - "I think I was unlawfully discriminated against by the property owners or agents.": children[i].discrimination_q
+"""
+        output = generate_review_screen_yaml([sample])
+
+        list(YAML(typ="safe", pure=True).load_all(output))
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Tuple
 
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
 
 def _load_yaml_documents(yaml_texts: List[str]) -> List[Dict[str, Any]]:
@@ -187,6 +188,7 @@ def generate_review_screen_yaml(
                         continue
                     attr_name = attr_value.split(".")[-1]
                     label = attr_name if attr_key == "no label" else attr_key
+                    label = DoubleQuotedScalarString(str(label))
                     columns.append(
                         {
                             label: (

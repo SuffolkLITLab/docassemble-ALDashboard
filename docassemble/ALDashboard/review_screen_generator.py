@@ -162,6 +162,8 @@ def generate_review_screen_yaml(
                 continue
             if not is_list_object_type(obj_type):
                 continue
+            if "[i]" in obj_name:
+                continue
             if obj_name in seen_object_names:
                 continue
             seen_object_names.add(obj_name)

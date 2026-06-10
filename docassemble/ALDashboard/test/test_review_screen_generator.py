@@ -94,6 +94,16 @@ objects:
 
         self.assertEqual(output.count("id: revisit children"), 1)
 
+    def test_indexed_list_object_does_not_create_top_level_revisit_block(self):
+        sample = """
+---
+objects:
+  users[i].jobs: ALJobList
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertNotIn("id: revisit users[i].jobs", output)
+
 
 if __name__ == "__main__":
     unittest.main()

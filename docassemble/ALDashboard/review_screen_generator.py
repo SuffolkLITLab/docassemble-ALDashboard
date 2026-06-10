@@ -23,6 +23,12 @@ def normalize_objects_block(objects_block):
     return []
 
 
+def is_list_object_type(obj_type: str) -> bool:
+    class_reference = obj_type.strip().split(".using(", 1)[0]
+    class_name = class_reference.rsplit(".", 1)[-1]
+    return class_name.lower().endswith("list")
+
+
 def generate_review_screen_yaml(
     yaml_texts: List[str],
     *,
@@ -152,13 +158,7 @@ def generate_review_screen_yaml(
 
             if not obj_name or not isinstance(obj_type, str):
                 continue
-            skippable_types = [
-                "ALDocument.",
-                "ALDocumentBundle.",
-                "DAStaticFile.",
-                "ALPeopleList.",
-            ]
-            if any(obj_type.startswith(val) for val in skippable_types):
+            if not is_list_object_type(obj_type):
                 continue
             review_fields_temp.append(
                 {

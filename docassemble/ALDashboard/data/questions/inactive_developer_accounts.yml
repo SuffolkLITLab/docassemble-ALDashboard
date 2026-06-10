@@ -94,6 +94,7 @@ code: |
     }
   )
 ---
+id: waiting for inactive developer report
 event: inactive_developer_report_waiting
 question: |
   Building inactive developer account report
@@ -107,6 +108,7 @@ subquestion: |
   The report is checking playground projects and file modification dates. This screen will reload until the report is ready.
 reload: True
 ---
+id: inactive developer report failed
 event: inactive_developer_report_failed
 question: |
   Report failed
@@ -274,6 +276,7 @@ code: |
       )
     )
 ---
+id: waiting for inactive developer account deletion
 event: inactive_developer_delete_waiting
 question: |
   Deleting selected developer accounts
@@ -287,6 +290,7 @@ subquestion: |
   Docassemble is deleting selected accounts and associated sessions and playground data. This screen will reload until the batch is complete.
 reload: True
 ---
+id: inactive developer account deletion failed
 event: inactive_developer_delete_failed
 question: |
   Account deletion failed
@@ -302,6 +306,7 @@ buttons:
 code: |
   delete_inactive_developer_results = inactive_developer_delete_task.get()
 ---
+id: inactive developer account report complete
 event: ending_screen
 question: |
   % if len(inactive_developer_candidates) and delete_scope != "none" and defined("delete_inactive_developer_results"):

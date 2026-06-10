@@ -150,6 +150,7 @@ def generate_review_screen_yaml(
             sections.append({"event": sec, "code": review_event_name})
 
     if build_revisit_blocks:
+        seen_object_names = set()
         for obj in objects:
             if not isinstance(obj, dict):
                 continue
@@ -161,6 +162,9 @@ def generate_review_screen_yaml(
                 continue
             if not is_list_object_type(obj_type):
                 continue
+            if obj_name in seen_object_names:
+                continue
+            seen_object_names.add(obj_name)
             review_fields_temp.append(
                 {
                     "Edit": f"{obj_name}.revisit",

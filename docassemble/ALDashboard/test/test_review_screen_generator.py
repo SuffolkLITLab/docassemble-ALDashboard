@@ -81,6 +81,19 @@ fields:
 
         list(YAML(typ="safe", pure=True).load_all(output))
 
+    def test_duplicate_list_declarations_create_one_revisit_block(self):
+        sample = """
+---
+objects:
+  children: ChildList
+---
+objects:
+  - children: ChildList
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertEqual(output.count("id: revisit children"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

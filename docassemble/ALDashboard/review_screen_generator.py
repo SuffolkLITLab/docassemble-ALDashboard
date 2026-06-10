@@ -15,6 +15,14 @@ def _load_yaml_documents(yaml_texts: List[str]) -> List[Dict[str, Any]]:
     return docs
 
 
+def normalize_objects_block(objects_block):
+    if isinstance(objects_block, dict):
+        return [{key: value} for key, value in objects_block.items()]
+    if isinstance(objects_block, list):
+        return [obj for obj in objects_block if isinstance(obj, dict)]
+    return []
+
+
 def generate_review_screen_yaml(
     yaml_texts: List[str],
     *,
@@ -105,8 +113,8 @@ def generate_review_screen_yaml(
             fields_temp.append(
                 {doc.get("question", ""): doc.get("field"), "datatype": "radio"}
             )
-        elif "objects" in doc and isinstance(doc["objects"], list):
-            objects_temp.extend(doc["objects"])
+        elif "objects" in doc:
+            objects_temp.extend(normalize_objects_block(doc["objects"]))
         elif "sections" in doc and isinstance(doc["sections"], list):
             sections_temp.extend(
                 [
@@ -136,8 +144,12 @@ def generate_review_screen_yaml(
 
     if build_revisit_blocks:
         for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+
             obj_name = next(iter(obj.keys()), "")
             obj_type = next(iter(obj.values()), "")
+
             if not obj_name or not isinstance(obj_type, str):
                 continue
             skippable_types = [

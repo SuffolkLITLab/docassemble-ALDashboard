@@ -21,6 +21,28 @@ sections:
         self.assertIn("question: Review your answers", output)
         self.assertIn("First name", output)
 
+    def test_supports_mapping_form_objects(self):
+        sample = """
+---
+objects:
+  children[i].lived_with: ALIndividual
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertIn("id: revisit children[i].lived_with", output)
+        self.assertIn("children[i].lived_with.revisit", output)
+
+    def test_preserves_list_form_objects(self):
+        sample = """
+---
+objects:
+  - users: ALPeopleList
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertIn("id: revisit users", output)
+        self.assertIn("users.revisit", output)
+
 
 if __name__ == "__main__":
     unittest.main()

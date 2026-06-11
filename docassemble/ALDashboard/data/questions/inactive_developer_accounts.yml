@@ -124,7 +124,9 @@ buttons:
 code: |
   inactive_developer_report_result = inactive_developer_report_task.get()
   inactive_developer_candidates = inactive_developer_report_result["candidates"]
-  inactive_developer_login_summary_result = inactive_developer_report_result["login_summary"]
+  inactive_developer_login_summary_result = inactive_developer_report_result[
+    "login_summary"
+  ]
   build_inactive_developer_report = True
 ---
 id: review inactive developers
@@ -203,11 +205,16 @@ fields:
 continue button field: review_inactive_developers
 validation code: |
   if delete_scope == "selected" and not selected_inactive_developers.any_true():
-    validation_error("Select at least one account, or choose not to delete anything.", field="selected_inactive_developers")
+    validation_error(
+      "Select at least one account, or choose not to delete anything.",
+      field="selected_inactive_developers",
+    )
 ---
 code: |
   if delete_scope == "all":
-    selected_inactive_developer_ids = [row["id"] for row in inactive_developer_candidates]
+    selected_inactive_developer_ids = [
+      row["id"] for row in inactive_developer_candidates
+    ]
   elif delete_scope == "selected":
     selected_inactive_developer_ids = [
       int(user_id) for user_id in selected_inactive_developers.true_values().elements
@@ -270,7 +277,8 @@ code: |
       delete_inactive_developer_accounts(
         action_argument("user_ids"),
         months=months,
-        delete_shared=delete_shared_arg is True or str(delete_shared_arg).lower() in ("true", "1", "yes"),
+        delete_shared=delete_shared_arg is True
+        or str(delete_shared_arg).lower() in ("true", "1", "yes"),
         restart_if_needed=True,
         requesting_user_id=requesting_user_id,
       )

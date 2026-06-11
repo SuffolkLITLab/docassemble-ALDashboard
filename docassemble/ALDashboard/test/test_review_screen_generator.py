@@ -159,13 +159,14 @@ objects:
 
         self.assertIn(
             ".review_screen_generator",
-            next(document["modules"] for document in documents if "modules" in document),
+            next(
+                document["modules"] for document in documents if "modules" in document
+            ),
         )
         generator_code = next(
             document["code"]
             for document in documents
-            if "code" in document
-            and "generate_review_screen_yaml" in document["code"]
+            if "code" in document and "generate_review_screen_yaml" in document["code"]
         )
         self.assertIn(
             "[uploaded_file.slurp() for uploaded_file in yaml_file]",

@@ -94,6 +94,7 @@ code: |
     }
   )
 ---
+id: waiting for inactive developer report
 event: inactive_developer_report_waiting
 question: |
   Building inactive developer account report
@@ -107,6 +108,7 @@ subquestion: |
   The report is checking playground projects and file modification dates. This screen will reload until the report is ready.
 reload: True
 ---
+id: inactive developer report failed
 event: inactive_developer_report_failed
 question: |
   Report failed
@@ -122,7 +124,9 @@ buttons:
 code: |
   inactive_developer_report_result = inactive_developer_report_task.get()
   inactive_developer_candidates = inactive_developer_report_result["candidates"]
-  inactive_developer_login_summary_result = inactive_developer_report_result["login_summary"]
+  inactive_developer_login_summary_result = inactive_developer_report_result[
+    "login_summary"
+  ]
   build_inactive_developer_report = True
 ---
 id: review inactive developers
@@ -201,11 +205,16 @@ fields:
 continue button field: review_inactive_developers
 validation code: |
   if delete_scope == "selected" and not selected_inactive_developers.any_true():
-    validation_error("Select at least one account, or choose not to delete anything.", field="selected_inactive_developers")
+    validation_error(
+      "Select at least one account, or choose not to delete anything.",
+      field="selected_inactive_developers",
+    )
 ---
 code: |
   if delete_scope == "all":
-    selected_inactive_developer_ids = [row["id"] for row in inactive_developer_candidates]
+    selected_inactive_developer_ids = [
+      row["id"] for row in inactive_developer_candidates
+    ]
   elif delete_scope == "selected":
     selected_inactive_developer_ids = [
       int(user_id) for user_id in selected_inactive_developers.true_values().elements
@@ -268,12 +277,14 @@ code: |
       delete_inactive_developer_accounts(
         action_argument("user_ids"),
         months=months,
-        delete_shared=delete_shared_arg is True or str(delete_shared_arg).lower() in ("true", "1", "yes"),
+        delete_shared=delete_shared_arg is True
+        or str(delete_shared_arg).lower() in ("true", "1", "yes"),
         restart_if_needed=True,
         requesting_user_id=requesting_user_id,
       )
     )
 ---
+id: waiting for inactive developer account deletion
 event: inactive_developer_delete_waiting
 question: |
   Deleting selected developer accounts
@@ -287,6 +298,7 @@ subquestion: |
   Docassemble is deleting selected accounts and associated sessions and playground data. This screen will reload until the batch is complete.
 reload: True
 ---
+id: inactive developer account deletion failed
 event: inactive_developer_delete_failed
 question: |
   Account deletion failed
@@ -302,6 +314,7 @@ buttons:
 code: |
   delete_inactive_developer_results = inactive_developer_delete_task.get()
 ---
+id: inactive developer account report complete
 event: ending_screen
 question: |
   % if len(inactive_developer_candidates) and delete_scope != "none" and defined("delete_inactive_developer_results"):

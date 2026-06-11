@@ -25,7 +25,7 @@ code: |
       "get_reset_link",
       "elevate_permissions",
       "disable_mfa",
-      "edit_profile"
+      "edit_profile",
     ):
       exit_cant_manage_privileged_user
   if user_task == "reset_password":
@@ -88,7 +88,12 @@ fields:
     datatype: integer
     input type: combobox
     code: |
-      [{user[0]: f"{user[2]} {user[3]} ({user[1]})".strip()} for user in get_users_and_name(limit_to_non_admin_or_developers=not user_has_privilege(["admin", "developer"]) )]
+      [
+        {user[0]: f"{user[2]} {user[3]} ({user[1]})".strip()}
+        for user in get_users_and_name(
+          limit_to_non_admin_or_developers=not user_has_privilege(["admin", "developer"])
+        )
+      ]
     exclude:
       - "2"
     # User ID 2 is the "cron" user and should not be managed here
@@ -117,14 +122,14 @@ fields:
   - New permissions: new_permission_level
     datatype: multiselect
     code: |
-      manage_privileges("list") if 'access_privileges' in user_info().permissions else []
+      manage_privileges("list") if "access_privileges" in user_info().permissions else []
     exclude: |
       'cron'
     show if:
       variable: user_task
       is: elevate_permissions
       code: |
-        'access_privileges' in user_info().permissions
+        "access_privileges" in user_info().permissions
     help: |
       The user's permissions will be completely reset to match the new
       list of permissions. Use "ctrl" to select multiple.
@@ -132,7 +137,7 @@ fields:
       You do not have permission to view or change user privileges.
     show if:
       code: |
-        not 'access_privileges' in user_info().permissions
+        not "access_privileges" in user_info().permissions
 validation code: |
   if user_task == "reset_password" and new_user_password != new_user_password_2:
     validation_error("The passwords do not match", field="new_user_password_2")

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Tuple
 
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString, LiteralScalarString
 
 
 def _load_yaml_documents(yaml_texts: List[str]) -> List[Dict[str, Any]]:
@@ -13,6 +14,20 @@ def _load_yaml_documents(yaml_texts: List[str]) -> List[Dict[str, Any]]:
             if isinstance(doc, dict):
                 docs.append(doc)
     return docs
+
+
+def normalize_objects_block(objects_block):
+    if isinstance(objects_block, dict):
+        return [{key: value} for key, value in objects_block.items()]
+    if isinstance(objects_block, list):
+        return [obj for obj in objects_block if isinstance(obj, dict)]
+    return []
+
+
+def is_list_object_type(obj_type: str) -> bool:
+    class_reference = obj_type.strip().split(".using(", 1)[0]
+    class_name = class_reference.rsplit(".", 1)[-1]
+    return class_name.lower().endswith("list")
 
 
 def generate_review_screen_yaml(
@@ -105,8 +120,8 @@ def generate_review_screen_yaml(
             fields_temp.append(
                 {doc.get("question", ""): doc.get("field"), "datatype": "radio"}
             )
-        elif "objects" in doc and isinstance(doc["objects"], list):
-            objects_temp.extend(doc["objects"])
+        elif "objects" in doc:
+            objects_temp.extend(normalize_objects_block(doc["objects"]))
         elif "sections" in doc and isinstance(doc["sections"], list):
             sections_temp.extend(
                 [
@@ -135,25 +150,29 @@ def generate_review_screen_yaml(
             sections.append({"event": sec, "code": review_event_name})
 
     if build_revisit_blocks:
+        seen_object_names = set()
         for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+
             obj_name = next(iter(obj.keys()), "")
             obj_type = next(iter(obj.values()), "")
+
             if not obj_name or not isinstance(obj_type, str):
                 continue
-            skippable_types = [
-                "ALDocument.",
-                "ALDocumentBundle.",
-                "DAStaticFile.",
-                "ALPeopleList.",
-            ]
-            if any(obj_type.startswith(val) for val in skippable_types):
+            if not is_list_object_type(obj_type):
                 continue
+            if any(character in obj_name for character in ".[]"):
+                continue
+            if obj_name in seen_object_names:
+                continue
+            seen_object_names.add(obj_name)
             review_fields_temp.append(
                 {
                     "Edit": f"{obj_name}.revisit",
-                    "button": (
-                        f"**{obj_name.replace('_', ' ').title()}**\\n\\n"
-                        f"% for item in {obj_name}:\\n- ${{ item }}\\n% endfor"
+                    "button": LiteralScalarString(
+                        f"**{obj_name.replace('_', ' ').title()}**\n\n"
+                        f"% for item in {obj_name}:\n- ${{ item }}\n% endfor"
                     ),
                 }
             )
@@ -162,7 +181,9 @@ def generate_review_screen_yaml(
                     "id": f"revisit {obj_name}",
                     "continue button field": f"{obj_name}.revisit",
                     "question": f"Edit your answers about {obj_name.replace('_', ' ').title()}",
-                    "subquestion": f"${{{obj_name}.table}}\\n\\n${{{obj_name}.add_action()}}",
+                    "subquestion": LiteralScalarString(
+                        f"${{{obj_name}.table}}\n\n${{{obj_name}.add_action()}}"
+                    ),
                 }
             )
             if obj_name in attributes_list:
@@ -175,6 +196,7 @@ def generate_review_screen_yaml(
                         continue
                     attr_name = attr_value.split(".")[-1]
                     label = attr_name if attr_key == "no label" else attr_key
+                    label = DoubleQuotedScalarString(str(label))
                     columns.append(
                         {
                             label: (
@@ -247,9 +269,9 @@ def generate_review_screen_yaml(
         review: Dict[str, str] = {"Edit": str(first_label_pair[1])}
         question_text = str(question.get("question", ""))
         if "\n" in question_text:
-            review["button"] = f"<strong>\\n{question_text}\\n</strong>\\n\\n"
+            review["button"] = f"<strong>\n{question_text}\n</strong>\n\n"
         else:
-            review["button"] = f"**{question_text}**\\n\\n"
+            review["button"] = f"**{question_text}**\n\n"
 
         for field in fields:
             label_pair = next(
@@ -266,31 +288,31 @@ def generate_review_screen_yaml(
             show_if = field.get("show if")
             if show_if:
                 if isinstance(show_if, str):
-                    review["button"] += f"% if showifdef('{show_if}'):\\n"
+                    review["button"] += f"% if showifdef('{show_if}'):\n"
                 elif isinstance(show_if, dict) and show_if.get("variable"):
                     var = show_if.get("variable")
                     val = show_if.get("is")
                     if val not in ["False", "True", "false", "true"]:
                         val = f'"{val}"'
-                    review["button"] += f"% if showifdef('{var}') == {val}:\\n"
+                    review["button"] += f"% if showifdef('{var}') == {val}:\n"
 
             if label != "no label":
                 review["button"] += f"{label}: "
 
             datatype = field.get("datatype")
             if datatype in ["yesno", "yesnoradio", "yesnowide"]:
-                review["button"] += f"${{ word(yesno({value_ref})) }}\\n"
+                review["button"] += f"${{ word(yesno({value_ref})) }}\n"
             elif datatype == "currency":
-                review["button"] += f"${{ currency(showifdef('{value_ref}')) }}\\n"
+                review["button"] += f"${{ currency(showifdef('{value_ref}')) }}\n"
             else:
-                review["button"] += f"${{ showifdef('{value_ref}') }}\\n"
+                review["button"] += f"${{ showifdef('{value_ref}') }}\n"
 
             if show_if:
-                review["button"] += "% endif\\n\\n"
+                review["button"] += "% endif\n\n"
             else:
-                review["button"] += "\\n"
+                review["button"] += "\n"
 
-        review["button"] = review["button"].strip() + "\\n"
+        review["button"] = LiteralScalarString(review["button"].strip() + "\n")
         review_fields_temp.append(review)
 
     review_yaml = (

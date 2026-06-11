@@ -13,42 +13,161 @@ modules:
 ---
 mandatory: True
 code: |
-  yaml_file
+  review_source_mode
+  if review_source_mode == "upload":
+    yaml_file
+  else:
+    selected_playground_project
+    selected_playground_files
+  build_revisit_blocks
+  point_sections_to_review
+  save_review_to_playground
+  if save_review_to_playground:
+    review_save_project
+    review_output_filename
+  review_result
   results
 ---
-id: generate review screen
+id: choose review source
+question: |
+  Choose YAML files
+fields:
+  - Get YAML files from: review_source_mode
+    datatype: radio
+    choices:
+      - Files I upload: upload
+      - A docassemble playground project: playground
+---
+id: upload review source files
+question: |
+  Upload YAML files
+subquestion: |
+  Upload all YAML files that contain questions, `objects` blocks, or sections that
+  should be included in the generated review screen.
+fields:
+  - YAML files: yaml_file
+    datatype: files
+---
+id: select review playground project
+question: |
+  Select a playground project
+fields:
+  - Playground project: selected_playground_project
+    code: |
+      list_review_playground_projects()
+---
+id: select review source files
 question: |
   Generate a review screen
 subquestion: |
-  This interview will build you a draft of a review screen from the question.yml file.
-
-  Please make sure to upload any YAML files containing questions as well as any YAML
-  files containing `objects` blocks.
+  Select all YAML files that contain questions, `objects` blocks, or sections that
+  should be included in the generated review screen.
 fields:
-  - Upload 1 or more YAML files: yaml_file
-    datatype: files
+  - YAML files: selected_playground_files
+    datatype: checkboxes
+    all of the above: True
+    code: |
+      [
+        {item["token"]: item["label"]}
+        for item in list_review_playground_yaml_files(selected_playground_project)
+      ]
+---
+id: review screen options
+question: |
+  Review screen options
+fields:
   - Create revisit screens for lists: build_revisit_blocks
     datatype: yesno
     default: True
   - Point section blocks to review screen: point_sections_to_review
     datatype: yesno
     default: True
+  - Save generated code to a playground project: save_review_to_playground
+    datatype: yesno
+    default: False
+  - Save generated code as: review_output_filename
+    default: review.yml
+    show if: save_review_to_playground
+    help: |
+      Enter a `.yml` or `.yaml` filename. If you omit the extension, `.yml` is added.
+---
+id: select review save project
+question: |
+  Select where to save the review screen
+fields:
+  - Playground project: review_save_project
+    code: |
+      list_review_playground_projects()
 ---
 code: |
-  review_yaml_dumped = generate_review_screen_yaml(
-    [uploaded_file.slurp() for uploaded_file in yaml_file],
-    build_revisit_blocks=build_revisit_blocks,
-    point_sections_to_review=point_sections_to_review,
-  )
+  if review_source_mode == "playground":
+    review_result = generate_and_save_playground_review_screen(
+      selected_playground_files.true_values(),
+      selected_playground_project=selected_playground_project,
+      output_filename=review_output_filename if save_review_to_playground else "review.yml",
+      save_to_playground=save_review_to_playground,
+      save_playground_project=review_save_project if save_review_to_playground else "",
+      build_revisit_blocks=build_revisit_blocks,
+      point_sections_to_review=point_sections_to_review,
+    )
+  else:
+    review_yaml_dumped = generate_review_screen_yaml(
+      [uploaded_file.slurp() for uploaded_file in yaml_file],
+      build_revisit_blocks=build_revisit_blocks,
+      point_sections_to_review=point_sections_to_review,
+    )
+    review_result = {
+      "selected_count": len(yaml_file),
+      "generated_yaml": review_yaml_dumped,
+      "saved": False,
+      "save_requested": save_review_to_playground,
+      "save_error": None,
+      "error": None,
+    }
+    if save_review_to_playground:
+      review_save_result = save_review_screen_to_playground(
+        review_yaml_dumped,
+        selected_playground_project=review_save_project,
+        output_filename=review_output_filename,
+      )
+      review_result["output_filename"] = review_save_result["output_filename"]
+      review_result["saved"] = review_save_result["saved"]
+      review_result["save_error"] = review_save_result["error"]
+  review_yaml_dumped = review_result.get("generated_yaml", "")
 ---
 template: review_yaml_template
 content: |
   ${ review_yaml_dumped }
 ---
 event: results
+id: review screen generator results
 question: |
+  Review screen generator results
 subquestion: |
+  % if review_result.get("error"):
+  The review screen could not be generated.
+
+  ```
+  ${ review_result.get("error") }
+  ```
+  % else:
+  Generated a review screen from ${ review_result["selected_count"] } YAML file(s).
+
+  % if review_result.get("saved"):
+  Saved `${ review_result["output_filename"] }` in the
+  `${ review_save_project }` playground project.
+  % elif review_result.get("save_requested"):
+  The review screen was generated but could not be saved.
+
+  ```
+  ${ review_result.get("save_error") or "Unknown save error" }
+  ```
+  % endif
+
+  % if review_yaml_dumped:
   ${ display_template(review_yaml_template, classname="make_code", copy=True) }
+  % endif
+  % endif
 css: |
   <style>
   .make_code {

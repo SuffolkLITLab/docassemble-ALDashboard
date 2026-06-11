@@ -1,9 +1,12 @@
 # do not pre-load
 import unittest
+from pathlib import Path
 
 from ruamel.yaml import YAML
 
 from docassemble.ALDashboard.review_screen_generator import generate_review_screen_yaml
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestReviewScreenGenerator(unittest.TestCase):
@@ -81,6 +84,25 @@ fields:
 
         list(YAML(typ="safe", pure=True).load_all(output))
 
+    def test_generated_multiline_content_uses_literal_yaml_blocks(self):
+        sample = """
+---
+objects:
+  children: ChildList
+---
+question: What is your name?
+fields:
+  - First name: users[0].name.first
+  - Eligible: is_eligible
+    datatype: yesno
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertNotIn(r"\n", output)
+        self.assertIn("button: |", output)
+        self.assertIn("subquestion: |", output)
+        self.assertIn("First name: ${ showifdef('users[0].name.first') }", output)
+
     def test_duplicate_list_declarations_create_one_revisit_block(self):
         sample = """
 ---
@@ -94,7 +116,9 @@ objects:
 
         self.assertEqual(output.count("id: revisit children"), 1)
 
-    def test_indexed_list_object_does_not_create_top_level_revisit_block(self):
+    def test_symbolically_indexed_list_object_does_not_create_top_level_revisit_block(
+        self,
+    ):
         sample = """
 ---
 objects:
@@ -103,6 +127,52 @@ objects:
         output = generate_review_screen_yaml([sample])
 
         self.assertNotIn("id: revisit users[i].jobs", output)
+
+    def test_concretely_indexed_list_object_does_not_create_top_level_revisit_block(
+        self,
+    ):
+        sample = """
+---
+objects:
+  users[0].jobs: ALJobList
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertNotIn("id: revisit users[0].jobs", output)
+        self.assertNotIn("users[0].jobs.revisit", output)
+
+    def test_nested_list_object_does_not_create_top_level_revisit_block(self):
+        sample = """
+---
+objects:
+  user.jobs: ALJobList
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertNotIn("id: revisit user.jobs", output)
+        self.assertNotIn("user.jobs.revisit", output)
+
+    def test_interview_uses_shared_generator_module(self):
+        interview_path = PACKAGE_ROOT / "data/questions/review_screen_generator.yml"
+        interview_source = interview_path.read_text(encoding="utf-8")
+        documents = list(YAML(typ="safe", pure=True).load_all(interview_source))
+
+        self.assertIn(
+            ".review_screen_generator",
+            next(document["modules"] for document in documents if "modules" in document),
+        )
+        generator_code = next(
+            document["code"]
+            for document in documents
+            if "code" in document
+            and "generate_review_screen_yaml" in document["code"]
+        )
+        self.assertIn(
+            "[uploaded_file.slurp() for uploaded_file in yaml_file]",
+            generator_code,
+        )
+        self.assertNotIn("skippable_types", interview_source)
+        self.assertNotIn("review_fields_temp", interview_source)
 
 
 if __name__ == "__main__":

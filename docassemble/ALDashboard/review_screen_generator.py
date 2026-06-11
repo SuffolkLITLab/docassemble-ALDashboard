@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Tuple
 
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString, LiteralScalarString
 
 
 def _load_yaml_documents(yaml_texts: List[str]) -> List[Dict[str, Any]]:
@@ -162,7 +162,7 @@ def generate_review_screen_yaml(
                 continue
             if not is_list_object_type(obj_type):
                 continue
-            if "[i]" in obj_name:
+            if any(character in obj_name for character in ".[]"):
                 continue
             if obj_name in seen_object_names:
                 continue
@@ -170,9 +170,9 @@ def generate_review_screen_yaml(
             review_fields_temp.append(
                 {
                     "Edit": f"{obj_name}.revisit",
-                    "button": (
-                        f"**{obj_name.replace('_', ' ').title()}**\\n\\n"
-                        f"% for item in {obj_name}:\\n- ${{ item }}\\n% endfor"
+                    "button": LiteralScalarString(
+                        f"**{obj_name.replace('_', ' ').title()}**\n\n"
+                        f"% for item in {obj_name}:\n- ${{ item }}\n% endfor"
                     ),
                 }
             )
@@ -181,7 +181,9 @@ def generate_review_screen_yaml(
                     "id": f"revisit {obj_name}",
                     "continue button field": f"{obj_name}.revisit",
                     "question": f"Edit your answers about {obj_name.replace('_', ' ').title()}",
-                    "subquestion": f"${{{obj_name}.table}}\\n\\n${{{obj_name}.add_action()}}",
+                    "subquestion": LiteralScalarString(
+                        f"${{{obj_name}.table}}\n\n${{{obj_name}.add_action()}}"
+                    ),
                 }
             )
             if obj_name in attributes_list:
@@ -267,9 +269,9 @@ def generate_review_screen_yaml(
         review: Dict[str, str] = {"Edit": str(first_label_pair[1])}
         question_text = str(question.get("question", ""))
         if "\n" in question_text:
-            review["button"] = f"<strong>\\n{question_text}\\n</strong>\\n\\n"
+            review["button"] = f"<strong>\n{question_text}\n</strong>\n\n"
         else:
-            review["button"] = f"**{question_text}**\\n\\n"
+            review["button"] = f"**{question_text}**\n\n"
 
         for field in fields:
             label_pair = next(
@@ -286,31 +288,31 @@ def generate_review_screen_yaml(
             show_if = field.get("show if")
             if show_if:
                 if isinstance(show_if, str):
-                    review["button"] += f"% if showifdef('{show_if}'):\\n"
+                    review["button"] += f"% if showifdef('{show_if}'):\n"
                 elif isinstance(show_if, dict) and show_if.get("variable"):
                     var = show_if.get("variable")
                     val = show_if.get("is")
                     if val not in ["False", "True", "false", "true"]:
                         val = f'"{val}"'
-                    review["button"] += f"% if showifdef('{var}') == {val}:\\n"
+                    review["button"] += f"% if showifdef('{var}') == {val}:\n"
 
             if label != "no label":
                 review["button"] += f"{label}: "
 
             datatype = field.get("datatype")
             if datatype in ["yesno", "yesnoradio", "yesnowide"]:
-                review["button"] += f"${{ word(yesno({value_ref})) }}\\n"
+                review["button"] += f"${{ word(yesno({value_ref})) }}\n"
             elif datatype == "currency":
-                review["button"] += f"${{ currency(showifdef('{value_ref}')) }}\\n"
+                review["button"] += f"${{ currency(showifdef('{value_ref}')) }}\n"
             else:
-                review["button"] += f"${{ showifdef('{value_ref}') }}\\n"
+                review["button"] += f"${{ showifdef('{value_ref}') }}\n"
 
             if show_if:
-                review["button"] += "% endif\\n\\n"
+                review["button"] += "% endif\n\n"
             else:
-                review["button"] += "\\n"
+                review["button"] += "\n"
 
-        review["button"] = review["button"].strip() + "\\n"
+        review["button"] = LiteralScalarString(review["button"].strip() + "\n")
         review_fields_temp.append(review)
 
     review_yaml = (

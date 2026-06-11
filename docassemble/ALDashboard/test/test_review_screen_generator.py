@@ -1,10 +1,16 @@
 # do not pre-load
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from ruamel.yaml import YAML
 
-from docassemble.ALDashboard.review_screen_generator import generate_review_screen_yaml
+from docassemble.ALDashboard.review_screen_generator import (
+    _review_output_filename,
+    generate_and_save_playground_review_screen,
+    generate_review_screen_yaml,
+    save_review_screen_to_playground,
+)
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,6 +109,43 @@ fields:
         self.assertIn("subquestion: |", output)
         self.assertIn("First name: ${ showifdef('users[0].name.first') }", output)
 
+    def test_show_if_code_generates_matching_if_and_endif(self):
+        sample = """
+---
+question: What court was your case decided in?
+fields:
+  - no label: trial_court
+    datatype: object
+    show if:
+      code: |
+        len(all_matches)
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertIn("% if len(all_matches):", output)
+        self.assertEqual(output.count("% if "), output.count("% endif"))
+
+    def test_show_if_boolean_and_null_values_are_python_literals(self):
+        sample = """
+---
+question: Conditional fields
+fields:
+  - Hardship: has_hardship
+    show if:
+      variable: non_payment
+      is: False
+  - Other court: other_court
+    show if:
+      variable: trial_court
+      is: null
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertIn("% if showifdef('non_payment') == False:", output)
+        self.assertIn("% if showifdef('trial_court') == None:", output)
+        self.assertNotIn('== \"False\"', output)
+        self.assertNotIn('== \"None\"', output)
+
     def test_duplicate_list_declarations_create_one_revisit_block(self):
         sample = """
 ---
@@ -166,14 +209,133 @@ objects:
         generator_code = next(
             document["code"]
             for document in documents
-            if "code" in document and "generate_review_screen_yaml" in document["code"]
+            if "code" in document
+            and "generate_and_save_playground_review_screen" in document["code"]
         )
         self.assertIn(
-            "[uploaded_file.slurp() for uploaded_file in yaml_file]",
+            "selected_playground_files.true_values()",
             generator_code,
         )
+        self.assertIn("default: review.yml", interview_source)
+        self.assertIn("datatype: checkboxes", interview_source)
+        self.assertIn("all of the above: True", interview_source)
+        self.assertIn('review_source_mode == "upload"', interview_source)
+        self.assertIn("save_review_to_playground", interview_source)
         self.assertNotIn("skippable_types", interview_source)
         self.assertNotIn("review_fields_temp", interview_source)
+
+    def test_review_output_filename_defaults_and_adds_extension(self):
+        self.assertEqual(_review_output_filename(""), "review.yml")
+        self.assertEqual(_review_output_filename("custom"), "custom.yml")
+        self.assertEqual(_review_output_filename("custom.yaml"), "custom.yaml")
+
+    def test_review_output_filename_rejects_directories(self):
+        with self.assertRaises(ValueError):
+            _review_output_filename("../review.yml")
+        with self.assertRaises(ValueError):
+            _review_output_filename(r"..\review.yml")
+
+    @patch(
+        "docassemble.ALDashboard.review_screen_generator.list_review_playground_yaml_files"
+    )
+    @patch(
+        "docassemble.ALDashboard.review_screen_generator._get_review_playground_storage"
+    )
+    def test_generates_and_saves_selected_playground_files(
+        self,
+        get_playground_storage,
+        list_yaml_files,
+    ):
+        fixture_dir = PACKAGE_ROOT / "test"
+        list_yaml_files.return_value = [
+            {"label": "api_review_input.yml", "token": "api_review_input.yml"}
+        ]
+        saved_file = MagicMock()
+        get_playground_storage.return_value = (saved_file, str(fixture_dir))
+
+        result = generate_and_save_playground_review_screen(
+            ["api_review_input.yml"],
+            selected_playground_project="sample",
+            output_filename="my_review",
+        )
+
+        self.assertTrue(result["saved"])
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["output_filename"], "my_review.yml")
+        self.assertIn("id: review screen", result["generated_yaml"])
+        saved_file.write_content.assert_called_once_with(
+            result["generated_yaml"],
+            filename="my_review.yml",
+            project="sample",
+            save=False,
+        )
+        saved_file.finalize.assert_called_once_with()
+
+    @patch(
+        "docassemble.ALDashboard.review_screen_generator.list_review_playground_yaml_files"
+    )
+    @patch(
+        "docassemble.ALDashboard.review_screen_generator._get_review_playground_storage"
+    )
+    def test_generates_from_playground_without_saving(
+        self,
+        get_playground_storage,
+        list_yaml_files,
+    ):
+        fixture_dir = PACKAGE_ROOT / "test"
+        list_yaml_files.return_value = [
+            {"label": "api_review_input.yml", "token": "api_review_input.yml"}
+        ]
+        playground_area = MagicMock()
+        get_playground_storage.return_value = (playground_area, str(fixture_dir))
+
+        result = generate_and_save_playground_review_screen(
+            ["api_review_input.yml"],
+            selected_playground_project="sample",
+            save_to_playground=False,
+        )
+
+        self.assertFalse(result["saved"])
+        self.assertFalse(result["save_requested"])
+        self.assertIsNone(result["error"])
+        self.assertIn("id: review screen", result["generated_yaml"])
+        playground_area.write_content.assert_not_called()
+        playground_area.finalize.assert_not_called()
+
+    @patch(
+        "docassemble.ALDashboard.review_screen_generator._get_review_playground_storage"
+    )
+    def test_saves_previously_generated_review_yaml(
+        self,
+        get_playground_storage,
+    ):
+        playground_area = MagicMock()
+        get_playground_storage.return_value = (playground_area, "/tmp/project")
+
+        result = save_review_screen_to_playground(
+            "id: review screen\n",
+            selected_playground_project="sample",
+            output_filename="custom",
+        )
+
+        self.assertTrue(result["saved"])
+        self.assertEqual(result["output_filename"], "custom.yml")
+        playground_area.write_content.assert_called_once_with(
+            "id: review screen\n",
+            filename="custom.yml",
+            project="sample",
+            save=False,
+        )
+        playground_area.finalize.assert_called_once_with()
+
+    def test_generate_and_save_requires_selected_files(self):
+        result = generate_and_save_playground_review_screen(
+            [],
+            selected_playground_project="default",
+        )
+
+        self.assertFalse(result["saved"])
+        self.assertEqual(result["error"], "Select at least one YAML file.")
 
 
 if __name__ == "__main__":

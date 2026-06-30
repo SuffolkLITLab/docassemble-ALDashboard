@@ -36,8 +36,7 @@ def _review_output_filename(filename: str) -> str:
 
 
 def _get_review_playground_storage(project: str) -> Tuple[Any, str]:
-    from docassemble.webapp.backend import directory_for
-    from docassemble.webapp.files import SavedFile
+    from .docassemble_compat import SavedFile, directory_for
 
     from .interview_linter import _resolve_current_user_id
 

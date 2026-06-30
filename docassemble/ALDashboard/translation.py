@@ -25,11 +25,6 @@ import docassemble.base.pdftk
 import docassemble.base.util
 import docassemble.base.core  # for backward-compatibility with data pickled in earlier versions
 
-import docassemble.webapp.backend
-from docassemble.webapp.backend import url_for
-import docassemble.webapp.clicksend
-import docassemble.webapp.telnyx
-import docassemble.webapp.machinelearning
 from docassemble.webapp.translations import setup_translation
 
 if not in_celery:
@@ -41,7 +36,17 @@ import pandas
 import xlsxwriter
 
 from docassemble.base.util import DAFile, language_name, get_config, log, DAEmpty
-from docassemble.webapp.server import mako_parts
+
+try:
+    from docassemble.webapp.utils.helpers import mako_parts
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+    }:
+        raise
+    # docassemble < 1.10 keeps this helper in the monolithic server module.
+    from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
 from docassemble.ALToolbox.llms import chat_completion
 

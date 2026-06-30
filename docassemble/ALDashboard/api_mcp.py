@@ -5,8 +5,24 @@ import json
 from flask import Response, jsonify, request
 from flask_cors import cross_origin
 
-from docassemble.webapp.app_object import app, csrf
-from docassemble.webapp.server import api_verify, jsonify_with_status
+try:
+    from docassemble.webapp.flask_app import flaskapp as app
+    from docassemble.webapp.extensions import csrf
+    from docassemble.webapp.api.helpers import api_verify
+    from docassemble.webapp.utils.helpers import jsonify_with_status
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.flask_app",
+        "docassemble.webapp.extensions",
+        "docassemble.webapp.api",
+        "docassemble.webapp.api.helpers",
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+    }:
+        raise
+    # docassemble < 1.10 exposes these objects from the legacy modules.
+    from docassemble.webapp.app_object import app, csrf
+    from docassemble.webapp.server import api_verify, jsonify_with_status
 
 from .mcp_registry import (
     MCP_API_BASE_PATH,

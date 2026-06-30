@@ -42,7 +42,9 @@ _STUB_PREFIX = textwrap.dedent("""
     server_module = types.ModuleType("docassemble.webapp.server")
     server_module.api_verify = lambda: False
     server_module.jsonify_with_status = lambda body, status: (body, status)
-    server_module.r = _FakeRedis()
+
+    daredis_module = types.ModuleType("docassemble.webapp.daredis")
+    daredis_module.r = _FakeRedis()
 
     worker_common_module = types.ModuleType("docassemble.webapp.worker_common")
     worker_common_module.workerapp = types.SimpleNamespace(
@@ -60,6 +62,7 @@ _STUB_PREFIX = textwrap.dedent("""
 
     sys.modules["docassemble.webapp.app_object"] = app_object_module
     sys.modules["docassemble.webapp.server"] = server_module
+    sys.modules["docassemble.webapp.daredis"] = daredis_module
     sys.modules["docassemble.webapp.worker_common"] = worker_common_module
     sys.modules["docassemble.base.config"] = base_config_module
     sys.modules["docassemble.base.functions"] = base_functions_module

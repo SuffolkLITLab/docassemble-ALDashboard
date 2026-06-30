@@ -2,7 +2,18 @@
 
 from typing import Any, Dict
 
-from docassemble.webapp.worker_common import bg_context, workerapp  # type: ignore[import-untyped]
+try:
+    from docassemble.webapp.tasks.context import bg_context
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.tasks",
+        "docassemble.webapp.tasks.context",
+    }:
+        raise
+    # docassemble < 1.10 defines the worker context in worker_common.
+    from docassemble.webapp.worker_common import bg_context  # type: ignore[import-untyped]
+
+from docassemble.webapp.worker_common import workerapp  # type: ignore[import-untyped]
 
 from .api_dashboard_utils import (
     alkiln_story_payload_from_options,

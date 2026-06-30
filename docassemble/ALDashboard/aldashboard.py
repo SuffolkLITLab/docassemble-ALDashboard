@@ -4,36 +4,108 @@ import subprocess
 import re
 import requests
 import calendar
+from contextlib import contextmanager
 from importlib.metadata import distributions
-from docassemble.webapp.users.models import UserModel, Role, UserDict, UserRoles
-from docassemble.webapp.db_object import init_sqlalchemy
-from github import Github  # PyGithub
-from flask import current_app
+from docassemble.webapp.users.models import UserModel, Role, UserRoles
 
-# db is a SQLAlchemy Engine
+try:
+    from docassemble.webapp.interview.models import UserDict
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.interview",
+        "docassemble.webapp.interview.models",
+    }:
+        raise
+    # docassemble < 1.10 defines interview models alongside user models.
+    from docassemble.webapp.users.models import UserDict
+
+try:
+    from docassemble.webapp.db import (
+        get_session as _get_db_session,
+        session_scope as _db_session_scope,
+    )
+    from docassemble.webapp.extensions import db
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.db",
+        "docassemble.webapp.extensions",
+    }:
+        raise
+    # docassemble < 1.10 exposes a configured SQLAlchemy session directly.
+    from docassemble.webapp.db_object import init_sqlalchemy
+
+    db = init_sqlalchemy()
+
+    @contextmanager
+    def _get_db_session():
+        yield db.session
+
+    @contextmanager
+    def _db_session_scope():
+        try:
+            yield db.session
+            db.session.commit()
+        except BaseException:
+            db.session.rollback()
+            raise
+
+
+from github import Github  # PyGithub
+from flask import current_app, flash, redirect
+
+# SQLAlchemy expressions are shared by both the legacy engine and Flask extension.
 from sqlalchemy.sql import text
-from sqlalchemy import or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
 from typing import Any, List, Tuple, Dict, Optional, Callable, Set
 import math
 
 import docassemble.webapp.worker
-from docassemble.webapp.server import (
-    user_can_edit_package,
-    get_master_branch,
-    install_git_package,
-    redirect,
-    should_run_create,
-    flash,
-    url_for,
-    restart_all,
-    install_pip_package,
-    get_package_info,
-    get_session_variables,
-)
+
+try:
+    from docassemble.webapp.utils.helpers import (
+        user_can_edit_package,
+        get_master_branch,
+        install_git_package,
+        should_run_create,
+        install_pip_package,
+        get_package_info,
+    )
+    from docassemble.webapp.main.helpers import restart_all
+    from docassemble.webapp.utils.hooks import url_for
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+        "docassemble.webapp.utils.hooks",
+        "docassemble.webapp.main",
+        "docassemble.webapp.main.helpers",
+    }:
+        raise
+    # docassemble < 1.10 exposes these objects from the legacy server module.
+    from docassemble.webapp.server import (
+        user_can_edit_package,
+        get_master_branch,
+        install_git_package,
+        should_run_create,
+        url_for,
+        restart_all,
+        install_pip_package,
+        get_package_info,
+    )
 from docassemble.base.config import daconfig
-from docassemble.webapp.backend import cloud
-from docassemble.base.functions import serializable_dict
+
+try:
+    from docassemble.webapp.cloud.utils import cloud
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.cloud",
+        "docassemble.webapp.cloud.utils",
+    }:
+        raise
+    # docassemble < 1.10 exposes cloud storage from the backend module.
+    from docassemble.webapp.backend import cloud
+from docassemble.base.functions import get_session_variables, serializable_dict
 from docassemble.base.util import (
     log,
     DAFile,
@@ -54,9 +126,7 @@ from ruamel.yaml.compat import StringIO
 import werkzeug
 import importlib.resources
 from datetime import datetime, timedelta, timezone
-from docassemble.webapp.files import SavedFile
-
-db = init_sqlalchemy()
+from .docassemble_compat import SavedFile
 
 __all__ = [
     "install_from_github_url",
@@ -449,7 +519,8 @@ def speedy_get_users() -> List[Dict[int, str]]:
     """
     Return a list of all users in the database. Possibly faster than get_user_list().
     """
-    the_users = UserModel.query.with_entities(UserModel.id, UserModel.email).all()
+    with _get_db_session() as session:
+        the_users = session.execute(select(UserModel.id, UserModel.email)).all()
 
     return [{user[0]: user[1]} for user in the_users]
 
@@ -457,7 +528,7 @@ def speedy_get_users() -> List[Dict[int, str]]:
 def get_users_and_name(
     limit_to_non_admin_or_developers: bool = False,
 ) -> List[Tuple[int, str, str, str]]:
-    users = UserModel.query.with_entities(
+    statement = select(
         UserModel.id,
         UserModel.email,
         UserModel.first_name,
@@ -466,11 +537,13 @@ def get_users_and_name(
     )
 
     if limit_to_non_admin_or_developers:
-        users = users.filter(
+        statement = statement.where(
             ~UserModel.roles.any(Role.name.in_(["admin", "developer"]))
         )
 
-    return [(u[0], u[1] or "", u[2] or u[4] or "", u[3] or "") for u in users.all()]
+    with _get_db_session() as session:
+        users = session.execute(statement).all()
+    return [(u[0], u[1] or "", u[2] or u[4] or "", u[3] or "") for u in users]
 
 
 def get_user_details(user_id: int) -> Optional[Dict]:
@@ -484,11 +557,16 @@ def get_user_details(user_id: int) -> Optional[Dict]:
         id, email, first_name, last_name, active, account_type, privileges (list of str),
         mfa_enabled (bool), and mfa_type (str or None: "app", "sms", or None).
     """
-    user = (
-        UserModel.query.options(joinedload(UserModel.roles))
-        .filter(UserModel.id == user_id)
-        .first()
-    )
+    with _get_db_session() as session:
+        user = (
+            session.execute(
+                select(UserModel)
+                .options(joinedload(UserModel.roles))
+                .where(UserModel.id == user_id)
+            )
+            .unique()
+            .scalar_one_or_none()
+        )
     if user is None:
         return None
 
@@ -526,13 +604,15 @@ def disable_user_mfa(user_id: int) -> bool:
     Returns:
         True if MFA was disabled, False if the user was not found or MFA was already disabled.
     """
-    user = UserModel.query.filter(UserModel.id == user_id).first()
-    if user is None:
-        return False
-    if user.otp_secret is None:
-        return False
-    user.otp_secret = None
-    UserModel.query.session.commit()
+    with _db_session_scope() as session:
+        user = session.execute(
+            select(UserModel).where(UserModel.id == user_id)
+        ).scalar_one_or_none()
+        if user is None:
+            return False
+        if user.otp_secret is None:
+            return False
+        user.otp_secret = None
     return True
 
 
@@ -588,7 +668,10 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
         )
         return None
 
-    user = UserModel.query.filter(UserModel.id == user_id).first()
+    with _get_db_session() as session:
+        user = session.execute(
+            select(UserModel).where(UserModel.id == user_id)
+        ).scalar_one_or_none()
 
     if user is None:
         log(f"get_password_reset_link: No user found with id {user_id}")
@@ -654,14 +737,13 @@ def _resolve_current_user_id() -> Optional[int]:
 
 
 def _user_session_summary(user_id: int) -> Dict[str, Any]:
-    row = (
-        UserDict.query.with_entities(
-            db.func.count(db.func.distinct(UserDict.key)).label("session_count"),
-            db.func.max(UserDict.modtime).label("last_session_activity"),
-        )
-        .filter(UserDict.user_id == user_id)
-        .first()
-    )
+    with _get_db_session() as session:
+        row = session.execute(
+            select(
+                func.count(func.distinct(UserDict.key)).label("session_count"),
+                func.max(UserDict.modtime).label("last_session_activity"),
+            ).where(UserDict.user_id == user_id)
+        ).one_or_none()
     if row is None:
         return {"session_count": 0, "last_session_activity": None}
     return {
@@ -678,48 +760,54 @@ def inactive_developer_login_summary(months: int = 18) -> Dict[str, Any]:
         months = 18
 
     cutoff_date = _months_ago(months)
-    developer_role = Role.query.filter(Role.name == "developer").first()
-    total_users = UserModel.query.filter(
-        ~UserModel.social_id.startswith("disabled$")
-    ).count()
+    with _get_db_session() as session:
+        developer_role = session.execute(
+            select(Role).where(Role.name == "developer")
+        ).scalar_one_or_none()
+        total_users = session.scalar(
+            select(func.count(UserModel.id)).where(
+                ~UserModel.social_id.startswith("disabled$")
+            )
+        )
     if developer_role is None:
         return {
             "months": months,
             "cutoff_date": cutoff_date,
             "cutoff_date_display": _format_optional_datetime(cutoff_date),
-            "total_users": total_users,
+            "total_users": int(total_users or 0),
             "developer_users": 0,
             "developer_users_not_logged_in_since_cutoff": 0,
             "developer_users_never_logged_in": 0,
         }
 
-    developer_query = UserModel.query.join(
-        UserRoles, UserRoles.user_id == UserModel.id
-    ).filter(
+    developer_filters = (
         UserRoles.role_id == developer_role.id,
         UserModel.id.notin_([1, 2]),
         ~UserModel.social_id.startswith("disabled$"),
     )
+
+    def developer_count(*extra_filters: Any) -> int:
+        statement = (
+            select(func.count(func.distinct(UserModel.id)))
+            .select_from(UserModel)
+            .join(UserRoles, UserRoles.user_id == UserModel.id)
+            .where(*developer_filters, *extra_filters)
+        )
+        with _get_db_session() as session:
+            return int(session.scalar(statement) or 0)
+
     return {
         "months": months,
         "cutoff_date": cutoff_date,
         "cutoff_date_display": _format_optional_datetime(cutoff_date),
         "total_users": int(total_users or 0),
-        "developer_users": developer_query.with_entities(UserModel.id)
-        .distinct()
-        .count(),
-        "developer_users_not_logged_in_since_cutoff": developer_query.filter(
+        "developer_users": developer_count(),
+        "developer_users_not_logged_in_since_cutoff": developer_count(
             or_(UserModel.last_login.is_(None), UserModel.last_login < cutoff_date)
-        )
-        .with_entities(UserModel.id)
-        .distinct()
-        .count(),
-        "developer_users_never_logged_in": developer_query.filter(
+        ),
+        "developer_users_never_logged_in": developer_count(
             UserModel.last_login.is_(None)
-        )
-        .with_entities(UserModel.id)
-        .distinct()
-        .count(),
+        ),
     }
 
 
@@ -779,18 +867,24 @@ def _playground_summary(user_id: int) -> Dict[str, Any]:
 
 
 def _developer_user_rows() -> List[Any]:
-    return (
-        UserModel.query.options(joinedload(UserModel.roles))
-        .join(UserRoles, UserRoles.user_id == UserModel.id)
-        .join(Role, Role.id == UserRoles.role_id)
-        .filter(
-            Role.name == "developer",
-            UserModel.id.notin_([1, 2]),
-            ~UserModel.social_id.startswith("disabled$"),
+    with _get_db_session() as session:
+        return (
+            session.execute(
+                select(UserModel)
+                .options(joinedload(UserModel.roles))
+                .join(UserRoles, UserRoles.user_id == UserModel.id)
+                .join(Role, Role.id == UserRoles.role_id)
+                .where(
+                    Role.name == "developer",
+                    UserModel.id.notin_([1, 2]),
+                    ~UserModel.social_id.startswith("disabled$"),
+                )
+                .distinct()
+            )
+            .unique()
+            .scalars()
+            .all()
         )
-        .distinct()
-        .all()
-    )
 
 
 def inactive_developer_account_report(
@@ -860,8 +954,21 @@ def delete_inactive_developer_accounts(
     requesting_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Delete selected stale developer accounts through docassemble's built-in cleanup."""
-    from docassemble.webapp.backend import delete_user_data
-    from docassemble.webapp.server import r, r_user, user_interviews
+    from docassemble.webapp.daredis import r, r_user
+
+    try:
+        from docassemble.base.hooks import user_interviews
+        from docassemble.webapp.interview.helpers import delete_user_data
+    except ModuleNotFoundError as err:
+        if err.name not in {
+            "docassemble.base.hooks",
+            "docassemble.webapp.interview",
+            "docassemble.webapp.interview.helpers",
+        }:
+            raise
+        # docassemble < 1.10 keeps these implementations in legacy modules.
+        from docassemble.webapp.server import user_interviews
+        from docassemble.webapp.backend import delete_user_data
 
     if requesting_user_id is None:
         requesting_user_id = _resolve_current_user_id()
@@ -973,17 +1080,18 @@ LIMIT 500;
     # Ensure filter_step1 is a boolean
     filter_step1 = bool(filter_step1)
 
-    with db.connect() as con:
-        rs = con.execute(
-            get_sessions_query,
-            {
-                "user_id": user_id,
-                "filename": filename,
-                "filter_step1": filter_step1,
-                "metadata": metadata_key_name,
-            },
+    with _get_db_session() as session:
+        sessions = list(
+            session.execute(
+                get_sessions_query,
+                {
+                    "user_id": user_id,
+                    "filename": filename,
+                    "filter_step1": filter_step1,
+                    "metadata": metadata_key_name,
+                },
+            )
         )
-    sessions = [session for session in rs]
 
     return sessions
 
@@ -1018,8 +1126,8 @@ GROUP BY
 ORDER BY
     modtime DESC;
         """)
-    with db.connect() as con:
-        rows = list(con.execute(find_session_query, {"session_id": session_id}))
+    with _get_db_session() as session:
+        rows = list(session.execute(find_session_query, {"session_id": session_id}))
 
     if len(rows) == 1:
         return str(rows[0].filename)
@@ -1308,12 +1416,12 @@ LIMIT :limit
     """
     query = text(query_sql)
 
-    with db.connect() as con:
+    with _get_db_session() as session:
         for m in minutes_list:
             cutoff = datetime.utcnow() - timedelta(minutes=int(m))
             query_params = {"cutoff": cutoff, "limit": int(limit)}
             query_params.update(exclude_params)
-            rs = con.execute(query, query_params)
+            rs = session.execute(query, query_params)
             rows = []
             for row in rs:
                 # SQLAlchemy result rows may be mapping-like or tuple-like depending on version/context.
@@ -1465,12 +1573,11 @@ def increment_index_value(by: int = 5000, index_name: str = "uploads_indexno_seq
         by (int): The amount to increment the file index value by. Defaults to 5000.
         index_name (str): The name of the sequence to increment. Defaults to "uploads_indexno_seq".
     """
-    with db.connect() as con:
-        con.execute(
+    with _db_session_scope() as session:
+        session.execute(
             text(f"SELECT setval(:index_name, nextval(:index_name) + :by);"),
             {"by": by, "index_name": index_name},
         )
-        con.commit()
 
 
 def get_current_index_value() -> int:
@@ -1479,8 +1586,9 @@ def get_current_index_value() -> int:
     Returns:
         int: The current value of the file index sequence.
     """
-    query = db.session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
-    return query.fetchone()[0]
+    with _get_db_session() as session:
+        query = session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
+        return query.fetchone()[0]
 
 
 def get_latest_s3_folder(prefix: str = "files/") -> Optional[int]:

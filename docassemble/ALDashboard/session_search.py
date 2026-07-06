@@ -10,6 +10,8 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 __all__ = [
     "SessionSearchCriteriaError",
+    "build_session_search_criteria_text",
+    "build_session_sql_filters_text",
     "parse_session_search_criteria",
     "parse_session_sql_filters",
     "resolve_session_variable",
@@ -116,6 +118,19 @@ def parse_session_search_criteria(criteria_text: str) -> list[dict[str, str]]:
     return criteria
 
 
+def build_session_search_criteria_text(
+    variable_name: str,
+    variable_value: str,
+    *,
+    use_advanced_filters: bool = False,
+    advanced_criteria_text: str = "",
+) -> str:
+    """Return the criteria text submitted to the session-search parser."""
+    if use_advanced_filters:
+        return str(advanced_criteria_text or "").strip()
+    return f"{str(variable_name or '').strip()} = {str(variable_value or '').strip()}"
+
+
 _SQL_FILTER_PATTERN = re.compile(
     r"^(created|creation_date|modified|modified_date|steps|num_steps|number_of_steps|user_id)"
     r"\s*(<=|>=|!=|=|<|>)\s*(.+)$",
@@ -163,6 +178,35 @@ def parse_session_sql_filters(filters_text: str) -> list[dict[str, Any]]:
             ) from error
         filters.append({"field": field, "operator": operator, "value": value})
     return filters
+
+
+def _iso_date_text(value: Any) -> str:
+    if not value:
+        return ""
+    if hasattr(value, "format_date"):
+        return value.format_date("yyyy-MM-dd")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def build_session_sql_filters_text(
+    *,
+    skip_first_step_sessions: bool = True,
+    start_date: Any = None,
+    end_date: Any = None,
+) -> str:
+    """Build SQL-filter text from the simple interview fields."""
+    filters: list[str] = []
+    if skip_first_step_sessions:
+        filters.append("steps >= 2")
+    start_date_text = _iso_date_text(start_date)
+    if start_date_text:
+        filters.append(f"modified >= {start_date_text}")
+    end_date_text = _iso_date_text(end_date)
+    if end_date_text:
+        filters.append(f"modified <= {end_date_text}")
+    return "\n".join(filters)
 
 
 def resolve_session_variable(variables: Mapping[str, Any], path: str) -> Any:
@@ -226,13 +270,19 @@ def _default_session_lister(
         "created": "DATE(summary.created)",
         "modified": "DATE(summary.modified)",
         "steps": "summary.num_keys",
-        "user_id": "userdictkeys.user_id",
     }
     for index, sql_filter in enumerate(sql_filters):
         parameter_name = f"filter_{index}"
-        clauses.append(
-            f"{sql_columns[sql_filter['field']]} {sql_filter['operator']} :{parameter_name}"
-        )
+        if sql_filter["field"] == "user_id":
+            clauses.append(
+                "EXISTS (SELECT 1 FROM userdictkeys AS filtered_users "
+                "WHERE filtered_users.key = summary.key "
+                f"AND filtered_users.user_id {sql_filter['operator']} :{parameter_name})"
+            )
+        else:
+            clauses.append(
+                f"{sql_columns[sql_filter['field']]} {sql_filter['operator']} :{parameter_name}"
+            )
         parameters[parameter_name] = (
             date.fromisoformat(sql_filter["value"])
             if sql_filter["field"] in {"created", "modified"}
@@ -243,7 +293,7 @@ def _default_session_lister(
         """
         SELECT summary.filename AS filename,
                summary.num_keys AS num_keys,
-               userdictkeys.user_id AS user_id,
+               joined_users.user_id AS user_id,
                summary.modified AS modtime,
                summary.created AS created,
                summary.key AS key,
@@ -258,7 +308,11 @@ def _default_session_lister(
                   FROM userdict
                  GROUP BY filename, key
                ) AS summary
-          LEFT JOIN userdictkeys ON userdictkeys.key = summary.key
+          LEFT JOIN (
+                SELECT key, MIN(user_id) AS user_id
+                  FROM userdictkeys
+                 GROUP BY key
+               ) AS joined_users ON joined_users.key = summary.key
           LEFT JOIN jsonstorage
                  ON jsonstorage.key = summary.key
                 AND jsonstorage.tags = :metadata
@@ -312,6 +366,7 @@ def search_interview_sessions(
     matching_sessions = 0
     load_errors = 0
     offset = 0
+    seen_session_ids: set[str] = set()
 
     while True:
         batch = list_sessions(
@@ -327,6 +382,9 @@ def search_interview_sessions(
             if not session_id:
                 load_errors += 1
                 continue
+            if session_id in seen_session_ids:
+                continue
+            seen_session_ids.add(session_id)
             sessions_examined += 1
             try:
                 variables = load_variables(filename, session_id)

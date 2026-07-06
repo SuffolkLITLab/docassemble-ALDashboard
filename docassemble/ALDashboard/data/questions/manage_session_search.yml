@@ -29,33 +29,51 @@ code: |
 id: session search form
 question: Search interview sessions
 subquestion: |
-  Enter one filter per line using `variable = partial text`. Filters are
-  case-insensitive and all filters must match. Variable paths may contain
-  attributes, quoted dictionary keys, and integer list indexes.
-
-  Example: `legalserver_data["client"]["last_name"] = Smith`
+  Search saved sessions for an interview by matching values in their answer
+  dictionaries. The default search matches one variable against one partial
+  value.
 fields:
   - Interview filename: session_search_filename
-    default: docassemble.WorkflowDocs:data/questions/slsct_bankruptcy_main.yml
-    hint: docassemble.Package:data/questions/interview.yml
-  - Filters: session_search_criteria_text
+    under text: "Like: docassemble.Package:data/questions/interview.yml"
+  - Use advanced answer-variable filters: session_search_use_advanced_filters
+    datatype: yesno
+    default: False
+  - Variable name: session_search_variable_name
+    show if:
+      variable: session_search_use_advanced_filters
+      is: False
+    label above field: True
+    grid: 6    
+  - Value contains: session_search_variable_value
+    show if:
+      variable: session_search_use_advanced_filters
+      is: False
+    label above field: True
+    grid: 6
+  - note: |
+      **Answer-variable filter syntax:** enter one filter per line as
+      `variable = partial text`. Do not quote the partial text. Quote dictionary
+      keys inside a variable path, for example:
+
+      `legalserver_data["case_number"] = 12345`
+
+      `clients[0].name.last = Smith`
+    show if: session_search_use_advanced_filters
+  - Advanced filters: session_search_criteria_text
     datatype: area
     rows: 6
-    hint: |
-      legalserver_data["case_number"] = 12345
-      clients[0].name.last = Smith
-  - Database filters (optional): session_search_sql_filters_text
-    datatype: area
-    rows: 4
     required: False
-    hint: |
-      created >= 2026-01-01
-      modified <= 2026-06-30
-      steps >= 2
-    help: |
-      These filters run in SQL before session answers are loaded. Supported fields
-      are `created`, `modified`, `steps`, and `user_id`. Supported operators are
-      `=`, `!=`, `<`, `<=`, `>`, and `>=`. Dates use `YYYY-MM-DD`.
+    show if: session_search_use_advanced_filters
+  - Filter out sessions that are on the first page: session_search_skip_first_step_sessions
+    datatype: yesno
+    default: True
+    required: False
+  - Modified on or after: session_search_start_date
+    datatype: date
+    required: False
+  - Modified on or before: session_search_end_date
+    datatype: date
+    required: False
   - Maximum matching sessions to display: session_search_max_results
     datatype: integer
     default: 100
@@ -64,11 +82,34 @@ fields:
 validation code: |
   if ":" not in session_search_filename or not session_search_filename.endswith((".yml", ".yaml")):
     validation_error("Enter a full docassemble interview filename.", field="session_search_filename")
+  if session_search_use_advanced_filters:
+    session_search_resolved_criteria_text = build_session_search_criteria_text(
+      "",
+      "",
+      use_advanced_filters=True,
+      advanced_criteria_text=session_search_criteria_text,
+    )
+  else:
+    session_search_resolved_criteria_text = build_session_search_criteria_text(
+      session_search_variable_name,
+      session_search_variable_value,
+    )
+  session_search_resolved_sql_filters_text = build_session_sql_filters_text(
+    skip_first_step_sessions=session_search_skip_first_step_sessions,
+    start_date=session_search_start_date,
+    end_date=session_search_end_date,
+  )
   try:
-    parse_session_search_criteria(session_search_criteria_text)
-    parse_session_sql_filters(session_search_sql_filters_text)
+    parse_session_search_criteria(session_search_resolved_criteria_text)
   except SessionSearchCriteriaError as error:
-    validation_error(str(error), field="session_search_criteria_text")
+    validation_error(
+      str(error),
+      field="session_search_criteria_text" if session_search_use_advanced_filters else "session_search_variable_name",
+    )
+  try:
+    parse_session_sql_filters(session_search_resolved_sql_filters_text)
+  except SessionSearchCriteriaError as error:
+    validation_error(str(error), field="session_search_start_date")
   undefine("session_search_task")
 continue button field: session_search_form
 ---
@@ -76,8 +117,8 @@ code: |
   session_search_task = background_action(
     "run_session_search",
     filename=session_search_filename.strip(),
-    criteria_text=session_search_criteria_text,
-    sql_filters_text=session_search_sql_filters_text,
+    criteria_text=session_search_resolved_criteria_text,
+    sql_filters_text=session_search_resolved_sql_filters_text,
     max_results=session_search_max_results,
   )
 ---

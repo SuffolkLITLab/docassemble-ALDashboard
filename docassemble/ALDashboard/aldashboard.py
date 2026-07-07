@@ -1163,8 +1163,8 @@ LEFT JOIN
 WHERE 
     (userdict.user_id = :user_id OR :user_id is null)
     AND (userdict.filename = :filename OR :filename is null)
-    AND (:start_date is null OR DATE(mostrecent.modtime) >= :start_date)
-    AND (:end_date is null OR DATE(mostrecent.modtime) <= :end_date)
+    AND (:start_date is null OR DATE(mostrecent.modtime) >= CAST(:start_date AS DATE))
+    AND (:end_date is null OR DATE(mostrecent.modtime) <= CAST(:end_date AS DATE))
 ORDER BY 
     modtime DESC 
 LIMIT 500;

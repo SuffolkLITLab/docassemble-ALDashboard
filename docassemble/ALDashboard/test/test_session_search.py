@@ -1,9 +1,9 @@
 # do not pre-load
-import importlib
-import sys
-import types
+import ast
 from collections import namedtuple
-from unittest.mock import patch
+from datetime import date
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 class _DummyDB:
@@ -11,86 +11,71 @@ class _DummyDB:
         raise RuntimeError("Database access is not available in this unit test.")
 
 
-def _stub_module(name, **attrs):
-    module = types.ModuleType(name)
-    for attr_name, attr_value in attrs.items():
-        setattr(module, attr_name, attr_value)
-    return module
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 
-_IMPORT_STUBS = {
-    "docassemble.webapp.users": _stub_module("docassemble.webapp.users", __path__=[]),
-    "docassemble.webapp.users.models": _stub_module(
-        "docassemble.webapp.users.models",
-        UserModel=object,
-        Role=object,
-        UserDict=object,
-        UserRoles=object,
-    ),
-    "docassemble.webapp.db_object": _stub_module(
-        "docassemble.webapp.db_object",
-        init_sqlalchemy=lambda: _DummyDB(),
-    ),
-    "github": _stub_module("github", Github=object),
-    "flask": _stub_module("flask", current_app=None),
-    "sqlalchemy.sql": _stub_module("sqlalchemy.sql", text=lambda value: value),
-    "sqlalchemy": _stub_module("sqlalchemy", or_=lambda *args: args),
-    "sqlalchemy.orm": _stub_module(
-        "sqlalchemy.orm",
-        joinedload=lambda *args, **kwargs: None,
-    ),
-    "docassemble.webapp.worker": _stub_module("docassemble.webapp.worker"),
-    "docassemble.webapp.server": _stub_module(
-        "docassemble.webapp.server",
-        user_can_edit_package=lambda *args, **kwargs: False,
-        get_master_branch=lambda *args, **kwargs: "",
-        install_git_package=lambda *args, **kwargs: None,
-        redirect=lambda *args, **kwargs: None,
-        should_run_create=lambda *args, **kwargs: False,
-        flash=lambda *args, **kwargs: None,
-        url_for=lambda *args, **kwargs: "",
-        restart_all=lambda *args, **kwargs: None,
-        install_pip_package=lambda *args, **kwargs: None,
-        get_package_info=lambda *args, **kwargs: {},
-        get_session_variables=lambda *args, **kwargs: {},
-    ),
-    "docassemble.webapp.backend": _stub_module(
-        "docassemble.webapp.backend", cloud=None
-    ),
-    "docassemble.base.config": _stub_module("docassemble.base.config", daconfig={}),
-    "docassemble.base.functions": _stub_module(
-        "docassemble.base.functions",
-        serializable_dict=lambda value, **kwargs: value,
-    ),
-    "docassemble.base.util": _stub_module(
-        "docassemble.base.util",
-        log=lambda *args, **kwargs: None,
-        DAFile=object,
-        DAObject=object,
-        DAList=list,
-        word=lambda value: value,
-        DAFileList=list,
-        get_config=lambda *args, **kwargs: {},
-        user_has_privilege=lambda *args, **kwargs: False,
-        DACloudStorage=object,
-        user_info=lambda: None,
-        user_logged_in=lambda: False,
-        get_user_info=lambda *args, **kwargs: {},
-    ),
-    "docassemble.webapp.files": _stub_module(
-        "docassemble.webapp.files",
-        SavedFile=object,
-    ),
-}
+class _HelperModule:
+    def __init__(self, namespace):
+        object.__setattr__(self, "_namespace", namespace)
 
-with patch.dict(sys.modules, _IMPORT_STUBS):
-    aldashboard = importlib.import_module("docassemble.ALDashboard.aldashboard")
-    SessionSearchCriteriaError = aldashboard.SessionSearchCriteriaError
-    build_session_search_criteria_text = aldashboard.build_session_search_criteria_text
-    format_session_users = aldashboard.format_session_users
-    parse_session_search_criteria = aldashboard.parse_session_search_criteria
-    resolve_session_variable = aldashboard.resolve_session_variable
-    speedy_get_sessions = aldashboard.speedy_get_sessions
+    def __getattr__(self, name):
+        return self._namespace[name]
+
+    def __setattr__(self, name, value):
+        self._namespace[name] = value
+
+
+def _load_session_search_helpers():
+    source = (PACKAGE_ROOT / "aldashboard.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    lines = source.splitlines(keepends=True)
+    names = {
+        "SessionSearchCriteriaError",
+        "_SessionSearchPathPart",
+        "_split_session_search_criterion",
+        "_parse_session_search_path",
+        "parse_session_search_criteria",
+        "build_session_search_criteria_text",
+        "resolve_session_variable",
+        "_display_session_value",
+        "_session_matches_criteria",
+        "_iso_date_text",
+        "format_session_users",
+        "speedy_get_sessions",
+    }
+    namespace = {
+        "Any": Any,
+        "Dict": Dict,
+        "List": List,
+        "Optional": Optional,
+        "Set": Set,
+        "Tuple": Tuple,
+        "ast": ast,
+        "date": date,
+        "db": _DummyDB(),
+        "get_session_variables": lambda *args, **kwargs: {},
+        "log": lambda *args, **kwargs: None,
+        "text": lambda value: value,
+        "user_has_privilege": lambda privileges: False,
+    }
+    found = set()
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in names:
+            exec("".join(lines[node.lineno - 1 : node.end_lineno]), namespace)
+            found.add(node.name)
+    missing = names - found
+    if missing:
+        raise AssertionError(f"Missing helpers in aldashboard.py: {sorted(missing)}")
+    return _HelperModule(namespace)
+
+
+aldashboard = _load_session_search_helpers()
+SessionSearchCriteriaError = aldashboard.SessionSearchCriteriaError
+build_session_search_criteria_text = aldashboard.build_session_search_criteria_text
+format_session_users = aldashboard.format_session_users
+parse_session_search_criteria = aldashboard.parse_session_search_criteria
+resolve_session_variable = aldashboard.resolve_session_variable
+speedy_get_sessions = aldashboard.speedy_get_sessions
 
 
 def test_build_session_search_criteria_text_from_simple_fields():
@@ -219,6 +204,7 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
 
         def execute(self, *args, **kwargs):
             executed["query"] = args[0]
+            executed["params"] = args[1]
             return rows
 
     class DB:
@@ -227,7 +213,11 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
 
     monkeypatch.setattr(aldashboard, "db", DB())
 
-    sessions = speedy_get_sessions(filename="pkg:data/questions/a.yml")
+    sessions = speedy_get_sessions(
+        filename="pkg:data/questions/a.yml",
+        start_date="2026-01-01",
+        end_date="2026-01-31",
+    )
 
     assert [session.key for session in sessions] == ["abc", "def"]
     assert "MIN(user_id) AS user_id" in executed["query"]
@@ -236,6 +226,10 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
         in executed["query"]
     )
     assert ") joined_users ON joined_users.key = userdict.key" in executed["query"]
+    assert "DATE(mostrecent.modtime) >= CAST(:start_date AS DATE)" in executed["query"]
+    assert "DATE(mostrecent.modtime) <= CAST(:end_date AS DATE)" in executed["query"]
+    assert executed["params"]["start_date"] == "2026-01-01"
+    assert executed["params"]["end_date"] == "2026-01-31"
 
 
 def test_speedy_get_sessions_can_filter_by_answer_criteria(monkeypatch):

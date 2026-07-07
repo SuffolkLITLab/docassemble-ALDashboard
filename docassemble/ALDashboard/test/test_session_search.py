@@ -54,7 +54,9 @@ _IMPORT_STUBS = {
         get_package_info=lambda *args, **kwargs: {},
         get_session_variables=lambda *args, **kwargs: {},
     ),
-    "docassemble.webapp.backend": _stub_module("docassemble.webapp.backend", cloud=None),
+    "docassemble.webapp.backend": _stub_module(
+        "docassemble.webapp.backend", cloud=None
+    ),
     "docassemble.base.config": _stub_module("docassemble.base.config", daconfig={}),
     "docassemble.base.functions": _stub_module(
         "docassemble.base.functions",
@@ -130,7 +132,10 @@ def test_resolve_session_variable_supports_names_indexes_and_keys():
         "legalserver_data": {"case_number": "12345"},
     }
 
-    assert resolve_session_variable(variables, 'legalserver_data["case_number"]') == "12345"
+    assert (
+        resolve_session_variable(variables, 'legalserver_data["case_number"]')
+        == "12345"
+    )
     assert resolve_session_variable(variables, "clients[0].name.last") == "Smith"
 
 
@@ -176,8 +181,32 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
         ],
     )
     rows = [
-        Row("pkg:data/questions/a.yml", 3, 1, "1,7", "2026-01-02", "abc", "", "A", "", "", ""),
-        Row("pkg:data/questions/a.yml", 4, 1, "1", "2026-01-03", "def", "", "B", "", "", ""),
+        Row(
+            "pkg:data/questions/a.yml",
+            3,
+            1,
+            "1,7",
+            "2026-01-02",
+            "abc",
+            "",
+            "A",
+            "",
+            "",
+            "",
+        ),
+        Row(
+            "pkg:data/questions/a.yml",
+            4,
+            1,
+            "1",
+            "2026-01-03",
+            "def",
+            "",
+            "B",
+            "",
+            "",
+            "",
+        ),
     ]
     executed = {}
 
@@ -202,7 +231,10 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
 
     assert [session.key for session in sessions] == ["abc", "def"]
     assert "MIN(user_id) AS user_id" in executed["query"]
-    assert "STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids" in executed["query"]
+    assert (
+        "STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids"
+        in executed["query"]
+    )
     assert ") joined_users ON joined_users.key = userdict.key" in executed["query"]
 
 
@@ -224,8 +256,32 @@ def test_speedy_get_sessions_can_filter_by_answer_criteria(monkeypatch):
         ],
     )
     rows = [
-        Row("pkg:data/questions/a.yml", 3, 1, "1", "2026-01-02", "abc", "", "A", "", "", ""),
-        Row("pkg:data/questions/a.yml", 4, 1, "1", "2026-01-03", "def", "", "B", "", "", ""),
+        Row(
+            "pkg:data/questions/a.yml",
+            3,
+            1,
+            "1",
+            "2026-01-02",
+            "abc",
+            "",
+            "A",
+            "",
+            "",
+            "",
+        ),
+        Row(
+            "pkg:data/questions/a.yml",
+            4,
+            1,
+            "1",
+            "2026-01-03",
+            "def",
+            "",
+            "B",
+            "",
+            "",
+            "",
+        ),
     ]
 
     class Connection:
@@ -277,8 +333,32 @@ def test_speedy_get_sessions_skips_unloadable_sessions_during_search(monkeypatch
         ],
     )
     rows = [
-        Row("pkg:data/questions/a.yml", 3, 1, "1", "2026-01-02", "bad", "", "Bad", "", "", ""),
-        Row("pkg:data/questions/a.yml", 4, 1, "1", "2026-01-03", "abc", "", "A", "", "", ""),
+        Row(
+            "pkg:data/questions/a.yml",
+            3,
+            1,
+            "1",
+            "2026-01-02",
+            "bad",
+            "",
+            "Bad",
+            "",
+            "",
+            "",
+        ),
+        Row(
+            "pkg:data/questions/a.yml",
+            4,
+            1,
+            "1",
+            "2026-01-03",
+            "abc",
+            "",
+            "A",
+            "",
+            "",
+            "",
+        ),
     ]
     log_messages = []
 
@@ -298,7 +378,9 @@ def test_speedy_get_sessions_skips_unloadable_sessions_during_search(monkeypatch
 
     def get_variables(filename, session_id, **kwargs):
         if session_id == "bad":
-            raise Exception("Unable to decrypt interview dictionary: could not find MARK")
+            raise Exception(
+                "Unable to decrypt interview dictionary: could not find MARK"
+            )
         return {"client": {"last_name": "Smith"}}
 
     monkeypatch.setattr(aldashboard, "db", DB())

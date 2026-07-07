@@ -1054,7 +1054,10 @@ def _session_matches_criteria(
     variables = get_session_variables(filename, session_id, secret=None, simplify=False)
     for criterion in criteria:
         value = resolve_session_variable(variables, criterion["path"])
-        if criterion["query"].casefold() not in _display_session_value(value).casefold():
+        if (
+            criterion["query"].casefold()
+            not in _display_session_value(value).casefold()
+        ):
             return False
     return True
 
@@ -1077,10 +1080,11 @@ def format_session_users(session: Any, users_by_id: Dict[int, str]) -> str:
     if not raw_user_ids:
         return "Anonymous"
 
+    candidate_user_ids: List[Any]
     if isinstance(raw_user_ids, str):
         candidate_user_ids = raw_user_ids.split(",")
     elif isinstance(raw_user_ids, (list, tuple, set)):
-        candidate_user_ids = raw_user_ids
+        candidate_user_ids = list(raw_user_ids)
     else:
         candidate_user_ids = [raw_user_ids]
 
@@ -1195,7 +1199,7 @@ LIMIT 500;
                 "start_date": start_date_text,
                 "end_date": end_date_text,
             },
-    )
+        )
     sessions = []
     for session in rs:
         session_id = str(session.key or "")
@@ -1203,7 +1207,9 @@ LIMIT 500;
             continue
         if criteria:
             try:
-                if not _session_matches_criteria(session.filename, session_id, criteria):
+                if not _session_matches_criteria(
+                    session.filename, session_id, criteria
+                ):
                     continue
             except (AttributeError, IndexError, KeyError, TypeError, ValueError):
                 continue

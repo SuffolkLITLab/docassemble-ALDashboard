@@ -143,8 +143,8 @@ fields:
 
         self.assertIn("% if showifdef('non_payment') == False:", output)
         self.assertIn("% if showifdef('trial_court') == None:", output)
-        self.assertNotIn('== \"False\"', output)
-        self.assertNotIn('== \"None\"', output)
+        self.assertNotIn('== "False"', output)
+        self.assertNotIn('== "None"', output)
 
     def test_duplicate_list_declarations_create_one_revisit_block(self):
         sample = """

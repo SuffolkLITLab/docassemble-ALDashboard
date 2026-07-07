@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import re
+import ast
 import requests
 import calendar
 from importlib.metadata import distributions
@@ -53,7 +54,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import werkzeug
 import importlib.resources
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from docassemble.webapp.files import SavedFile
 
 db = init_sqlalchemy()
@@ -63,6 +64,11 @@ __all__ = [
     "reset",
     "speedy_get_users",
     "speedy_get_sessions",
+    "SessionSearchCriteriaError",
+    "build_session_search_criteria_text",
+    "parse_session_search_criteria",
+    "resolve_session_variable",
+    "format_session_users",
     "get_users_and_name",
     "da_get_config",
     "da_get_config_as_file",
@@ -908,11 +914,199 @@ def delete_inactive_developer_accounts(
     }
 
 
+class SessionSearchCriteriaError(ValueError):
+    """Raised when a session-search criterion is malformed or unsafe."""
+
+
+class _SessionSearchPathPart:
+    def __init__(self, kind: str, value: Any):
+        self.kind = kind
+        self.value = value
+
+
+def _split_session_search_criterion(line: str) -> Tuple[str, str]:
+    """Split ``path = value`` at an equals sign outside quotes and brackets."""
+    quote: Optional[str] = None
+    escaped = False
+    depth = 0
+    for index, character in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {"'", '"'}:
+            quote = character
+        elif character in "([":
+            depth += 1
+        elif character in ")]":
+            depth -= 1
+        elif character == "=" and depth == 0:
+            return line[:index].strip(), line[index + 1 :].strip()
+    raise SessionSearchCriteriaError(
+        "Each filter must use the format variable_name = partial text."
+    )
+
+
+def _parse_session_search_path(path: str) -> List[_SessionSearchPathPart]:
+    try:
+        node = ast.parse(path, mode="eval").body
+    except (SyntaxError, ValueError) as error:
+        raise SessionSearchCriteriaError(f"Invalid variable path: {path}") from error
+
+    parts: List[_SessionSearchPathPart] = []
+
+    def visit(current: ast.AST) -> None:
+        if isinstance(current, ast.Name):
+            if current.id.startswith("_"):
+                raise SessionSearchCriteriaError(f"Unsafe variable path: {path}")
+            parts.append(_SessionSearchPathPart("name", current.id))
+            return
+        if isinstance(current, ast.Attribute):
+            visit(current.value)
+            if current.attr.startswith("_"):
+                raise SessionSearchCriteriaError(f"Unsafe variable path: {path}")
+            parts.append(_SessionSearchPathPart("attribute", current.attr))
+            return
+        if isinstance(current, ast.Subscript):
+            visit(current.value)
+            slice_node = current.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(
+                slice_node.value, (str, int)
+            ):
+                parts.append(_SessionSearchPathPart("item", slice_node.value))
+                return
+            raise SessionSearchCriteriaError(
+                f"Only quoted keys and integer indexes are allowed in: {path}"
+            )
+        raise SessionSearchCriteriaError(
+            f"Only names, attributes, quoted keys, and integer indexes are allowed in: {path}"
+        )
+
+    visit(node)
+    return parts
+
+
+def parse_session_search_criteria(criteria_text: str) -> List[Dict[str, str]]:
+    """Parse one case-insensitive partial-match criterion per nonblank line."""
+    criteria: List[Dict[str, str]] = []
+    for line_number, raw_line in enumerate(str(criteria_text or "").splitlines(), 1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            path, query = _split_session_search_criterion(line)
+            if not path or not query:
+                raise SessionSearchCriteriaError(
+                    "Both the variable path and partial text are required."
+                )
+            _parse_session_search_path(path)
+        except SessionSearchCriteriaError as error:
+            raise SessionSearchCriteriaError(f"Line {line_number}: {error}") from error
+        criteria.append({"path": path, "query": query})
+    if not criteria:
+        raise SessionSearchCriteriaError("Enter at least one filter.")
+    return criteria
+
+
+def build_session_search_criteria_text(
+    variable_name: str,
+    variable_value: str,
+    *,
+    use_advanced_filters: bool = False,
+    advanced_criteria_text: str = "",
+) -> str:
+    """Return the criteria text submitted to the session-search parser."""
+    if use_advanced_filters:
+        return str(advanced_criteria_text or "").strip()
+    return f"{str(variable_name or '').strip()} = {str(variable_value or '').strip()}"
+
+
+def resolve_session_variable(variables: Dict[str, Any], path: str) -> Any:
+    """Resolve a restricted Python-style path without using ``eval``."""
+    value: Any = variables
+    for part in _parse_session_search_path(path):
+        if part.kind in {"name", "item"}:
+            value = value[part.value]
+        else:
+            value = (
+                value[part.value]
+                if isinstance(value, dict) and part.value in value
+                else getattr(value, part.value)
+            )
+    return value
+
+
+def _display_session_value(value: Any) -> str:
+    try:
+        return str(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
+
+
+def _session_matches_criteria(
+    filename: str, session_id: str, criteria: List[Dict[str, str]]
+) -> bool:
+    variables = get_session_variables(filename, session_id, secret=None, simplify=False)
+    for criterion in criteria:
+        value = resolve_session_variable(variables, criterion["path"])
+        if criterion["query"].casefold() not in _display_session_value(value).casefold():
+            return False
+    return True
+
+
+def _iso_date_text(value: Any) -> str:
+    if not value:
+        return ""
+    if hasattr(value, "format_date"):
+        return value.format_date("yyyy-MM-dd")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def format_session_users(session: Any, users_by_id: Dict[int, str]) -> str:
+    """Return a readable list of users associated with a session row."""
+    raw_user_ids = getattr(session, "user_ids", None)
+    if raw_user_ids is None:
+        raw_user_ids = getattr(session, "user_id", None)
+    if not raw_user_ids:
+        return "Anonymous"
+
+    if isinstance(raw_user_ids, str):
+        candidate_user_ids = raw_user_ids.split(",")
+    elif isinstance(raw_user_ids, (list, tuple, set)):
+        candidate_user_ids = raw_user_ids
+    else:
+        candidate_user_ids = [raw_user_ids]
+
+    user_labels: List[str] = []
+    seen_user_ids: Set[int] = set()
+    for raw_user_id in candidate_user_ids:
+        try:
+            user_id = int(raw_user_id)
+        except (TypeError, ValueError):
+            continue
+        if user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(user_id)
+        user_labels.append(users_by_id.get(user_id, f"User ID {user_id}"))
+
+    return ", ".join(user_labels) if user_labels else "Anonymous"
+
+
 def speedy_get_sessions(
     user_id: Optional[int] = None,
     filename: Optional[str] = None,
     filter_step1: bool = True,
     metadata_key_name: str = "metadata",
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
+    search_criteria_text: Optional[str] = None,
 ) -> List[Tuple]:
     """
     Return a list of the most recent 500 sessions, optionally tied to a specific user ID.
@@ -927,7 +1121,8 @@ def speedy_get_sessions(
 SELECT 
     userdict.filename as filename,
     num_keys,
-    userdictkeys.user_id as user_id,
+    joined_users.user_id as user_id,
+    joined_users.user_ids as user_ids,
     mostrecent.modtime as modtime,  -- This retrieves the most recent modification time for each key
     userdict.key as key,
     jsonstorage.data->>'auto_title' as auto_title,
@@ -951,12 +1146,21 @@ NATURAL JOIN
             COUNT(key) > 1 OR :filter_step1 = False
     ) mostrecent
 LEFT JOIN 
-    userdictkeys ON userdictkeys.key = userdict.key
+    (
+        SELECT
+            key,
+            MIN(user_id) AS user_id,
+            STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids
+        FROM userdictkeys
+        GROUP BY key
+    ) joined_users ON joined_users.key = userdict.key
 LEFT JOIN 
     jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = :metadata
 WHERE 
     (userdict.user_id = :user_id OR :user_id is null)
     AND (userdict.filename = :filename OR :filename is null)
+    AND (:start_date is null OR DATE(mostrecent.modtime) >= :start_date)
+    AND (:end_date is null OR DATE(mostrecent.modtime) <= :end_date)
 ORDER BY 
     modtime DESC 
 LIMIT 500;
@@ -972,6 +1176,13 @@ LIMIT 500;
 
     # Ensure filter_step1 is a boolean
     filter_step1 = bool(filter_step1)
+    start_date_text = _iso_date_text(start_date) or None
+    end_date_text = _iso_date_text(end_date) or None
+    criteria = (
+        parse_session_search_criteria(search_criteria_text)
+        if search_criteria_text
+        else []
+    )
 
     with db.connect() as con:
         rs = con.execute(
@@ -981,9 +1192,28 @@ LIMIT 500;
                 "filename": filename,
                 "filter_step1": filter_step1,
                 "metadata": metadata_key_name,
+                "start_date": start_date_text,
+                "end_date": end_date_text,
             },
-        )
-    sessions = [session for session in rs]
+    )
+    sessions = []
+    for session in rs:
+        session_id = str(session.key or "")
+        if not session_id:
+            continue
+        if criteria:
+            try:
+                if not _session_matches_criteria(session.filename, session_id, criteria):
+                    continue
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                continue
+            except Exception as error:
+                log(
+                    "speedy_get_sessions: skipped session "
+                    f"{session_id} for {session.filename} because it could not be loaded: {error}"
+                )
+                continue
+        sessions.append(session)
 
     return sessions
 

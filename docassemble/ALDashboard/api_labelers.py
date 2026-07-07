@@ -407,6 +407,30 @@ def _apply_pdf_field_visual_defaults(
         pdf.save(pdf_path)
 
 
+def _copy_pdf_page_tab_order(source_pdf_path: str, output_pdf_path: str) -> None:
+    """Preserve per-page PDF tab order settings from one PDF in another."""
+    import pikepdf
+
+    with (
+        pikepdf.open(source_pdf_path) as source_pdf,
+        pikepdf.open(output_pdf_path, allow_overwriting_input=True) as output_pdf,
+    ):
+        source_page_count = len(source_pdf.pages)
+        for page_index, output_page in enumerate(output_pdf.pages):
+            if (
+                page_index < source_page_count
+                and "/Tabs" in source_pdf.pages[page_index]
+            ):
+                source_tabs = source_pdf.pages[page_index]["/Tabs"]
+                if getattr(source_tabs, "is_indirect", False):
+                    output_page["/Tabs"] = output_pdf.copy_foreign(source_tabs)
+                else:
+                    output_page["/Tabs"] = pikepdf.Name(str(source_tabs))
+            elif "/Tabs" in output_page:
+                del output_page["/Tabs"]  # type: ignore[operator]
+        output_pdf.save(output_pdf_path)
+
+
 def _normalize_provider_family(family_name: Optional[str]) -> str:
     """Normalize model provider aliases into the labeler provider keys.
 
@@ -3955,22 +3979,7 @@ def pdf_labeler_copy_fields() -> Response:
             # Preserve the source PDF's per-page tab order setting (/Tabs).
             # Without this, viewers fall back to visual row order even though
             # copy_pdf_fields already copied the Annots array in source order.
-            import pikepdf as _pikepdf
-
-            with (
-                _pikepdf.open(source_path) as _src_pdf,
-                _pikepdf.open(output_path, allow_overwriting_input=True) as _out_pdf,
-            ):
-                _src_page_count = len(_src_pdf.pages)
-                for _page_index, _out_page in enumerate(_out_pdf.pages):
-                    if (
-                        _page_index < _src_page_count
-                        and "/Tabs" in _src_pdf.pages[_page_index]
-                    ):
-                        _out_page["/Tabs"] = _src_pdf.pages[_page_index]["/Tabs"]
-                    elif "/Tabs" in _out_page:
-                        del _out_page["/Tabs"]  # type: ignore[operator]
-                _out_pdf.save(output_path)
+            _copy_pdf_page_tab_order(source_path, output_path)
 
             from .pdf_accessibility import (
                 apply_pdf_accessibility_settings,

@@ -5,8 +5,7 @@ from functools import lru_cache
 from importlib import metadata
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from docassemble.webapp.backend import directory_for
-from docassemble.webapp.files import SavedFile
+from .docassemble_compat import SavedFile, directory_for
 
 from .api_dashboard_utils import yaml_reformat_payload_from_options
 from .interview_linter import _resolve_current_user_id

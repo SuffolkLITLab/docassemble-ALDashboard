@@ -27,9 +27,11 @@ _STUB_PREFIX = textwrap.dedent("""
 
     fake_app = Flask("api_labelers_test")
 
-    app_object_module = types.ModuleType("docassemble.webapp.app_object")
-    app_object_module.app = fake_app
-    app_object_module.csrf = types.SimpleNamespace(exempt=lambda func: func)
+    flask_app_module = types.ModuleType("docassemble.webapp.flask_app")
+    flask_app_module.flaskapp = fake_app
+
+    extensions_module = types.ModuleType("docassemble.webapp.extensions")
+    extensions_module.csrf = types.SimpleNamespace(exempt=lambda func: func)
 
     class _FakePipeline:
         def set(self, *args, **kwargs): return self
@@ -40,10 +42,14 @@ _STUB_PREFIX = textwrap.dedent("""
         def get(self, *args, **kwargs): return None
         def pipeline(self): return _FakePipeline()
 
-    server_module = types.ModuleType("docassemble.webapp.server")
-    server_module.api_verify = lambda: False
-    server_module.jsonify_with_status = lambda body, status: (body, status)
-    server_module.r = _FakeRedis()
+    api_helpers_module = types.ModuleType("docassemble.webapp.api.helpers")
+    api_helpers_module.api_verify = lambda: False
+
+    utils_helpers_module = types.ModuleType("docassemble.webapp.utils.helpers")
+    utils_helpers_module.jsonify_with_status = lambda body, status: (body, status)
+
+    daredis_module = types.ModuleType("docassemble.webapp.daredis")
+    daredis_module.r = _FakeRedis()
 
     worker_common_module = types.ModuleType("docassemble.webapp.worker_common")
     worker_common_module.workerapp = types.SimpleNamespace(
@@ -59,8 +65,11 @@ _STUB_PREFIX = textwrap.dedent("""
     base_util_module = types.ModuleType("docassemble.base.util")
     base_util_module.log = lambda *args, **kwargs: None
 
-    sys.modules["docassemble.webapp.app_object"] = app_object_module
-    sys.modules["docassemble.webapp.server"] = server_module
+    sys.modules["docassemble.webapp.flask_app"] = flask_app_module
+    sys.modules["docassemble.webapp.extensions"] = extensions_module
+    sys.modules["docassemble.webapp.api.helpers"] = api_helpers_module
+    sys.modules["docassemble.webapp.utils.helpers"] = utils_helpers_module
+    sys.modules["docassemble.webapp.daredis"] = daredis_module
     sys.modules["docassemble.webapp.worker_common"] = worker_common_module
     sys.modules["docassemble.base.config"] = base_config_module
     sys.modules["docassemble.base.functions"] = base_functions_module

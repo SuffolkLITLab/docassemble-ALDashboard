@@ -14,10 +14,46 @@ from flask_cors import cross_origin
 
 from docassemble.base.config import daconfig, in_celery
 from docassemble.base.util import log
-from docassemble.webapp.app_object import app, csrf
-from docassemble.webapp.server import api_verify, jsonify_with_status, r, save_user_dict
+
+try:
+    from docassemble.webapp.flask_app import flaskapp as app
+    from docassemble.webapp.extensions import csrf
+    from docassemble.webapp.api.helpers import api_verify
+    from docassemble.webapp.utils.helpers import jsonify_with_status
+    from docassemble.webapp.interview.helpers import save_user_dict
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.flask_app",
+        "docassemble.webapp.extensions",
+        "docassemble.webapp.api",
+        "docassemble.webapp.api.helpers",
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+        "docassemble.webapp.interview",
+        "docassemble.webapp.interview.helpers",
+    }:
+        raise
+    # docassemble < 1.10 exposes these objects from the legacy modules.
+    from docassemble.webapp.app_object import app, csrf
+    from docassemble.webapp.server import (
+        api_verify,
+        jsonify_with_status,
+        save_user_dict,
+    )
+
+from docassemble.webapp.daredis import r
 from docassemble.webapp import worker as da_worker
-from docassemble.webapp.cron import get_cron_user
+
+try:
+    from docassemble.webapp.cron_tasks.cli import get_cron_user
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.cron_tasks",
+        "docassemble.webapp.cron_tasks.cli",
+    }:
+        raise
+    # docassemble < 1.10 defines cron helpers in a single module.
+    from docassemble.webapp.cron import get_cron_user
 from docassemble.webapp.worker_common import workerapp
 from docassemble.base.parse import get_initial_dict
 

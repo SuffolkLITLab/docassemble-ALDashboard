@@ -49,8 +49,27 @@ except ImportError:  # pragma: no cover - exercised by subprocess import tests
 from docassemble.base.config import daconfig
 import docassemble.base.functions
 from docassemble.base.util import log
-from docassemble.webapp.app_object import app, csrf
-from docassemble.webapp.server import api_verify, jsonify_with_status, r
+
+try:
+    from docassemble.webapp.flask_app import flaskapp as app
+    from docassemble.webapp.extensions import csrf
+    from docassemble.webapp.api.helpers import api_verify
+    from docassemble.webapp.utils.helpers import jsonify_with_status
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.flask_app",
+        "docassemble.webapp.extensions",
+        "docassemble.webapp.api",
+        "docassemble.webapp.api.helpers",
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+    }:
+        raise
+    # docassemble < 1.10 exposes these objects from the legacy modules.
+    from docassemble.webapp.app_object import app, csrf
+    from docassemble.webapp.server import api_verify, jsonify_with_status
+
+from docassemble.webapp.daredis import r
 from docassemble.webapp.worker_common import workerapp
 
 from .api_dashboard_utils import (
@@ -742,7 +761,7 @@ def _list_playground_projects() -> List[str]:
     Returns:
         List[str]: Sorted Playground project names, always including ``default``.
     """
-    from docassemble.webapp.files import SavedFile
+    from .docassemble_compat import SavedFile
 
     uid = getattr(current_user, "id", None)
     if uid is None:
@@ -969,7 +988,17 @@ def _get_installed_interview_variable_info(interview_path: str) -> Dict[str, Any
         Dict[str, Any]: Variable metadata including all and top-level names.
     """
     from docassemble.base.parse import InterviewStatus, interview_source_from_string
-    from docassemble.webapp.server import current_info, get_vars_in_use
+
+    try:
+        from docassemble.webapp.utils.helpers import current_info, get_vars_in_use
+    except ModuleNotFoundError as err:
+        if err.name not in {
+            "docassemble.webapp.utils",
+            "docassemble.webapp.utils.helpers",
+        }:
+            raise
+        # docassemble < 1.10 keeps these helpers in the monolithic server module.
+        from docassemble.webapp.server import current_info, get_vars_in_use
 
     normalized_path = _normalize_installed_interview_path(interview_path)
     try:
@@ -1389,8 +1418,7 @@ def _list_playground_template_files(
     Returns:
         List[Dict[str, str]]: Template metadata for files in the template folder.
     """
-    from docassemble.webapp.backend import directory_for
-    from docassemble.webapp.files import SavedFile
+    from .docassemble_compat import SavedFile, directory_for
 
     uid = getattr(current_user, "id", None)
     if uid is None:
@@ -1425,8 +1453,7 @@ def _load_playground_template_file(project: str, filename: str) -> bytes:
     Returns:
         bytes: File contents for the requested template.
     """
-    from docassemble.webapp.backend import directory_for
-    from docassemble.webapp.files import SavedFile
+    from .docassemble_compat import SavedFile, directory_for
 
     uid = getattr(current_user, "id", None)
     if uid is None:
@@ -1460,8 +1487,7 @@ def _save_playground_template_file(
     Returns:
         Dict[str, Any]: Metadata about the saved template file.
     """
-    from docassemble.webapp.backend import directory_for
-    from docassemble.webapp.files import SavedFile
+    from .docassemble_compat import SavedFile, directory_for
 
     uid = getattr(current_user, "id", None)
     if uid is None:

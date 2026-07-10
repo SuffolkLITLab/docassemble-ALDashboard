@@ -1,14 +1,16 @@
 # do not pre-load
 import ast
 from collections import namedtuple
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-class _DummyDB:
-    def connect(self):
-        raise RuntimeError("Database access is not available in this unit test.")
+@contextmanager
+def _unavailable_database_session():
+    raise RuntimeError("Database access is not available in this unit test.")
+    yield
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +54,7 @@ def _load_session_search_helpers():
         "Tuple": Tuple,
         "ast": ast,
         "date": date,
-        "db": _DummyDB(),
+        "_get_db_session": _unavailable_database_session,
         "get_session_variables": lambda *args, **kwargs: {},
         "log": lambda *args, **kwargs: None,
         "text": lambda value: value,
@@ -207,11 +209,7 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
             executed["params"] = args[1]
             return rows
 
-    class DB:
-        def connect(self):
-            return Connection()
-
-    monkeypatch.setattr(aldashboard, "db", DB())
+    monkeypatch.setattr(aldashboard, "_get_db_session", Connection)
 
     sessions = speedy_get_sessions(
         filename="pkg:data/questions/a.yml",
@@ -288,11 +286,7 @@ def test_speedy_get_sessions_can_filter_by_answer_criteria(monkeypatch):
         def execute(self, *args, **kwargs):
             return rows
 
-    class DB:
-        def connect(self):
-            return Connection()
-
-    monkeypatch.setattr(aldashboard, "db", DB())
+    monkeypatch.setattr(aldashboard, "_get_db_session", Connection)
     monkeypatch.setattr(
         aldashboard,
         "get_session_variables",
@@ -366,10 +360,6 @@ def test_speedy_get_sessions_skips_unloadable_sessions_during_search(monkeypatch
         def execute(self, *args, **kwargs):
             return rows
 
-    class DB:
-        def connect(self):
-            return Connection()
-
     def get_variables(filename, session_id, **kwargs):
         if session_id == "bad":
             raise Exception(
@@ -377,7 +367,7 @@ def test_speedy_get_sessions_skips_unloadable_sessions_during_search(monkeypatch
             )
         return {"client": {"last_name": "Smith"}}
 
-    monkeypatch.setattr(aldashboard, "db", DB())
+    monkeypatch.setattr(aldashboard, "_get_db_session", Connection)
     monkeypatch.setattr(aldashboard, "get_session_variables", get_variables)
     monkeypatch.setattr(aldashboard, "log", log_messages.append)
 

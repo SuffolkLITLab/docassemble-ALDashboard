@@ -67,14 +67,15 @@ def test_new_docassemble_import_locations_are_covered():
         "translation.py": {"docassemble.webapp.utils.helpers"},
         "aldashboard.py": {
             "docassemble.webapp.interview.models",
-            "docassemble.webapp.db",
-            "docassemble.webapp.extensions",
             "docassemble.webapp.utils.helpers",
             "docassemble.webapp.main.helpers",
             "docassemble.webapp.utils.hooks",
             "docassemble.webapp.daredis",
             "docassemble.base.hooks",
             "docassemble.webapp.cloud.utils",
+        },
+        "database_compat.py": {
+            "docassemble.webapp.db",
         },
         "docassemble_compat.py": {
             "docassemble.webapp.files.savedfile",
@@ -108,6 +109,10 @@ def test_api_imports_fall_back_on_docassemble_1_9_layout():
         import types
         from flask import Flask
 
+        flask_cors = types.ModuleType("flask_cors")
+        flask_cors.cross_origin = lambda *args, **kwargs: lambda func: func
+        sys.modules["flask_cors"] = flask_cors
+
         for module_name in (
             "docassemble.webapp.flask_app",
             "docassemble.webapp.extensions",
@@ -138,6 +143,123 @@ def test_api_imports_fall_back_on_docassemble_1_9_layout():
         module = importlib.import_module("docassemble.ALDashboard.api_mcp")
         assert module.app is fake_app
         assert module.api_verify() is False
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+
+def test_database_compat_falls_back_to_docassemble_1_9_session_api():
+    probe = textwrap.dedent("""
+        import importlib
+        import sys
+        import types
+
+        events = []
+
+        class LegacySession:
+            def commit(self):
+                events.append("commit")
+
+            def rollback(self):
+                events.append("rollback")
+
+        legacy_db = types.SimpleNamespace(session=LegacySession())
+        db_object = types.ModuleType("docassemble.webapp.db_object")
+        db_object.init_sqlalchemy = lambda: legacy_db
+
+        files = types.ModuleType("docassemble.webapp.files")
+        files.__path__ = []
+        files.SavedFile = object
+        backend = types.ModuleType("docassemble.webapp.backend")
+        backend.directory_for = lambda area, project: (area, project)
+
+        sys.modules["docassemble.webapp.db"] = None
+        sys.modules["docassemble.webapp.files.savedfile"] = None
+        sys.modules["docassemble.webapp.utils"] = None
+        sys.modules["docassemble.webapp.db_object"] = db_object
+        sys.modules["docassemble.webapp.files"] = files
+        sys.modules["docassemble.webapp.backend"] = backend
+        sys.modules.pop("docassemble.ALDashboard.database_compat", None)
+
+        compat = importlib.import_module("docassemble.ALDashboard.database_compat")
+        with compat.get_database_session() as session:
+            assert session is legacy_db.session
+        with compat.database_session_scope() as session:
+            assert session is legacy_db.session
+        assert events == ["commit"]
+
+        try:
+            with compat.database_session_scope():
+                raise RuntimeError("test")
+        except RuntimeError:
+            pass
+        assert events == ["commit", "rollback"]
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+
+def test_database_compat_prefers_docassemble_1_10_session_api():
+    probe = textwrap.dedent("""
+        import importlib
+        import sys
+        import types
+
+        modern_db = types.ModuleType("docassemble.webapp.db")
+        modern_db.get_session = object()
+        modern_db.session_scope = object()
+        sys.modules["docassemble.webapp.db"] = modern_db
+        sys.modules.pop("docassemble.ALDashboard.database_compat", None)
+
+        compat = importlib.import_module("docassemble.ALDashboard.database_compat")
+        assert compat.get_database_session is modern_db.get_session
+        assert compat.database_session_scope is modern_db.session_scope
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+
+def test_file_compat_falls_back_to_docassemble_1_9_layout():
+    probe = textwrap.dedent("""
+        import importlib
+        import sys
+        import types
+
+        legacy_saved_file = object()
+        legacy_directory_for = object()
+        files = types.ModuleType("docassemble.webapp.files")
+        files.__path__ = []
+        files.SavedFile = legacy_saved_file
+        backend = types.ModuleType("docassemble.webapp.backend")
+        backend.directory_for = legacy_directory_for
+
+        sys.modules["docassemble.webapp.files.savedfile"] = None
+        sys.modules["docassemble.webapp.utils"] = None
+        sys.modules["docassemble.webapp.files"] = files
+        sys.modules["docassemble.webapp.backend"] = backend
+        sys.modules.pop("docassemble.ALDashboard.docassemble_compat", None)
+
+        compat = importlib.import_module("docassemble.ALDashboard.docassemble_compat")
+        assert compat.SavedFile is legacy_saved_file
+        assert compat.directory_for is legacy_directory_for
     """)
     result = subprocess.run(
         [sys.executable, "-c", probe],

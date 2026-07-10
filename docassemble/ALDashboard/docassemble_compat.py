@@ -1,4 +1,4 @@
-"""Compatibility imports for docassemble webapp APIs moved in version 1.10."""
+"""File compatibility imports for APIs moved in docassemble 1.10."""
 
 try:
     from docassemble.webapp.files.savedfile import SavedFile
@@ -23,4 +23,7 @@ except ModuleNotFoundError as err:
     from docassemble.webapp.backend import directory_for
 
 
-__all__ = ["SavedFile", "directory_for"]
+__all__ = [
+    "SavedFile",
+    "directory_for",
+]

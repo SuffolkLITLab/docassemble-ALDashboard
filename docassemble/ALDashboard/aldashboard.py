@@ -5,7 +5,6 @@ import re
 import ast
 import requests
 import calendar
-from contextlib import contextmanager
 from importlib.metadata import distributions
 from docassemble.webapp.users.models import UserModel, Role, UserRoles
 
@@ -19,37 +18,6 @@ except ModuleNotFoundError as err:
         raise
     # docassemble < 1.10 defines interview models alongside user models.
     from docassemble.webapp.users.models import UserDict
-
-try:
-    from docassemble.webapp.db import (
-        get_session as _get_db_session,
-        session_scope as _db_session_scope,
-    )
-    from docassemble.webapp.extensions import db
-except ModuleNotFoundError as err:
-    if err.name not in {
-        "docassemble.webapp.db",
-        "docassemble.webapp.extensions",
-    }:
-        raise
-    # docassemble < 1.10 exposes a configured SQLAlchemy session directly.
-    from docassemble.webapp.db_object import init_sqlalchemy
-
-    db = init_sqlalchemy()
-
-    @contextmanager
-    def _get_db_session():
-        yield db.session
-
-    @contextmanager
-    def _db_session_scope():
-        try:
-            yield db.session
-            db.session.commit()
-        except BaseException:
-            db.session.rollback()
-            raise
-
 
 from github import Github  # PyGithub
 from flask import current_app, flash, redirect
@@ -127,6 +95,10 @@ from ruamel.yaml.compat import StringIO
 import werkzeug
 import importlib.resources
 from datetime import date, datetime, timedelta, timezone
+from .database_compat import (
+    database_session_scope as _db_session_scope,
+    get_database_session as _get_db_session,
+)
 from .docassemble_compat import SavedFile
 
 __all__ = [
@@ -1295,40 +1267,8 @@ LIMIT 500;
         else []
     )
 
-    with db.connect() as con:
-        rs = con.execute(
-            get_sessions_query,
-            {
-                "user_id": user_id,
-                "filename": filename,
-                "filter_step1": filter_step1,
-                "metadata": metadata_key_name,
-                "start_date": start_date_text,
-                "end_date": end_date_text,
-            },
-        )
-    sessions = []
-    for session in rs:
-        session_id = str(session.key or "")
-        if not session_id:
-            continue
-        if criteria:
-            try:
-                if not _session_matches_criteria(
-                    session.filename, session_id, criteria
-                ):
-                    continue
-            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
-                continue
-            except Exception as error:
-                log(
-                    "speedy_get_sessions: skipped session "
-                    f"{session_id} for {session.filename} because it could not be loaded: {error}"
-                )
-                continue
-        sessions.append(session)
     with _get_db_session() as session:
-        sessions = list(
+        rows = list(
             session.execute(
                 get_sessions_query,
                 {
@@ -1336,9 +1276,29 @@ LIMIT 500;
                     "filename": filename,
                     "filter_step1": filter_step1,
                     "metadata": metadata_key_name,
+                    "start_date": start_date_text,
+                    "end_date": end_date_text,
                 },
             )
         )
+    sessions = []
+    for row in rows:
+        session_id = str(row.key or "")
+        if not session_id:
+            continue
+        if criteria:
+            try:
+                if not _session_matches_criteria(row.filename, session_id, criteria):
+                    continue
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                continue
+            except Exception as error:
+                log(
+                    "speedy_get_sessions: skipped session "
+                    f"{session_id} for {row.filename} because it could not be loaded: {error}"
+                )
+                continue
+        sessions.append(row)
 
     return sessions
 

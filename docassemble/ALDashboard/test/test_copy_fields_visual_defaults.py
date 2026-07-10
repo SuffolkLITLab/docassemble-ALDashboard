@@ -10,6 +10,7 @@ These tests verify that:
 """
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,7 @@ _STUB_PREFIX = textwrap.dedent("""
 
     module = importlib.import_module("docassemble.ALDashboard.api_labelers")
     _apply_pdf_field_visual_defaults = module._apply_pdf_field_visual_defaults
+    _copy_pdf_page_tab_order = module._copy_pdf_page_tab_order
 """)
 
 
@@ -304,6 +306,54 @@ print("done")
             )
         finally:
             os.unlink(pdf_path)
+
+
+class TestCopyPDFPageTabOrder(unittest.TestCase):
+    """Regression tests for preserving copied-field tab order metadata."""
+
+    def test_direct_tabs_name_is_copied_into_output_pdf(self):
+        """A source-owned direct /Tabs name must not be assigned cross-PDF."""
+        probe = """
+import json
+import os
+import tempfile
+import pikepdf
+from pikepdf import Name
+
+source_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
+output_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
+
+try:
+    source_pdf = pikepdf.new()
+    source_page_one = source_pdf.add_blank_page(page_size=(100, 100))
+    source_pdf.add_blank_page(page_size=(100, 100))
+    source_page_one.obj["/Tabs"] = Name("/S")
+    source_pdf.save(source_path)
+    source_pdf.close()
+
+    output_pdf = pikepdf.new()
+    output_pdf.add_blank_page(page_size=(100, 100))
+    output_page_two = output_pdf.add_blank_page(page_size=(100, 100))
+    output_page_two.obj["/Tabs"] = Name("/R")
+    output_pdf.save(output_path)
+    output_pdf.close()
+
+    _copy_pdf_page_tab_order(source_path, output_path)
+
+    with pikepdf.open(output_path) as output_pdf:
+        result = {
+            "page_one_tabs": str(output_pdf.pages[0].get("/Tabs")),
+            "page_two_has_tabs": "/Tabs" in output_pdf.pages[1],
+        }
+    print(json.dumps(result, sort_keys=True))
+finally:
+    for path in (source_path, output_path):
+        if os.path.exists(path):
+            os.unlink(path)
+"""
+        result = json.loads(_run_probe(probe))
+        self.assertEqual(result["page_one_tabs"], "/S")
+        self.assertFalse(result["page_two_has_tabs"])
 
 
 if __name__ == "__main__":

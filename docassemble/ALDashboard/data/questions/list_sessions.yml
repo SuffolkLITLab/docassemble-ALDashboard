@@ -96,6 +96,12 @@ under: |
   % endif
   % endif
 fields:
+  - Mode: session_list_mode
+    datatype: radio
+    choices:
+      - Browse recent sessions: browse
+      - Search answer values: search
+    default: browse
   - Filename: filename
     required: False
     datatype: combobox
@@ -115,29 +121,6 @@ fields:
           )
         ),
       )
-    show if:
-      code: |
-        user_has_privilege(["admin", "developer"])
-  - Filename: filename
-    code: |
-      sorted(
-        list(interviews.keys()),
-        key=lambda fname: (
-          interviews.get(fname).get("title")
-          if isinstance(interviews.get(fname), dict)
-          else (
-            getattr(interviews.get(fname), "title", None)
-            or (
-              interviews.get(fname)
-              if isinstance(interviews.get(fname), str)
-              else fname
-            )
-          )
-        ),
-      )
-    show if:
-      code: |
-        not user_has_privilege(["admin", "developer"])
   - User (leave blank to view all sessions): chosen_user
     required: False
     datatype: integer
@@ -152,13 +135,83 @@ fields:
     required: False
     datatype: yesno
     default: True
+  - Use advanced answer-variable filters: session_search_use_advanced_filters
+    datatype: yesno
+    default: False
+    show if:
+      variable: session_list_mode
+      is: search
+  - Variable name: session_search_variable_name
+    js show if: |
+      val("session_list_mode") == "search" && !val("session_search_use_advanced_filters")
+  - Value contains: session_search_variable_value
+    js show if: |
+      val("session_list_mode") == "search" && !val("session_search_use_advanced_filters")
+  - note: |
+      **Answer-variable filter syntax:** enter one filter per line as
+      `variable = partial text`. Do not quote the partial text. Quote dictionary
+      keys inside a variable path, for example:
+
+      `legalserver_data["case_number"] = 12345`
+
+      `clients[0].name.last = Smith`
+    js show if: |
+      val("session_list_mode") == "search" && val("session_search_use_advanced_filters")
+  - Advanced filters: session_search_criteria_text
+    datatype: area
+    rows: 6
+    required: False
+    js show if: |
+      val("session_list_mode") == "search" && val("session_search_use_advanced_filters")
+  - Modified on or after: session_search_start_date
+    datatype: date
+    required: False
+    show if:
+      variable: session_list_mode
+      is: search
+  - Modified on or before: session_search_end_date
+    datatype: date
+    required: False
+    show if:
+      variable: session_list_mode
+      is: search
+validation code: |
+  if session_list_mode == "search":
+    if session_search_use_advanced_filters:
+      session_search_resolved_criteria_text = build_session_search_criteria_text(
+        "",
+        "",
+        use_advanced_filters=True,
+        advanced_criteria_text=session_search_criteria_text,
+      )
+    else:
+      session_search_resolved_criteria_text = build_session_search_criteria_text(
+        session_search_variable_name,
+        session_search_variable_value,
+      )
+    try:
+      parse_session_search_criteria(session_search_resolved_criteria_text)
+    except SessionSearchCriteriaError as error:
+      validation_error(
+        str(error),
+        field="session_search_criteria_text" if session_search_use_advanced_filters else "session_search_variable_name",
+      )
+  else:
+    session_search_resolved_criteria_text = ""
+    session_search_start_date = None
+    session_search_end_date = None
 ---
 # next((item.get('title') for item in interviews if item.get('filename') == interview['filename']), interview['filename'] )
 ---
 code: |
   # For debugging purposes
   sessions_list = speedy_get_sessions(
-    user_id=chosen_user, filename=filename, filter_step1=filter_step1
+    user_id=chosen_user,
+    filename=filename,
+    filter_step1=filter_step1,
+    start_date=session_search_start_date if session_list_mode == "search" else None,
+    end_date=session_search_end_date if session_list_mode == "search" else None,
+    search_criteria_text=session_search_resolved_criteria_text,
   )
 ---
 code: |
@@ -175,17 +228,22 @@ code: |
   filename = action_argument("filename")
   chosen_user = None
   filter_step1 = True
+  session_list_mode = "browse"
+  session_search_resolved_criteria_text = ""
+  session_search_start_date = None
+  session_search_end_date = None
+  undefine("sessions_list")
 ---
 mandatory: True
 event: load_answer
 id: session list
 question: |
   % if filename:
-  Recently started sessions for ${ nicer_interview_filename(interviews.get(filename, {"title": filename}).get('title', filename)) }
+  ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for ${ nicer_interview_filename(interviews.get(filename, {"title": filename}).get('title', filename)) }
   % elif chosen_user:
-  Recently started sessions for User ID ${ chosen_user}
+  ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for User ID ${ chosen_user}
   % else:
-  Recently started sessions for all users
+  ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for all users
   % endif
 subquestion: |
 
@@ -200,7 +258,7 @@ subquestion: |
       </tr>
     </thead>
 
-  % for interview in speedy_get_sessions(user_id=chosen_user, filename=filename, filter_step1=filter_step1):
+  % for interview in sessions_list:
   <tr>
     <td class="text-wrap text-break">
       <strong>${ interview.title if interview.title else interview.auto_title }</strong>
@@ -211,7 +269,7 @@ subquestion: |
       ${ nicer_interview_filename(interview.filename) }
   % endif
     </td>
-    <td>${ users_and_name_dict[interview.user_id] if interview.user_id else 'Anonymous'}</td>
+    <td>${ format_session_users(interview, users_and_name_dict) }</td>
     <td>${ format_date(interview.modtime, "MMM d YYYY") }</td>
     <td>
       ${ f"Step {interview.num_keys if not interview.progress else (lambda x: f'{float(x):.2f}' if isinstance(x, (int, float, str)) and str(x).replace('.', '', 1).isdigit() else None)(interview.progress)}%"}

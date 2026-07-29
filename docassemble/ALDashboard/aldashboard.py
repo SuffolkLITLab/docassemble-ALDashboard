@@ -555,16 +555,16 @@ def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, st
     with _get_db_session() as session:
         users = session.execute(statement).all()
 
-    results = []
-    for user in users:
-        user_id, email, first_name, last_name = user
-        label = email
-        if first_name:
-            label += " " + first_name
-        if last_name:
-            label += " " + last_name
-        results.append((user_id, label))
-    return results
+        results = []
+        for user in users:
+            user_id, email, first_name, last_name = user
+            label = email
+            if first_name:
+                label += " " + first_name
+            if last_name:
+                label += " " + last_name
+            results.append((user_id, label))
+        return results
 
 def speedy_get_users() -> List[Dict[int, str]]:
     """

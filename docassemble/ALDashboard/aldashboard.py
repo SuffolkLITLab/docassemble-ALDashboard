@@ -531,12 +531,12 @@ def get_users_and_name_by_ids(ids: List[int]) -> List[Tuple[int, str, str, str]]
     with _get_db_session() as session:
         users = session.execute(statement).all()
 
-    results = []
-    for user in users:
-        user_id, email, first_name, last_name, nickname = user
-        display_name = first_name or nickname or ""
-        results.append((user_id, email or "", display_name, last_name or ""))
-    return results
+        results = []
+        for user in users:
+            user_id, email, first_name, last_name, nickname = user
+            display_name = first_name or nickname or ""
+            results.append((user_id, email or "", display_name, last_name or ""))
+        return results
 
 
 def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, str]]:

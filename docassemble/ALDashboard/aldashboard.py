@@ -501,9 +501,7 @@ def get_user_count() -> int:
     it's safe to load every user into a dropdown, or whether the list is too large to do that.
     """
     with _get_db_session() as session:
-        statement = select(func.count(UserModel.id)).where(
-            ~UserModel.social_id.startswith("disabled$")
-        )
+        statement = select(func.count(UserModel.id))
         count = session.scalar(statement)
 
     if count is None:
@@ -550,7 +548,7 @@ def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, st
 
     statement = select(
         UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
-    ).where(UserModel.email.ilike(wordstart + "%")).limit(limit)
+    ).where(UserModel.email.istartswith(wordstart)).limit(limit)
 
     with _get_db_session() as session:
         users = session.execute(statement).all()

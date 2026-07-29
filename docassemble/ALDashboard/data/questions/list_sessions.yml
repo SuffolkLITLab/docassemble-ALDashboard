@@ -245,16 +245,9 @@ code: |
   needed_user_ids = set()
   for interview in sessions_list:
     raw_user_ids = getattr(interview, "user_ids", None)
-    if raw_user_ids is None:
-      raw_user_ids = getattr(interview, "user_id", None)
     if not raw_user_ids:
       continue
-    if isinstance(raw_user_ids, str):
-      needed_user_ids.update(raw_user_ids.split(","))
-    elif isinstance(raw_user_ids, (list, tuple, set)):
-      needed_user_ids.update(raw_user_ids)
-    else:
-      needed_user_ids.add(raw_user_ids)
+    needed_user_ids.update(raw_user_ids.split(","))
 
   clean_ids = []
   for uid in needed_user_ids:

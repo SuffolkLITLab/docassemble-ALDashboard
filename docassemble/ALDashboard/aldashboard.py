@@ -140,6 +140,9 @@ __all__ = [
     "inactive_developer_account_report",
     "delete_inactive_developer_accounts",
     "is_user_privileged",
+    "get_user_count",
+    "get_users_and_name_by_ids",
+    "search_users_by_email",
 ]
 
 
@@ -492,6 +495,74 @@ def da_write_config(data: Dict):
     restart_all()
     return True
 
+def get_user_count() -> int:
+    """
+    Return the count of active (non-disabled) users on the server. Used to decide whether 
+    it's safe to load every user into a dropdown, or whether the list is too large to do that.
+    """
+    with _get_db_session() as session:
+        statement = select(func.count(UserModel.id))
+        count = session.scalar(statement)
+
+    if count is None:
+        return 0
+    return count
+
+
+def get_users_and_name_by_ids(ids: List[int]) -> List[Tuple[int, str, str, str]]:
+    """
+    Same shape as get_users_and_name(), but scoped to a specific list of user IDs instead of pulling 
+    every user in the database. Used to avoid loading the entire users table just to label a handful 
+    of already fetched session rows.
+    """
+    if not ids:
+        return []
+
+    statement = select(
+        UserModel.id,
+        UserModel.email,
+        UserModel.first_name,
+        UserModel.last_name,
+        UserModel.nickname,
+    ).where(UserModel.id.in_(ids))
+
+    with _get_db_session() as session:
+        users = session.execute(statement).all()
+
+        results = []
+        for user in users:
+            user_id, email, first_name, last_name, nickname = user
+            display_name = first_name or nickname or ""
+            results.append((user_id, email or "", display_name, last_name or ""))
+        return results
+
+
+def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, str]]:
+    """
+    Search for users whose email starts with the given text. Used by the input type: ajax field on large servers, 
+    so we never load the full user table - just return a handful of matches as the admin types.
+    """
+    wordstart = wordstart.strip()
+    if not wordstart:
+        return []
+
+    statement = select(
+        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
+    ).where(UserModel.email.istartswith(wordstart)).limit(limit)
+
+    with _get_db_session() as session:
+        users = session.execute(statement).all()
+
+        results = []
+        for user in users:
+            user_id, email, first_name, last_name = user
+            label = email
+            if first_name:
+                label += " " + first_name
+            if last_name:
+                label += " " + last_name
+            results.append((user_id, label))
+        return results
 
 def speedy_get_users() -> List[Dict[int, str]]:
     """

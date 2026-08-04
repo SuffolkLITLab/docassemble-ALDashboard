@@ -468,7 +468,7 @@ def _apply_pdf_field_visual_defaults(
         if ft != "/Btn":
             return
         if "/DA" not in obj:
-            obj["/DA"] = pikepdf.String("/ZaDb 0 g")
+            obj["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
 
     def _is_button_widget(named_parent: Optional[Any]) -> bool:
         if named_parent is None or not hasattr(named_parent, "get"):

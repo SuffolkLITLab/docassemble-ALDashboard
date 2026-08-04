@@ -617,7 +617,7 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
 
             with pikepdf.open(out_path) as pdf:
                 annot = pdf.pages[0].Annots[0]
-                self.assertEqual(str(annot["/MK"]["/CA"]), "8")
+                self.assertEqual(str(annot["/MK"]["/CA"]), "n")
         finally:
             if os.path.exists(in_path):
                 os.remove(in_path)

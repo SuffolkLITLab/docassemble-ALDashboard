@@ -127,24 +127,29 @@ def _checkbox_checked_state(
     return pikepdf_module.Name("/Yes")
 
 
-_CHECKBOX_CAPTION_TO_STYLE = {
-    "4": "check",
-    "5": "cross",
-    "8": "cross",  # Wingdings '8' (heavy ballot X)
-    "x": "cross",
-    "X": "cross",
-    "l": "circle",
-    "N": "star",
-    "u": "diamond",
-}
 _CHECKBOX_STYLE_TO_CAPTION = {
     "check": "4",
     "cross": "5",
-    "square": "8",
+    "square": "n",
     "circle": "l",
     "star": "N",
     "diamond": "u",
 }
+# Round-trip decode map: every caption written by _CHECKBOX_STYLE_TO_CAPTION
+# must map back to the same style here. Extra keys below ("8", "x", "X") are
+# decode-only aliases for captions produced by other PDF tools (e.g. Adobe's
+# own "8" = heavy ballot X convention) and are never emitted by this module,
+# so they cannot collide with a style we round-trip ourselves.
+_CHECKBOX_CAPTION_TO_STYLE = {
+    caption: style for style, caption in _CHECKBOX_STYLE_TO_CAPTION.items()
+}
+_CHECKBOX_CAPTION_TO_STYLE.update(
+    {
+        "8": "cross",  # Wingdings/Adobe '8' (heavy ballot X)
+        "x": "cross",
+        "X": "cross",
+    }
+)
 
 
 def _checkbox_mark_style(widget: Any, parent: Optional[Any]) -> str:
@@ -438,9 +443,9 @@ def restore_checkbox_appearances(
                     # Always ensure /DA for Chrome/PDFium, even on
                     # checkboxes whose /AP we keep unchanged.
                     if "/DA" not in widget:
-                        widget["/DA"] = pikepdf.String("/ZaDb 0 g")
+                        widget["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
                     if parent is not None and hasattr(parent, "get") and "/DA" not in parent:
-                        parent["/DA"] = pikepdf.String("/ZaDb 0 g")
+                        parent["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
 
                     normal_ap = _normal_appearance_dict(widget)
                     if (

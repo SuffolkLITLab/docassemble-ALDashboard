@@ -13,7 +13,7 @@ try:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches, Pt, RGBColor
 except ImportError:
-    docx = None
+    docx = None  # type: ignore[assignment]
 
 # System variables to skip in user-facing intake outputs
 SKIP_SYSTEM_VARS: Set[str] = {
@@ -316,7 +316,7 @@ def extract_interview_questions_and_variables(
                 fields = doc.get("fields")
                 if isinstance(fields, list):
                     for f in fields:
-                        var_name = None
+                        var_name: Optional[str] = None
                         label = ""
                         datatype = "text"
                         if isinstance(f, str):

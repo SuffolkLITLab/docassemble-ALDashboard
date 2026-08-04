@@ -27,27 +27,33 @@ class DashboardAPIValidationError(ValueError):
 
 def _format_pdf_fields_for_ui_payload(
     fields_per_page: List[List[Any]],
+    *,
+    checkbox_styles: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert FormFyxer fields into the browser labeler payload shape."""
     formatted_fields: List[Dict[str, Any]] = []
+    styles = checkbox_styles or {}
     for page_idx, page_fields in enumerate(fields_per_page):
         for field in page_fields:
             raw_font_size = getattr(field, "font_size", None)
             auto_size = raw_font_size == 0
-            formatted_fields.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "name": field.name,
-                    "type": str(field.type).lower().replace("fieldtype.", ""),
-                    "pageIndex": page_idx,
-                    "x": field.x,
-                    "y": field.y,
-                    "width": field.configs.get("width", 100),
-                    "height": field.configs.get("height", 20),
-                    "fontSize": 10 if auto_size else (raw_font_size or 10),
-                    "autoSize": auto_size,
-                }
-            )
+            field_dict: Dict[str, Any] = {
+                "id": str(uuid.uuid4()),
+                "name": field.name,
+                "type": str(field.type).lower().replace("fieldtype.", ""),
+                "pageIndex": page_idx,
+                "x": field.x,
+                "y": field.y,
+                "width": field.configs.get("width", 100),
+                "height": field.configs.get("height", 20),
+                "fontSize": 10 if auto_size else (raw_font_size or 10),
+                "autoSize": auto_size,
+            }
+            # Include checkbox style from the original PDF if available
+            field_type = str(field.type).lower().replace("fieldtype.", "")
+            if field_type == "checkbox" and field.name in styles:
+                field_dict["checkboxStyle"] = styles[field.name]
+            formatted_fields.append(field_dict)
     return formatted_fields
 
 

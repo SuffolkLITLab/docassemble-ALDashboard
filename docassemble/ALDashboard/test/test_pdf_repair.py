@@ -568,6 +568,100 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
             if os.path.exists(out_path):
                 os.remove(out_path)
 
+    def test_restores_checkbox_appearances_with_resources_dict(self):
+        try:
+            import pikepdf
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path)
+            restore_checkbox_appearances(in_path, out_path)
+
+            with pikepdf.open(out_path) as pdf:
+                annot = pdf.pages[0].Annots[0]
+                ap_n = annot["/AP"]["/N"]
+                for state in ("/Off", "/Yes"):
+                    stream = ap_n[state]
+                    self.assertIn("/Resources", stream)
+                    self.assertIn("/ProcSet", stream["/Resources"])
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_restores_checkbox_appearances_custom_style(self):
+        try:
+            import pikepdf
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path)
+            restore_checkbox_appearances(
+                in_path,
+                out_path,
+                checkbox_styles={"needs_appearance": "square"},
+            )
+
+            widgets = {item["name"]: item for item in self._read_widget_flags(out_path)}
+            self.assertIn(" re", widgets["needs_appearance"]["yes_stream"])
+            self.assertIn("f", widgets["needs_appearance"]["yes_stream"])
+
+            with pikepdf.open(out_path) as pdf:
+                annot = pdf.pages[0].Annots[0]
+                self.assertEqual(str(annot["/MK"]["/CA"]), "8")
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+    def test_restores_checkbox_sets_da_and_dr_fonts(self):
+        """Ensure AcroForm /DR /Font and widget /DA are set for Chrome."""
+        try:
+            import pikepdf
+        except ImportError:
+            self.skipTest("pikepdf not installed")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
+            in_path = inp.name
+        out_path = in_path + ".appearances.pdf"
+        try:
+            self._make_form_pdf(in_path)
+            restore_checkbox_appearances(in_path, out_path)
+
+            with pikepdf.open(out_path) as pdf:
+                # Verify AcroForm /DR /Font has /ZaDb and /Helv
+                acroform = pdf.Root["/AcroForm"]
+                dr = acroform["/DR"]
+                font_dict = dr["/Font"]
+                self.assertIn("/ZaDb", font_dict)
+                self.assertIn("/Helv", font_dict)
+                self.assertEqual(
+                    str(font_dict["/ZaDb"]["/BaseFont"]), "/ZapfDingbats"
+                )
+                self.assertEqual(
+                    str(font_dict["/Helv"]["/BaseFont"]), "/Helvetica"
+                )
+
+                # Verify widget /DA is set
+                annot = pdf.pages[0].Annots[0]
+                self.assertIn("/DA", annot)
+                self.assertIn("ZaDb", str(annot["/DA"]))
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
 
 class TestNormalizeSignatureFields(unittest.TestCase):
     def _make_text_signature_pdf(self, path: str) -> None:

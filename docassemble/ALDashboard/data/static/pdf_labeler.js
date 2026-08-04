@@ -2636,6 +2636,10 @@
                 font: field.font || getSessionDefault('font'),
                 fontSize: field.fontSize || getSessionDefault('fontSize'),
                 autoSize: field.autoSize !== false,
+                checkboxStyle: field.checkboxStyle || (fieldType === 'checkbox' ? (getSessionDefault('checkboxStyle') || 'cross') : undefined),
+                checkboxExportValue: field.checkboxExportValue || undefined,
+                checkboxBorder: !!field.checkboxBorder,
+                checkboxBorderWidth: field.checkboxBorderWidth || 'thin',
                 options: Array.isArray(field.options) ? field.options.slice() : undefined
             };
         });

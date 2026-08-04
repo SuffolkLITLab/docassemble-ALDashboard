@@ -31,6 +31,7 @@ from .api_dashboard_utils import (
     translation_payload_from_options,
     validate_docx_payload_from_options,
     validate_translation_payload_from_options,
+    variable_report_payload_from_options,
     yaml_check_payload_from_options,
     yaml_reformat_payload_from_options,
 )
@@ -144,3 +145,10 @@ def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     with bg_context():
         return pdf_repair_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_variable_report_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return variable_report_payload_from_options(payload)
+

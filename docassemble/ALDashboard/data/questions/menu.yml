@@ -108,6 +108,9 @@ data:
   - name: Generate an ALKiln story
     url: ${ interview_url(i=user_info().package + ":alkiln_story.yml", reset=1) }
     image: book
+  - name: Generate variable report
+    url: ${ interview_url(i=user_info().package + ":variable_report_generator.yml", reset=1) }
+    image: clipboard-list
   - name: Reformat YAML and Python
     url: ${ interview_url(i=user_info().package + ":yaml_formatter.yml", reset=1) }
     image: magic

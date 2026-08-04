@@ -78,6 +78,7 @@ from .api_dashboard_utils import (
     translation_payload_from_request,
     validate_docx_payload_from_request,
     validate_translation_payload_from_request,
+    variable_report_payload_from_request,
     yaml_check_payload_from_request,
     yaml_reformat_payload_from_request,
     pdf_repair_payload_from_request,
@@ -108,6 +109,7 @@ if not in_celery:
         dashboard_yaml_check_task,
         dashboard_yaml_reformat_task,
         dashboard_pdf_repair_task,
+        dashboard_variable_report_task,
     )
 
 
@@ -550,6 +552,15 @@ def dashboard_interview_lint():
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def dashboard_kiln_story():
     return _run_endpoint(alkiln_story_payload_from_request, dashboard_alkiln_story_task)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/variable-report", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_variable_report():
+    return _run_endpoint(
+        variable_report_payload_from_request, dashboard_variable_report_task
+    )
 
 
 @app.route(f"{DASHBOARD_API_BASE_PATH}/yaml/check", methods=["POST"])

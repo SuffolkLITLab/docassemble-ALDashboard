@@ -316,17 +316,17 @@ def extract_interview_questions_and_variables(
                 fields = doc.get("fields")
                 if isinstance(fields, list):
                     for f in fields:
-                        var_name: Optional[str] = None
+                        field_var_name: Optional[str] = None
                         label = ""
                         datatype = "text"
                         if isinstance(f, str):
-                            var_name = f.strip()
+                            field_var_name = f.strip()
                         elif isinstance(f, Mapping):
                             if "note" in f and "field" not in f:
                                 continue
                             datatype = str(f.get("datatype") or "text").strip().lower()
                             if "field" in f and isinstance(f["field"], str):
-                                var_name = f["field"].strip()
+                                field_var_name = f["field"].strip()
                                 label = str(f.get("label") or f.get("note") or "").strip()
                             else:
                                 reserved_keys = {
@@ -339,21 +339,21 @@ def extract_interview_questions_and_variables(
                                     if str(k).strip().lower() in reserved_keys:
                                         continue
                                     if isinstance(v, str) and re.match(r"^[a-zA-Z_][a-zA-Z0-9_\[\]\.]*$", v.strip()):
-                                        var_name = v.strip()
+                                        field_var_name = v.strip()
                                         label = str(k).strip()
                                         break
                                     elif isinstance(k, str) and re.match(r"^[a-zA-Z_][a-zA-Z0-9_\[\]\.]*$", str(k).strip()) and (v is None or isinstance(v, (str, bool, int, float))):
-                                        var_name = str(k).strip()
+                                        field_var_name = str(k).strip()
                                         if isinstance(v, str):
                                             label = v.strip()
                                         break
 
-                        if var_name and var_name not in SKIP_SYSTEM_VARS:
-                            list_match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[.*?\]|\.(.+))?", var_name)
+                        if field_var_name and field_var_name not in SKIP_SYSTEM_VARS:
+                            list_match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[.*?\]|\.(.+))?", field_var_name)
                             if list_match:
                                 base_list = list_match.group(1)
                                 attr = list_match.group(2) or ""
-                                has_index_or_dot = "[" in var_name or "." in var_name
+                                has_index_or_dot = "[" in field_var_name or "." in field_var_name
 
                                 if has_index_or_dot:
                                     if attr and attr not in NOISE_LIST_ATTRS:
@@ -373,22 +373,22 @@ def extract_interview_questions_and_variables(
                                     else:
                                         variables[base_list].is_list = True
                                 else:
-                                    referenced_var_names.add(var_name)
-                                    if var_name not in variables:
-                                        variables[var_name] = VariableSpec(
-                                            name=var_name,
+                                    referenced_var_names.add(field_var_name)
+                                    if field_var_name not in variables:
+                                        variables[field_var_name] = VariableSpec(
+                                            name=field_var_name,
                                             var_type=datatype,
                                             is_list=False,
-                                            label=label or var_name.replace("_", " ").title(),
+                                            label=label or field_var_name.replace("_", " ").title(),
                                             source="yaml_fields",
                                         )
-                                    elif label and not variables[var_name].label:
-                                        variables[var_name].label = label
+                                    elif label and not variables[field_var_name].label:
+                                        variables[field_var_name].label = label
 
                                     group.fields.append(
                                         FieldSpec(
-                                            var_name=var_name,
-                                            label=label or var_name.replace("_", " ").title(),
+                                            var_name=field_var_name,
+                                            label=label or field_var_name.replace("_", " ").title(),
                                             datatype=datatype,
                                         )
                                     )

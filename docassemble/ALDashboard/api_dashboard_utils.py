@@ -651,12 +651,15 @@ def docx_labeler_suggest_payload_from_options(
             ),
             "judge_review_count": len(judge_review.get("reviews", []) or []),
         }
+        # Server-log priority on purpose: any other priority appends to
+        # `this_thread.message_log`, which docassemble 1.10 only populates
+        # inside an interview request, and these timings are not meant for
+        # the user's screen anyway.
         log(
             "ALDashboard: DOCX suggest-labels timings for "
             + repr(filename)
             + ": "
-            + json.dumps(timings, sort_keys=True),
-            "info",
+            + json.dumps(timings, sort_keys=True)
         )
 
         return {

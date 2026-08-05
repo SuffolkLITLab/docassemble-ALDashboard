@@ -69,5 +69,29 @@ def _preimport_pikepdf() -> None:
         pass
 
 
+def _install_empty_docassemble_configuration() -> None:
+    """Make ``get_config()`` usable without a running docassemble server.
+
+    docassemble 1.10 routes ``get_configuration()`` through a pluggy hook that
+    only the webapp registers. Outside a real server the hook has no
+    implementation and returns ``None``, so ``docassemble.base.functions``'s
+    ``get_config()`` dies with ``AttributeError: 'NoneType' object has no
+    attribute 'get'``. ALToolbox's ``llms`` module calls ``get_config`` at
+    import time, which breaks collection of every test that imports
+    ``docx_wrangling``. Fall back to an empty configuration, which is what
+    these tests want anyway.
+    """
+    try:
+        import docassemble.base.functions as da_functions
+    except Exception:
+        return
+
+    try:
+        da_functions.get_config("open ai")
+    except Exception:
+        setattr(da_functions, "get_configuration", lambda: {})
+
+
 _install_docassemble_webapp_stubs()
+_install_empty_docassemble_configuration()
 _preimport_pikepdf()

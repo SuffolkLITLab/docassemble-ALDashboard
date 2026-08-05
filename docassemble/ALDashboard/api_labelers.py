@@ -349,7 +349,7 @@ def _read_checkbox_styles_from_pdf(pdf_path: str) -> Dict[str, str]:
                 annots = page.get("/Annots")
                 if annots is None:
                     continue
-                for annot in annots:
+                for annot in annots:  # type: ignore[attr-defined]
                     try:
                         widget = (
                             annot.resolve()

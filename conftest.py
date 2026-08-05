@@ -51,4 +51,23 @@ def _install_docassemble_webapp_stubs() -> None:
         pass
 
 
+def _preimport_pikepdf() -> None:
+    """Load pikepdf before any test patches ``sys.modules``.
+
+    ``unittest.mock.patch.dict("sys.modules", ...)`` restores the original
+    module dict on exit, dropping anything that was imported for the first
+    time inside the patched block. pikepdf cannot survive a second import in
+    the same process -- its ``@augments`` class patching raises
+    ``RuntimeError: ... both define the same non-abstract method`` -- so a test
+    that first pulls it in transitively (via ``docassemble.base.util``) while
+    ``sys.modules`` is patched would break every later pikepdf import.
+    Importing it up front keeps it in the dict that ``patch.dict`` restores.
+    """
+    try:
+        import pikepdf  # noqa: F401
+    except Exception:  # pragma: no cover - pikepdf is optional at import time
+        pass
+
+
 _install_docassemble_webapp_stubs()
+_preimport_pikepdf()

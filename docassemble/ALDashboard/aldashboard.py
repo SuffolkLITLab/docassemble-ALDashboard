@@ -1016,8 +1016,8 @@ def delete_inactive_developer_accounts(
         }:
             raise
         # docassemble < 1.10 keeps these implementations in legacy modules.
-        from docassemble.webapp.server import user_interviews
-        from docassemble.webapp.backend import delete_user_data
+        from docassemble.webapp.server import user_interviews  # type: ignore[no-redef]
+        from docassemble.webapp.backend import delete_user_data  # type: ignore[no-redef]
 
     if requesting_user_id is None:
         requesting_user_id = _resolve_current_user_id()

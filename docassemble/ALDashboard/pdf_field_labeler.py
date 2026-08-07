@@ -29,7 +29,13 @@ def log(message: str, level: str = "info") -> None:
         from docassemble.base.util import log as da_log
     except ImportError:
         return
-    da_log(message, level)
+    try:
+        da_log(message, level)
+    except Exception:
+        # Any level other than "log" is routed to `this_thread.message_log`,
+        # which docassemble 1.10 only populates inside a request. Diagnostics
+        # must never take down the labeling call that emitted them.
+        pass
 
 
 def _assert_valid_pdf_output(pdf_path: str, *, action_label: str) -> None:

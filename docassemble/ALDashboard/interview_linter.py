@@ -24,8 +24,15 @@ import ruamel.yaml
 import textstat
 from spellchecker import SpellChecker
 
-import docassemble.base.filter
 import docassemble.webapp.screenreader
+
+try:
+    from docassemble.base.filter.html import markdown_to_html
+except ImportError:
+    # docassemble < 1.10 keeps this in a flat `docassemble.base.filter` module.
+    from docassemble.base.filter import (  # type: ignore[no-redef,attr-defined]
+        markdown_to_html,
+    )
 
 try:
     from flask_login import current_user
@@ -550,7 +557,7 @@ def remove_mako(text: str) -> str:
     try:
         template = mako.template.Template(input_text)
         markdown_text = template.render()
-        html_text = docassemble.base.filter.markdown_to_html(markdown_text)  # type: ignore[attr-defined]
+        html_text = markdown_to_html(markdown_text)
         return docassemble.webapp.screenreader.to_text(html_text)
     except Exception:
         return input_text

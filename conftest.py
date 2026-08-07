@@ -11,9 +11,20 @@ stack.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 from typing import Any, Callable
+
+
+def _isolate_external_llm_credentials() -> None:
+    """Prevent local dotenv credentials from changing deterministic tests."""
+    # docassemble may load the repository's .env while importing its config.
+    # Empty values are intentional: python-dotenv does not replace variables
+    # that are already present, and tests that need credentials can pass them
+    # explicitly or patch the environment in that test.
+    os.environ["OPENAI_API_KEY"] = ""
+    os.environ["OPENAI_BASE_URL"] = ""
 
 
 def _install_docassemble_webapp_stubs() -> None:
@@ -92,6 +103,7 @@ def _install_empty_docassemble_configuration() -> None:
         setattr(da_functions, "get_configuration", lambda: {})
 
 
+_isolate_external_llm_credentials()
 _install_docassemble_webapp_stubs()
 _install_empty_docassemble_configuration()
 _preimport_pikepdf()

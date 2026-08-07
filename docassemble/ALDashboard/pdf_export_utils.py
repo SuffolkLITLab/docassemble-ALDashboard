@@ -405,12 +405,16 @@ def build_pdf_export_fields_per_page(
         if field_flag_parts:
             field_configs["fieldFlags"] = " ".join(field_flag_parts)
 
+        _REPORTLAB_BUTTON_STYLES = {"check", "cross", "circle", "star", "diamond"}
         checkbox_style = str(field_data.get("checkboxStyle") or "").strip()
         if checkbox_style and field_type in (
             field_type_enum.CHECK_BOX,
             field_type_enum.RADIO,
         ):
-            field_configs["buttonStyle"] = checkbox_style
+            if checkbox_style in _REPORTLAB_BUTTON_STYLES:
+                field_configs["buttonStyle"] = checkbox_style
+            else:
+                field_configs["buttonStyle"] = "check"
 
         background_color = field_data.get("backgroundColor")
         if (

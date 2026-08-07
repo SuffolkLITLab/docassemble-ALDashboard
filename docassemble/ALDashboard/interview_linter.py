@@ -550,7 +550,10 @@ def remove_mako(text: str) -> str:
     try:
         template = mako.template.Template(input_text)
         markdown_text = template.render()
-        html_text = docassemble.base.filter.markdown_to_html(markdown_text)
+        markdown_to_html = getattr(docassemble.base.filter, "markdown_to_html", None)
+        if not callable(markdown_to_html):
+            return input_text
+        html_text = markdown_to_html(markdown_text)
         return docassemble.webapp.screenreader.to_text(html_text)
     except Exception:
         return input_text

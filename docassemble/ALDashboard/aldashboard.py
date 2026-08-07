@@ -495,9 +495,10 @@ def da_write_config(data: Dict):
     restart_all()
     return True
 
+
 def get_user_count() -> int:
     """
-    Return the count of active (non-disabled) users on the server. Used to decide whether 
+    Return the count of active (non-disabled) users on the server. Used to decide whether
     it's safe to load every user into a dropdown, or whether the list is too large to do that.
     """
     with _get_db_session() as session:
@@ -511,8 +512,8 @@ def get_user_count() -> int:
 
 def get_users_and_name_by_ids(ids: List[int]) -> List[Tuple[int, str, str, str]]:
     """
-    Same shape as get_users_and_name(), but scoped to a specific list of user IDs instead of pulling 
-    every user in the database. Used to avoid loading the entire users table just to label a handful 
+    Same shape as get_users_and_name(), but scoped to a specific list of user IDs instead of pulling
+    every user in the database. Used to avoid loading the entire users table just to label a handful
     of already fetched session rows.
     """
     if not ids:
@@ -539,16 +540,18 @@ def get_users_and_name_by_ids(ids: List[int]) -> List[Tuple[int, str, str, str]]
 
 def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, str]]:
     """
-    Search for users whose email starts with the given text. Used by the input type: ajax field on large servers, 
+    Search for users whose email starts with the given text. Used by the input type: ajax field on large servers,
     so we never load the full user table - just return a handful of matches as the admin types.
     """
     wordstart = wordstart.strip()
     if not wordstart:
         return []
 
-    statement = select(
-        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
-    ).where(UserModel.email.istartswith(wordstart)).limit(limit)
+    statement = (
+        select(UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name)
+        .where(UserModel.email.istartswith(wordstart))
+        .limit(limit)
+    )
 
     with _get_db_session() as session:
         users = session.execute(statement).all()
@@ -563,6 +566,7 @@ def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, st
                 label += " " + last_name
             results.append((user_id, label))
         return results
+
 
 def speedy_get_users() -> List[Dict[int, str]]:
     """
@@ -1005,9 +1009,12 @@ def delete_inactive_developer_accounts(
     """Delete selected stale developer accounts through docassemble's built-in cleanup."""
     from docassemble.webapp.daredis import r, r_user
 
+    user_interviews: Callable[..., Any]
     try:
-        from docassemble.base.hooks import user_interviews
+        from docassemble.base.hooks import user_interviews as modern_user_interviews
         from docassemble.webapp.interview.helpers import delete_user_data
+
+        user_interviews = modern_user_interviews
     except ModuleNotFoundError as err:
         if err.name not in {
             "docassemble.base.hooks",
@@ -1016,8 +1023,13 @@ def delete_inactive_developer_accounts(
         }:
             raise
         # docassemble < 1.10 keeps these implementations in legacy modules.
-        from docassemble.webapp.server import user_interviews
-        from docassemble.webapp.backend import delete_user_data
+        from docassemble.webapp.server import user_interviews as legacy_user_interviews
+        from docassemble.webapp.backend import (
+            delete_user_data as legacy_delete_user_data,
+        )
+
+        user_interviews = legacy_user_interviews
+        delete_user_data = legacy_delete_user_data
 
     if requesting_user_id is None:
         requesting_user_id = _resolve_current_user_id()

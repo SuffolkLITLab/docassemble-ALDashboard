@@ -11,9 +11,20 @@ stack.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 from typing import Any, Callable
+
+
+def _isolate_external_llm_credentials() -> None:
+    """Prevent local dotenv credentials from changing deterministic tests."""
+    # docassemble may load the repository's .env while importing its config.
+    # Empty values are intentional: python-dotenv does not replace variables
+    # that are already present, and tests that need credentials can pass them
+    # explicitly or patch the environment in that test.
+    os.environ["OPENAI_API_KEY"] = ""
+    os.environ["OPENAI_BASE_URL"] = ""
 
 
 def _install_docassemble_webapp_stubs() -> None:
@@ -51,4 +62,48 @@ def _install_docassemble_webapp_stubs() -> None:
         pass
 
 
+def _preimport_pikepdf() -> None:
+    """Load pikepdf before any test patches ``sys.modules``.
+
+    ``unittest.mock.patch.dict("sys.modules", ...)`` restores the original
+    module dict on exit, dropping anything that was imported for the first
+    time inside the patched block. pikepdf cannot survive a second import in
+    the same process -- its ``@augments`` class patching raises
+    ``RuntimeError: ... both define the same non-abstract method`` -- so a test
+    that first pulls it in transitively (via ``docassemble.base.util``) while
+    ``sys.modules`` is patched would break every later pikepdf import.
+    Importing it up front keeps it in the dict that ``patch.dict`` restores.
+    """
+    try:
+        import pikepdf  # noqa: F401
+    except Exception:  # pragma: no cover - pikepdf is optional at import time
+        pass
+
+
+def _install_empty_docassemble_configuration() -> None:
+    """Make ``get_config()`` usable without a running docassemble server.
+
+    docassemble 1.10 routes ``get_configuration()`` through a pluggy hook that
+    only the webapp registers. Outside a real server the hook has no
+    implementation and returns ``None``, so ``docassemble.base.functions``'s
+    ``get_config()`` dies with ``AttributeError: 'NoneType' object has no
+    attribute 'get'``. ALToolbox's ``llms`` module calls ``get_config`` at
+    import time, which breaks collection of every test that imports
+    ``docx_wrangling``. Fall back to an empty configuration, which is what
+    these tests want anyway.
+    """
+    try:
+        import docassemble.base.functions as da_functions
+    except Exception:
+        return
+
+    try:
+        da_functions.get_config("open ai")
+    except Exception:
+        setattr(da_functions, "get_configuration", lambda: {})
+
+
+_isolate_external_llm_credentials()
 _install_docassemble_webapp_stubs()
+_install_empty_docassemble_configuration()
+_preimport_pikepdf()

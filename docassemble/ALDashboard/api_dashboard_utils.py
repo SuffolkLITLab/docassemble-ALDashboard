@@ -657,12 +657,15 @@ def docx_labeler_suggest_payload_from_options(
             ),
             "judge_review_count": len(judge_review.get("reviews", []) or []),
         }
+        # Server-log priority on purpose: any other priority appends to
+        # `this_thread.message_log`, which docassemble 1.10 only populates
+        # inside an interview request, and these timings are not meant for
+        # the user's screen anyway.
         log(
             "ALDashboard: DOCX suggest-labels timings for "
             + repr(filename)
             + ": "
-            + json.dumps(timings, sort_keys=True),
-            "info",
+            + json.dumps(timings, sort_keys=True)
         )
 
         return {
@@ -1945,6 +1948,69 @@ def alkiln_story_payload_from_options(
     return story_from_docassemble_json(docassemble_data, options=options)
 
 
+def variable_report_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    upload: Optional[Dict[str, Any]] = None
+    if "file" in request.files:
+        upload = _read_single_upload(field_name="file")
+    elif "files" in request.files:
+        uploads = _read_multi_uploads(field_name="files")
+        upload = uploads[0] if uploads else None
+    return variable_report_payload_from_options(raw, upload=upload)
+
+
+def variable_report_payload_from_options(
+    raw_options: Mapping[str, Any], *, upload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    from .variable_report_generator import generate_variable_report
+
+    raw = merge_raw_options(raw_options)
+    yaml_text = raw.get("yaml_text") or raw.get("yaml_content")
+    playground_project = str(raw.get("playground_project") or "").strip()
+    playground_yaml_file = str(raw.get("playground_yaml_file") or "").strip()
+    source_token = str(raw.get("source_token") or "").strip()
+
+    if upload is None and raw.get("file_content_base64") is not None:
+        filename = str(raw.get("filename") or "upload.yml")
+        content = decode_base64_content(raw.get("file_content_base64"))
+        _validate_upload_size(content)
+        upload = {"filename": filename, "content": content}
+
+    if yaml_text is None and upload is not None:
+        upload_content = upload.get("content")
+        if isinstance(upload_content, (bytes, bytearray)):
+            yaml_text = bytes(upload_content).decode("utf-8", errors="replace")
+
+    if yaml_text is None and (playground_yaml_file or source_token):
+        token_to_use = playground_yaml_file or source_token
+        selected_source = _find_playground_yaml_source(
+            playground_project, token_to_use
+        )
+        with open(selected_source["path"], "r", encoding="utf-8") as f:
+            yaml_text = f.read()
+
+    if yaml_text is None:
+        raise DashboardAPIValidationError(
+            "Provide YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
+            "or `playground_project` with `playground_yaml_file`."
+        )
+
+    report_title = str(raw.get("report_title") or "Interview Variable Report").strip()
+    infer_assemblyline = parse_bool(raw.get("infer_assemblyline"), default=True)
+
+    res = generate_variable_report(
+        [yaml_text],
+        report_title=report_title,
+        infer_assemblyline=infer_assemblyline,
+    )
+    return {
+        "mako_markdown": res["mako_markdown"],
+        "variables_count": res["variables_count"],
+        "list_count": res["list_count"],
+        "scalar_count": res["scalar_count"],
+    }
+
+
 def _prepare_pdf_upload(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     raw = merge_raw_options(raw_options)
     filename = str(raw.get("filename") or "upload.pdf")
@@ -2396,6 +2462,27 @@ def build_openapi_spec() -> Dict[str, Any]:
                     "description": (
                         "Formats embedded Python code blocks in YAML (for example `code` and "
                         "`validation code`) and returns `formatted_yaml` plus `changed`."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/kiln/story": {
+                "post": {
+                    "summary": "Convert docassemble JSON, YAML, or a saved session to an ALKiln story",
+                    "description": (
+                        "Accepts docassemble JSON as `data`, `json_text`, or `variables`, "
+                        "a saved interview `session_id`, or interview YAML via `yaml_text`, "
+                        "upload, source token, or playground selection. YAML input uses "
+                        "heuristics to create table rows and detect the ending screen."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/variable-report": {
+                "post": {
+                    "summary": "Generate interview variable report (Mako+Markdown and Jinja2 DOCX)",
+                    "description": (
+                        "Accepts interview YAML via `yaml_text`, upload, or playground selection, "
+                        "extracts all variables, infers AssemblyLine built-ins, and returns "
+                        "Mako+Markdown plain text and variable metrics."
                     ),
                 }
             },

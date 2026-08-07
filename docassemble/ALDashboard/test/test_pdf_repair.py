@@ -645,12 +645,8 @@ class TestRestoreCheckboxAppearances(unittest.TestCase):
                 font_dict = dr["/Font"]
                 self.assertIn("/ZaDb", font_dict)
                 self.assertIn("/Helv", font_dict)
-                self.assertEqual(
-                    str(font_dict["/ZaDb"]["/BaseFont"]), "/ZapfDingbats"
-                )
-                self.assertEqual(
-                    str(font_dict["/Helv"]["/BaseFont"]), "/Helvetica"
-                )
+                self.assertEqual(str(font_dict["/ZaDb"]["/BaseFont"]), "/ZapfDingbats")
+                self.assertEqual(str(font_dict["/Helv"]["/BaseFont"]), "/Helvetica")
 
                 # Verify widget /DA is set
                 annot = pdf.pages[0].Annots[0]

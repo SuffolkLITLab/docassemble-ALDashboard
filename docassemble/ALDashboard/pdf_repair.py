@@ -231,8 +231,7 @@ def _checkbox_mark_ops(
         )
     if style == "square":
         return (
-            f"{left:.3f} {bottom:.3f} {right - left:.3f} {top - bottom:.3f} re\n"
-            "f\n"
+            f"{left:.3f} {bottom:.3f} {right - left:.3f} {top - bottom:.3f} re\n" "f\n"
         )
     if style == "circle":
         c = 0.5522847498
@@ -444,7 +443,11 @@ def restore_checkbox_appearances(
                     # checkboxes whose /AP we keep unchanged.
                     if "/DA" not in widget:
                         widget["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
-                    if parent is not None and hasattr(parent, "get") and "/DA" not in parent:
+                    if (
+                        parent is not None
+                        and hasattr(parent, "get")
+                        and "/DA" not in parent
+                    ):
                         parent["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
 
                     normal_ap = _normal_appearance_dict(widget)
@@ -467,7 +470,9 @@ def restore_checkbox_appearances(
                         parent, "/T", _pdf_obj_value(widget, "/T", "")
                     )
                     field_name = str(field_name_obj or "")
-                    mark_style = styles.get(field_name) or _checkbox_mark_style(widget, parent)
+                    mark_style = styles.get(field_name) or _checkbox_mark_style(
+                        widget, parent
+                    )
                     border_width = border_widths.get(field_name, 0.0)
                     streams = _make_checkbox_appearance_streams(
                         pdf,

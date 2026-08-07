@@ -309,6 +309,99 @@ def _collect_checkbox_border_widths(
     return widths
 
 
+def _collect_checkbox_styles(
+    fields_data: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Collect checkbox style preferences keyed by PDF field name."""
+    styles: Dict[str, str] = {}
+    for field in fields_data:
+        try:
+            if str(field.get("type", "")).lower() != "checkbox":
+                continue
+            name = str(field.get("name", "")).strip()
+            style = str(field.get("checkboxStyle") or "").strip()
+            if name and style:
+                styles[name] = style
+        except Exception:  # nosec B112
+            continue
+    return styles
+
+
+def _read_checkbox_styles_from_pdf(pdf_path: str) -> Dict[str, str]:
+    """Read actual checkbox mark styles from a PDF's /MK /CA values.
+
+    Returns a ``{field_name: style_name}`` mapping (e.g. ``{"cb1": "cross"}``).
+    FormFyxer's ``get_existing_pdf_fields`` always defaults to
+    ``buttonStyle='check'``, losing the original style.  This function reads
+    the PDF directly so the detect endpoint can report the true style.
+    """
+    from .pdf_repair import _CHECKBOX_CAPTION_TO_STYLE
+
+    try:
+        import pikepdf
+    except ImportError:
+        return {}
+
+    styles: Dict[str, str] = {}
+    try:
+        with pikepdf.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                annots = page.get("/Annots")
+                if annots is None:
+                    continue
+                for annot in annots:  # type: ignore[attr-defined]
+                    try:
+                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                        if widget.get("/Subtype") != pikepdf.Name("/Widget"):
+                            continue
+                        # Determine field type
+                        ft = str(widget.get("/FT", ""))
+                        parent = widget.get("/Parent")
+                        if parent is not None:
+                            try:
+                                parent = (
+                                    parent.resolve()
+                                    if hasattr(parent, "resolve")
+                                    else parent
+                                )
+                            except Exception:
+                                parent = None
+                        if not ft and parent is not None:
+                            ft = str(parent.get("/FT", ""))
+                        if ft != "/Btn":
+                            continue
+
+                        # Get field name
+                        name_obj = widget.get("/T")
+                        if name_obj is None and parent is not None:
+                            name_obj = parent.get("/T")
+                        if name_obj is None:
+                            continue
+                        field_name = str(name_obj).strip()
+                        if not field_name:
+                            continue
+
+                        # Read /MK /CA
+                        for obj in (widget, parent):
+                            if obj is None or not hasattr(obj, "get"):
+                                continue
+                            mk = obj.get("/MK")
+                            if mk is None or not hasattr(mk, "get"):
+                                continue
+                            ca = mk.get("/CA")
+                            if ca is None:
+                                continue
+                            style = _CHECKBOX_CAPTION_TO_STYLE.get(str(ca))
+                            if style:
+                                styles[field_name] = style
+                                break
+                    except Exception:  # nosec B112
+                        continue
+    except Exception:  # nosec B112
+        pass
+    return styles
+
+
 def _apply_pdf_field_visual_defaults(
     pdf_path: str,
     *,
@@ -362,10 +455,54 @@ def _apply_pdf_field_visual_defaults(
         if "/DA" not in obj:
             obj["/DA"] = pikepdf.String("/Helv 10 Tf 0 g")
 
+    def _ensure_button_da(obj: Any) -> None:
+        """Set /DA on /Btn widgets so Chrome/PDFium uses ZapfDingbats."""
+        if obj is None or not hasattr(obj, "get"):
+            return
+        ft = str(obj.get("/FT", ""))
+        if ft != "/Btn":
+            return
+        if "/DA" not in obj:
+            obj["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
+
     def _is_button_widget(named_parent: Optional[Any]) -> bool:
         if named_parent is None or not hasattr(named_parent, "get"):
             return False
         return str(named_parent.get("/FT", "")) == "/Btn"
+
+    def _ensure_dr_fonts(pdf_obj: Any) -> None:
+        """Ensure AcroForm /DR /Font has /ZaDb and /Helv entries."""
+        af = pdf_obj.Root.get("/AcroForm")
+        if not isinstance(af, pikepdf.Dictionary):
+            return
+        dr = af.get("/DR")
+        if not isinstance(dr, pikepdf.Dictionary):
+            dr = pikepdf.Dictionary()
+            af["/DR"] = dr
+        font_dict = dr.get("/Font")
+        if not isinstance(font_dict, pikepdf.Dictionary):
+            font_dict = pikepdf.Dictionary()
+            dr["/Font"] = font_dict
+        if "/ZaDb" not in font_dict:
+            font_dict["/ZaDb"] = pdf_obj.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Font"),
+                        "/Subtype": pikepdf.Name("/Type1"),
+                        "/BaseFont": pikepdf.Name("/ZapfDingbats"),
+                    }
+                )
+            )
+        if "/Helv" not in font_dict:
+            font_dict["/Helv"] = pdf_obj.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Font"),
+                        "/Subtype": pikepdf.Name("/Type1"),
+                        "/BaseFont": pikepdf.Name("/Helvetica"),
+                    }
+                )
+            )
 
     with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
         acroform = pdf.Root.get("/AcroForm")
@@ -374,7 +511,11 @@ def _apply_pdf_field_visual_defaults(
                 continue
             for annot in page.Annots:  # type: ignore[attr-defined]
                 try:
-                    if annot.Type != "/Annot" or annot.Subtype != "/Widget":
+                    if annot is None or not hasattr(annot, "get"):
+                        continue
+                    if annot.get("/Type") != pikepdf.Name("/Annot") or annot.get(
+                        "/Subtype"
+                    ) != pikepdf.Name("/Widget"):
                         continue
 
                     named_parent = _get_named_pdf_parent(annot)
@@ -392,6 +533,9 @@ def _apply_pdf_field_visual_defaults(
                     _ensure_standard_text_da(annot)
                     if named_parent and named_parent is not annot:
                         _ensure_standard_text_da(named_parent)
+                    _ensure_button_da(annot)
+                    if named_parent and named_parent is not annot:
+                        _ensure_button_da(named_parent)
 
                     is_button_widget = _is_button_widget(named_parent)
                     if field_name in explicit and (
@@ -415,6 +559,7 @@ def _apply_pdf_field_visual_defaults(
                 except Exception:  # nosec B112
                     continue
 
+        _ensure_dr_fonts(pdf)
         if isinstance(acroform, pikepdf.Dictionary):
             # Rebuild standard text/list appearances now, then clear the flag so
             # button widgets keep their authoritative saved /AP streams.
@@ -422,6 +567,24 @@ def _apply_pdf_field_visual_defaults(
             pdf.generate_appearance_streams()
             if "/NeedAppearances" in acroform:
                 del acroform["/NeedAppearances"]
+
+        if not preserve_button_appearances:
+            # generate_appearance_streams() regenerates ALL widget /AP,
+            # including button fields, using a default checkmark style that
+            # ignores /MK /CA.  Strip those so restore_checkbox_appearances
+            # can synthesize correct style-aware appearances afterwards.
+            for page in pdf.pages:
+                if "/Annots" not in page:
+                    continue
+                for annot in page.Annots:  # type: ignore[attr-defined]
+                    try:
+                        if annot is None or not hasattr(annot, "get"):
+                            continue
+                        named_parent = _get_named_pdf_parent(annot)
+                        if _is_button_widget(named_parent) and "/AP" in annot:
+                            del annot["/AP"]
+                    except Exception:  # nosec B112
+                        continue
 
         pdf.save(pdf_path)
 
@@ -3043,6 +3206,11 @@ def pdf_labeler_detect_fields() -> Response:
             # Get existing fields with positions
             fields_per_page = formfyxer.get_existing_pdf_fields(temp_path)
 
+            # FormFyxer defaults all checkboxes to buttonStyle='check',
+            # losing the original /MK /CA value.  Read actual styles from
+            # the PDF so the browser can preserve them on export.
+            checkbox_styles_from_pdf = _read_checkbox_styles_from_pdf(temp_path)
+
             return jsonify(
                 {
                     "success": True,
@@ -3050,7 +3218,10 @@ def pdf_labeler_detect_fields() -> Response:
                     "data": {
                         "filename": filename,
                         "page_count": len(fields_per_page),
-                        "fields": _format_pdf_fields_for_ui_payload(fields_per_page),
+                        "fields": _format_pdf_fields_for_ui_payload(
+                            fields_per_page,
+                            checkbox_styles=checkbox_styles_from_pdf,
+                        ),
                     },
                 }
             )
@@ -3391,6 +3562,7 @@ def pdf_labeler_apply_fields() -> Response:
                 fields_data
             )
             checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
+            checkbox_styles = _collect_checkbox_styles(fields_data)
             signature_field_names = [
                 str(field.get("name", "")).strip()
                 for field in fields_data
@@ -3430,6 +3602,7 @@ def pdf_labeler_apply_fields() -> Response:
                 output_path,
                 output_path,
                 checkbox_border_widths=checkbox_border_widths,
+                checkbox_styles=checkbox_styles,
             )
 
             accessibility_payload = _parse_optional_json_field(
@@ -3601,6 +3774,7 @@ def pdf_labeler_test_fill() -> Response:
                 fields_data
             )
             checkbox_border_widths = _collect_checkbox_border_widths(fields_data)
+            checkbox_styles = _collect_checkbox_styles(fields_data)
 
             fields_per_page = build_pdf_export_fields_per_page(
                 fields_data,
@@ -3636,6 +3810,7 @@ def pdf_labeler_test_fill() -> Response:
                 output_path,
                 output_path,
                 checkbox_border_widths=checkbox_border_widths,
+                checkbox_styles=checkbox_styles,
             )
 
             the_fields = read_fields(output_path)
@@ -4303,6 +4478,10 @@ def pdf_labeler_bulk_normalize():
                             _apply_checkbox_export_values(output_path, checkbox_values)
                         from .pdf_repair import normalize_signature_fields
 
+                        checkbox_border_widths = _collect_checkbox_border_widths(
+                            normalized_fields
+                        )
+                        checkbox_styles = _collect_checkbox_styles(normalized_fields)
                         normalize_signature_fields(
                             output_path,
                             output_path,
@@ -4318,6 +4497,7 @@ def pdf_labeler_bulk_normalize():
                             output_path,
                             output_path,
                             checkbox_border_widths=checkbox_border_widths,
+                            checkbox_styles=checkbox_styles,
                         )
 
                         # Strip embedded fonts if requested

@@ -127,16 +127,29 @@ def _checkbox_checked_state(
     return pikepdf_module.Name("/Yes")
 
 
-_CHECKBOX_CAPTION_TO_STYLE = {
-    "4": "check",
-    "5": "cross",
-    "l": "circle",
-    "N": "star",
-    "u": "diamond",
-}
 _CHECKBOX_STYLE_TO_CAPTION = {
-    style: caption for caption, style in _CHECKBOX_CAPTION_TO_STYLE.items()
+    "check": "4",
+    "cross": "5",
+    "square": "n",
+    "circle": "l",
+    "star": "N",
+    "diamond": "u",
 }
+# Round-trip decode map: every caption written by _CHECKBOX_STYLE_TO_CAPTION
+# must map back to the same style here. Extra keys below ("8", "x", "X") are
+# decode-only aliases for captions produced by other PDF tools (e.g. Adobe's
+# own "8" = heavy ballot X convention) and are never emitted by this module,
+# so they cannot collide with a style we round-trip ourselves.
+_CHECKBOX_CAPTION_TO_STYLE = {
+    caption: style for style, caption in _CHECKBOX_STYLE_TO_CAPTION.items()
+}
+_CHECKBOX_CAPTION_TO_STYLE.update(
+    {
+        "8": "cross",  # Wingdings/Adobe '8' (heavy ballot X)
+        "x": "cross",
+        "X": "cross",
+    }
+)
 
 
 def _checkbox_mark_style(widget: Any, parent: Optional[Any]) -> str:
@@ -196,7 +209,10 @@ def _checkbox_mark_ops(
     style: str, width: float, height: float, border_width: float
 ) -> str:
     """Return PDF path operations for a borderless checkbox mark."""
-    inset = max(3.0, border_width + 2.0)
+    if border_width > 0:
+        inset = max(border_width + 1.0, min(width, height) * 0.15)
+    else:
+        inset = max(1.5, min(width, height) * 0.15)
     left = inset
     right = max(width - inset, left)
     bottom = inset
@@ -212,6 +228,10 @@ def _checkbox_mark_ops(
             f"{right:.3f} {top:.3f} l\n"
             f"{right:.3f} {bottom:.3f} m\n"
             f"{left:.3f} {top:.3f} l\n"
+        )
+    if style == "square":
+        return (
+            f"{left:.3f} {bottom:.3f} {right - left:.3f} {top - bottom:.3f} re\n" "f\n"
         )
     if style == "circle":
         c = 0.5522847498
@@ -288,20 +308,25 @@ def _make_checkbox_appearance_streams(
             "S\n"
         )
 
+    procset = pikepdf.Array([pikepdf.Name("/PDF")])
+    resources = pikepdf.Dictionary({"/ProcSet": procset})
+
     off_stream = pikepdf.Stream(pdf, f"q\n{border_ops}Q\n".encode("ascii"))
     off_stream["/Type"] = pikepdf.Name("/XObject")
     off_stream["/Subtype"] = pikepdf.Name("/Form")
     off_stream["/FormType"] = 1
     off_stream["/BBox"] = pikepdf.Array([0, 0, width, height])
     off_stream["/Matrix"] = pikepdf.Array([1, 0, 0, 1, 0, 0])
+    off_stream["/Resources"] = resources
 
+    stroke_op = "f\n" if style == "square" else "S\n"
     checked_ops = (
         "q\n"
         f"{border_ops}"
         "0 0 0 RG\n"
         "1.8 w\n"
         f"{_checkbox_mark_ops(style, width, height, border_width)}"
-        "S\n"
+        f"{stroke_op}"
         "Q\n"
     ).encode("ascii")
     checked_stream = pikepdf.Stream(pdf, checked_ops)
@@ -310,7 +335,48 @@ def _make_checkbox_appearance_streams(
     checked_stream["/FormType"] = 1
     checked_stream["/BBox"] = pikepdf.Array([0, 0, width, height])
     checked_stream["/Matrix"] = pikepdf.Array([1, 0, 0, 1, 0, 0])
+    checked_stream["/Resources"] = resources
     return {"off": off_stream, "checked": checked_stream}
+
+
+def _ensure_acroform_font_resources(pdf: Any) -> None:
+    """Ensure AcroForm dictionary has /DR /Font with /ZaDb and /Helv."""
+    import pikepdf
+
+    acroform = pdf.Root.get("/AcroForm")
+    if not isinstance(acroform, pikepdf.Dictionary):
+        acroform = pikepdf.Dictionary()
+        pdf.Root["/AcroForm"] = pdf.make_indirect(acroform)
+
+    dr = acroform.get("/DR")
+    if not isinstance(dr, pikepdf.Dictionary):
+        dr = pikepdf.Dictionary()
+        acroform["/DR"] = dr
+
+    font_dict = dr.get("/Font")
+    if not isinstance(font_dict, pikepdf.Dictionary):
+        font_dict = pikepdf.Dictionary()
+        dr["/Font"] = font_dict
+
+    if "/ZaDb" not in font_dict:
+        zapf = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/ZapfDingbats"),
+            }
+        )
+        font_dict["/ZaDb"] = pdf.make_indirect(zapf)
+
+    if "/Helv" not in font_dict:
+        helv = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/Helvetica"),
+            }
+        )
+        font_dict["/Helv"] = pdf.make_indirect(helv)
 
 
 def restore_checkbox_appearances(
@@ -318,6 +384,7 @@ def restore_checkbox_appearances(
     output_pdf_path: str,
     *,
     checkbox_border_widths: Optional[Dict[str, Any]] = None,
+    checkbox_styles: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Restore missing checkbox appearance streams without touching text fields.
 
@@ -337,12 +404,18 @@ def restore_checkbox_appearances(
         for name, value in (checkbox_border_widths or {}).items()
         if str(name).strip()
     }
+    styles = {
+        str(name): str(value).strip()
+        for name, value in (checkbox_styles or {}).items()
+        if str(name).strip() and str(value).strip()
+    }
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
         with pikepdf.open(input_pdf_path) as pdf:
+            _ensure_acroform_font_resources(pdf)
             for page in pdf.pages:
                 annots = page.get("/Annots")
                 if annots is None:
@@ -365,6 +438,18 @@ def restore_checkbox_appearances(
                     checked += 1
 
                     checked_state = _checkbox_checked_state(widget, parent, pikepdf)
+
+                    # Always ensure /DA for Chrome/PDFium, even on
+                    # checkboxes whose /AP we keep unchanged.
+                    if "/DA" not in widget:
+                        widget["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
+                    if (
+                        parent is not None
+                        and hasattr(parent, "get")
+                        and "/DA" not in parent
+                    ):
+                        parent["/DA"] = pikepdf.String("/ZaDb 0 Tf 0 g")
+
                     normal_ap = _normal_appearance_dict(widget)
                     if (
                         normal_ap is not None
@@ -381,11 +466,13 @@ def restore_checkbox_appearances(
                     except (TypeError, ValueError, IndexError):
                         width = height = 12.0
 
-                    mark_style = _checkbox_mark_style(widget, parent)
                     field_name_obj = _pdf_obj_value(
                         parent, "/T", _pdf_obj_value(widget, "/T", "")
                     )
                     field_name = str(field_name_obj or "")
+                    mark_style = styles.get(field_name) or _checkbox_mark_style(
+                        widget, parent
+                    )
                     border_width = border_widths.get(field_name, 0.0)
                     streams = _make_checkbox_appearance_streams(
                         pdf,

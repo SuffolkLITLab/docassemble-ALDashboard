@@ -1005,9 +1005,11 @@ def delete_inactive_developer_accounts(
     """Delete selected stale developer accounts through docassemble's built-in cleanup."""
     from docassemble.webapp.daredis import r, r_user
 
+    user_interviews: Callable[..., Any]
     try:
-        from docassemble.base.hooks import user_interviews
+        from docassemble.base.hooks import user_interviews as modern_user_interviews
         from docassemble.webapp.interview.helpers import delete_user_data
+        user_interviews = modern_user_interviews
     except ModuleNotFoundError as err:
         if err.name not in {
             "docassemble.base.hooks",
@@ -1016,8 +1018,11 @@ def delete_inactive_developer_accounts(
         }:
             raise
         # docassemble < 1.10 keeps these implementations in legacy modules.
-        from docassemble.webapp.server import user_interviews
-        from docassemble.webapp.backend import delete_user_data
+        from docassemble.webapp.server import user_interviews as legacy_user_interviews
+        from docassemble.webapp.backend import delete_user_data as legacy_delete_user_data
+
+        user_interviews = legacy_user_interviews
+        delete_user_data = legacy_delete_user_data
 
     if requesting_user_id is None:
         requesting_user_id = _resolve_current_user_id()

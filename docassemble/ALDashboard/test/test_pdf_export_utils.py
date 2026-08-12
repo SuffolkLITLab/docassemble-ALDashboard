@@ -220,6 +220,7 @@ class TestPDFExportUtils(unittest.TestCase):
         self.assertEqual(dropdown.type, FakeFieldType.CHOICE)
         self.assertEqual(dropdown.configs["fieldFlags"], "combo")
         self.assertEqual(dropdown.configs["options"], ["MA", "RI"])
+        self.assertEqual(dropdown.configs["value"], "MA")
         self.assertEqual(dropdown.configs["fontName"], "Helvetica")
         self.assertEqual(dropdown.configs["fontSize"], 10)
         self.assertEqual(dropdown.configs["width"], 80.0)

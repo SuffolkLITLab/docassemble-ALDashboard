@@ -3523,10 +3523,17 @@ def pdf_labeler_apply_fields() -> Response:
 
         # Parse fields
         if isinstance(fields_raw, str):
-            fields_data = json.loads(fields_raw)
+            try:
+                fields_data = json.loads(fields_raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise DashboardAPIValidationError(
+                    "fields must be valid JSON when provided as a string."
+                ) from exc
         elif isinstance(fields_raw, list):
             fields_data = fields_raw
         else:
+            raise DashboardAPIValidationError("fields is required and must be a list.")
+        if not isinstance(fields_data, list):
             raise DashboardAPIValidationError("fields is required and must be a list.")
         deduplicate_field_names = parse_bool(
             post_data.get("deduplicate_field_names"), default=False
@@ -3740,10 +3747,17 @@ def pdf_labeler_test_fill() -> Response:
         filename, content, post_data = _read_pdf_labeler_file_request()
         fields_raw = post_data.get("fields")
         if isinstance(fields_raw, str):
-            fields_data = json.loads(fields_raw)
+            try:
+                fields_data = json.loads(fields_raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise DashboardAPIValidationError(
+                    "fields must be valid JSON when provided as a string."
+                ) from exc
         elif isinstance(fields_raw, list):
             fields_data = fields_raw
         else:
+            raise DashboardAPIValidationError("fields is required and must be a list.")
+        if not isinstance(fields_data, list):
             raise DashboardAPIValidationError("fields is required and must be a list.")
 
         deduplicate_field_names = parse_bool(

@@ -351,7 +351,11 @@ def _read_checkbox_styles_from_pdf(pdf_path: str) -> Dict[str, str]:
                     continue
                 for annot in annots:  # type: ignore[attr-defined]
                     try:
-                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                        widget = (
+                            annot.resolve()  # type: ignore[operator]
+                            if hasattr(annot, "resolve")
+                            else annot
+                        )
                         if widget.get("/Subtype") != pikepdf.Name("/Widget"):
                             continue
                         # Determine field type
@@ -360,7 +364,7 @@ def _read_checkbox_styles_from_pdf(pdf_path: str) -> Dict[str, str]:
                         if parent is not None:
                             try:
                                 parent = (
-                                    parent.resolve()
+                                    parent.resolve()  # type: ignore[operator]
                                     if hasattr(parent, "resolve")
                                     else parent
                                 )

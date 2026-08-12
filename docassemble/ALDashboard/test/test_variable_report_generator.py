@@ -28,10 +28,14 @@ class TestVariableReportGenerator(unittest.TestCase):
         self.assertEqual(meta["md_filename"], "affidavit_of_indigency_draft.md")
         self.assertEqual(meta["docx_filename"], "affidavit_of_indigency_draft.docx")
 
-        meta_file = extract_interview_metadata_info(["question: | Start"], primary_filename="housing_code_checklist.yml")
+        meta_file = extract_interview_metadata_info(
+            ["question: | Start"], primary_filename="housing_code_checklist.yml"
+        )
         self.assertEqual(meta_file["display_title"], "Housing Code Checklist Draft")
         self.assertEqual(meta_file["md_filename"], "housing_code_checklist_draft.md")
-        self.assertEqual(meta_file["docx_filename"], "housing_code_checklist_draft.docx")
+        self.assertEqual(
+            meta_file["docx_filename"], "housing_code_checklist_draft.docx"
+        )
 
     def test_assemblyline_baseline_inference(self):
         baseline = _load_assemblyline_baseline()
@@ -55,7 +59,9 @@ fields:
     datatype: date
   - Case Number: case_number
 """
-        groups, variables = extract_interview_questions_and_variables([yaml_content], infer_assemblyline=True)
+        groups, variables = extract_interview_questions_and_variables(
+            [yaml_content], infer_assemblyline=True
+        )
         self.assertIn("users", variables)
         self.assertTrue(variables["users"].is_list)
         self.assertIn("case_number", variables)
@@ -75,7 +81,9 @@ fields:
   - First Name: users[i].name.first
   - Case Number: case_number
 """
-        res = generate_variable_report([yaml_content], report_title="Test Report", infer_assemblyline=True)
+        res = generate_variable_report(
+            [yaml_content], report_title="Test Report", infer_assemblyline=True
+        )
         mako_md = res["mako_markdown"]
         self.assertIn("# Test Report", mako_md)
         self.assertIn("## What is your information?", mako_md)
@@ -122,7 +130,9 @@ fields:
 """
         with tempfile.TemporaryDirectory() as tmpdir:
             out_docx = os.path.join(tmpdir, "report.docx")
-            res = generate_variable_report([yaml_content], output_docx_path=out_docx, infer_assemblyline=True)
+            res = generate_variable_report(
+                [yaml_content], output_docx_path=out_docx, infer_assemblyline=True
+            )
             self.assertTrue(os.path.exists(res["docx_path"]))
             self.assertGreater(os.path.getsize(res["docx_path"]), 0)
 

@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess  # nosec B404
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -422,7 +423,11 @@ def restore_checkbox_appearances(
                     continue
                 for annot in annots:  # type: ignore[attr-defined]
                     try:
-                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                        widget = (
+                            annot.resolve()  # type: ignore[operator]
+                            if hasattr(annot, "resolve")
+                            else annot
+                        )
                     except Exception:  # nosec B112
                         continue
                     try:
@@ -566,7 +571,11 @@ def normalize_signature_fields(
                     continue
                 for annot in annots:  # type: ignore[attr-defined]
                     try:
-                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                        widget = (
+                            annot.resolve()  # type: ignore[operator]
+                            if hasattr(annot, "resolve")
+                            else annot
+                        )
                     except Exception:  # nosec B112
                         continue
                     try:
@@ -623,7 +632,11 @@ def _extract_field_info_pikepdf(pdf_path: str) -> List[Dict[str, Any]]:
                 continue
             for annot in annots:  # type: ignore[attr-defined]
                 try:
-                    obj = annot.resolve() if hasattr(annot, "resolve") else annot
+                    obj = (
+                        annot.resolve()  # type: ignore[operator]
+                        if hasattr(annot, "resolve")
+                        else annot
+                    )
                 except Exception:  # nosec B112
                     continue
                 ft = str(obj.get("/FT", "")) if "/FT" in obj else None
@@ -676,9 +689,7 @@ def _restore_fields_pikepdf(pdf_path: str, fields: List[Dict[str, Any]]) -> None
                 {
                     "/Type": pikepdf.Name("/Annot"),
                     "/Subtype": pikepdf.Name("/Widget"),
-                    "/Rect": pikepdf.Array(
-                        [pikepdf.objects.Decimal(str(v)) for v in rect]
-                    ),
+                    "/Rect": pikepdf.Array([Decimal(str(v)) for v in rect]),
                     "/P": page.obj,
                 }
             )

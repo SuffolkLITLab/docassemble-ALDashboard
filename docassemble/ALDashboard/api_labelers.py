@@ -351,7 +351,11 @@ def _read_checkbox_styles_from_pdf(pdf_path: str) -> Dict[str, str]:
                     continue
                 for annot in annots:  # type: ignore[attr-defined]
                     try:
-                        widget = annot.resolve() if hasattr(annot, "resolve") else annot
+                        widget = (
+                            annot.resolve()  # type: ignore[operator]
+                            if hasattr(annot, "resolve")
+                            else annot
+                        )
                         if widget.get("/Subtype") != pikepdf.Name("/Widget"):
                             continue
                         # Determine field type
@@ -360,7 +364,7 @@ def _read_checkbox_styles_from_pdf(pdf_path: str) -> Dict[str, str]:
                         if parent is not None:
                             try:
                                 parent = (
-                                    parent.resolve()
+                                    parent.resolve()  # type: ignore[operator]
                                     if hasattr(parent, "resolve")
                                     else parent
                                 )
@@ -3523,10 +3527,17 @@ def pdf_labeler_apply_fields() -> Response:
 
         # Parse fields
         if isinstance(fields_raw, str):
-            fields_data = json.loads(fields_raw)
+            try:
+                fields_data = json.loads(fields_raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise DashboardAPIValidationError(
+                    "fields must be valid JSON when provided as a string."
+                ) from exc
         elif isinstance(fields_raw, list):
             fields_data = fields_raw
         else:
+            raise DashboardAPIValidationError("fields is required and must be a list.")
+        if not isinstance(fields_data, list):
             raise DashboardAPIValidationError("fields is required and must be a list.")
         deduplicate_field_names = parse_bool(
             post_data.get("deduplicate_field_names"), default=False
@@ -3740,10 +3751,17 @@ def pdf_labeler_test_fill() -> Response:
         filename, content, post_data = _read_pdf_labeler_file_request()
         fields_raw = post_data.get("fields")
         if isinstance(fields_raw, str):
-            fields_data = json.loads(fields_raw)
+            try:
+                fields_data = json.loads(fields_raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise DashboardAPIValidationError(
+                    "fields must be valid JSON when provided as a string."
+                ) from exc
         elif isinstance(fields_raw, list):
             fields_data = fields_raw
         else:
+            raise DashboardAPIValidationError("fields is required and must be a list.")
+        if not isinstance(fields_data, list):
             raise DashboardAPIValidationError("fields is required and must be a list.")
 
         deduplicate_field_names = parse_bool(

@@ -439,6 +439,13 @@ def build_pdf_export_fields_per_page(
                 options = [str(option) for option in raw_options if str(option).strip()]
             else:
                 options = []
+            # ReportLab's choice/listbox appearance builder expects a non-empty
+            # option value. The browser always starts these widgets with a
+            # default option list, but keep the API safe for older clients and
+            # hand-authored requests as well.
+            if not options:
+                options = ["Option 1", "Option 2"]
+            field_configs["value"] = options[0]
             if options:
                 field_configs["options"] = options
         elif field_type == field_type_enum.RADIO:

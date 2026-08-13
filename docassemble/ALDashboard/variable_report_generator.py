@@ -144,7 +144,9 @@ def list_variable_report_playground_yaml_files(
     return list_formatter_playground_yaml_files(project)
 
 
-def _get_playground_storage(project: str, section: str = "playground") -> Tuple[Any, str]:
+def _get_playground_storage(
+    project: str, section: str = "playground"
+) -> Tuple[Any, str]:
     from .docassemble_compat import SavedFile, directory_for
     from .interview_linter import _resolve_current_user_id
 
@@ -230,15 +232,29 @@ def _load_assemblyline_baseline() -> Dict[str, VariableSpec]:
                                 class_str = str(class_info).strip()
                                 if name_str in SKIP_SYSTEM_VARS:
                                     continue
-                                is_list = "ALPeopleList" in class_str or "DAList" in class_str or "List" in class_str
+                                is_list = (
+                                    "ALPeopleList" in class_str
+                                    or "DAList" in class_str
+                                    or "List" in class_str
+                                )
                                 if is_list and name_str not in baseline_specs:
                                     attrs = (
                                         [
-                                            AttributeSpec(name=a[0], datatype=a[1], description=a[2])
+                                            AttributeSpec(
+                                                name=a[0],
+                                                datatype=a[1],
+                                                description=a[2],
+                                            )
                                             for a in DEFAULT_INDIVIDUAL_ATTRIBUTES
                                         ]
                                         if "ALPeopleList" in class_str
-                                        else [AttributeSpec(name="item", datatype="text", description="Item")]
+                                        else [
+                                            AttributeSpec(
+                                                name="item",
+                                                datatype="text",
+                                                description="Item",
+                                            )
+                                        ]
                                     )
                                     baseline_specs[name_str] = VariableSpec(
                                         name=name_str,
@@ -292,7 +308,13 @@ def extract_interview_questions_and_variables(
                             class_str = str(class_info)
                             is_list = any(
                                 k in class_str
-                                for k in ("ALPeopleList", "DAList", "ALList", "list", "DADict")
+                                for k in (
+                                    "ALPeopleList",
+                                    "DAList",
+                                    "ALList",
+                                    "list",
+                                    "DADict",
+                                )
                             )
                             if var_name not in variables:
                                 variables[var_name] = VariableSpec(
@@ -309,7 +331,9 @@ def extract_interview_questions_and_variables(
 
             # 2. Parse question screen
             if "question" in doc or "fields" in doc or "id" in doc:
-                q_title = _clean_title(doc.get("question") or doc.get("id") or "Interview Screen")
+                q_title = _clean_title(
+                    doc.get("question") or doc.get("id") or "Interview Screen"
+                )
                 q_id = str(doc.get("id") or "screen").strip()
                 group = QuestionGroupSpec(question_id=q_id, title=q_title)
 
@@ -327,40 +351,76 @@ def extract_interview_questions_and_variables(
                             datatype = str(f.get("datatype") or "text").strip().lower()
                             if "field" in f and isinstance(f["field"], str):
                                 field_var_name = f["field"].strip()
-                                label = str(f.get("label") or f.get("note") or "").strip()
+                                label = str(
+                                    f.get("label") or f.get("note") or ""
+                                ).strip()
                             else:
                                 reserved_keys = {
-                                    "datatype", "choices", "help", "hint", "note", "label",
-                                    "required", "default", "disable_others", "input type",
-                                    "show if", "hide if", "rows", "code", "validation code",
-                                    "address autocomplete", "js_show_if", "grid", "buttons"
+                                    "datatype",
+                                    "choices",
+                                    "help",
+                                    "hint",
+                                    "note",
+                                    "label",
+                                    "required",
+                                    "default",
+                                    "disable_others",
+                                    "input type",
+                                    "show if",
+                                    "hide if",
+                                    "rows",
+                                    "code",
+                                    "validation code",
+                                    "address autocomplete",
+                                    "js_show_if",
+                                    "grid",
+                                    "buttons",
                                 }
                                 for k, v in f.items():
                                     if str(k).strip().lower() in reserved_keys:
                                         continue
-                                    if isinstance(v, str) and re.match(r"^[a-zA-Z_][a-zA-Z0-9_\[\]\.]*$", v.strip()):
+                                    if isinstance(v, str) and re.match(
+                                        r"^[a-zA-Z_][a-zA-Z0-9_\[\]\.]*$", v.strip()
+                                    ):
                                         field_var_name = v.strip()
                                         label = str(k).strip()
                                         break
-                                    elif isinstance(k, str) and re.match(r"^[a-zA-Z_][a-zA-Z0-9_\[\]\.]*$", str(k).strip()) and (v is None or isinstance(v, (str, bool, int, float))):
+                                    elif (
+                                        isinstance(k, str)
+                                        and re.match(
+                                            r"^[a-zA-Z_][a-zA-Z0-9_\[\]\.]*$",
+                                            str(k).strip(),
+                                        )
+                                        and (
+                                            v is None
+                                            or isinstance(v, (str, bool, int, float))
+                                        )
+                                    ):
                                         field_var_name = str(k).strip()
                                         if isinstance(v, str):
                                             label = v.strip()
                                         break
 
                         if field_var_name and field_var_name not in SKIP_SYSTEM_VARS:
-                            list_match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[.*?\]|\.(.+))?", field_var_name)
+                            list_match = re.match(
+                                r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[.*?\]|\.(.+))?",
+                                field_var_name,
+                            )
                             if list_match:
                                 base_list = list_match.group(1)
                                 attr = list_match.group(2) or ""
-                                has_index_or_dot = "[" in field_var_name or "." in field_var_name
+                                has_index_or_dot = (
+                                    "[" in field_var_name or "." in field_var_name
+                                )
 
                                 if has_index_or_dot:
                                     if attr and attr not in NOISE_LIST_ATTRS:
                                         referenced_var_names.add(base_list)
                                         if base_list not in list_attributes_found:
                                             list_attributes_found[base_list] = set()
-                                        list_attributes_found[base_list].add((attr, datatype))
+                                        list_attributes_found[base_list].add(
+                                            (attr, datatype)
+                                        )
 
                                     if base_list not in variables:
                                         variables[base_list] = VariableSpec(
@@ -379,7 +439,8 @@ def extract_interview_questions_and_variables(
                                             name=field_var_name,
                                             var_type=datatype,
                                             is_list=False,
-                                            label=label or field_var_name.replace("_", " ").title(),
+                                            label=label
+                                            or field_var_name.replace("_", " ").title(),
                                             source="yaml_fields",
                                         )
                                     elif label and not variables[field_var_name].label:
@@ -388,7 +449,8 @@ def extract_interview_questions_and_variables(
                                     group.fields.append(
                                         FieldSpec(
                                             var_name=field_var_name,
-                                            label=label or field_var_name.replace("_", " ").title(),
+                                            label=label
+                                            or field_var_name.replace("_", " ").title(),
                                             datatype=datatype,
                                         )
                                     )
@@ -398,10 +460,37 @@ def extract_interview_questions_and_variables(
 
             # 3. Find references in templates/code
             doc_str = str(doc)
-            for var_match in re.finditer(r"\b([a-zA-Z_][a-zA-Z0-9_]*)(?:\[.*?\]|\.([a-zA-Z0-9_\.]+))?\b", doc_str):
+            for var_match in re.finditer(
+                r"\b([a-zA-Z_][a-zA-Z0-9_]*)(?:\[.*?\]|\.([a-zA-Z0-9_\.]+))?\b", doc_str
+            ):
                 b_name = var_match.group(1)
                 b_attr = var_match.group(2)
-                if b_name not in SKIP_SYSTEM_VARS and b_name not in ("True", "False", "None", "len", "str", "int", "dict", "list", "and", "or", "not", "if", "else", "endif", "for", "in", "endfor", "include", "fields", "question", "subquestion", "id", "mandatory", "code"):
+                if b_name not in SKIP_SYSTEM_VARS and b_name not in (
+                    "True",
+                    "False",
+                    "None",
+                    "len",
+                    "str",
+                    "int",
+                    "dict",
+                    "list",
+                    "and",
+                    "or",
+                    "not",
+                    "if",
+                    "else",
+                    "endif",
+                    "for",
+                    "in",
+                    "endfor",
+                    "include",
+                    "fields",
+                    "question",
+                    "subquestion",
+                    "id",
+                    "mandatory",
+                    "code",
+                ):
                     referenced_var_names.add(b_name)
                     if b_attr and b_attr not in NOISE_LIST_ATTRS:
                         if b_name not in list_attributes_found:
@@ -423,7 +512,10 @@ def extract_interview_questions_and_variables(
                         source="inferred_assemblyline",
                     )
                 else:
-                    if variables[ref].var_type in ("unknown", "text", "DAList") and al_spec.var_type != "unknown":
+                    if (
+                        variables[ref].var_type in ("unknown", "text", "DAList")
+                        and al_spec.var_type != "unknown"
+                    ):
                         variables[ref].var_type = al_spec.var_type
                     if al_spec.is_list:
                         variables[ref].is_list = True
@@ -433,17 +525,24 @@ def extract_interview_questions_and_variables(
     # Filter out internal list attributes and assign clean attributes
     for var_name, spec in variables.items():
         if spec.is_list:
-            filtered_attrs = [a for a in spec.attributes if a.name not in NOISE_LIST_ATTRS]
+            filtered_attrs = [
+                a for a in spec.attributes if a.name not in NOISE_LIST_ATTRS
+            ]
             existing_attrs = {a.name for a in filtered_attrs}
 
             if var_name in list_attributes_found:
                 for attr_name, dtype in sorted(list_attributes_found[var_name]):
-                    if attr_name not in NOISE_LIST_ATTRS and attr_name not in existing_attrs:
+                    if (
+                        attr_name not in NOISE_LIST_ATTRS
+                        and attr_name not in existing_attrs
+                    ):
                         filtered_attrs.append(
                             AttributeSpec(
                                 name=attr_name,
                                 datatype=dtype,
-                                description=attr_name.replace("_", " ").replace(".", " ").title(),
+                                description=attr_name.replace("_", " ")
+                                .replace(".", " ")
+                                .title(),
                             )
                         )
                         existing_attrs.add(attr_name)
@@ -455,7 +554,9 @@ def extract_interview_questions_and_variables(
                         for a in DEFAULT_INDIVIDUAL_ATTRIBUTES
                     ]
                 else:
-                    filtered_attrs = [AttributeSpec(name="item", datatype="text", description="Item")]
+                    filtered_attrs = [
+                        AttributeSpec(name="item", datatype="text", description="Item")
+                    ]
 
             spec.attributes = filtered_attrs
 
@@ -465,11 +566,16 @@ def extract_interview_questions_and_variables(
         for var_name, spec in variables.items():
             if spec.is_list and var_name not in assigned_lists:
                 # Check if this list was referenced in this group's screen
-                if any(f.var_name.startswith(var_name) for f in g.fields) or var_name in g.title.lower():
+                if (
+                    any(f.var_name.startswith(var_name) for f in g.fields)
+                    or var_name in g.title.lower()
+                ):
                     g.lists.append(spec)
                     assigned_lists.add(var_name)
 
-    unassigned_lists = [v for k, v in variables.items() if v.is_list and k not in assigned_lists]
+    unassigned_lists = [
+        v for k, v in variables.items() if v.is_list and k not in assigned_lists
+    ]
     if unassigned_lists:
         groups.append(
             QuestionGroupSpec(
@@ -516,7 +622,9 @@ def generate_mako_markdown_report(
                     disp_label += f" [{fspec.datatype}]"
 
                 if fspec.datatype in ("yesno", "boolean"):
-                    val_expr = f"% if showifdef('{fspec.var_name}'): Yes % else: No % endif"
+                    val_expr = (
+                        f"% if showifdef('{fspec.var_name}'): Yes % else: No % endif"
+                    )
                 else:
                     val_expr = f"${{ showifdef('{fspec.var_name}') }}"
                 lines.append(f"| {disp_label} | {val_expr} |")
@@ -533,11 +641,17 @@ def generate_mako_markdown_report(
                 lines.append(f"### {disp_title}")
                 lines.append("")
 
-                attrs = [a for a in lvar.attributes if a.name not in NOISE_LIST_ATTRS] or [AttributeSpec(name="item", datatype="text", description="Item")]
+                attrs = [
+                    a for a in lvar.attributes if a.name not in NOISE_LIST_ATTRS
+                ] or [AttributeSpec(name="item", datatype="text", description="Item")]
 
                 if len(attrs) <= max_list_cols:
                     # Horizontal table format
-                    header_row = "| # | " + " | ".join([a.description or a.name for a in attrs]) + " |"
+                    header_row = (
+                        "| # | "
+                        + " | ".join([a.description or a.name for a in attrs])
+                        + " |"
+                    )
                     sep_row = "| --- | " + " | ".join(["---"] * len(attrs)) + " |"
                     lines.append(header_row)
                     lines.append(sep_row)
@@ -548,9 +662,13 @@ def generate_mako_markdown_report(
                     item_cells = []
                     for a in attrs:
                         if a.name == "item":
-                            item_cells.append(f"${{ showifdef(f'{lvar.name}[{{i}}]') }}")
+                            item_cells.append(
+                                f"${{ showifdef(f'{lvar.name}[{{i}}]') }}"
+                            )
                         else:
-                            item_cells.append(f"${{ showifdef(item.attr_name('{a.name}')) }}")
+                            item_cells.append(
+                                f"${{ showifdef(item.attr_name('{a.name}')) }}"
+                            )
 
                     lines.append("| ${ i + 1 } | " + " | ".join(item_cells) + " |")
                     lines.append("% endfor")
@@ -627,7 +745,9 @@ def generate_docx_report(
 
                 row_cells[0].text = disp_label
                 if fspec.datatype in ("yesno", "boolean"):
-                    row_cells[1].text = f"{{% if showifdef('{fspec.var_name}') %}}Yes{{% else %}}No{{% endif %}}"
+                    row_cells[1].text = (
+                        f"{{% if showifdef('{fspec.var_name}') %}}Yes{{% else %}}No{{% endif %}}"
+                    )
                 else:
                     row_cells[1].text = f"{{{{ showifdef('{fspec.var_name}') }}}}"
 
@@ -643,7 +763,9 @@ def generate_docx_report(
 
                 doc.add_heading(disp_title, level=3)
 
-                attrs = [a for a in lvar.attributes if a.name not in NOISE_LIST_ATTRS] or [AttributeSpec(name="item", datatype="text", description="Item")]
+                attrs = [
+                    a for a in lvar.attributes if a.name not in NOISE_LIST_ATTRS
+                ] or [AttributeSpec(name="item", datatype="text", description="Item")]
 
                 if len(attrs) <= max_list_cols:
                     # Horizontal table format with standalone {%tr for %} and {%tr endfor %} rows
@@ -659,7 +781,9 @@ def generate_docx_report(
 
                     # Row 1: Standalone Loop Start Row
                     loop_start_cells = table.rows[1].cells
-                    loop_start_cells[0].text = f"{{%tr for item in showifdef('{lvar.name}') %}}"
+                    loop_start_cells[0].text = (
+                        f"{{%tr for item in showifdef('{lvar.name}') %}}"
+                    )
 
                     # Row 2: Data Row
                     data_cells = table.rows[2].cells
@@ -678,7 +802,9 @@ def generate_docx_report(
                     doc.add_paragraph()
                 else:
                     # Vertical person-by-person format for wide lists
-                    p_loop_start = doc.add_paragraph(f"{{%p for item in showifdef('{lvar.name}') %}}")
+                    p_loop_start = doc.add_paragraph(
+                        f"{{%p for item in showifdef('{lvar.name}') %}}"
+                    )
                     doc.add_heading("Person {{ loop.index }}", level=4)
 
                     table = doc.add_table(rows=0, cols=2)
@@ -690,7 +816,9 @@ def generate_docx_report(
                         if a.name == "item":
                             row_cells[1].text = "{{ item }}"
                         else:
-                            row_cells[1].text = f"{{{{ showifdef(item.attr_name('{a.name}')) }}}}"
+                            row_cells[1].text = (
+                                f"{{{{ showifdef(item.attr_name('{a.name}')) }}}}"
+                            )
 
                     doc.add_paragraph(f"{{%p endfor %}}")
                     doc.add_paragraph()
@@ -777,7 +905,9 @@ def save_variable_report_to_playground(
         # 1. Save Markdown (.md) to playground questions area (section="playground")
         if save_format_choice in ("both", "markdown") and mako_markdown:
             try:
-                playground_area, _ = _get_playground_storage(project, section="playground")
+                playground_area, _ = _get_playground_storage(
+                    project, section="playground"
+                )
                 playground_area.write_content(
                     str(mako_markdown or ""),
                     filename=md_filename,
@@ -788,12 +918,20 @@ def save_variable_report_to_playground(
                 result["saved_md"] = True
                 result["saved_files"].append(md_filename)
             except Exception as err:
-                result["errors"].append(f"Failed to save Markdown file '{md_filename}': {err}")
+                result["errors"].append(
+                    f"Failed to save Markdown file '{md_filename}': {err}"
+                )
 
         # 2. Save DOCX (.docx) to playground templates area (section="playgroundtemplate")
-        if save_format_choice in ("both", "docx") and docx_path and os.path.isfile(docx_path):
+        if (
+            save_format_choice in ("both", "docx")
+            and docx_path
+            and os.path.isfile(docx_path)
+        ):
             try:
-                template_area, the_directory = _get_playground_storage(project, section="playgroundtemplate")
+                template_area, the_directory = _get_playground_storage(
+                    project, section="playgroundtemplate"
+                )
                 filepath = os.path.join(the_directory, docx_filename)
                 with open(docx_path, "rb") as src, open(filepath, "wb") as dst:
                     dst.write(src.read())
@@ -801,7 +939,9 @@ def save_variable_report_to_playground(
                 result["saved_docx"] = True
                 result["saved_files"].append(docx_filename)
             except Exception as err:
-                result["errors"].append(f"Failed to save DOCX file '{docx_filename}': {err}")
+                result["errors"].append(
+                    f"Failed to save DOCX file '{docx_filename}': {err}"
+                )
 
         result["saved"] = result["saved_md"] or result["saved_docx"]
         if result["errors"]:
@@ -842,7 +982,9 @@ def extract_interview_metadata_info(
     elif primary_filename:
         clean_file = primary_filename.split("/")[-1].rsplit(".", 1)[0]
         base_name = _slugify(clean_file)
-        display_title = f"{clean_file.replace('_', ' ').replace('-', ' ').title()} Draft"
+        display_title = (
+            f"{clean_file.replace('_', ' ').replace('-', ' ').title()} Draft"
+        )
     else:
         base_name = "interview_document"
         display_title = "Interview Document Draft"
@@ -869,7 +1011,9 @@ def get_playground_yaml_texts(
     for filename in filenames:
         source_path = os.path.realpath(os.path.join(project_root, filename))
         if not source_path.startswith(project_root + os.sep):
-            raise ValueError("Refusing to read files outside selected playground project.")
+            raise ValueError(
+                "Refusing to read files outside selected playground project."
+            )
         with open(source_path, "r", encoding="utf-8") as f:
             yaml_texts.append(f.read())
     return yaml_texts

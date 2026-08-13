@@ -151,4 +151,3 @@ def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_variable_report_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return variable_report_payload_from_options(payload)
-

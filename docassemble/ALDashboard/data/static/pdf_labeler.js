@@ -4260,13 +4260,27 @@
             return;
         }
 
+        const deduplicateFieldNames = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
+        const exportNameMap = buildExportNameMap({ deduplicate: deduplicateFieldNames });
+        const renamedFields = getRenamedFields(exportNameMap);
+
+        // A clean document already contains the exact PDF the user loaded. Sending
+        // it through FormFyxer would rebuild every widget, which can alter field
+        // appearance streams, checkbox geometry, and other PDF metadata even when
+        // the user made no edit. Keep a no-op export byte-for-byte non-destructive;
+        // duplicate names still go through the server so the export contract can
+        // enforce uniqueness when requested.
+        if (!state.hasUnsavedChanges && renamedFields.length === 0) {
+            const cleanFilename = stripPdfExtension(state.fileName || 'edited-form') + '-with-fields.pdf';
+            downloadBlob(new Blob([state.pdfBytes], { type: 'application/pdf' }), cleanFilename);
+            showSuccess('PDF exported successfully.');
+            return;
+        }
+
         showLoading('Exporting PDF...');
         try {
             const formData = new FormData();
             formData.append('file', getPdfFileForRequests());
-            const deduplicateFieldNames = !exportDeduplicateFieldNamesInput || exportDeduplicateFieldNamesInput.checked;
-            const exportNameMap = buildExportNameMap({ deduplicate: deduplicateFieldNames });
-            const renamedFields = getRenamedFields(exportNameMap);
             formData.append('fields', JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)));
             formData.append('accessibility', JSON.stringify(buildAccessibilityPayload(exportNameMap)));
             formData.append('deduplicate_field_names', deduplicateFieldNames ? 'true' : 'false');
@@ -5577,7 +5591,9 @@
     });
 
     document.addEventListener('mousedown', function (event) {
-        if (!aiModelSuggestions.contains(event.target) && event.target !== aiModelInput) {
+        if (!aiModelSuggestions.contains(event.target) &&
+            event.target !== aiModelInput &&
+            !settingsModal.contains(event.target)) {
             aiModelSuggestions.classList.add('hidden');
         }
         const authMenu = document.getElementById('auth-menu');

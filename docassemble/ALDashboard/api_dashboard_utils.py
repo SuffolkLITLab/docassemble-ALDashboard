@@ -1983,9 +1983,7 @@ def variable_report_payload_from_options(
 
     if yaml_text is None and (playground_yaml_file or source_token):
         token_to_use = playground_yaml_file or source_token
-        selected_source = _find_playground_yaml_source(
-            playground_project, token_to_use
-        )
+        selected_source = _find_playground_yaml_source(playground_project, token_to_use)
         with open(selected_source["path"], "r", encoding="utf-8") as f:
             yaml_text = f.read()
 

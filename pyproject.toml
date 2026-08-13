@@ -221,3 +221,13 @@ dev = [
 docassemble = [
     "docassemble.webapp>=1.9.11",
 ]
+
+[tool.uv]
+# nltk 3.10.1 (pulled in transitively via docassemble.base) added a CWD-hijacking
+# import guard that false-positives whenever the venv lives inside the project
+# directory (as with `uv sync`'s .venv), blocking nltk's own internal imports
+# (e.g. `import regex`) and breaking collection of every test that imports
+# docassemble.base.
+constraint-dependencies = [
+    "nltk!=3.10.1",
+]

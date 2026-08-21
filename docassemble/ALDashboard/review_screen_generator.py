@@ -6,6 +6,11 @@ from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString, LiteralScalarString
 
+# Gathered by AssemblyLine's `basic_questions_signature_flow`, immediately
+# before the download screen, and therefore never something a review table's
+# "Edit" button should ask for.
+SIGNATURE_ATTRIBUTES = {"signature", "signature_date"}
+
 
 def list_review_playground_projects() -> List[str]:
     from .interview_linter import list_playground_projects
@@ -214,7 +219,18 @@ def generate_review_screen_yaml(
     *,
     build_revisit_blocks: bool = True,
     point_sections_to_review: bool = True,
+    review_id: str = "review screen",
+    review_event_name: str = "review_form",
+    review_question: str = "Review your answers",
 ) -> str:
+    """Draft a review screen for one or more interview YAML files.
+
+    ``review_id``, ``review_event_name`` and ``review_question`` name the block
+    that comes out. They matter when the draft is replacing a review screen an
+    interview already has: a generated interview's download screen links to its
+    own ``review_<label>`` event, so a draft that renamed the event to
+    ``review_form`` would quietly break the "Edit answers" button.
+    """
     docs = _load_yaml_documents(yaml_texts)
 
     objects_temp: List[Dict[str, str]] = []
@@ -251,23 +267,21 @@ def generate_review_screen_yaml(
                     except Exception:
                         continue
                     if ".name_fields(" in str(field["code"]):
-                        fields_temp.extend(
-                            [
-                                {"First": f"{object_name}.name.first"},
-                                {"Middle": f"{object_name}.name.middle"},
-                                {"Last": f"{object_name}.name.last"},
-                            ]
+                        # One "Name: Jane Q. Public" line rather than three
+                        # lines of first, middle and last: a review screen is
+                        # read, not filled in.
+                        fields_temp.append(
+                            {
+                                "Name": f"{object_name}.name.first",
+                                "display": f"{object_name}",
+                            }
                         )
                     elif ".address_fields(" in str(field["code"]):
-                        fields_temp.extend(
-                            [
-                                {"Address": f"{object_name}.address.address"},
-                                {"Apartment or Unit": f"{object_name}.address.unit"},
-                                {"City": f"{object_name}.address.city"},
-                                {"State": f"{object_name}.address.state"},
-                                {"Zip": f"{object_name}.address.zip"},
-                                {"Country": f"{object_name}.address.country"},
-                            ]
+                        fields_temp.append(
+                            {
+                                "Address": f"{object_name}.address.address",
+                                "display": f"{object_name}.address.block()",
+                            }
                         )
                     elif ".gender_fields(" in str(field["code"]):
                         fields_temp.append({"Gender": f"{object_name}.gender"})
@@ -318,7 +332,6 @@ def generate_review_screen_yaml(
     questions = questions_temp
     section_events = sections_temp
 
-    review_event_name = "review_form"
     review_fields_temp: List[Dict[str, str]] = []
     revisit_screens: List[Dict[str, str]] = []
     tables: List[Dict[str, Any]] = []
@@ -367,7 +380,7 @@ def generate_review_screen_yaml(
             )
             if obj_name in attributes_list:
                 columns = []
-                edits = []
+                edits: List[str] = []
                 for attribute in attributes_list[obj_name]:
                     attr_key = next(iter(attribute.keys()))
                     attr_value = next(iter(attribute.values()))
@@ -383,13 +396,21 @@ def generate_review_screen_yaml(
                             )
                         }
                     )
-                    edits.append(attr_name)
+                    # Docassemble seeks every variable named under `edit:`,
+                    # defining any the interview never asked. Sending someone
+                    # to a signature pad they did not ask for -- and that
+                    # AssemblyLine's signature flow overwrites moments later --
+                    # is not editing a row.
+                    if attr_name in SIGNATURE_ATTRIBUTES:
+                        continue
+                    if attr_name not in edits:
+                        edits.append(attr_name)
                 tables.append(
                     {
                         "table": f"{obj_name}.table",
                         "rows": obj_name,
                         "columns": columns,
-                        "edit": edits,
+                        "edit": edits if edits else True,
                     }
                 )
 
@@ -427,6 +448,8 @@ def generate_review_screen_yaml(
         "accept",
         "validate",
         "address autocomplete",
+        # Not a Docassemble key: how this generator wants the value shown.
+        "display",
     }
 
     for question in questions:
@@ -471,11 +494,25 @@ def generate_review_screen_yaml(
             if label != "no label":
                 review["button"] += f"{label}: "
 
+            # Whatever the datatype, an undefined variable has to render as
+            # empty. A review screen that sends the user back into the
+            # interview just for looking at their answers is a review screen
+            # with a bug, and `yesno('')` would confidently report "No" for a
+            # question nobody was ever asked.
             datatype = field.get("datatype")
-            if datatype in ["yesno", "yesnoradio", "yesnowide"]:
-                review["button"] += f"${{ word(yesno({value_ref})) }}\n"
+            display = field.get("display")
+            if display:
+                review[
+                    "button"
+                ] += f"${{ {display} if defined('{value_ref}') else '' }}\n"
+            elif datatype in ["yesno", "yesnoradio", "yesnowide"]:
+                review[
+                    "button"
+                ] += f"${{ word(yesno({value_ref})) if defined('{value_ref}') else '' }}\n"
             elif datatype == "currency":
-                review["button"] += f"${{ currency(showifdef('{value_ref}')) }}\n"
+                review[
+                    "button"
+                ] += f"${{ currency({value_ref}) if defined('{value_ref}') else '' }}\n"
             else:
                 review["button"] += f"${{ showifdef('{value_ref}') }}\n"
 
@@ -491,9 +528,11 @@ def generate_review_screen_yaml(
         sections
         + [
             {
-                "id": "review screen",
+                "id": review_id,
                 "event": review_event_name,
-                "question": "Review your answers",
+                "question": LiteralScalarString(
+                    str(review_question).rstrip("\n") + "\n"
+                ),
                 "review": review_fields_temp,
             }
         ]
@@ -503,6 +542,11 @@ def generate_review_screen_yaml(
 
     yaml = YAML()
     yaml.default_flow_style = False
+    # AssemblyLine's house style indents list items under their key, which is
+    # what every hand-written review screen in the ecosystem looks like. The
+    # draft has to be something an author can paste in without reformatting.
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    yaml.width = 4096
     stream = StringIO()
     yaml.dump_all(review_yaml, stream)
     return stream.getvalue()

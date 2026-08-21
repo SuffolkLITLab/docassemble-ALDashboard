@@ -29,8 +29,11 @@ sections:
 """
         output = generate_review_screen_yaml([sample])
         self.assertIn("id: review screen", output)
-        self.assertIn("question: Review your answers", output)
+        self.assertIn("question: |\n  Review your answers", output)
         self.assertIn("First name", output)
+        # AssemblyLine's house style: list items indented under their key, the
+        # way every hand-written review screen in the ecosystem looks.
+        self.assertIn("\n  - Edit: ", output)
 
     def test_mapping_form_non_list_object_is_safely_skipped(self):
         sample = """
@@ -194,6 +197,91 @@ objects:
 
         self.assertNotIn("id: revisit user.jobs", output)
         self.assertNotIn("user.jobs.revisit", output)
+
+    def test_the_review_screen_can_take_the_interviews_own_names(self):
+        """A drafted screen has to keep the event the download screen links to."""
+        sample = """
+---
+question: What is your name?
+fields:
+  - First name: users[0].name.first
+"""
+        output = generate_review_screen_yaml(
+            [sample],
+            review_id="my form review screen",
+            review_event_name="review_my_form",
+            review_question="Look over your answers",
+        )
+
+        self.assertIn("id: my form review screen", output)
+        self.assertIn("event: review_my_form", output)
+        self.assertIn("question: |\n  Look over your answers", output)
+        self.assertNotIn("review_form", output)
+
+    def test_a_name_or_an_address_is_one_line_not_six(self):
+        sample = """
+---
+question: Your details
+fields:
+  - code: |
+      client.name_fields()
+  - code: |
+      client.address_fields()
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertIn(
+            "Name: ${ client if defined('client.name.first') else '' }", output
+        )
+        self.assertIn(
+            "Address: ${ client.address.block() "
+            "if defined('client.address.address') else '' }",
+            output,
+        )
+        self.assertNotIn("Middle:", output)
+        self.assertNotIn("Apartment or Unit:", output)
+
+    def test_no_value_on_the_screen_forces_a_variable_to_be_defined(self):
+        sample = """
+---
+question: Money and yes/no
+fields:
+  - Rent: rent_amount
+    datatype: currency
+  - Served: was_served
+    datatype: yesno
+  - Notes: notes
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertIn(
+            "${ currency(rent_amount) if defined('rent_amount') else '' }", output
+        )
+        self.assertIn(
+            "${ word(yesno(was_served)) if defined('was_served') else '' }", output
+        )
+        self.assertIn("${ showifdef('notes') }", output)
+
+    def test_a_review_table_never_asks_for_a_signature(self):
+        sample = """
+---
+objects:
+  - plaintiffs: ALPeopleList
+---
+question: Signatures
+fields:
+  - Signature: plaintiffs[i].signature
+    datatype: signature
+  - Phone: plaintiffs[i].phone_number
+"""
+        output = generate_review_screen_yaml([sample])
+        table = output.split("table: plaintiffs.table", 1)[1]
+        edits = table.split("edit:", 1)[1]
+
+        self.assertNotIn("- signature", edits)
+        self.assertIn("- phone_number", edits)
+        # It is still worth showing; it is just not something to demand.
+        self.assertIn("row_item.signature", table)
 
     def test_interview_uses_shared_generator_module(self):
         interview_path = PACKAGE_ROOT / "data/questions/review_screen_generator.yml"

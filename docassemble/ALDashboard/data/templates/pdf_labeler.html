@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="page-title">AssemblyLine PDF Labeler</title>
+    <link id="page-favicon" rel="icon" type="image/png" href="/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/bootstrap-theme.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/variables.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/custom.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/pdf_labeler.css">
+</head>
+<body class="pdf-labeler-body">
+    <div id="app" class="pdf-labeler-app d-flex flex-column">
+        <header class="navbar bg-dark px-4 py-3">
+            <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap gap-3">
+                <div class="d-flex align-items-center gap-3">
+                    <img id="brand-logo" src="/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
+                    <div>
+                        <h1 id="brand-pdf-title" class="h4 fw-bold mb-0 text-white">AssemblyLine PDF Labeler</h1>
+                        <p id="brand-pdf-subtitle" class="small mt-1 mb-0 text-light">Add, inspect, rename, and export PDF form fields</p>
+                    </div>
+                </div>
+                <div id="tools-container" class="d-flex align-items-center gap-2 flex-wrap">
+                    <button id="settings-btn" class="btn btn-outline-light btn-sm">
+                        <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        Settings
+                    </button>
+                    <label class="btn btn-outline-light btn-sm d-inline-flex align-items-center gap-2 rounded-pill">
+                        <svg class="icon-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        Upload PDF
+                        <input type="file" id="file-input" accept=".pdf" class="d-none">
+                    </label>
+                    <button id="open-playground-btn" class="btn btn-outline-light btn-sm" title="Open a PDF from the Playground templates folder">
+                        <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        Open from Playground
+                    </button>
+                    <button id="normalize-pass-btn" class="btn btn-outline-light btn-sm" disabled>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"></path><path d="m5 7 2 2 4-4"></path><path d="m13 17 2 2 4-4"></path></svg>
+                        Normalize
+                    </button>
+                    <button id="repair-btn" class="btn btn-outline-light btn-sm" disabled title="PDF Repair Tools">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        Repair
+                    </button>
+                    <button id="utilities-btn" class="btn btn-outline-light btn-sm" title="PDF Utilities">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"></path></svg>
+                        Utilities
+                    </button>
+                    <button id="manage-pages-btn" class="btn btn-outline-light btn-sm" disabled title="Reorder, split, delete, or insert PDF pages">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+                        Manage Pages
+                    </button>
+                    <button id="preview-btn" class="btn btn-outline-light btn-sm" disabled title="Toggle field value preview">
+                        <svg id="preview-icon-open" class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        <svg id="preview-icon-closed" class="icon-16 me-1 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                        Preview
+                    </button>
+                    <button id="accessibility-btn" class="btn btn-outline-light btn-sm" disabled title="Accessibility options">
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2"></circle><path d="M12 7v5"></path><path d="M8 12h8"></path><path d="M10 12l-2 8"></path><path d="M14 12l2 8"></path></svg>
+                        Accessibility
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
+                        <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+                        Auto-Detect
+                    </button>
+                    <label class="form-check form-check-inline text-light small mb-0 ms-1" title="When names repeat, export them as name, name__1, name__2, and so on">
+                        <input id="export-deduplicate-field-names" class="form-check-input" type="checkbox" checked>
+                        <span class="form-check-label">Deduplicate repeated names</span>
+                    </label>
+                    <button id="export-btn" class="btn btn-primary btn-sm" disabled>Export PDF</button>
+                    <button id="test-filling-btn" class="btn btn-outline-info btn-sm" disabled title="Generate a filled PDF preview">Test filling</button>
+                    <button id="save-playground-btn" class="btn btn-outline-success btn-sm hidden" disabled title="Save this PDF back to the Playground templates folder">
+                        <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                        Save to Playground
+                    </button>
+                    <div id="auth-controls" class="position-relative ms-2"></div>
+                </div>
+            </div>
+            <div class="container-fluid mt-3 d-flex justify-content-end align-items-center flex-wrap gap-2">
+                <span id="document-name" class="small text-light"></span>
+                <span id="duplicate-field-warning" class="badge text-bg-warning hidden">Duplicate field names</span>
+                <span id="dirty-indicator" class="badge text-bg-warning dirty-indicator hidden">Unsaved changes</span>
+            </div>
+        </header>
+
+        <main class="pdf-main d-flex flex-grow-1 overflow-hidden">
+            <div id="pdf-container" class="pdf-container flex-grow-1 overflow-auto p-4">
+                <div class="pdf-viewport-toolbar-wrap">
+                    <div id="pdf-viewport-toolbar" class="pdf-viewport-toolbar" aria-label="PDF viewport zoom controls">
+                        <div class="pdf-viewport-toolbar-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.35-4.35"></path><path d="M11 8v6"></path><path d="M8 11h6"></path></svg>
+                            Zoom
+                        </div>
+                        <button id="pdf-zoom-out" type="button" class="btn btn-outline-secondary btn-sm pdf-zoom-btn" disabled aria-label="Zoom out">
+                            <svg class="icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"></path></svg>
+                        </button>
+                        <div id="pdf-zoom-label" class="pdf-zoom-label" aria-live="polite">100%</div>
+                        <button id="pdf-zoom-in" type="button" class="btn btn-outline-secondary btn-sm pdf-zoom-btn" disabled aria-label="Zoom in">
+                            <svg class="icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+                        </button>
+                        <button id="pdf-zoom-reset" type="button" class="btn btn-outline-secondary btn-sm" disabled>Reset</button>
+                    </div>
+                </div>
+                <div id="pdf-empty" class="h-100 d-flex align-items-center justify-content-center text-center">
+                    <div>
+                        <svg class="icon-96 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                        </svg>
+                        <h3 class="mt-4 h5 text-muted">Upload a PDF to get started</h3>
+                        <p class="mt-2 text-muted">Drag and drop a PDF here or use the upload button above.</p>
+                    </div>
+                </div>
+                <div id="pdf-loading" class="loading-modal hidden" role="status" aria-live="polite" aria-modal="true">
+                    <div class="loading-modal-card">
+                        <svg class="loading-spinner icon-48 mx-auto text-primary" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <p id="loading-message" class="mt-4 text-muted">Loading PDF...</p>
+                    </div>
+                </div>
+                <div id="pdf-pages" class="hidden pdf-pages-wrap mx-auto"></div>
+            </div>
+
+            <aside id="fields-panel" class="pdf-fields-panel bg-white border-start d-flex flex-column overflow-hidden">
+                <div class="p-3 border-bottom">
+                    <div class="d-flex align-items-baseline justify-content-between gap-2">
+                        <h2 class="h5 fw-semibold mb-0">Fields <span id="field-count" class="field-count-inline">No fields</span></h2>
+                    </div>
+                    <div class="fields-mode-toggle btn-group btn-group-sm mt-2" role="group" aria-label="Fields panel mode">
+                        <input type="radio" class="btn-check" name="fields-panel-mode" id="fields-mode-filter" value="filter" checked>
+                        <label class="btn btn-outline-secondary" for="fields-mode-filter">Filter</label>
+                        <input type="radio" class="btn-check" name="fields-panel-mode" id="fields-mode-rename" value="rename">
+                        <label class="btn btn-outline-secondary" for="fields-mode-rename">Rename</label>
+                    </div>
+                    <div id="fields-filter-controls" class="fields-toolbar">
+                        <input id="field-search" type="search" class="form-control form-control-sm" placeholder="Filter by field name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true">
+                        <div class="fields-toolbar-row">
+                            <select id="field-type-filter" class="form-select form-select-sm" aria-label="Filter fields by type">
+                                <option value="">All types</option>
+                                <option value="text">Text</option>
+                                <option value="multiline">Multiline</option>
+                                <option value="checkbox">Checkbox</option>
+                                <option value="signature">Signature</option>
+                                <option value="radio">Radio</option>
+                                <option value="dropdown">Dropdown</option>
+                                <option value="listbox">List box</option>
+                            </select>
+                            <select id="field-sort" class="form-select form-select-sm" aria-label="Sort fields">
+                                <option value="position">By position</option>
+                                <option value="name_asc">Name A-Z</option>
+                                <option value="name_desc">Name Z-A</option>
+                                <option value="type_name">Type</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="bulk-rename-controls" class="bulk-rename-panel hidden">
+                        <div class="bulk-rename-row">
+                            <label class="form-label small text-muted fw-semibold mb-1" for="bulk-rename-type">Rename type</label>
+                            <select id="bulk-rename-type" class="form-select form-select-sm">
+                                <option value="pattern" selected>Pattern</option>
+                                <option value="regex">Regex (advanced)</option>
+                            </select>
+                        </div>
+                        <div class="bulk-rename-row">
+                            <label class="form-label small text-muted fw-semibold mb-1" for="bulk-rename-pattern">Original pattern</label>
+                            <input id="bulk-rename-pattern" type="text" class="form-control form-control-sm font-monospace" placeholder="parents1_">
+                        </div>
+                        <div class="bulk-rename-row">
+                            <label class="form-label small text-muted fw-semibold mb-1" for="bulk-rename-replacement">New value</label>
+                            <input id="bulk-rename-replacement" type="text" class="form-control form-control-sm font-monospace" placeholder="other_parties1_">
+                        </div>
+                        <div id="bulk-rename-status" class="bulk-rename-status small text-muted">Live preview will appear in the list below.</div>
+                        <div class="bulk-rename-actions">
+                            <button id="bulk-rename-apply" type="button" class="btn btn-primary btn-sm" disabled>Apply Rename</button>
+                            <button id="sidebar-relabel-btn" type="button" class="btn btn-outline-secondary btn-sm" disabled>
+                                <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                AI Relabel
+                            </button>
+                        </div>
+                        <p class="form-text small mb-0 mt-1">AI relabel can take 2-3 minutes.</p>
+                    </div>
+                    <div id="ai-auth-notice" class="alert alert-warning small mt-3 mb-0 hidden"></div>
+                </div>
+
+                <div id="fields-empty" class="flex-grow-1 d-flex align-items-center justify-content-center p-4 text-center">
+                    <div>
+                        <p class="text-muted small mb-0">Existing fields will appear here after upload. You can also place new fields from the toolbar.</p>
+                    </div>
+                </div>
+
+                <div id="fields-list" class="hidden flex-grow-1 overflow-auto p-3"></div>
+            </aside>
+        </main>
+
+        <div id="floating-tool-picker" class="floating-tool-picker hidden">
+            <div class="tool-grid">
+                <button id="tool-text" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a text field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"></path></svg>
+                    Text
+                </button>
+                <button id="tool-multiline" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a multiline field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 10h18M3 14h18M3 18h10"></path></svg>
+                    Multiline
+                </button>
+                <button id="tool-checkbox" class="floating-tool-btn tool-btn" type="button" title="Click once to place a checkbox">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><path d="m9 12 2 2 4-4"></path></svg>
+                    Checkbox
+                </button>
+                <button id="tool-signature" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a signature field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.5 3.5 6 6-11 11H3v-6.5l11-11Z"></path></svg>
+                    Signature
+                </button>
+                <button id="tool-dropdown" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a dropdown">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><path d="m7 10 5 5 5-5"></path></svg>
+                    Dropdown
+                </button>
+                <button id="tool-listbox" class="floating-tool-btn tool-btn" type="button" title="Click and drag to draw a list box">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><path d="M7 8h10M7 12h10M7 16h4"></path></svg>
+                    List Box
+                </button>
+            </div>
+        </div>
+
+        <div id="quick-field-editor" class="quick-field-editor hidden">
+            <div class="quick-field-header">
+                <div id="quick-field-type-badge" class="quick-field-icon" aria-hidden="true"></div>
+                <input id="quick-field-name" type="text" class="quick-field-input form-control form-control-sm font-monospace" aria-label="PDF field label">
+                <button id="quick-field-delete" type="button" class="quick-field-done btn btn-outline-danger btn-sm" aria-label="Delete field" title="Delete field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
+                </button>
+                <button id="quick-field-close" type="button" class="quick-field-done btn btn-outline-secondary btn-sm" aria-label="Done editing field label" title="Done editing field label">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 13 4 4L19 7"></path></svg>
+                </button>
+            </div>
+            <div id="quick-field-suggestions" class="quick-field-suggestions hidden" aria-label="Suggested field names"></div>
+        </div>
+
+        <div id="error-toast" class="hidden alert alert-danger labeler-toast mb-0">
+            <p id="error-toast-message" class="mb-0"></p>
+        </div>
+
+        <div id="success-toast" class="hidden alert alert-success labeler-toast mb-0">
+            <p id="success-toast-message" class="mb-0"></p>
+        </div>
+
+        <div id="settings-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 32rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">AI Settings</h2>
+                    <button id="close-settings" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-3">
+                    <label for="ai-model" class="form-label fw-medium">AI model</label>
+                    <input id="ai-model" type="text" class="model-input form-control form-control-sm font-monospace" placeholder="Type model name">
+                    <p class="form-text mb-1">Type to filter available models.</p>
+                    <div id="ai-model-suggestions" class="model-suggestions hidden"></div>
+                </div>
+                <div class="mb-3">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="use-playground-variables">
+                        <label class="form-check-label fw-medium" for="use-playground-variables">
+                            Use interview variable names as hints
+                        </label>
+                    </div>
+                    <div id="pdf-interview-picker" class="hidden">
+                        <div class="small fw-medium mb-2">Interview variables source</div>
+                        <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Interview source mode">
+                            <input type="radio" class="btn-check" name="pdf-interview-source-mode" id="pdf-source-mode-playground" value="playground" checked>
+                            <label class="btn btn-outline-secondary" for="pdf-source-mode-playground">Playground</label>
+                            <input type="radio" class="btn-check" name="pdf-interview-source-mode" id="pdf-source-mode-installed" value="installed">
+                            <label class="btn btn-outline-secondary" for="pdf-source-mode-installed">Installed</label>
+                        </div>
+                        <div id="pdf-playground-fields">
+                            <div class="mb-2">
+                                <label class="form-label small mb-1" for="pdf-playground-project">Project</label>
+                                <select id="pdf-playground-project" class="form-select form-select-sm"></select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-1" for="pdf-playground-yaml-file">YAML file</label>
+                                <select id="pdf-playground-yaml-file" class="form-select form-select-sm"></select>
+                            </div>
+                        </div>
+                        <div id="pdf-installed-fields" class="hidden">
+                            <div class="mb-2">
+                                <label class="form-label small mb-1" for="pdf-installed-package">Package</label>
+                                <select id="pdf-installed-package" class="form-select form-select-sm"></select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-1" for="pdf-installed-yaml-file">YAML file</label>
+                                <select id="pdf-installed-yaml-file" class="form-select form-select-sm"></select>
+                            </div>
+                        </div>
+                        <p id="pdf-interview-variable-summary" class="small text-muted mt-2 mb-0 hidden"></p>
+                    </div>
+                </div>
+                <div class="mb-3 border-top pt-3">
+                    <h3 class="h6 fw-semibold mb-2">Field defaults (saved for session)</h3>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <div>
+                            <label for="settings-default-font" class="form-label small text-muted mb-1">Default font</label>
+                            <select id="settings-default-font" class="form-select form-select-sm">
+                                <option value="Helvetica">Helvetica</option>
+                                <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                <option value="Courier">Courier</option>
+                                <option value="Courier-Bold">Courier-Bold</option>
+                                <option value="Times-Roman">Times-Roman</option>
+                                <option value="Times-Bold">Times-Bold</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="settings-default-font-size" class="form-label small text-muted mb-1">Default size (pt)</label>
+                            <input id="settings-default-font-size" type="number" min="4" max="72" step="1" class="form-control form-control-sm" value="10">
+                        </div>
+                        <div>
+                            <label for="settings-default-checkbox-style" class="form-label small text-muted mb-1">Checkbox style</label>
+                            <select id="settings-default-checkbox-style" class="form-select form-select-sm">
+                                <option value="cross">Cross</option>
+                                <option value="check">Check</option>
+                                <option value="circle">Circle</option>
+                                <option value="star">Star</option>
+                                <option value="diamond">Diamond</option>
+                                <option value="square">Square</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="form-text mb-0">These defaults apply to newly created fields and are remembered for this browser session.</p>
+                </div>
+                <div class="d-flex justify-content-end gap-2 border-top pt-2">
+                    <button id="reset-settings" class="btn btn-outline-secondary btn-sm">Reset</button>
+                    <button id="save-settings" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Open from Playground modal -->
+        <div id="open-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Open from Playground</h2>
+                    <button id="close-open-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="open-pg-project">Project</label>
+                    <select id="open-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="open-pg-template">Template file</label>
+                    <select id="open-pg-template" class="form-select form-select-sm"></select>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="open-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="open-pg-confirm" class="btn btn-primary btn-sm">Open</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save to Playground modal -->
+        <div id="save-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Save to Playground</h2>
+                    <button id="close-save-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="save-pg-project">Project</label>
+                    <select id="save-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="save-pg-filename">Filename</label>
+                    <input id="save-pg-filename" type="text" class="form-control form-control-sm" placeholder="template.pdf">
+                </div>
+                <div id="save-pg-duplicate-warning" class="alert alert-warning small py-2 hidden">
+                    Duplicate PDF field names can work in some platforms, but PDF viewers handle them inconsistently.
+                </div>
+                <label class="form-check mb-3">
+                    <input id="save-pg-deduplicate-field-names" class="form-check-input" type="checkbox" checked>
+                    <span class="form-check-label small">Deduplicate repeated field names when saving</span>
+                </label>
+                <p id="save-pg-status" class="small text-muted hidden"></p>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="save-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="save-pg-confirm" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="field-rename-summary-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1090;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 42rem; max-height: 85vh; overflow-y: auto;">
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Field Names Changed</h2>
+                        <p id="field-rename-summary-context" class="small text-muted mb-0"></p>
+                    </div>
+                    <button id="field-rename-summary-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <div id="field-rename-summary-list" class="vstack gap-2"></div>
+                <div class="d-flex justify-content-end mt-3">
+                    <button id="field-rename-summary-done" class="btn btn-primary btn-sm">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="accessibility-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 62rem; max-height: 92vh; overflow: auto;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-0">PDF Accessibility</h2>
+                        <p class="small text-muted mb-0 mt-1">Tooltips, field order, image alt text, metadata, and tag structure.</p>
+                    </div>
+                    <button id="close-accessibility" class="btn btn-sm btn-light">Close</button>
+                </div>
+
+                <div class="form-check mb-3">
+                    <input id="a11y-enable" class="form-check-input" type="checkbox" checked>
+                    <label class="form-check-label fw-medium" for="a11y-enable">Enable accessibility enhancements on export</label>
+                </div>
+
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Field Tooltips and Order</h3>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button id="a11y-autofill-tooltips" type="button" class="btn btn-outline-secondary btn-sm">Auto-fill Missing Tooltips</button>
+                        <span class="small text-muted">Default tooltip format replaces underscores with spaces.</span>
+                    </div>
+                    <div id="a11y-field-list" class="vstack gap-2"></div>
+                </section>
+
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Document Metadata</h3>
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label for="a11y-meta-language" class="form-label small text-muted mb-1">Language</label>
+                            <input id="a11y-meta-language" type="text" class="form-control form-control-sm" placeholder="en-US">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="a11y-meta-title" class="form-label small text-muted mb-1">Title</label>
+                            <input id="a11y-meta-title" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="a11y-meta-author" class="form-label small text-muted mb-1">Author</label>
+                            <input id="a11y-meta-author" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="a11y-meta-subject" class="form-label small text-muted mb-1">Subject</label>
+                            <input id="a11y-meta-subject" type="text" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                </section>
+
+                <section class="border rounded p-3 mb-3">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h3 class="h6 fw-semibold mb-0">Image Alternative Text</h3>
+                        <label class="form-check form-switch m-0">
+                            <input id="a11y-image-mode" class="form-check-input" type="checkbox">
+                            <span class="form-check-label small">Image alt text mode</span>
+                        </label>
+                    </div>
+                    <div id="a11y-image-list" class="vstack gap-2"></div>
+                </section>
+
+                <section class="border rounded p-3">
+                    <h3 class="h6 fw-semibold mb-2">Document Tag Structure (Read-only)</h3>
+                    <pre id="a11y-tag-structure" class="small mb-0" style="max-height: 14rem; overflow: auto;"></pre>
+                </section>
+            </div>
+        </div>
+
+        <div id="normalization-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 58rem; max-height: 90vh; overflow: auto;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-0">Normalize PDF Fields</h2>
+                        <p class="small text-muted mb-0 mt-1">Apply court-PDF cleanup heuristics to the current fields.</p>
+                    </div>
+                    <button id="close-normalization" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="normalization-grid">
+                    <section class="normalization-card">
+                        <h3 class="normalization-card-title">Checkboxes</h3>
+                        <label class="form-check">
+                            <input id="norm-checkbox-uniform" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Use one checkbox size everywhere</span>
+                        </label>
+                        <div>
+                            <label for="norm-checkbox-size" class="form-label small text-muted mb-1">Size (pt)</label>
+                            <input id="norm-checkbox-size" type="number" min="6" max="24" step="0.5" class="form-control form-control-sm" value="12">
+                        </div>
+                        <label class="form-check mt-2">
+                            <input id="norm-checkbox-style-enable" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Normalize checkbox style</span>
+                        </label>
+                        <div class="normalization-inline">
+                            <div>
+                                <label for="norm-checkbox-style" class="form-label small text-muted mb-1">Style</label>
+                                <select id="norm-checkbox-style" class="form-select form-select-sm">
+                                    <option value="cross" selected>Cross</option>
+                                    <option value="check">Check</option>
+                                    <option value="circle">Circle</option>
+                                    <option value="star">Star</option>
+                                    <option value="diamond">Diamond</option>
+                                    <option value="square">Square</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="norm-checkbox-export-value" class="form-label small text-muted mb-1">Export value</label>
+                                <input id="norm-checkbox-export-value" type="text" class="form-control form-control-sm font-monospace" value="Yes" placeholder="Yes">
+                            </div>
+                        </div>
+                        <div class="form-text">Recommended: style <code>cross</code>, export value <code>Yes</code>.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <h3 class="normalization-card-title">Typography</h3>
+                        <label class="form-check">
+                            <input id="norm-font-normalize" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Normalize font</span>
+                        </label>
+                        <div>
+                            <label for="norm-font-name" class="form-label small text-muted mb-1">Font</label>
+                            <select id="norm-font-name" class="form-select form-select-sm">
+                                <option value="Helvetica" selected>Helvetica</option>
+                                <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                <option value="Courier">Courier</option>
+                                <option value="Courier-Bold">Courier-Bold</option>
+                                <option value="Times-Roman">Times-Roman</option>
+                                <option value="Times-Bold">Times-Bold</option>
+                            </select>
+                        </div>
+                        <label class="form-check mt-2">
+                            <input id="norm-fontsize-normalize" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Normalize font size</span>
+                        </label>
+                        <div>
+                            <label for="norm-font-size" class="form-label small text-muted mb-1">Size (pt)</label>
+                            <input id="norm-font-size" type="number" min="6" max="18" step="0.5" class="form-control form-control-sm" value="10">
+                        </div>
+                        <label class="form-check mt-2">
+                            <input id="norm-autosize-name-address" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Fix single-line text field height and auto-size</span>
+                        </label>
+                        <label for="norm-text-height" class="form-label small text-muted mb-1">Single-line field height (pt)</label>
+                        <input id="norm-text-height" type="number" min="10" max="36" step="0.5" class="form-control form-control-sm" value="14">
+                        <div class="form-text">If the field looks like a name, address, phone number, or email, fix field height and turn on auto-font-size.</div>
+                        <label class="form-check mt-2">
+                            <input id="norm-remove-embedded-fonts" class="form-check-input" type="checkbox">
+                            <span class="form-check-label fw-medium">Remove embedded fonts</span>
+                        </label>
+                        <div class="form-text">Strip embedded font programs from the PDF. Viewers will substitute system fonts. Reduces file size but may alter appearance.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <h3 class="normalization-card-title">Conversions</h3>
+                        <label class="form-check">
+                            <input id="norm-dropdowns-to-text" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Convert dropdown menus to text fields</span>
+                        </label>
+                        <label class="form-check">
+                            <input id="norm-radios-to-checkboxes" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Convert radio groups to checkbox sets</span>
+                        </label>
+                        <div class="form-text">Yes/no groups become <code>_yes</code> and <code>_no</code>. Others become <code>_opt</code>, <code>_opt2</code>, and so on.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <h3 class="normalization-card-title">Field Names</h3>
+                        <label class="form-check">
+                            <input id="norm-lowercase-names" class="form-check-input" type="checkbox">
+                            <span class="form-check-label fw-medium">Lowercase all field names</span>
+                        </label>
+                        <div class="form-text">Convert all field labels to lowercase (e.g., <code>MyField</code> → <code>myfield</code>). Recommended for AssemblyLine (docassemble) variable naming.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <h3 class="normalization-card-title">Alignment</h3>
+                        <label class="form-check">
+                            <input id="norm-align-rows" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Align nearby fields to a shared baseline</span>
+                        </label>
+                        <label for="norm-align-threshold" class="form-label small text-muted mb-1">Row snap threshold (pt)</label>
+                        <input id="norm-align-threshold" type="number" min="2" max="20" step="0.5" class="form-control form-control-sm" value="6">
+                        <div class="form-text">Fields with nearby centers snap to a shared row baseline.</div>
+                        <label class="form-check mt-2">
+                            <input id="norm-align-columns" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Align nearby fields to a shared left edge</span>
+                        </label>
+                        <label for="norm-align-col-threshold" class="form-label small text-muted mb-1">Column snap threshold (pt)</label>
+                        <input id="norm-align-col-threshold" type="number" min="2" max="20" step="0.5" class="form-control form-control-sm" value="6">
+                        <div class="form-text">Fields with nearby left edges snap to a shared vertical rule.</div>
+                    </section>
+                    <section class="normalization-card">
+                        <h3 class="normalization-card-title">Multiline Text</h3>
+                        <label class="form-check">
+                            <input id="norm-disable-scroll" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Disable scrolling inside text fields</span>
+                        </label>
+                        <label class="form-check">
+                            <input id="norm-multiline-tall" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Turn tall text fields into multiline fields</span>
+                        </label>
+                        <label for="norm-multiline-lines" class="form-label small text-muted mb-1">Multiline threshold (10pt lines)</label>
+                        <input id="norm-multiline-lines" type="number" min="2" max="8" step="0.5" class="form-control form-control-sm" value="2.2">
+                        <label class="form-check mt-1">
+                            <input id="norm-multiline-white" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label fw-medium">Use white background for multiline fields</span>
+                        </label>
+                    </section>
+                </div>
+                <div class="d-flex justify-content-end gap-2 border-top pt-3 mt-3">
+                    <button id="apply-normalization" class="btn btn-primary btn-sm">Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="repair-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 40rem; max-height: 90vh; overflow: auto;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-0">PDF Repair Tools</h2>
+                        <p class="small text-muted mb-0 mt-1">Run one repair action at a time on the current PDF.</p>
+                    </div>
+                    <button id="close-repair" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div id="repair-status" class="hidden alert alert-info small mb-3">
+                    <span id="repair-status-text"></span>
+                </div>
+                <div class="d-flex flex-column gap-2">
+                    <div class="repair-action-card border rounded p-3 border-primary bg-light">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Auto-Repair</h3>
+                                <p class="small text-muted mb-0">Automatically try multiple repair strategies (qpdf, Ghostscript, metadata) until one produces a valid PDF.</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="auto">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Ghostscript Reprint</h3>
+                                <p class="small text-muted mb-2">Re-distill through Ghostscript for a completely fresh file. Requires <code>gs</code> on PATH.</p>
+                                <label class="form-check">
+                                    <input id="repair-gs-preserve" class="form-check-input" type="checkbox" checked>
+                                    <span class="form-check-label small">Preserve existing field locations</span>
+                                </label>
+                                <div class="mt-2">
+                                    <label for="repair-gs-optimization" class="form-label small text-muted mb-1">Optimize for</label>
+                                    <select id="repair-gs-optimization" class="form-select form-select-sm" style="max-width: 14rem;">
+                                        <option value="prepress" selected>Prepress (highest quality)</option>
+                                        <option value="printer">Print</option>
+                                        <option value="ebook">Ebook (medium)</option>
+                                        <option value="screen">Screen (smallest size)</option>
+                                        <option value="default">Default (no optimization)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="ghostscript_reprint">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Fix Structure (qpdf)</h3>
+                                <p class="small text-muted mb-2">Repair cross-reference tables and rebuild the page tree with pikepdf.</p>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="qpdf_repair">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Restore Checkbox Appearances</h3>
+                                <p class="small text-muted mb-2">Add missing checkbox appearance streams without changing text field appearances.</p>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="restore_checkbox_appearances">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Unlock PDF</h3>
+                                <p class="small text-muted mb-2">Remove encryption and permission restrictions.</p>
+                                <div class="mt-1">
+                                    <label for="repair-unlock-pw" class="form-label small text-muted mb-1">Password (if required)</label>
+                                    <input id="repair-unlock-pw" type="password" class="form-control form-control-sm" style="max-width: 16rem;" placeholder="Leave blank for owner-only restrictions">
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="unlock">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">Repair Metadata</h3>
+                                <p class="small text-muted mb-2">Fix broken catalog and metadata entries. Tries pikepdf first, then pdfrw.</p>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="repair_metadata">Run</button>
+                        </div>
+                    </div>
+                    <div class="repair-action-card border rounded p-3">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div>
+                                <h3 class="h6 fw-semibold mb-1">OCR (Add Text Layer)</h3>
+                                <p class="small text-muted mb-2">Add searchable text to scanned pages. Requires <code>ocrmypdf</code> on PATH.</p>
+                                <div class="d-flex gap-2 mt-1 flex-wrap">
+                                    <div>
+                                        <label for="repair-ocr-lang" class="form-label small text-muted mb-1">Language</label>
+                                        <input id="repair-ocr-lang" type="text" class="form-control form-control-sm" style="max-width: 8rem;" value="eng" placeholder="eng">
+                                    </div>
+                                    <label class="form-check mt-auto mb-1">
+                                        <input id="repair-ocr-skip" class="form-check-input" type="checkbox" checked>
+                                        <span class="form-check-label small">Skip pages with text</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm flex-shrink-0 repair-run-btn" data-repair-action="ocr">Run</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="password-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 28rem;">
+                <h2 class="h5 fw-semibold mb-2">Password Required</h2>
+                <p class="small text-muted mb-3">This PDF is password-protected. Enter the password to unlock it.</p>
+                <div id="password-error" class="hidden alert alert-danger small mb-3"></div>
+                <div class="mb-3">
+                    <label for="password-input" class="form-label small">Password</label>
+                    <input id="password-input" type="password" class="form-control form-control-sm" placeholder="Enter PDF password">
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="password-cancel" class="btn btn-sm btn-light">Cancel</button>
+                    <button id="password-submit" class="btn btn-sm btn-primary">Unlock</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="repair-prompt-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 32rem;">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <svg class="flex-shrink-0 mt-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">PDF Cannot Be Opened</h2>
+                        <p id="repair-prompt-message" class="small text-muted mb-0">This PDF could not be rendered. Would you like to try repairing it?</p>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="repair-prompt-cancel" class="btn btn-sm btn-light">Cancel</button>
+                    <button id="repair-prompt-fix" class="btn btn-sm btn-primary">Try Fixing</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="utilities-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 36rem; max-height: 85vh; overflow-y: auto;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Utilities</h2>
+                    <button id="utilities-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Copy Fields Between PDFs</h3>
+                    <p class="small text-muted mb-3">Copy form field positions from a source PDF onto a destination PDF. All existing fields in the destination will be replaced.</p>
+                    <div id="util-copy-status" class="hidden alert small mb-3"></div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-medium mb-1">Source PDF <span class="text-muted fw-normal">(has the fields)</span></label>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-outline-secondary btn-sm flex-shrink-0">
+                                Upload
+                                <input type="file" id="util-copy-source-file" accept=".pdf" class="d-none">
+                            </label>
+                            <button id="util-copy-source-active" class="btn btn-outline-primary btn-sm flex-shrink-0" disabled title="Use the PDF currently loaded in the labeler">Use Active PDF</button>
+                            <span id="util-copy-source-name" class="small text-muted text-truncate"></span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-medium mb-1">Destination PDF <span class="text-muted fw-normal">(receives the fields)</span></label>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-outline-secondary btn-sm flex-shrink-0">
+                                Upload
+                                <input type="file" id="util-copy-dest-file" accept=".pdf" class="d-none">
+                            </label>
+                            <button id="util-copy-dest-active" class="btn btn-outline-primary btn-sm flex-shrink-0" disabled title="Use the PDF currently loaded in the labeler">Use Active PDF</button>
+                            <span id="util-copy-dest-name" class="small text-muted text-truncate"></span>
+                        </div>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input id="util-copy-load-result" class="form-check-input" type="checkbox" checked>
+                        <label class="form-check-label small" for="util-copy-load-result">Load resulting PDF in the labeler</label>
+                    </div>
+                    <button id="util-copy-run" class="btn btn-primary btn-sm" disabled>Copy Fields</button>
+                </section>
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Attachment Block</h3>
+                    <p class="small text-muted mb-2">Generate a complete docassemble <code>attachment:</code> block for the active PDF. Field mappings use Weaver's quoted YAML list style, for example <code>- "users1_name__1": ${ users[0] }</code>.</p>
+                    <div id="util-attachment-status" class="hidden alert small mb-2"></div>
+                    <textarea id="util-attachment-output" class="form-control form-control-sm font-monospace mb-2" rows="9" readonly placeholder="Load a PDF, then generate the block."></textarea>
+                    <div class="d-flex gap-2">
+                        <button id="util-attachment-generate" class="btn btn-primary btn-sm" disabled>Generate Attachment Block</button>
+                        <button id="util-attachment-copy" class="btn btn-outline-secondary btn-sm" disabled>Copy</button>
+                    </div>
+                </section>
+                <section class="border rounded p-3 mb-3">
+                    <h3 class="h6 fw-semibold mb-2">Bulk Upload &amp; Normalize PDFs</h3>
+                    <p class="small text-muted mb-2">Upload multiple PDFs, apply normalization steps to each, and download a .zip with the results.</p>
+                    <div id="util-bulk-status" class="hidden alert small mb-3"></div>
+                    <div id="util-bulk-size-warning" class="hidden alert alert-warning small mb-3">
+                        <strong>Warning:</strong> Total upload size is <span id="util-bulk-size-display"></span>. Uploads larger than ~16 MB may be rejected by the server depending on its configuration.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-medium mb-1">PDF files</label>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-outline-secondary btn-sm flex-shrink-0">
+                                Choose files
+                                <input type="file" id="util-bulk-files" accept=".pdf" multiple class="d-none">
+                            </label>
+                            <span id="util-bulk-file-count" class="small text-muted"></span>
+                        </div>
+                    </div>
+                    <div class="mb-3 border rounded p-2 bg-light">
+                        <div class="small fw-medium mb-2">Normalization steps</div>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-font" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Normalize font to
+                                <select id="util-bulk-norm-font-name" class="form-select form-select-sm d-inline-block" style="width:auto;vertical-align:middle;">
+                                    <option value="Helvetica" selected>Helvetica</option>
+                                    <option value="Helvetica-Bold">Helvetica-Bold</option>
+                                    <option value="Courier">Courier</option>
+                                    <option value="Courier-Bold">Courier-Bold</option>
+                                    <option value="Times-Roman">Times-Roman</option>
+                                    <option value="Times-Bold">Times-Bold</option>
+                                </select>
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-fontsize" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Normalize font size to
+                                <input id="util-bulk-norm-fontsize-val" type="number" min="6" max="18" step="0.5" value="10" class="form-control form-control-sm d-inline-block" style="width:4rem;vertical-align:middle;"> pt
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-checkbox-style" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Normalize checkbox style to
+                                <select id="util-bulk-norm-checkbox-style-val" class="form-select form-select-sm d-inline-block" style="width:auto;vertical-align:middle;">
+                                    <option value="cross" selected>Cross</option>
+                                    <option value="check">Check</option>
+                                    <option value="circle">Circle</option>
+                                    <option value="star">Star</option>
+                                    <option value="diamond">Diamond</option>
+                                    <option value="square">Square</option>
+                                </select>
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-checkbox-size" class="form-check-input" type="checkbox" checked>
+                            <span class="form-check-label small">Uniform checkbox size
+                                <input id="util-bulk-norm-checkbox-size-val" type="number" min="6" max="24" step="0.5" value="12" class="form-control form-control-sm d-inline-block" style="width:4rem;vertical-align:middle;"> pt
+                            </span>
+                        </label>
+                        <label class="form-check">
+                            <input id="util-bulk-norm-strip-fonts" class="form-check-input" type="checkbox">
+                            <span class="form-check-label small">Remove embedded fonts</span>
+                        </label>
+                    </div>
+                    <button id="util-bulk-run" class="btn btn-primary btn-sm" disabled>Normalize &amp; Download .zip</button>
+                </section>
+            </div>
+        </div>
+
+        <div id="page-manager-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.52); z-index: 1070;">
+            <div class="bg-white border shadow rounded p-4" style="width: min(94vw, 82rem); max-height: 92vh; overflow-y: auto;">
+                <div class="d-flex align-items-start justify-content-between gap-3 border-bottom pb-3 mb-3">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Manage Pages</h2>
+                        <p class="small text-muted mb-0">Reorder pages by dragging cards, remove pages, insert pages from another PDF, or add split points for multi-document export.</p>
+                    </div>
+                    <button id="close-page-manager" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div id="page-manager-status" class="hidden alert small mb-3"></div>
+                <div class="pdf-manager-layout">
+                    <section class="page-manager-panel">
+                        <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                            <div class="panel-title mb-0">Current Arrangement</div>
+                            <div id="page-manager-summary" class="page-manager-summary"></div>
+                        </div>
+                        <p class="small text-muted mt-2 mb-3">Drag cards to reorder. Check “Start new document here” on any page after the first to split the PDF at that point.</p>
+                        <div id="page-manager-pages" class="page-manager-pages"></div>
+                        <div id="page-manager-dropzone" class="page-manager-dropzone mt-3">Drop here to move a page to the end</div>
+                    </section>
+                    <section class="d-flex flex-column gap-3">
+                        <div class="page-manager-panel">
+                            <div class="panel-title">Insert Pages</div>
+                            <p class="small text-muted mb-3">Upload another PDF, pick the pages to insert, and choose where they should land in the current arrangement.</p>
+                            <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                                <label class="btn btn-outline-secondary btn-sm mb-0">
+                                    Upload PDF
+                                    <input type="file" id="page-manager-insert-file" accept=".pdf" class="d-none">
+                                </label>
+                                <span id="page-manager-insert-file-name" class="small text-muted"></span>
+                            </div>
+                            <div class="mb-2">
+                                <label for="page-manager-insert-position" class="form-label small mb-1">Insert position</label>
+                                <select id="page-manager-insert-position" class="form-select form-select-sm"></select>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                <div id="page-manager-insert-selection-summary" class="small text-muted">No insert PDF loaded.</div>
+                                <button id="page-manager-insert-run" class="btn btn-primary btn-sm" disabled>Insert Selected Pages</button>
+                            </div>
+                            <div id="page-manager-insert-pages" class="page-manager-insert-grid"></div>
+                        </div>
+                        <div class="page-manager-panel">
+                            <div class="panel-title">Split &amp; Apply</div>
+                            <p class="small text-muted mb-3">Applying updates the active PDF in the workspace and preserves field overlays on kept pages. Split download exports the current arrangement as multiple PDFs.</p>
+                            <div class="form-text mb-3">Split downloads use the current PDF pages. If you have unsaved field edits, apply the arrangement to the workspace first and export afterward to embed those fields.</div>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button id="page-manager-reset" class="btn btn-outline-secondary btn-sm">Reset</button>
+                                <button id="page-manager-download-splits" class="btn btn-outline-primary btn-sm" disabled>Split &amp; Download</button>
+                                <button id="page-manager-apply" class="btn btn-primary btn-sm" disabled>Apply to Workspace</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script id="labeler-bootstrap" type="application/json">__LABELER_BOOTSTRAP_JSON__</script>
+    <script type="module" src="/packagestatic/docassemble.ALDashboard/pdf_labeler.js"></script>
+</body>
+</html>

@@ -1,7 +1,23 @@
 ---
+comment: |
+  # API Tester
+
+  This interview lets you easily test various APIs that docassemble uses, including:
+
+  * [Google Maps geocoding](https://docassemble.org/docs/config.html#geocoder%20service)
+  * [Email sending](https://docassemble.org/docs/config.html#mail)
+  * [SMS sending](https://docassemble.org/docs/sms.html#sms%20setup)
+  * [LLM Chat Completion](https://assemblyline.suffolklitlab.org/docs/components/ALToolbox/llms#ALToolbox.llms.chat_completion)
+
+  You will need to have those APIs setup in your docassemble configuration. Instructions on how to
+  do so are linked above for each API.
+---
 include:
   - docassemble.ALToolbox:display_template.yml
   - nav.yml
+---
+modules:
+  - docassemble.ALToolbox.llms
 ---
 metadata:
   title: Test API keys
@@ -20,11 +36,21 @@ code: |
   if my_person.address.address:
     my_person.address.geocode()
   if my_person.email:
-    email_success = send_email(to=my_person, subject="Test message from Docassemble", body="Test message body. Thanks for testing with ALDashboard.")
+    email_success = send_email(
+      to=my_person,
+      subject="Test message from Docassemble",
+      body="Test message body. Thanks for testing with ALDashboard.",
+    )
   if my_person.phone_number:
-    sms_success = send_sms(to=my_person, body="Test message from Docassemble. Thanks for testing with ALDashboard.")
-  api_results  
+    sms_success = send_sms(
+      to=my_person,
+      body="Test message from Docassemble. Thanks for testing with ALDashboard.",
+    )
+  if test_chat_message:
+    chat_response = chat_completion("you are a helpful assistant", test_chat_message)
+  api_results
 ---
+id: test api key
 question: |
   Test an API key
 subquestion: |
@@ -82,12 +108,39 @@ fields:
   - Enter a phone number to get a test message: my_person.phone_number
     datatype: phone
     required: False
+  - note: |
+      Chat Completion (OpenAI, Google Gemini, Azure, etc.)
+
+      Will only try the default model specified by llms.py, which
+      as of this writing is gpt-5-nano.
+
+      % if user_has_privilege("admin"):
+      Dictionary-style config: 
+
+      ```
+      ${ get_config("open ai")}
+      ```
+
+      Top level style, API key and url: 
+
+      ```
+      ${ get_config("openai base url") }
+      ${ get_config("openai api key") }      
+      ```
+      % else:
+      Only admins can view the relevant configuration for chat completions.
+      % endif
+
+  - Enter a test chat: test_chat_message
+    datatype: area
+    required: False
 ---
 event: api_test
 code: |
   a = 1 / 0
 ---
 event: api_results
+id: api test results
 question: |
   Results
 subquestion: |
@@ -107,6 +160,12 @@ subquestion: |
 
   % if my_person.phone_number:
   SMS success: ${ sms_success }
+  % endif
+
+  % if test_chat_message:
+  Chat response: 
+  
+  ${ chat_response }
   % endif
 
   Use the back button to try again

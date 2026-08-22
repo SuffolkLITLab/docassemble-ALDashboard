@@ -25,11 +25,6 @@ import docassemble.base.pdftk
 import docassemble.base.util
 import docassemble.base.core  # for backward-compatibility with data pickled in earlier versions
 
-import docassemble.webapp.backend
-from docassemble.webapp.backend import url_for
-import docassemble.webapp.clicksend
-import docassemble.webapp.telnyx
-import docassemble.webapp.machinelearning
 from docassemble.webapp.translations import setup_translation
 
 if not in_celery:
@@ -41,9 +36,19 @@ import pandas
 import xlsxwriter
 
 from docassemble.base.util import DAFile, language_name, get_config, log, DAEmpty
-from docassemble.webapp.server import mako_parts
+
+try:
+    from docassemble.webapp.utils.helpers import mako_parts
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+    }:
+        raise
+    # docassemble < 1.10 keeps this helper in the monolithic server module.
+    from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
-from docassemble.ALToolbox.llms import chat_completion  # type: ignore[import-untyped]
+from docassemble.ALToolbox.llms import chat_completion
 
 import tiktoken
 import mako.template
@@ -304,10 +309,13 @@ def translation_file(
                 the_xlsx_file = docassemble.base.functions.package_data_filename(item)
                 if not os.path.isfile(the_xlsx_file):
                     continue
+                # Translation workbooks are fixed to A:H; keep reads narrow so stray cells
+                # in later columns do not inflate the imported sheet width.
                 df = pandas.read_excel(
                     the_xlsx_file,
                     na_values=["NaN", "-NaN", "#NA", "#N/A"],
                     keep_default_na=False,
+                    usecols="A:H",
                 )
                 invalid = False
                 for column_name in (
@@ -409,7 +417,7 @@ def translation_file(
                                 "question_id": "Unknown" + str(indexno),
                                 "index_num": transunit.attrib.get("id", str(indexno)),
                                 "hash": hashlib.md5(
-                                    orig_text.encode("utf-8")
+                                    orig_text.encode("utf-8"), usedforsecurity=False
                                 ).hexdigest(),
                                 "orig_lang": source_lang,
                                 "tr_lang": target_lang,
@@ -467,7 +475,7 @@ def translation_file(
                                     "question_id": question_id,
                                     "index_num": segment.attrib.get("id", str(indexno)),
                                     "hash": hashlib.md5(
-                                        orig_text.encode("utf-8")
+                                        orig_text.encode("utf-8"), usedforsecurity=False
                                     ).hexdigest(),
                                     "orig_lang": source_lang,
                                     "tr_lang": target_lang,
@@ -662,7 +670,12 @@ def translation_file(
                 worksheet.write_string(row, 1, question_id, text_format)
                 worksheet.write_number(row, 2, indexno, numb)
                 worksheet.write_string(
-                    row, 3, hashlib.md5(item.encode("utf-8")).hexdigest(), text_format
+                    row,
+                    3,
+                    hashlib.md5(
+                        item.encode("utf-8"), usedforsecurity=False
+                    ).hexdigest(),
+                    text_format,
                 )
                 worksheet.write_string(row, 4, language, text_format)
                 worksheet.write_string(row, 5, tr_lang, text_format)

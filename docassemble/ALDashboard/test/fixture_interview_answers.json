@@ -1,0 +1,83 @@
+{
+  "interview_short_title": "Ask the Appeals Court to Stop Your Eviction",
+  "acknowledged_information_use": {
+    "_class": "docassemble.base.util.DADict",
+    "instanceName": "acknowledged_information_use",
+    "elements": {
+      "I accept the terms of use.": true
+    },
+    "auto_gather": false,
+    "ask_number": false,
+    "minimum_number": null,
+    "object_type": null,
+    "object_type_parameters": {},
+    "complete_attribute": null,
+    "ask_object_type": false,
+    "gathered": true
+  },
+  "eviction_notice": {
+    "_class": "docassemble.base.util.DAStaticFile",
+    "instanceName": "eviction_notice",
+    "extension": "png",
+    "mimetype": "image/png",
+    "package": "docassemble.MotionToStayEviction",
+    "filename": "48_Hour_Notice.png",
+    "alt_text": "An example 48-Hour Notice. Title reads \"48 hours notice to vacate premises\", will be addressed to the tenant, signed by a landlord or attorney, and will include the contact information of the constable."
+  },
+  "users": {
+    "_class": "docassemble.AssemblyLine.al_general.ALPeopleList",
+    "instanceName": "users",
+    "elements": [
+      {
+        "_class": "docassemble.AssemblyLine.al_general.ALIndividual",
+        "name": {
+          "_class": "docassemble.base.util.IndividualName",
+          "first": "John",
+          "middle": "",
+          "last": "Brown",
+          "uses_parts": true
+        },
+        "address": {
+          "_class": "docassemble.AssemblyLine.al_general.ALAddress",
+          "address": "7 Millbrook Street",
+          "city": "WORCESTER",
+          "state": "MA",
+          "zip": "01605"
+        }
+      }
+    ],
+    "there_are_any": true,
+    "target_number": 1,
+    "gathered": true
+  },
+  "other_parties": {
+    "_class": "docassemble.AssemblyLine.al_general.ALPeopleList",
+    "instanceName": "other_parties",
+    "elements": [
+      {
+        "_class": "docassemble.AssemblyLine.al_general.ALIndividual",
+        "name": {
+          "_class": "docassemble.base.util.IndividualName",
+          "first": "Steven",
+          "middle": "",
+          "last": "Brown",
+          "uses_parts": true
+        },
+        "address": {
+          "_class": "docassemble.AssemblyLine.al_general.ALAddress",
+          "address": "68 Windsor Street",
+          "city": "WORCESTER",
+          "state": "MA",
+          "zip": "01605"
+        }
+      }
+    ],
+    "there_are_any": true,
+    "target_number": 1,
+    "gathered": true
+  },
+  "eviction_date": "2026-03-10T00:00:00-04:00",
+  "signature_choice": "typed_signature",
+  "typed_signature": "users[0].typed_signature",
+  "comments_to_clerk": "aoeuaoeuaeo"
+}

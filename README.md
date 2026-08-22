@@ -8,6 +8,7 @@ A single tool and interview to centralize some tedious Docassemble admin configu
 
 1. Install the Document Assembly Line packages (support files for [Court Forms Online](https://courtformsonline.org))
 1. Searchable user management - reset passwords and change privileges.
+1. Report on and delete stale developer accounts, including their playground files.
 1. Installing or updating several packages at once.
 1. Listing and viewing the contents of an (unencrypted) interview to facilitate debugging errors on production servers.
 1. View analytics/stats captured with `store_variable_snapshot`.
@@ -49,9 +50,12 @@ When installed on a docassemble server, ALDashboard exposes a Flask API at:
 - `POST /al/api/v1/dashboard/translation/validate`
 - `POST /al/api/v1/dashboard/review-screen/draft`
 - `POST /al/api/v1/dashboard/docx/validate`
+- `POST /al/api/v1/dashboard/yaml/check`
+- `POST /al/api/v1/dashboard/yaml/reformat`
 - `POST /al/api/v1/dashboard/pdf/label-fields`
 - `POST /al/api/v1/dashboard/pdf/fields/detect`
 - `POST /al/api/v1/dashboard/pdf/fields/relabel`
+- `POST /al/api/v1/dashboard/pdf/repair`
 - `GET /al/api/v1/dashboard/jobs/{job_id}`
 - `GET /al/api/v1/dashboard/jobs/{job_id}/download`
 - `DELETE /al/api/v1/dashboard/jobs/{job_id}`
@@ -107,6 +111,12 @@ celery modules:
 - `POST /al/api/v1/dashboard/docx/validate`
   - Input: one or more DOCX templates.
   - Output: per-file Jinja rendering errors.
+- `POST /al/api/v1/dashboard/yaml/check`
+  - Input: `yaml_text` (or `yaml_content`) and optional `filename`.
+  - Output: structured DAYamlChecker issues with `errors`, `warnings`, and `valid`.
+- `POST /al/api/v1/dashboard/yaml/reformat`
+  - Input: `yaml_text` (or `yaml_content`), optional `line_length` and `convert_indent_4_to_2`.
+  - Output: reformatted YAML in `formatted_yaml` and `changed` boolean.
 - `POST /al/api/v1/dashboard/pdf/label-fields`
   - Input: PDF upload.
   - Output: PDF with fields detected and optionally relabeled (backward-compatible alias of `/pdf/fields/detect`).
@@ -119,6 +129,16 @@ celery modules:
   - Input: PDF with existing fields.
   - Relabel modes: `field_name_mapping` (exact old->new map), ordered `target_field_names`, or AI (`relabel_with_ai=true`).
   - Output: Relabeled PDF and resulting field names; optional parse stats/base64 output.
+- `POST /al/api/v1/dashboard/pdf/repair`
+  - Run a single repair action on an uploaded PDF. Omit `action` to list available actions.
+  - `action` values: `ghostscript_reprint`, `qpdf_repair`, `restore_checkbox_appearances`, `unlock`, `repair_metadata`, `ocr`.
+  - `ghostscript_reprint`: Re-distill through Ghostscript. Optional `preserve_fields=true` to extract and re-apply field locations.
+  - `qpdf_repair`: Fix cross-reference tables and rebuild the page tree via pikepdf.
+  - `restore_checkbox_appearances`: Add missing checkbox appearance streams without changing text field appearances.
+  - `unlock`: Remove encryption/permissions. Optional `password` parameter.
+  - `repair_metadata`: Fix broken catalog/metadata entries (pikepdf, then pdfrw fallback).
+  - `ocr`: Add searchable text layer via ocrmypdf. Optional `language` (default `eng`) and `skip_text` (default `true`).
+  - Output: `repair_result` object and optional `pdf_base64`.
 - `GET /al/api/v1/dashboard/jobs/{job_id}/download`
   - Streams the first available file artifact from a completed async job.
   - Optional query parameters:

@@ -1,0 +1,12 @@
+{
+  "eviction_notice": {
+    "_class": "docassemble.base.util.DAStaticFile",
+    "instanceName": "eviction_notice",
+    "extension": "png",
+    "mimetype": "image/png",
+    "package": "docassemble.MotionToStayEviction",
+    "filename": "48_Hour_Notice.png",
+    "alt_text": "An example 48-Hour Notice. Title reads \"48 hours notice to vacate premises\", will be addressed to the tenant, signed by a landlord or attorney, and will include the contact information of the constable."
+  },
+  "accepted": true
+}

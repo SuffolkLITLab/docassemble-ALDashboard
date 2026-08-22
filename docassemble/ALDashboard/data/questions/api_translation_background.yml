@@ -6,6 +6,7 @@ event: api_translation_background
 code: |
   import base64
 
+
   def parse_bool(value, default=False):
     if value is None:
       return default
@@ -20,11 +21,13 @@ code: |
       return False
     return default
 
+
   def parse_langs(value):
     if isinstance(value, list):
       return [str(item).strip() for item in value if str(item).strip()]
     text = str(value or "")
     return [item.strip() for item in text.replace(",", " ").split() if item.strip()]
+
 
   def parse_special_words(value):
     if value is None:
@@ -45,8 +48,11 @@ code: |
         output[key] = val
     return output or None
 
+
   args = action_arguments()
-  interview_path = str(args.get("interview_path") or args.get("yaml_filename") or "").strip()
+  interview_path = str(
+    args.get("interview_path") or args.get("yaml_filename") or ""
+  ).strip()
   if not interview_path:
     raise Exception("interview_path is required")
 
@@ -90,7 +96,4 @@ code: |
         tr_entry["xlsx_base64"] = base64.b64encode(handle.read()).decode("ascii")
     translations.append(tr_entry)
 
-  background_response({
-    "interview_path": interview_path,
-    "translations": translations
-  })
+  background_response({"interview_path": interview_path, "translations": translations})

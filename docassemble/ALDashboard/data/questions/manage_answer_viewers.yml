@@ -13,7 +13,7 @@ metadata:
 ---
 code: |
   # Get the list of dispatch interviews
-  interviews = {interview['filename']:interview for interview in interview_menu()}
+  interviews = {interview["filename"]: interview for interview in interview_menu()}
 ---
 objects:
   - viewers: DADict.using(object_type = DAObject, auto_gather=False)
@@ -38,16 +38,16 @@ columns:
 delete buttons: True
 ---
 code: |
-  existing_viewers = get_config("assembly line",{}).get("interview viewers",{})
-  
-  for privilege in manage_privileges('list'):
+  existing_viewers = get_config("assembly line", {}).get("interview viewers", {})
+
+  for privilege in manage_privileges("list"):
     viewers.initializeObject(privilege)
     if privilege in existing_viewers:
       viewers[privilege].allowed_interviews = DAList(
-          viewers[privilege].attr_name("allowed_interviews"), 
-          elements=existing_viewers[privilege],
-          auto_gather=False,
-          gathered=True
+        viewers[privilege].attr_name("allowed_interviews"),
+        elements=existing_viewers[privilege],
+        auto_gather=False,
+        gathered=True,
       )
   viewers.gathered = True
 ---
@@ -69,10 +69,16 @@ fields:
   - Interview name: viewers[i].allowed_interviews[j]
     datatype: combobox
     code: |
-      sorted([{interview: interviews[interview].get('title')} for interview in interviews], key=lambda y: next(iter(y.values()), ''))
+      sorted(
+        [{interview: interviews[interview].get("title")} for interview in interviews],
+        key=lambda y: next(iter(y.values()), ""),
+      )
 validation code: |
   if viewers[i].allowed_interviews[j] in viewers[i].allowed_interviews[:j]:
-    validation_error("This interview is already in the list", field="viewers[i].allowed_interviews[j]")
+    validation_error(
+      "This interview is already in the list",
+      field="viewers[i].allowed_interviews[j]",
+    )
 ---
 event: view_viewers
 id: viewers
@@ -113,8 +119,13 @@ code: |
   if not "interview viewers" in the_config["assembly line"]:
     the_config["assembly line"]["interview viewers"] = {}
   for privilege in viewers:
-    if viewers[privilege].allowed_interviews or privilege in the_config["assembly line"]["interview viewers"]: # handle deletion but don't add new empty entries
-      the_config["assembly line"]["interview viewers"][privilege] = list(viewers[privilege].allowed_interviews)
+    if (
+      viewers[privilege].allowed_interviews
+      or privilege in the_config["assembly line"]["interview viewers"]
+    ):  # handle deletion but don't add new empty entries
+      the_config["assembly line"]["interview viewers"][privilege] = list(
+        viewers[privilege].allowed_interviews
+      )
   results = da_write_config(the_config)
   if results:
     log("Changes saved", "success")

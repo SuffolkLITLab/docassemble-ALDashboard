@@ -5,10 +5,13 @@ import json
 import os
 import re
 import tempfile
+import time
+import uuid
 from typing import Any, Dict, List, Mapping, Optional, cast
 
 from flask import request
 from docassemble.base.error import DAError
+from docassemble.base.util import log
 
 DASHBOARD_API_BASE_PATH = "/al/api/v1/dashboard"
 
@@ -20,6 +23,38 @@ class DashboardAPIValidationError(ValueError):
         self.message = message
         self.status_code = status_code
         super().__init__(message)
+
+
+def _format_pdf_fields_for_ui_payload(
+    fields_per_page: List[List[Any]],
+    *,
+    checkbox_styles: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Convert FormFyxer fields into the browser labeler payload shape."""
+    formatted_fields: List[Dict[str, Any]] = []
+    styles = checkbox_styles or {}
+    for page_idx, page_fields in enumerate(fields_per_page):
+        for field in page_fields:
+            raw_font_size = getattr(field, "font_size", None)
+            auto_size = raw_font_size == 0
+            field_dict: Dict[str, Any] = {
+                "id": str(uuid.uuid4()),
+                "name": field.name,
+                "type": str(field.type).lower().replace("fieldtype.", ""),
+                "pageIndex": page_idx,
+                "x": field.x,
+                "y": field.y,
+                "width": field.configs.get("width", 100),
+                "height": field.configs.get("height", 20),
+                "fontSize": 10 if auto_size else (raw_font_size or 10),
+                "autoSize": auto_size,
+            }
+            # Include checkbox style from the original PDF if available
+            field_type = str(field.type).lower().replace("fieldtype.", "")
+            if field_type == "checkbox" and field.name in styles:
+                field_dict["checkboxStyle"] = styles[field.name]
+            formatted_fields.append(field_dict)
+    return formatted_fields
 
 
 def parse_bool(value: Any, *, default: bool = False) -> bool:
@@ -86,6 +121,14 @@ def _load_json_field(
             f"{field_name} must be a {expected_type.__name__}."
         )
     return value
+
+
+def _load_string_list_field(raw_value: Any, *, field_name: str) -> Optional[List[str]]:
+    parsed = _load_json_field(raw_value, field_name=field_name, expected_type=list)
+    if parsed is None:
+        return None
+    output = [str(item).strip() for item in parsed if str(item).strip()]
+    return output or None
 
 
 def merge_raw_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
@@ -164,6 +207,58 @@ def _validate_upload_size(
         raise DashboardAPIValidationError(
             f"Uploaded file is larger than {max_upload_bytes} bytes.", status_code=413
         )
+
+
+def _read_text_file_with_size_limit(
+    path: str, *, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+) -> str:
+    try:
+        file_size = os.path.getsize(path)
+    except OSError as exc:
+        raise DashboardAPIValidationError(f"Could not inspect file {path!r}.") from exc
+    if file_size <= 0:
+        raise DashboardAPIValidationError("Source file is empty.")
+    if file_size > max_upload_bytes:
+        raise DashboardAPIValidationError(
+            f"Source file is larger than {max_upload_bytes} bytes.", status_code=413
+        )
+    with open(path, "r", encoding="utf-8") as source_file:
+        return source_file.read()
+
+
+def _find_playground_yaml_source(
+    playground_project: str, selected_value: str
+) -> Dict[str, str]:
+    from .interview_linter import list_playground_yaml_files
+
+    playground_files = list_playground_yaml_files(playground_project or "default")
+    selected_file = next(
+        (
+            item
+            for item in playground_files
+            if item.get("label") == selected_value
+            or item.get("token") == selected_value
+        ),
+        None,
+    )
+    if not selected_file:
+        raise DashboardAPIValidationError(
+            "Could not find the requested Playground YAML file."
+        )
+    source_path = str(selected_file.get("token") or "").strip()
+    source_name = str(
+        selected_file.get("label") or os.path.basename(source_path)
+    ).strip()
+    if not source_path or not os.path.exists(source_path):
+        raise DashboardAPIValidationError(
+            "Could not resolve the requested Playground YAML file."
+        )
+    if not source_name.lower().endswith((".yml", ".yaml")):
+        raise DashboardAPIValidationError(
+            "Only YAML sources are supported for heuristic story generation.",
+            status_code=415,
+        )
+    return {"path": source_path, "filename": source_name}
 
 
 def _read_single_upload(*, field_name: str = "file") -> Dict[str, Any]:
@@ -374,6 +469,244 @@ def docx_runs_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
             os.remove(temp_path)
 
 
+def docx_labeler_suggest_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    import docx
+
+    from .docx_wrangling import defragment_docx_runs, get_voted_docx_label_suggestions
+    from .validate_docx import detect_docx_automation_features
+
+    raw = merge_raw_options(raw_options)
+    filename = str(raw.get("filename") or "upload.docx")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError("file_content_base64 is required.")
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+
+    if not filename.lower().endswith(".docx"):
+        raise DashboardAPIValidationError(
+            "Only DOCX uploads are supported.", status_code=415
+        )
+
+    prompt_profile = str(raw.get("prompt_profile") or "standard").strip() or "standard"
+    optional_context = raw.get("context_text")
+    custom_prompt = raw.get("custom_prompt")
+    additional_instructions = raw.get("additional_instructions")
+    defragment_runs = parse_bool(raw.get("defragment_runs"), default=True)
+    model = str(raw.get("model") or "gpt-5-mini").strip() or "gpt-5-mini"
+
+    judge_model_raw = raw.get("judge_model")
+    judge_model = None
+    if judge_model_raw is not None:
+        judge_model = str(judge_model_raw).strip() or None
+
+    openai_api = raw.get("openai_api")
+    if openai_api is not None:
+        openai_api = str(openai_api)
+    openai_base_url = raw.get("openai_base_url")
+    if openai_base_url is not None:
+        openai_base_url = str(openai_base_url)
+
+    generator_models = _load_string_list_field(
+        raw.get("generator_models"), field_name="generator_models"
+    )
+    custom_people_names = _load_json_field(
+        raw.get("custom_people_names"),
+        field_name="custom_people_names",
+        expected_type=list,
+    )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
+    preferred_variable_names = _load_string_list_field(
+        raw.get("preferred_variable_names"),
+        field_name="preferred_variable_names",
+    )
+
+    interview_source_mode = (
+        str(raw.get("interview_source_mode") or "playground").strip().lower()
+        or "playground"
+    )
+    selected_playground_project = raw.get("playground_project")
+    selected_playground_filename = raw.get("playground_yaml_file")
+    selected_installed_interview_path = raw.get("installed_interview_path")
+
+    temp_path = _write_temp_file(filename, content)
+    started_at = time.perf_counter()
+    try:
+        prep_started_at = time.perf_counter()
+        review_document = docx.Document(temp_path)
+        if defragment_runs:
+            review_document, _ = defragment_docx_runs(review_document)
+        prep_elapsed = time.perf_counter() - prep_started_at
+
+        automation_started_at = time.perf_counter()
+        automation_findings = detect_docx_automation_features(temp_path)
+        document_warnings = [
+            finding
+            for finding in automation_findings.get("findings", [])
+            if finding.get("code")
+            in {
+                "track_changes",
+                "structured_document_tags",
+                "sdt_specialized_controls",
+                "sdt_plain_text_control",
+                "sdt_group_control",
+                "sdt_docpart_non_page_numbers",
+                "sdt_metadata",
+                "sdt_bound_or_locked",
+                "data_binding",
+                "custom_xml_parts",
+                "custom_xml_relationships",
+            }
+        ]
+        automation_elapsed = time.perf_counter() - automation_started_at
+
+        suggestion_started_at = time.perf_counter()
+        aggregated = get_voted_docx_label_suggestions(
+            docx_path=temp_path,
+            custom_people_names=cast(Any, custom_people_names),
+            primary_person_variable=primary_person_variable,
+            preferred_variable_names=preferred_variable_names,
+            openai_api=cast(Optional[str], openai_api),
+            openai_base_url=cast(Optional[str], openai_base_url),
+            model=model,
+            generator_models=generator_models,
+            judge_model=judge_model,
+            prompt_profile=prompt_profile,
+            optional_context=(
+                str(optional_context) if optional_context is not None else None
+            ),
+            custom_prompt=str(custom_prompt) if custom_prompt is not None else None,
+            additional_instructions=(
+                str(additional_instructions)
+                if additional_instructions is not None
+                else None
+            ),
+            defragment_runs=defragment_runs,
+            judge_max_output_tokens=2000,
+        )
+        suggestion_elapsed = time.perf_counter() - suggestion_started_at
+
+        format_started_at = time.perf_counter()
+        suggestions = aggregated.get("suggestions", [])
+        aggregation_summary = aggregated.get("aggregation", {})
+        judge_review = aggregated.get("judge_review", {})
+        generation_runs = aggregated.get("generation_runs", [])
+        flagged_selected_count = sum(
+            1 for suggestion in suggestions if suggestion.get("validation_flags")
+        )
+
+        formatted_suggestions = []
+        for suggestion in suggestions:
+            alternates = []
+            for alternate in suggestion.get("alternates", []):
+                alternates.append(
+                    {
+                        "text": alternate.get("text", ""),
+                        "paragraph": alternate.get("paragraph"),
+                        "run": alternate.get("run"),
+                        "new_paragraph": alternate.get("new_paragraph", 0),
+                        "validation_flags": alternate.get("validation_flags", []),
+                        "confidence": alternate.get("confidence", "low"),
+                        "vote_count": alternate.get("vote_count", 0),
+                        "clean_vote_count": alternate.get("clean_vote_count", 0),
+                        "vote_total": suggestion.get(
+                            "vote_total", len(generation_runs)
+                        ),
+                        "sources": alternate.get("sources", []),
+                    }
+                )
+            formatted_suggestions.append(
+                {
+                    "paragraph": suggestion.get("paragraph"),
+                    "run": suggestion.get("run"),
+                    "text": suggestion.get("text", ""),
+                    "new_paragraph": suggestion.get("new_paragraph", 0),
+                    "id": str(uuid.uuid4()),
+                    "validation_flags": suggestion.get("validation_flags", []),
+                    "judge_review": suggestion.get("judge_review"),
+                    "confidence": suggestion.get("confidence", "low"),
+                    "vote_count": suggestion.get("vote_count", 0),
+                    "clean_vote_count": suggestion.get("clean_vote_count", 0),
+                    "vote_total": suggestion.get("vote_total", len(generation_runs)),
+                    "sources": suggestion.get("sources", []),
+                    "alternates": alternates,
+                }
+            )
+        format_elapsed = time.perf_counter() - format_started_at
+
+        total_elapsed = time.perf_counter() - started_at
+        timings = {
+            "document_prep_seconds": round(prep_elapsed, 3),
+            "automation_scan_seconds": round(automation_elapsed, 3),
+            "label_generation_seconds": round(suggestion_elapsed, 3),
+            "response_format_seconds": round(format_elapsed, 3),
+            "total_seconds": round(total_elapsed, 3),
+            "generator_run_count": len(generation_runs),
+            "generator_models": [
+                str(item.get("model") or "")
+                for item in generation_runs
+                if str(item.get("model") or "")
+            ],
+            "ambiguous_group_count": int(
+                aggregation_summary.get("ambiguous_group_count") or 0
+            ),
+            "judge_review_count": len(judge_review.get("reviews", []) or []),
+        }
+        # Server-log priority on purpose: any other priority appends to
+        # `this_thread.message_log`, which docassemble 1.10 only populates
+        # inside an interview request, and these timings are not meant for
+        # the user's screen anyway.
+        log(
+            "ALDashboard: DOCX suggest-labels timings for "
+            + repr(filename)
+            + ": "
+            + json.dumps(timings, sort_keys=True)
+        )
+
+        return {
+            "filename": filename,
+            "suggestions": formatted_suggestions,
+            "defragment_runs": defragment_runs,
+            "interview_source_mode": interview_source_mode,
+            "playground_project": (
+                str(selected_playground_project)
+                if selected_playground_project is not None
+                else None
+            ),
+            "playground_yaml_file": (
+                str(selected_playground_filename)
+                if selected_playground_filename is not None
+                else None
+            ),
+            "installed_interview_path": (
+                str(selected_installed_interview_path)
+                if selected_installed_interview_path is not None
+                else None
+            ),
+            "playground_variable_count": len(preferred_variable_names or []),
+            "validation": {
+                "deterministic": {
+                    "flagged_count": flagged_selected_count,
+                    "ai_review_recommended": bool(
+                        aggregation_summary.get("ambiguous_group_count")
+                    ),
+                },
+                "ai_review": judge_review,
+                "document_warnings": document_warnings,
+                "aggregation": aggregation_summary,
+                "timings": timings,
+            },
+        }
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
     from .docx_wrangling import get_labeled_docx_runs, update_docx
 
@@ -432,12 +765,17 @@ def autolabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, 
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
 
     temp_path = _write_temp_file(filename, content)
     try:
         guesses = get_labeled_docx_runs(
             temp_path,
             custom_people_names=custom_people_names,
+            primary_person_variable=primary_person_variable,
             openai_api=openai_api_override,
             openai_base_url=openai_base_url_override,
             model=openai_model_override or "gpt-5-nano",
@@ -686,6 +1024,14 @@ def _apply_add_label_rules(
 
 
 def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    """Apply relabeling edits to DOCX suggestions and optionally build output DOCX.
+
+    Args:
+        raw_options: Request options containing source labels, edits, and file data.
+
+    Returns:
+        Dict[str, Any]: A payload with updated labels and optional labeled DOCX bytes.
+    """
     from .docx_wrangling import get_labeled_docx_runs, update_docx
 
     raw = merge_raw_options(raw_options)
@@ -754,6 +1100,10 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
         field_name="custom_people_names",
         expected_type=list,
     )
+    primary_person_raw = raw.get("primary_person_variable")
+    primary_person_variable = (
+        str(primary_person_raw).strip() if primary_person_raw is not None else None
+    )
 
     try:
         if raw_results is not None:
@@ -761,12 +1111,16 @@ def relabel_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, An
                 _coerce_label_item(item, field_name="results") for item in raw_results
             ]
         else:
-            assert temp_path is not None
+            if temp_path is None:
+                raise DashboardAPIValidationError(
+                    "Either 'results' or a file upload is required."
+                )
             labels = [
                 list(item)
                 for item in get_labeled_docx_runs(
                     temp_path,
                     custom_people_names=custom_people_names,
+                    primary_person_variable=primary_person_variable,
                     openai_api=openai_api_override,
                     openai_base_url=openai_base_url_override,
                     model=openai_model_override or "gpt-5-nano",
@@ -1053,7 +1407,12 @@ def validate_docx_payload_from_request() -> Dict[str, Any]:
 def validate_docx_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    from .validate_docx import get_jinja_errors
+    from .validate_docx import (
+        analyze_docx_template_markup,
+        detect_docx_automation_features,
+        get_jinja_errors,
+        strip_docx_problem_controls,
+    )
 
     raw = merge_raw_options(raw_options)
     files_option = raw.get("files")
@@ -1061,6 +1420,9 @@ def validate_docx_payload_from_options(
         raise DashboardAPIValidationError(
             "Expected files[] payload for DOCX validation."
         )
+    include_stripped_docx_base64 = parse_bool(
+        raw.get("include_stripped_docx_base64"), default=False
+    )
 
     files = []
     for upload in files_option:
@@ -1076,7 +1438,33 @@ def validate_docx_payload_from_options(
 
         temp_path = _write_temp_file(filename, content)
         try:
-            files.append({"file": filename, "errors": get_jinja_errors(temp_path)})
+            findings = detect_docx_automation_features(temp_path)
+            markup_warnings = analyze_docx_template_markup(temp_path)
+            warning_details = findings.get("warning_details", []) + markup_warnings
+            result: Dict[str, Any] = {
+                "file": filename,
+                "errors": get_jinja_errors(temp_path),
+                "warnings": findings.get("warnings", [])
+                + [str(item.get("message")) for item in markup_warnings],
+                "warning_details": warning_details,
+            }
+            if include_stripped_docx_base64 and result["warnings"]:
+                with tempfile.NamedTemporaryFile(
+                    suffix=".docx", delete=False
+                ) as out_file:
+                    stripped_path = out_file.name
+                try:
+                    strip_stats = strip_docx_problem_controls(temp_path, stripped_path)
+                    with open(stripped_path, "rb") as stripped_handle:
+                        result["stripped_docx_base64"] = base64.b64encode(
+                            stripped_handle.read()
+                        ).decode("ascii")
+                    result["stripped_output_filename"] = f"stripped_{filename}"
+                    result["strip_stats"] = strip_stats
+                finally:
+                    if os.path.exists(stripped_path):
+                        os.remove(stripped_path)
+            files.append(result)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -1097,11 +1485,22 @@ def interview_lint_payload_from_request() -> Dict[str, Any]:
 def interview_lint_payload_from_options(
     raw_options: Mapping[str, Any], *, uploads: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
-    from .interview_linter import lint_multiple_sources
+    from .interview_linter import (
+        lint_multiple_sources,
+        list_lint_modes,
+        normalize_lint_mode,
+    )
 
     raw = merge_raw_options(raw_options)
     include_llm = parse_bool(raw.get("include_llm"), default=False)
     language = str(raw.get("language") or "en")
+    lint_mode_raw = str(raw.get("lint_mode") or "")
+    try:
+        lint_mode = normalize_lint_mode(lint_mode_raw or "full", strict=True)
+    except ValueError as exc:
+        raise DashboardAPIValidationError(
+            f"{exc} Received lint_mode={lint_mode_raw!r}."
+        ) from exc
 
     temp_paths: List[str] = []
     lint_sources: List[Dict[str, str]] = []
@@ -1153,7 +1552,10 @@ def interview_lint_payload_from_options(
 
     try:
         reports = lint_multiple_sources(
-            lint_sources, language=language, include_llm=include_llm
+            lint_sources,
+            language=language,
+            include_llm=include_llm,
+            lint_mode=lint_mode,
         )
     finally:
         for temp_path in temp_paths:
@@ -1163,8 +1565,447 @@ def interview_lint_payload_from_options(
     return {
         "include_llm": include_llm,
         "language": language,
+        "lint_mode": lint_mode,
+        "available_lint_modes": list_lint_modes(),
         "count": len(reports),
         "reports": reports,
+    }
+
+
+def _dayaml_issue_severity(message: str) -> str:
+    normalized = message.strip().lower()
+    if "does not call validation_error" in normalized or normalized.startswith(
+        "warning:"
+    ):
+        return "warning"
+    return "error"
+
+
+def _run_dayaml_checker(yaml_text: str, *, input_file: str) -> List[Any]:
+    try:
+        from dayamlchecker.yaml_structure import (
+            find_errors_from_string,
+        )
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            "DAYamlChecker is not installed; install it to use /yaml/check."
+        ) from exc
+
+    try:
+        return list(find_errors_from_string(yaml_text, input_file=input_file))
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            f"DAYamlChecker validation failed: {exc}"
+        ) from exc
+
+
+def _run_dayaml_reformat(
+    yaml_text: str, *, line_length: int, convert_indent_4_to_2: bool
+) -> Any:
+    try:
+        from dayamlchecker.code_formatter import (
+            FormatterConfig,
+            format_yaml_string,
+        )
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            "DAYamlChecker formatter is not available; install a DAYamlChecker "
+            "version that provides dayamlchecker.code_formatter to use /yaml/reformat."
+        ) from exc
+
+    try:
+        config = FormatterConfig(
+            black_line_length=line_length,
+            convert_indent_4_to_2=convert_indent_4_to_2,
+        )
+        return format_yaml_string(yaml_text, config=config)
+    except Exception as exc:
+        raise DashboardAPIValidationError(
+            f"DAYamlChecker reformat failed: {exc}"
+        ) from exc
+
+
+def _coerce_yaml_text(
+    raw: Mapping[str, Any], *, required_field: str = "yaml_text"
+) -> str:
+    yaml_raw = raw.get("yaml_text")
+    if yaml_raw is None:
+        yaml_raw = raw.get("yaml_content")
+    if yaml_raw is None:
+        raise DashboardAPIValidationError(
+            f"{required_field} is required (or provide yaml_content)."
+        )
+    yaml_text = str(yaml_raw)
+    if not yaml_text.strip():
+        raise DashboardAPIValidationError(
+            f"{required_field} is required (or provide yaml_content)."
+        )
+    return yaml_text
+
+
+def yaml_check_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    return yaml_check_payload_from_options(raw)
+
+
+def yaml_check_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str, Any]:
+    raw = merge_raw_options(raw_options)
+    yaml_text = _coerce_yaml_text(raw)
+    input_file = str(raw.get("filename") or raw.get("input_file") or "<string input>")
+    raw_issues = _run_dayaml_checker(yaml_text, input_file=input_file)
+
+    issues: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for issue in raw_issues:
+        message = str(getattr(issue, "err_str", issue))
+        line_value = getattr(issue, "line_number", 1)
+        try:
+            line = int(line_value)
+        except Exception:
+            line = 1
+        file_name = str(getattr(issue, "file_name", input_file))
+        experimental = bool(getattr(issue, "experimental", True))
+        severity = _dayaml_issue_severity(message)
+        normalized_issue = {
+            "severity": severity,
+            "message": message,
+            "line": line,
+            "filename": file_name,
+            "experimental": experimental,
+        }
+        issues.append(normalized_issue)
+        if severity == "warning":
+            warnings.append(normalized_issue)
+        else:
+            errors.append(normalized_issue)
+
+    return {
+        "valid": len(errors) == 0,
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "issues": issues,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def yaml_reformat_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    return yaml_reformat_payload_from_options(raw)
+
+
+def yaml_reformat_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    raw = merge_raw_options(raw_options)
+    yaml_text = _coerce_yaml_text(raw)
+
+    raw_line_length = raw.get("line_length")
+    if raw_line_length is None or str(raw_line_length).strip() == "":
+        line_length = 88
+    else:
+        try:
+            line_length = int(str(raw_line_length))
+        except (TypeError, ValueError) as exc:
+            raise DashboardAPIValidationError(
+                "line_length must be an integer."
+            ) from exc
+        if line_length <= 0:
+            raise DashboardAPIValidationError("line_length must be a positive integer.")
+
+    convert_indent_4_to_2 = parse_bool(raw.get("convert_indent_4_to_2"), default=True)
+    formatted_yaml, changed = _run_dayaml_reformat(
+        yaml_text,
+        line_length=line_length,
+        convert_indent_4_to_2=convert_indent_4_to_2,
+    )
+
+    return {
+        "changed": bool(changed),
+        "line_length": line_length,
+        "convert_indent_4_to_2": convert_indent_4_to_2,
+        "formatted_yaml": str(formatted_yaml),
+    }
+
+
+def alkiln_story_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    upload: Optional[Dict[str, Any]] = None
+    if "file" in request.files:
+        upload = _read_single_upload(field_name="file")
+    elif "files" in request.files:
+        uploads = _read_multi_uploads(field_name="files")
+        upload = uploads[0] if uploads else None
+    return alkiln_story_payload_from_options(raw, upload=upload)
+
+
+def alkiln_story_payload_from_options(
+    raw_options: Mapping[str, Any], *, upload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    from .alkiln_story import (
+        DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME,
+        StoryOptions,
+        default_yaml_file_name,
+        load_docassemble_json_text,
+        story_from_docassemble_yaml,
+        story_from_docassemble_json,
+        detect_yaml_ending_screen,
+    )
+
+    raw = merge_raw_options(raw_options)
+    data = raw.get("data")
+    json_text = raw.get("json_text") or raw.get("json")
+    yaml_text = raw.get("yaml_text") or raw.get("yaml_content")
+    variables = raw.get("variables")
+    session_id = str(raw.get("session_id") or raw.get("key") or "").strip()
+    source_token = str(
+        raw.get("source_token")
+        or raw.get("playground_source_token")
+        or raw.get("yaml_source_token")
+        or ""
+    ).strip()
+    playground_project = str(raw.get("playground_project") or "").strip()
+    playground_yaml_file = str(raw.get("playground_yaml_file") or "").strip()
+    yaml_source_filename = str(
+        raw.get("filename") or raw.get("yaml_file_name") or ""
+    ).strip()
+    yaml_source_path: Optional[str] = None
+
+    if upload is None and raw.get("file_content_base64") is not None:
+        filename = str(raw.get("filename") or "upload.yml")
+        content = decode_base64_content(raw.get("file_content_base64"))
+        _validate_upload_size(content)
+        upload = {"filename": filename, "content": content}
+
+    if yaml_text is None and upload is not None:
+        filename = str(upload.get("filename") or "upload.yml")
+        upload_content = upload.get("content")
+        if not isinstance(upload_content, (bytes, bytearray)):
+            raise DashboardAPIValidationError("Upload content must be bytes.")
+        if not filename.lower().endswith((".yml", ".yaml")):
+            raise DashboardAPIValidationError(
+                "Only YAML uploads are supported for heuristic story generation.",
+                status_code=415,
+            )
+        yaml_text = bytes(upload_content).decode("utf-8", errors="replace")
+        yaml_source_filename = filename
+
+    if yaml_text is None and source_token:
+        from .interview_linter import _resolve_source_token
+
+        if source_token.startswith("ref:"):
+            source_path = _resolve_source_token(source_token)
+            yaml_source_filename = str(
+                raw.get("filename") or os.path.basename(str(source_path or ""))
+            ).strip()
+        else:
+            selected_source = _find_playground_yaml_source(
+                playground_project, source_token
+            )
+            source_path = selected_source["path"]
+            yaml_source_filename = str(
+                raw.get("filename") or selected_source["filename"]
+            ).strip()
+        if not source_path or not os.path.exists(source_path):
+            raise DashboardAPIValidationError(
+                f"Could not resolve YAML source token {source_token!r}."
+            )
+        if not yaml_source_filename.lower().endswith((".yml", ".yaml")):
+            raise DashboardAPIValidationError(
+                "Only YAML sources are supported for heuristic story generation.",
+                status_code=415,
+            )
+        yaml_text = _read_text_file_with_size_limit(source_path)
+        yaml_source_path = source_path
+
+    if yaml_text is None and playground_yaml_file:
+        selected_source = _find_playground_yaml_source(
+            playground_project, playground_yaml_file
+        )
+        source_path = selected_source["path"]
+        yaml_text = _read_text_file_with_size_limit(source_path)
+        yaml_source_path = source_path
+        yaml_source_filename = str(selected_source["filename"] or playground_yaml_file)
+
+    if data is None and session_id:
+        from .aldashboard import (
+            dashboard_find_session_filename,
+            dashboard_get_session_variables,
+        )
+
+        session_filename = str(
+            raw.get("filename") or raw.get("interview_path") or ""
+        ).strip()
+        if not session_filename:
+            found_filename = dashboard_find_session_filename(session_id)
+            if not found_filename:
+                raise DashboardAPIValidationError(
+                    "filename or interview_path is required when session_id cannot be resolved unambiguously."
+                )
+            session_filename = found_filename
+        try:
+            data = {
+                "i": session_filename,
+                "variables": dashboard_get_session_variables(
+                    session_id=session_id,
+                    filename=session_filename,
+                ),
+            }
+        except Exception as exc:
+            raise DashboardAPIValidationError(
+                "Could not load variables for the requested session."
+            ) from exc
+    elif data is None and yaml_text is not None:
+        if not isinstance(yaml_text, str) or not yaml_text.strip():
+            raise DashboardAPIValidationError("yaml_text must be non-empty YAML.")
+    elif data is None and json_text is not None:
+        if not isinstance(json_text, str) or not json_text.strip():
+            raise DashboardAPIValidationError("json_text must be non-empty JSON.")
+        try:
+            data = load_docassemble_json_text(json_text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise DashboardAPIValidationError("json_text must be valid JSON.") from exc
+    elif data is None and variables is not None:
+        data = {"variables": variables}
+    elif data is None and any(
+        key in raw
+        for key in (
+            "i",
+            "variables",
+        )
+    ):
+        data = raw
+
+    docassemble_data: Optional[Mapping[str, Any]] = None
+    if yaml_text is None:
+        if not isinstance(data, dict):
+            raise DashboardAPIValidationError(
+                "Provide docassemble JSON as `data`, `json_text`, or `variables`, "
+                "or YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
+                "`source_token`, or `playground_project` with `playground_yaml_file`."
+            )
+        docassemble_data = data
+
+    ignore_anywhere = _load_string_list_field(
+        raw.get("ignore_anywhere_in_var_name"),
+        field_name="ignore_anywhere_in_var_name",
+    )
+    if ignore_anywhere is None:
+        ignore_anywhere = list(DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME)
+
+    if yaml_text is not None:
+        yaml_default_name = (
+            yaml_source_filename or raw.get("interview_path") or "interview.yml"
+        )
+        question_default = detect_yaml_ending_screen(
+            yaml_text, source_path=yaml_source_path
+        )
+    else:
+        assert docassemble_data is not None
+        yaml_default_name = raw.get("interview_path") or default_yaml_file_name(
+            docassemble_data
+        )
+        question_default = "review_screen"
+
+    if raw.get("yaml_file_name"):
+        yaml_file_name = str(raw.get("yaml_file_name")).strip()
+    elif yaml_text is not None:
+        yaml_file_name = os.path.basename(str(yaml_default_name).rsplit(":", 1)[-1])
+    else:
+        yaml_file_name = str(yaml_default_name).strip()
+    question_id = str(raw.get("question_id") or question_default).strip()
+    feature_description = str(
+        raw.get("feature_description") or "Generated docassemble test"
+    ).strip()
+    scenario_description = str(
+        raw.get("scenario_description") or "Generated scenario"
+    ).strip()
+    include_trigger_column = parse_bool(
+        raw.get("include_trigger_column"), default=False
+    )
+    synthesize_target_number = parse_bool(
+        raw.get("synthesize_target_number"), default=True
+    )
+
+    options = StoryOptions(
+        feature_description=feature_description,
+        scenario_description=scenario_description,
+        yaml_file_name=yaml_file_name or "interview.yml",
+        question_id=question_id or "review_screen",
+        include_trigger_column=include_trigger_column,
+        synthesize_target_number=synthesize_target_number,
+        ignore_anywhere_in_var_name=ignore_anywhere,
+    )
+    if yaml_text is not None:
+        return story_from_docassemble_yaml(
+            yaml_text,
+            filename=yaml_file_name,
+            source_path=yaml_source_path,
+            options=options,
+        )
+    assert docassemble_data is not None
+    return story_from_docassemble_json(docassemble_data, options=options)
+
+
+def variable_report_payload_from_request() -> Dict[str, Any]:
+    raw = merge_raw_options(_request_dict())
+    upload: Optional[Dict[str, Any]] = None
+    if "file" in request.files:
+        upload = _read_single_upload(field_name="file")
+    elif "files" in request.files:
+        uploads = _read_multi_uploads(field_name="files")
+        upload = uploads[0] if uploads else None
+    return variable_report_payload_from_options(raw, upload=upload)
+
+
+def variable_report_payload_from_options(
+    raw_options: Mapping[str, Any], *, upload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    from .variable_report_generator import generate_variable_report
+
+    raw = merge_raw_options(raw_options)
+    yaml_text = raw.get("yaml_text") or raw.get("yaml_content")
+    playground_project = str(raw.get("playground_project") or "").strip()
+    playground_yaml_file = str(raw.get("playground_yaml_file") or "").strip()
+    source_token = str(raw.get("source_token") or "").strip()
+
+    if upload is None and raw.get("file_content_base64") is not None:
+        filename = str(raw.get("filename") or "upload.yml")
+        content = decode_base64_content(raw.get("file_content_base64"))
+        _validate_upload_size(content)
+        upload = {"filename": filename, "content": content}
+
+    if yaml_text is None and upload is not None:
+        upload_content = upload.get("content")
+        if isinstance(upload_content, (bytes, bytearray)):
+            yaml_text = bytes(upload_content).decode("utf-8", errors="replace")
+
+    if yaml_text is None and (playground_yaml_file or source_token):
+        token_to_use = playground_yaml_file or source_token
+        selected_source = _find_playground_yaml_source(playground_project, token_to_use)
+        with open(selected_source["path"], "r", encoding="utf-8") as f:
+            yaml_text = f.read()
+
+    if yaml_text is None:
+        raise DashboardAPIValidationError(
+            "Provide YAML as `yaml_text`, `file_content_base64`, multipart `file`, "
+            "or `playground_project` with `playground_yaml_file`."
+        )
+
+    report_title = str(raw.get("report_title") or "Interview Variable Report").strip()
+    infer_assemblyline = parse_bool(raw.get("infer_assemblyline"), default=True)
+
+    res = generate_variable_report(
+        [yaml_text],
+        report_title=report_title,
+        infer_assemblyline=infer_assemblyline,
+    )
+    return {
+        "mako_markdown": res["mako_markdown"],
+        "variables_count": res["variables_count"],
+        "list_count": res["list_count"],
+        "scalar_count": res["scalar_count"],
     }
 
 
@@ -1199,7 +2040,7 @@ def _finalize_pdf_payload(
     output_path: str,
     stats: Dict[str, Any],
     include_pdf_base64: bool,
-    include_parse_stats: bool,
+    include_field_positions: bool = False,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "input_filename": filename,
@@ -1212,8 +2053,14 @@ def _finalize_pdf_payload(
         "fields": stats.get("fields", []),
         "fields_old": stats.get("fields_old", []),
     }
-    if include_parse_stats:
-        payload["parse_stats"] = stats
+    if include_field_positions:
+        import formfyxer  # type: ignore[import-not-found]
+
+        fields_per_page = formfyxer.get_existing_pdf_fields(output_path)
+        payload["page_count"] = len(fields_per_page)
+        payload["positioned_fields"] = _format_pdf_fields_for_ui_payload(
+            fields_per_page
+        )
     if include_pdf_base64:
         with open(output_path, "rb") as handle:
             payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
@@ -1254,6 +2101,14 @@ def pdf_fields_detect_payload_from_request() -> Dict[str, Any]:
 def pdf_fields_detect_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Detect PDF fields and optionally relabel them before returning artifacts.
+
+    Args:
+        raw_options: Request options containing upload data and relabel settings.
+
+    Returns:
+        Dict[str, Any]: Serialized field metadata and optional output PDF content.
+    """
     from .pdf_field_labeler import (
         PDFLabelingError,
         detect_pdf_fields_and_optionally_relabel,
@@ -1266,14 +2121,19 @@ def pdf_fields_detect_payload_from_options(
     output_path = prepared["output_path"]
 
     include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
-    include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
+    include_field_positions = parse_bool(
+        raw.get("include_field_positions"), default=False
+    )
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
-    tools_token = (
-        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
-    )
+    model = str(raw.get("model") or "").strip() or None
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    openai_base_url = (
+        str(raw.get("openai_base_url"))
+        if raw.get("openai_base_url") is not None
+        else None
     )
     target_field_names = _load_json_field(
         raw.get("target_field_names"),
@@ -1282,22 +2142,33 @@ def pdf_fields_detect_payload_from_options(
     )
     if isinstance(target_field_names, list):
         target_field_names = [str(item) for item in target_field_names]
+    preferred_variable_names = _load_json_field(
+        raw.get("preferred_variable_names"),
+        field_name="preferred_variable_names",
+        expected_type=list,
+    )
+    if isinstance(preferred_variable_names, list):
+        preferred_variable_names = [
+            str(item) for item in preferred_variable_names if str(item).strip()
+        ]
     try:
         stats = detect_pdf_fields_and_optionally_relabel(
             input_pdf_path=input_path,
             output_pdf_path=output_path,
             relabel_with_ai=relabel_with_ai,
             target_field_names=target_field_names,
+            preferred_variable_names=preferred_variable_names,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
+            model=model,
         )
         return _finalize_pdf_payload(
             filename=filename,
             output_path=output_path,
             stats=stats,
             include_pdf_base64=include_pdf_base64,
-            include_parse_stats=include_parse_stats,
+            include_field_positions=include_field_positions,
         )
     except PDFLabelingError as err:
         raise DashboardAPIValidationError(str(err), status_code=400)
@@ -1323,6 +2194,14 @@ def pdf_fields_relabel_payload_from_request() -> Dict[str, Any]:
 def pdf_fields_relabel_payload_from_options(
     raw_options: Mapping[str, Any],
 ) -> Dict[str, Any]:
+    """Relabel existing PDF fields and package the resulting PDF artifacts.
+
+    Args:
+        raw_options: Request options containing upload data and rename settings.
+
+    Returns:
+        Dict[str, Any]: Serialized renamed field metadata and optional PDF output data.
+    """
     from .pdf_field_labeler import PDFLabelingError, relabel_existing_pdf_fields
 
     prepared = _prepare_pdf_upload(raw_options)
@@ -1332,14 +2211,16 @@ def pdf_fields_relabel_payload_from_options(
     output_path = prepared["output_path"]
 
     include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
-    include_parse_stats = parse_bool(raw.get("include_parse_stats"), default=True)
     relabel_with_ai = parse_bool(raw.get("relabel_with_ai"), default=False)
     jur = str(raw.get("jur") or "MA").strip() or "MA"
-    tools_token = (
-        str(raw.get("tools_token")) if raw.get("tools_token") is not None else None
-    )
+    model = str(raw.get("model") or "").strip() or None
     openai_api = (
         str(raw.get("openai_api")) if raw.get("openai_api") is not None else None
+    )
+    openai_base_url = (
+        str(raw.get("openai_base_url"))
+        if raw.get("openai_base_url") is not None
+        else None
     )
     target_field_names = _load_json_field(
         raw.get("target_field_names"),
@@ -1363,15 +2244,15 @@ def pdf_fields_relabel_payload_from_options(
             target_field_names=target_field_names,
             relabel_with_ai=relabel_with_ai,
             jur=jur,
-            tools_token=tools_token,
             openai_api=openai_api,
+            openai_base_url=openai_base_url,
+            model=model,
         )
         return _finalize_pdf_payload(
             filename=filename,
             output_path=output_path,
             stats=stats,
             include_pdf_base64=include_pdf_base64,
-            include_parse_stats=include_parse_stats,
         )
     except PDFLabelingError as err:
         raise DashboardAPIValidationError(str(err), status_code=400)
@@ -1382,7 +2263,117 @@ def pdf_fields_relabel_payload_from_options(
             os.remove(output_path)
 
 
+# ---------------------------------------------------------------------------
+# PDF repair
+# ---------------------------------------------------------------------------
+
+
+def _extract_repair_options(raw: Mapping[str, Any], action: str) -> Dict[str, Any]:
+    """Build keyword arguments for ``pdf_repair.run_repair`` from raw request data."""
+    options: Dict[str, Any] = {}
+    if action == "ghostscript_reprint":
+        options["preserve_fields"] = parse_bool(
+            raw.get("preserve_fields"), default=False
+        )
+        pdf_opt = str(raw.get("pdf_optimization") or "").strip()
+        if pdf_opt:
+            options["pdf_optimization"] = pdf_opt
+    elif action == "unlock":
+        pw = raw.get("password")
+        if pw is not None:
+            options["password"] = str(pw)
+    elif action == "ocr":
+        lang = raw.get("language")
+        if lang is not None:
+            options["language"] = str(lang).strip() or "eng"
+        skip = raw.get("skip_text")
+        if skip is not None:
+            options["skip_text"] = parse_bool(skip, default=True)
+    return options
+
+
+def pdf_repair_payload_from_request() -> Dict[str, Any]:
+    """Build PDF repair options from a multipart request.
+
+    Returns:
+        Dict[str, Any]: Normalized repair options including base64-encoded PDF data.
+    """
+    upload = _read_single_upload(field_name="file")
+    raw = merge_raw_options(_request_dict())
+    return pdf_repair_payload_from_options(
+        {
+            "filename": upload["filename"],
+            "file_content_base64": base64.b64encode(upload["content"]).decode("ascii"),
+            **raw,
+        }
+    )
+
+
+def pdf_repair_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Run a PDF repair action and package the result for the API response.
+
+    Args:
+        raw_options: Request options containing repair action, file data, and flags.
+
+    Returns:
+        Dict[str, Any]: Repair metadata and optional repaired PDF bytes.
+    """
+    from .pdf_repair import PDFRepairError, list_repair_actions, run_repair
+
+    raw = merge_raw_options(raw_options)
+    action = str(raw.get("action") or "").strip()
+    if not action:
+        return {"available_actions": list_repair_actions()}
+
+    filename = str(raw.get("filename") or "upload.pdf")
+    file_content_base64 = raw.get("file_content_base64")
+    if file_content_base64 is None:
+        raise DashboardAPIValidationError(
+            "file_content_base64 is required for repair actions."
+        )
+    content = decode_base64_content(file_content_base64)
+    _validate_upload_size(content)
+    if not filename.lower().endswith(".pdf"):
+        raise DashboardAPIValidationError(
+            "Only PDF uploads are supported.", status_code=415
+        )
+    input_path = _write_temp_file(filename, content)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_file:
+        output_path = out_file.name
+    if os.path.exists(output_path):
+        os.remove(output_path)
+
+    include_pdf_base64 = parse_bool(raw.get("include_pdf_base64"), default=True)
+    repair_options = _extract_repair_options(raw, action)
+
+    try:
+        result = run_repair(action, input_path, output_path, options=repair_options)
+        payload: Dict[str, Any] = {
+            "input_filename": filename,
+            "output_filename": f"repaired_{filename}",
+            "repair_result": result,
+        }
+        if include_pdf_base64 and os.path.isfile(output_path):
+            with open(output_path, "rb") as handle:
+                payload["pdf_base64"] = base64.b64encode(handle.read()).decode("ascii")
+        return payload
+    except PDFRepairError as err:
+        raise DashboardAPIValidationError(str(err), status_code=400)
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
 def build_openapi_spec() -> Dict[str, Any]:
+    """Construct the OpenAPI document for the ALDashboard REST API.
+
+    Returns:
+        Dict[str, Any]: An OpenAPI 3.1 document describing supported endpoints.
+    """
     return {
         "openapi": "3.1.0",
         "info": {
@@ -1449,8 +2440,101 @@ def build_openapi_spec() -> Dict[str, Any]:
                     "summary": "Lint interview YAML text",
                     "description": (
                         "Run deterministic (and optional LLM) lint checks on one or more interview YAML files. "
-                        "Accepts multipart uploads (files[]) and/or JSON source tokens."
+                        "Accepts multipart uploads (files[]) and/or JSON source tokens. "
+                        "Optional `lint_mode`: `full` (default) or `wcag-basic`."
                     ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/yaml/check": {
+                "post": {
+                    "summary": "Check and warn on docassemble YAML with DAYamlChecker",
+                    "description": (
+                        "Runs DAYamlChecker against `yaml_text`/`yaml_content` and returns "
+                        "structured issues split into errors and warnings."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/yaml/reformat": {
+                "post": {
+                    "summary": "Reformat docassemble YAML with DAYamlChecker formatter",
+                    "description": (
+                        "Formats embedded Python code blocks in YAML (for example `code` and "
+                        "`validation code`) and returns `formatted_yaml` plus `changed`."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/kiln/story": {
+                "post": {
+                    "summary": "Convert docassemble JSON, YAML, or a saved session to an ALKiln story",
+                    "description": (
+                        "Accepts docassemble JSON as `data`, `json_text`, or `variables`, "
+                        "a saved interview `session_id`, or interview YAML via `yaml_text`, "
+                        "upload, source token, or playground selection. YAML input uses "
+                        "heuristics to create table rows and detect the ending screen."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/variable-report": {
+                "post": {
+                    "summary": "Generate interview variable report (Mako+Markdown and Jinja2 DOCX)",
+                    "description": (
+                        "Accepts interview YAML via `yaml_text`, upload, or playground selection, "
+                        "extracts all variables, infers AssemblyLine built-ins, and returns "
+                        "Mako+Markdown plain text and variable metrics."
+                    ),
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/kiln/story": {
+                "post": {
+                    "summary": "Convert docassemble JSON, YAML, or a saved session to an ALKiln story",
+                    "description": (
+                        "Accepts docassemble JSON as `data`, `json_text`, or `variables`, "
+                        "a saved interview `session_id`, or interview YAML via `yaml_text`, "
+                        "upload, source token, or playground selection. YAML input uses "
+                        "heuristics to create table rows and detect the ending screen."
+                    ),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {"type": "object"},
+                                        "json_text": {"type": "string"},
+                                        "yaml_text": {"type": "string"},
+                                        "file_content_base64": {"type": "string"},
+                                        "source_token": {"type": "string"},
+                                        "playground_project": {"type": "string"},
+                                        "playground_yaml_file": {"type": "string"},
+                                        "variables": {"type": "object"},
+                                        "session_id": {
+                                            "type": "string",
+                                            "description": (
+                                                "Saved docassemble session key to convert directly."
+                                            ),
+                                        },
+                                        "filename": {
+                                            "type": "string",
+                                            "description": (
+                                                "Interview filename for session_id, for example "
+                                                "docassemble.pkg:data/questions/interview.yml."
+                                            ),
+                                        },
+                                        "yaml_file_name": {"type": "string"},
+                                        "question_id": {"type": "string"},
+                                        "feature_description": {"type": "string"},
+                                        "scenario_description": {"type": "string"},
+                                        "include_trigger_column": {"type": "boolean"},
+                                        "synthesize_target_number": {"type": "boolean"},
+                                        "ignore_anywhere_in_var_name": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    },
                 }
             },
             f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields": {
@@ -1480,6 +2564,19 @@ def build_openapi_spec() -> Dict[str, Any]:
                     ),
                 }
             },
+            f"{DASHBOARD_API_BASE_PATH}/pdf/repair": {
+                "post": {
+                    "summary": "Repair / fix a PDF",
+                    "description": (
+                        "Run a single repair action on an uploaded PDF. "
+                        "Send without `action` to list available actions. "
+                        "Actions: ghostscript_reprint (re-distill, optionally preserve fields), "
+                        "qpdf_repair (fix xref/page tree), restore_checkbox_appearances "
+                        "(restore missing checkbox appearances), unlock (remove encryption), "
+                        "repair_metadata (fix catalog/metadata), ocr (add text layer)."
+                    ),
+                }
+            },
             f"{DASHBOARD_API_BASE_PATH}/jobs/{{job_id}}": {
                 "get": {"summary": "Get async job status and result"},
                 "delete": {"summary": "Delete async job metadata"},
@@ -1504,6 +2601,11 @@ def build_openapi_spec() -> Dict[str, Any]:
 
 
 def build_docs_html() -> str:
+    """Render the lightweight human-readable API documentation page.
+
+    Returns:
+        str: HTML content for the API docs page.
+    """
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -1537,9 +2639,13 @@ def build_docs_html() -> str:
     <li><code>POST {DASHBOARD_API_BASE_PATH}/review-screen/draft</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/docx/validate</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/interview/lint</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/kiln/story</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/check</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/yaml/reformat</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/label-fields</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/detect</code></li>
     <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/fields/relabel</code></li>
+    <li><code>POST {DASHBOARD_API_BASE_PATH}/pdf/repair</code></li>
     <li><code>GET {DASHBOARD_API_BASE_PATH}/jobs/&lt;job_id&gt;/download</code></li>
   </ul>
   <h2>Notes</h2>
@@ -1549,12 +2655,16 @@ def build_docs_html() -> str:
     <li>You can pass optional <code>openai_api</code>, <code>openai_base_url</code>, and <code>openai_model</code> to <code>/docx/auto-label</code>.</li>
     <li>You can customize labeling behavior with <code>custom_prompt</code>, <code>additional_instructions</code>, and optional <code>max_output_tokens</code>.</li>
     <li><code>/docx/relabel</code> can replace or skip labels by index and add labels via explicit updates or paragraph-range rules.</li>
+    <li><code>/yaml/check</code> runs DAYamlChecker and classifies returned issues into <code>errors</code> and <code>warnings</code>.</li>
+    <li><code>/yaml/reformat</code> uses DAYamlChecker's formatter and returns the updated YAML as <code>formatted_yaml</code>.</li>
+    <li><code>/kiln/story</code> accepts docassemble JSON or <code>session_id</code> with optional <code>filename</code>/<code>interview_path</code>, then converts the variables into ALKiln feature text.</li>
     <li><code>/jobs/&lt;job_id&gt;/download</code> streams file outputs from async job results. Use <code>?index=1</code> or <code>?field=...</code> when multiple file artifacts exist.</li>
     <li>Most endpoints accept <code>mode=async</code> and can be polled via <code>/jobs/&lt;job_id&gt;</code>.</li>
     <li><code>/bootstrap/compile</code> requires <code>node</code>/<code>npm</code> on PATH and outbound HTTPS; first run may be slower while dependencies install.</li>
     <li><code>/pdf/label-fields</code> is a backward-compatible alias for <code>/pdf/fields/detect</code>.</li>
-    <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>.</li>
-    <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>.</li>
+    <li><code>/pdf/fields/detect</code> supports <code>relabel_with_ai</code> and ordered <code>target_field_names</code>; responses include renamed <code>fields</code>, optional positioned fields, and optional <code>pdf_base64</code>.</li>
+    <li><code>/pdf/fields/relabel</code> supports <code>field_name_mapping</code>, ordered <code>target_field_names</code>, or <code>relabel_with_ai</code>; responses include <code>fields</code>, <code>fields_old</code>, and optional <code>pdf_base64</code>.</li>
+    <li><code>/pdf/repair</code> accepts <code>action</code> (ghostscript_reprint, qpdf_repair, restore_checkbox_appearances, unlock, repair_metadata, ocr). Omit <code>action</code> to list available repair actions with descriptions. Action-specific options: <code>preserve_fields</code> (ghostscript), <code>password</code> (unlock), <code>language</code>/<code>skip_text</code> (ocr).</li>
   </ul>
   <h2>DOCX Modes</h2>
   <ul>

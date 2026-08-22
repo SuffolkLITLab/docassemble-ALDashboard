@@ -9,8 +9,7 @@ from docassemble.base.util import (
     path_and_mimetype,
     user_info,
 )
-from docassemble.webapp.files import SavedFile
-from docassemble.webapp.backend import directory_for
+from .docassemble_compat import SavedFile, directory_for
 import datetime
 import zipfile
 import os

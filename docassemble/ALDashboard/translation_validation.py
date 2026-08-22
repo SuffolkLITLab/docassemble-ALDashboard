@@ -155,5 +155,7 @@ def validate_translation_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
 
 
 def validate_translation_xlsx(path: str) -> Dict[str, Any]:
-    df = pd.read_excel(path)
+    # Translation validation only needs the eight supported columns; revisit this if the
+    # upstream XLSX layout changes.
+    df = pd.read_excel(path, usecols="A:H")
     return validate_translation_dataframe(df)

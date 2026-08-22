@@ -14,10 +14,46 @@ from flask_cors import cross_origin
 
 from docassemble.base.config import daconfig, in_celery
 from docassemble.base.util import log
-from docassemble.webapp.app_object import app, csrf
-from docassemble.webapp.server import api_verify, jsonify_with_status, r, save_user_dict
+
+try:
+    from docassemble.webapp.flask_app import flaskapp as app
+    from docassemble.webapp.extensions import csrf
+    from docassemble.webapp.api.helpers import api_verify
+    from docassemble.webapp.utils.helpers import jsonify_with_status
+    from docassemble.webapp.interview.helpers import save_user_dict
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.flask_app",
+        "docassemble.webapp.extensions",
+        "docassemble.webapp.api",
+        "docassemble.webapp.api.helpers",
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+        "docassemble.webapp.interview",
+        "docassemble.webapp.interview.helpers",
+    }:
+        raise
+    # docassemble < 1.10 exposes these objects from the legacy modules.
+    from docassemble.webapp.app_object import app, csrf
+    from docassemble.webapp.server import (
+        api_verify,
+        jsonify_with_status,
+        save_user_dict,
+    )
+
+from docassemble.webapp.daredis import r
 from docassemble.webapp import worker as da_worker
-from docassemble.webapp.cron import get_cron_user
+
+try:
+    from docassemble.webapp.cron_tasks.cli import get_cron_user
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.cron_tasks",
+        "docassemble.webapp.cron_tasks.cli",
+    }:
+        raise
+    # docassemble < 1.10 defines cron helpers in a single module.
+    from docassemble.webapp.cron import get_cron_user
 from docassemble.webapp.worker_common import workerapp
 from docassemble.base.parse import get_initial_dict
 
@@ -25,6 +61,7 @@ from .api_dashboard_utils import (
     DASHBOARD_API_BASE_PATH,
     DashboardAPIValidationError,
     _validate_upload_size,
+    alkiln_story_payload_from_request,
     autolabel_payload_from_request,
     bootstrap_payload_from_request,
     docx_runs_payload_from_request,
@@ -41,8 +78,13 @@ from .api_dashboard_utils import (
     translation_payload_from_request,
     validate_docx_payload_from_request,
     validate_translation_payload_from_request,
+    variable_report_payload_from_request,
+    yaml_check_payload_from_request,
+    yaml_reformat_payload_from_request,
+    pdf_repair_payload_from_request,
 )
 from . import api_mcp  # noqa: F401
+from . import api_labelers  # noqa: F401
 
 __all__ = []
 
@@ -53,6 +95,7 @@ ASYNC_CELERY_MODULE = "docassemble.ALDashboard.api_dashboard_worker"
 if not in_celery:
     from .api_dashboard_worker import (
         dashboard_autolabel_task,
+        dashboard_alkiln_story_task,
         dashboard_bootstrap_task,
         dashboard_docx_runs_task,
         dashboard_interview_lint_task,
@@ -63,6 +106,10 @@ if not in_celery:
         dashboard_review_screen_task,
         dashboard_validate_docx_task,
         dashboard_validate_translation_task,
+        dashboard_yaml_check_task,
+        dashboard_yaml_reformat_task,
+        dashboard_pdf_repair_task,
+        dashboard_variable_report_task,
     )
 
 
@@ -116,6 +163,14 @@ def _request_payload_without_files() -> Dict[str, Any]:
 
 
 def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Add uploaded file content to an async-safe payload.
+
+    Args:
+        base_payload: Request options collected before reading uploaded files.
+
+    Returns:
+        Dict[str, Any]: A payload that includes base64-encoded file content.
+    """
     payload: Dict[str, Any] = dict(base_payload)
     if request.files:
         files_payload = []
@@ -124,7 +179,7 @@ def _extract_payload_for_async(base_payload: Dict[str, Any]) -> Dict[str, Any]:
             _validate_upload_size(content)
             try:
                 upload.stream.seek(0)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             files_payload.append(
                 {
@@ -492,6 +547,38 @@ def dashboard_interview_lint():
     )
 
 
+@app.route(f"{DASHBOARD_API_BASE_PATH}/kiln/story", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_kiln_story():
+    return _run_endpoint(alkiln_story_payload_from_request, dashboard_alkiln_story_task)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/variable-report", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_variable_report():
+    return _run_endpoint(
+        variable_report_payload_from_request, dashboard_variable_report_task
+    )
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/yaml/check", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_yaml_check():
+    return _run_endpoint(yaml_check_payload_from_request, dashboard_yaml_check_task)
+
+
+@app.route(f"{DASHBOARD_API_BASE_PATH}/yaml/reformat", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_yaml_reformat():
+    return _run_endpoint(
+        yaml_reformat_payload_from_request, dashboard_yaml_reformat_task
+    )
+
+
 @app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/label-fields", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
@@ -515,17 +602,45 @@ def dashboard_pdf_fields_detect():
 @app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/fields/relabel", methods=["POST"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
-def dashboard_pdf_fields_relabel():
+def dashboard_pdf_fields_relabel() -> Response:
+    """Handle synchronous or asynchronous PDF field relabeling requests.
+
+    Returns:
+        Response: A JSON response containing relabel results or queued job details.
+    """
     return _run_endpoint(
         pdf_fields_relabel_payload_from_request,
         dashboard_pdf_fields_relabel_task,
     )
 
 
+@app.route(f"{DASHBOARD_API_BASE_PATH}/pdf/repair", methods=["POST"])
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def dashboard_pdf_repair() -> Response:
+    """Handle synchronous or asynchronous PDF repair requests.
+
+    Returns:
+        Response: A JSON response containing repair results or queued job details.
+    """
+    return _run_endpoint(
+        pdf_repair_payload_from_request,
+        dashboard_pdf_repair_task,
+    )
+
+
 @app.route(f"{DASHBOARD_API_BASE_PATH}/jobs/<job_id>", methods=["GET", "DELETE"])
 @csrf.exempt
 @cross_origin(origins="*", methods=["GET", "DELETE", "HEAD"], automatic_options=True)
-def dashboard_job(job_id: str):
+def dashboard_job(job_id: str) -> Response:
+    """Return or delete async job state for an ALDashboard API task.
+
+    Args:
+        job_id: The public job identifier returned when the task was queued.
+
+    Returns:
+        Response: A JSON response describing job state, result data, or deletion.
+    """
     request_id = str(uuid.uuid4())
     if not api_verify():
         return _auth_fail(request_id)
@@ -543,7 +658,7 @@ def dashboard_job(job_id: str):
             )
         try:
             workerapp.AsyncResult(id=task_info["id"]).forget()
-        except Exception:
+        except Exception:  # nosec B110
             pass
         r.delete(_job_key(job_id))
         return jsonify(

@@ -1,31 +1,79 @@
 import os
 import shutil
 import subprocess
-from docassemble.webapp.users.models import UserModel
-from docassemble.webapp.db_object import init_sqlalchemy
-from github import Github  # PyGithub
+import re
+import ast
+import requests
+import calendar
+from importlib.metadata import distributions
+from docassemble.webapp.users.models import UserModel, Role, UserRoles
 
-# db is a SQLAlchemy Engine
+try:
+    from docassemble.webapp.interview.models import UserDict
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.interview",
+        "docassemble.webapp.interview.models",
+    }:
+        raise
+    # docassemble < 1.10 defines interview models alongside user models.
+    from docassemble.webapp.users.models import UserDict
+
+from github import Github  # PyGithub
+from flask import current_app, flash, redirect
+
+# SQLAlchemy expressions are shared by both the legacy engine and Flask extension.
 from sqlalchemy.sql import text
-from typing import List, Tuple, Dict, Optional, Callable, Any
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import joinedload
+from typing import Any, List, Tuple, Dict, Optional, Callable, Set, Union
 import math
 import docassemble.webapp.worker
-from docassemble.webapp.server import (
-    user_can_edit_package,
-    get_master_branch,
-    install_git_package,
-    redirect,
-    should_run_create,
-    flash,
-    url_for,
-    restart_all,
-    install_pip_package,
-    get_package_info,
-    get_session_variables,
-)
+
+try:
+    from docassemble.webapp.utils.helpers import (
+        user_can_edit_package,
+        get_master_branch,
+        install_git_package,
+        should_run_create,
+        install_pip_package,
+        get_package_info,
+    )
+    from docassemble.webapp.main.helpers import restart_all
+    from docassemble.webapp.utils.hooks import url_for
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.helpers",
+        "docassemble.webapp.utils.hooks",
+        "docassemble.webapp.main",
+        "docassemble.webapp.main.helpers",
+    }:
+        raise
+    # docassemble < 1.10 exposes these objects from the legacy server module.
+    from docassemble.webapp.server import (
+        user_can_edit_package,
+        get_master_branch,
+        install_git_package,
+        should_run_create,
+        url_for,
+        restart_all,
+        install_pip_package,
+        get_package_info,
+    )
 from docassemble.base.config import daconfig
-from docassemble.webapp.backend import cloud
-from docassemble.base.functions import serializable_dict
+
+try:
+    from docassemble.webapp.cloud.utils import cloud
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.cloud",
+        "docassemble.webapp.cloud.utils",
+    }:
+        raise
+    # docassemble < 1.10 exposes cloud storage from the backend module.
+    from docassemble.webapp.backend import cloud
+from docassemble.base.functions import get_session_variables, serializable_dict
 from docassemble.base.util import (
     log,
     DAFile,
@@ -36,41 +84,56 @@ from docassemble.base.util import (
     get_config,
     user_has_privilege,
     DACloudStorage,
+    user_info,
+    user_logged_in,
+    get_user_info,
 )
-from docassemble.webapp.server import get_package_info
 
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
-import re
 import werkzeug
 from flask import send_file
 from werkzeug.utils import secure_filename
 import tempfile
 import zipfile
 
-from docassemble.webapp.backend import get_info_from_file_number
-from docassemble.webapp.files import get_ext_and_mimetype, SavedFile
-from docassemble.webapp.server import secure_filename_unicode_ok
 import importlib.resources
-from datetime import datetime, timedelta
-
-db = init_sqlalchemy()
+from datetime import date, datetime, timedelta, timezone
+from .database_compat import (
+    database_session_scope as _db_session_scope,
+    get_database_session as _get_db_session,
+)
+from .docassemble_compat import (
+    SavedFile,
+    directory_for,
+    get_ext_and_mimetype,
+    secure_filename_unicode_ok,
+    get_info_from_file_number,
+)
 
 __all__ = [
     "install_from_github_url",
     "reset",
     "speedy_get_users",
     "speedy_get_sessions",
+    "SessionSearchCriteriaError",
+    "build_session_search_criteria_text",
+    "parse_session_search_criteria",
+    "resolve_session_variable",
+    "format_session_users",
     "get_users_and_name",
     "da_get_config",
     "da_get_config_as_file",
     "da_write_config",
     "ALPackageInstaller",
     "get_package_info",
+    "github_url_to_package_name",
+    "get_assemblyline_package_status",
     "install_from_pypi",
     "install_fonts",
     "list_installed_fonts",
     "dashboard_get_session_variables",
+    "dashboard_find_session_filename",
     "dashboard_session_activity",
     "make_usage_rows",
     "compute_heatmap_styles",
@@ -85,6 +148,16 @@ __all__ = [
     "get_files_associated_with_session",
     "build_session_files_zip",
     "download_file_by_id",
+    "get_user_details",
+    "disable_user_mfa",
+    "get_password_reset_link",
+    "inactive_developer_login_summary",
+    "inactive_developer_account_report",
+    "delete_inactive_developer_accounts",
+    "is_user_privileged",
+    "get_user_count",
+    "get_users_and_name_by_ids",
+    "search_users_by_email",
 ]
 
 
@@ -112,7 +185,274 @@ def install_from_github_url(url: str, branch: str = "", pat: Optional[str] = Non
 
 
 def install_from_pypi(packagename: str):
-    return install_pip_package(packagename)
+    return install_pip_package(packagename, limitation=None)
+
+
+def github_url_to_package_name(url: str) -> str:
+    """Normalize a GitHub package URL to a python package name."""
+    package_name = re.sub(r"/*$", "", str(url or "").strip())
+    package_name = re.sub(r"^git+", "", package_name)
+    package_name = re.sub(r"#.*", "", package_name)
+    package_name = re.sub(r"\.git$", "", package_name)
+    package_name = re.sub(r".*/", "", package_name)
+    return re.sub(r"^docassemble-", "docassemble.", package_name)
+
+
+def _get_github_version(giturl: str) -> Optional[str]:
+    """
+    Fetch the version from a GitHub repository's setup.py file.
+
+    Args:
+        giturl: Git repository URL (e.g., https://github.com/owner/repo)
+
+    Returns:
+        Version string if found, None otherwise.
+    """
+    if not giturl:
+        return None
+
+    try:
+        # Extract owner and repo from URL
+        # Handle various formats: https://github.com/owner/repo, https://github.com/owner/repo.git, etc.
+        giturl = giturl.strip().rstrip("/")
+        match = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", giturl)
+        if not match:
+            return None
+
+        owner, repo = match.groups()
+
+        # Fetch setup.py from default branch
+        setup_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/setup.py"
+        response = requests.get(setup_url, timeout=5)
+        if response.status_code != 200:
+            return None
+
+        # Extract version from setup.py
+        # Look for patterns like: version="1.2.3" or version='1.2.3'
+        version_match = re.search(r'version\s*=\s*["\']([^"\']+)["\']', response.text)
+        if version_match:
+            return version_match.group(1)
+    except Exception:
+        # Non-fatal: if we can't fetch version, just return None
+        pass
+
+    return None
+
+
+def _parse_version_tuple(version_str: str) -> Tuple:
+    """Convert version string to tuple of integers for comparison."""
+    if not version_str:
+        return ()
+    try:
+        return tuple(int(x) for x in version_str.split(".") if x.isdigit())
+    except Exception:
+        return ()
+
+
+def _compare_versions(v1: str, v2: str) -> int:
+    """
+    Compare two version strings.
+
+    Args:
+        v1: First version
+        v2: Second version
+
+    Returns:
+        -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+    """
+    v1_tuple = _parse_version_tuple(v1)
+    v2_tuple = _parse_version_tuple(v2)
+
+    if not v1_tuple and not v2_tuple:
+        return 0
+    if not v1_tuple:
+        return -1
+    if not v2_tuple:
+        return 1
+
+    # Pad to same length with zeros
+    max_len = max(len(v1_tuple), len(v2_tuple))
+    v1_tuple = v1_tuple + (0,) * (max_len - len(v1_tuple))
+    v2_tuple = v2_tuple + (0,) * (max_len - len(v2_tuple))
+
+    if v1_tuple < v2_tuple:
+        return -1
+    elif v1_tuple > v2_tuple:
+        return 1
+    else:
+        return 0
+
+
+def _get_latest_version(
+    installed: str, pypi: Optional[str], github: Optional[str]
+) -> Tuple[str, str]:
+    """
+    Determine the latest available version among installed, pypi, and github versions.
+
+    Args:
+        installed: Installed version
+        pypi: PyPI version (if available)
+        github: GitHub version (if available)
+
+    Returns:
+        Tuple of (latest_version, source) where source is 'github', 'pypi', or 'installed'
+    """
+    candidates = []
+    if installed:
+        candidates.append((installed, "installed"))
+    if pypi:
+        candidates.append((pypi, "pypi"))
+    if github:
+        candidates.append((github, "github"))
+
+    if not candidates:
+        return (installed or "", "installed")
+
+    # Find the maximum version
+    latest = candidates[0]
+    for version, source in candidates[1:]:
+        if _compare_versions(version, latest[0]) > 0:
+            latest = (version, source)
+
+    return latest
+
+
+def _installed_distribution_versions() -> Dict[str, str]:
+    """Return installed distribution versions keyed by casefolded package name."""
+    installed_versions: Dict[str, str] = {}
+    for dist in distributions():
+        dist_name = getattr(dist, "name", None)
+        dist_version = getattr(dist, "version", None)
+        if not dist_name:
+            continue
+        installed_versions[str(dist_name).casefold()] = str(dist_version or "")
+    return installed_versions
+
+
+def _package_info_by_name(
+    pkg_versions: Optional[Dict[str, str]] = None,
+    package_names: Optional[Set[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Return package metadata from docassemble package manager keyed by package name.
+
+    NOTE: We get the actual installed version from importlib.metadata (pkg_versions)
+    rather than from the docassemble Package object, since the Package object's
+    version attribute may be unreliable or represent a different value.
+    """
+    if pkg_versions is None:
+        pkg_versions = _installed_distribution_versions()
+    package_keys = (
+        {name.casefold() for name in package_names}
+        if package_names is not None
+        else None
+    )
+    if package_keys == set():
+        return {}
+    rows_by_name: Dict[str, Dict[str, Any]] = {}
+    try:
+        package_info = get_package_info()
+        package_rows = (
+            package_info[0] if isinstance(package_info, (list, tuple)) else []
+        )
+        for row in package_rows:
+            package = getattr(row, "package", None)
+            package_name = getattr(package, "name", None)
+            if not package_name:
+                continue
+
+            pkg_type = str(getattr(package, "type", "") or "")
+            pkg_giturl = str(getattr(package, "giturl", "") or "")
+
+            # Get the actual installed version from package metadata
+            package_key = str(package_name).casefold()
+            if package_keys is not None and package_key not in package_keys:
+                continue
+            pkg_version = pkg_versions.get(package_key, "")
+
+            # Get latest available version on GitHub if this is a git package
+            github_version = None
+            if pkg_giturl and pkg_type.lower() in ("git", ""):
+                github_version = _get_github_version(pkg_giturl)
+
+            # Determine the latest available version and where it comes from
+            latest_version, latest_source = _get_latest_version(
+                pkg_version, None, github_version
+            )
+
+            # Determine if package can be updated:
+            # - Check docassemble's built-in flag, OR
+            # - Any remote version (GitHub) is newer than installed
+            can_update = bool(
+                getattr(row, "can_update", False)
+                or _compare_versions(latest_version, pkg_version) > 0
+            )
+
+            rows_by_name[str(package_name).casefold()] = {
+                "name": str(package_name),
+                "version": pkg_version,
+                "can_update": can_update,
+                "type": pkg_type,
+                "giturl": pkg_giturl,
+                "latest_version": latest_version,
+                "latest_source": latest_source,
+            }
+    except Exception as ex:
+        log(f"Error loading package info: {ex}")
+        return {}
+    return rows_by_name
+
+
+def get_assemblyline_package_status(
+    package_catalog: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return package status for AssemblyLine package installer choices.
+
+    Args:
+        package_catalog: mapping of github URL -> metadata (label/help/package_name/etc).
+    Returns:
+        List of dicts with fields including url, package_name, label, installed,
+        version, can_update, latest_version, latest_source, and optional.
+    """
+    installed_versions = _installed_distribution_versions()
+    package_names = {
+        str(
+            (meta if isinstance(meta, dict) else {}).get("package_name")
+            or github_url_to_package_name(url)
+        ).casefold()
+        for url, meta in package_catalog.items()
+    }
+    package_info = _package_info_by_name(
+        pkg_versions=installed_versions, package_names=package_names
+    )
+    rows: List[Dict[str, Any]] = []
+
+    for pkg_url, meta in package_catalog.items():
+        metadata = meta if isinstance(meta, dict) else {}
+        package_name = metadata.get("package_name") or github_url_to_package_name(
+            pkg_url
+        )
+        package_key = str(package_name).casefold()
+        package_row = package_info.get(package_key, {})
+        installed = package_key in installed_versions or bool(package_row)
+        version = installed_versions.get(package_key) or package_row.get("version", "")
+        latest_version = package_row.get("latest_version", version)
+        latest_source = package_row.get("latest_source", "installed")
+
+        rows.append(
+            {
+                "url": pkg_url,
+                "package_name": package_name,
+                "label": metadata.get("label", package_name),
+                "help": metadata.get("help", ""),
+                "optional": bool(metadata.get("optional", False)),
+                "installed": installed,
+                "version": version,
+                "latest_version": latest_version,
+                "latest_source": latest_source,
+                "can_update": bool(package_row.get("can_update", False)),
+            }
+        )
+    return sorted(rows, key=lambda row: str(row.get("label", "")).casefold())
 
 
 def reset(packagename=""):
@@ -171,21 +511,791 @@ def da_write_config(data: Dict):
     return True
 
 
+def get_user_count() -> int:
+    """
+    Return the count of active (non-disabled) users on the server. Used to decide whether
+    it's safe to load every user into a dropdown, or whether the list is too large to do that.
+    """
+    with _get_db_session() as session:
+        statement = select(func.count(UserModel.id))
+        count = session.scalar(statement)
+
+    if count is None:
+        return 0
+    return count
+
+
+def get_users_and_name_by_ids(ids: List[int]) -> List[Tuple[int, str, str, str]]:
+    """
+    Same shape as get_users_and_name(), but scoped to a specific list of user IDs instead of pulling
+    every user in the database. Used to avoid loading the entire users table just to label a handful
+    of already fetched session rows.
+    """
+    if not ids:
+        return []
+
+    statement = select(
+        UserModel.id,
+        UserModel.email,
+        UserModel.first_name,
+        UserModel.last_name,
+        UserModel.nickname,
+    ).where(UserModel.id.in_(ids))
+
+    with _get_db_session() as session:
+        users = session.execute(statement).all()
+
+        results = []
+        for user in users:
+            user_id, email, first_name, last_name, nickname = user
+            display_name = first_name or nickname or ""
+            results.append((user_id, email or "", display_name, last_name or ""))
+        return results
+
+
+def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, str]]:
+    """
+    Search for users whose email starts with the given text. Used by the input type: ajax field on large servers,
+    so we never load the full user table - just return a handful of matches as the admin types.
+    """
+    wordstart = wordstart.strip()
+    if not wordstart:
+        return []
+
+    statement = (
+        select(UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name)
+        .where(UserModel.email.istartswith(wordstart))
+        .limit(limit)
+    )
+
+    with _get_db_session() as session:
+        users = session.execute(statement).all()
+
+        results = []
+        for user in users:
+            user_id, email, first_name, last_name = user
+            label = email
+            if first_name:
+                label += " " + first_name
+            if last_name:
+                label += " " + last_name
+            results.append((user_id, label))
+        return results
+
+
 def speedy_get_users() -> List[Dict[int, str]]:
     """
     Return a list of all users in the database. Possibly faster than get_user_list().
     """
-    the_users = UserModel.query.with_entities(UserModel.id, UserModel.email).all()
+    with _get_db_session() as session:
+        the_users = session.execute(select(UserModel.id, UserModel.email)).all()
 
     return [{user[0]: user[1]} for user in the_users]
 
 
-def get_users_and_name() -> List[Tuple[int, str, str, str]]:
-    users = UserModel.query.with_entities(
-        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
+def get_users_and_name(
+    limit_to_non_admin_or_developers: bool = False,
+) -> List[Tuple[int, str, str, str]]:
+    statement = select(
+        UserModel.id,
+        UserModel.email,
+        UserModel.first_name,
+        UserModel.last_name,
+        UserModel.nickname,
     )
 
-    return users
+    if limit_to_non_admin_or_developers:
+        statement = statement.where(
+            ~UserModel.roles.any(Role.name.in_(["admin", "developer"]))
+        )
+
+    with _get_db_session() as session:
+        users = session.execute(statement).all()
+    return [(u[0], u[1] or "", u[2] or u[4] or "", u[3] or "") for u in users]
+
+
+def get_user_details(user_id: int) -> Optional[Dict]:
+    """Return a dictionary with details about a user, including privileges and MFA status.
+
+    Args:
+        user_id: The database ID of the user.
+
+    Returns:
+        A dictionary with user details, or None if the user is not found. Keys include:
+        id, email, first_name, last_name, active, account_type, privileges (list of str),
+        mfa_enabled (bool), and mfa_type (str or None: "app", "sms", or None).
+    """
+    with _get_db_session() as session:
+        user = (
+            session.execute(
+                select(UserModel)
+                .options(joinedload(UserModel.roles))
+                .where(UserModel.id == user_id)
+            )
+            .unique()
+            .scalar_one_or_none()
+        )
+    if user is None:
+        return None
+
+    privileges = [role.name for role in user.roles]
+
+    mfa_enabled = user.otp_secret is not None
+    mfa_type: Optional[str] = None
+    if mfa_enabled:
+        if user.otp_secret and user.otp_secret.startswith(":phone:"):
+            mfa_type = "sms"
+        else:
+            mfa_type = "app"
+
+    account_type = re.sub(r"\$.*", "", user.social_id) if user.social_id else "unknown"
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name or user.nickname,
+        "last_name": user.last_name,
+        "active": user.active,
+        "account_type": account_type,
+        "privileges": privileges,
+        "mfa_enabled": mfa_enabled,
+        "mfa_type": mfa_type,
+    }
+
+
+def disable_user_mfa(user_id: int) -> bool:
+    """Disable two-factor authentication for a user by clearing their OTP secret.
+
+    Args:
+        user_id: The database ID of the user.
+
+    Returns:
+        True if MFA was disabled, False if the user was not found or MFA was already disabled.
+    """
+    with _db_session_scope() as session:
+        user = session.execute(
+            select(UserModel).where(UserModel.id == user_id)
+        ).scalar_one_or_none()
+        if user is None:
+            return False
+        if user.otp_secret is None:
+            return False
+        user.otp_secret = None
+    return True
+
+
+def is_user_privileged(user_id: int) -> Optional[bool]:
+    """Check if a user has admin, developer, or cron privileges.
+
+    Args:
+        user_id: The database ID of the user.
+    Returns:
+        True if the user has any of the privileged roles, False if not, or None
+        if the user could not be retrieved.
+    """
+    try:
+        target_user_info = get_user_info(user_id)
+    except Exception as ex:
+        log(
+            f"is_user_privileged: Error retrieving user info for user_id {user_id}: {ex}"
+        )
+        return None
+    if target_user_info is None:
+        return None
+    return bool(
+        {"admin", "developer", "cron"}.intersection(
+            target_user_info.get("privileges", [])
+        )
+    )
+
+
+def get_password_reset_link(user_id: int) -> Optional[str]:
+    """Generate a password reset link for a specific user without sending an email.
+
+    Args:
+        user_id: The database ID of the user to generate the reset link for.
+
+    Returns:
+        A full password reset URL string, or None if the user is not found.
+    """
+    # Check top level authority
+    if not user_logged_in() or (
+        not user_has_privilege("admin")
+        and not ("edit_user_password" in user_info().permissions)
+    ):
+        log(
+            f"get_password_reset_link: Current user does not have permission to reset passwords."
+        )
+        return None
+
+    # Enforce that the user is not an admin or developer, unless the current user is an admin or developer
+
+    if is_user_privileged(user_id) and not user_has_privilege(["admin", "developer"]):
+        log(
+            f"get_password_reset_link: Cannot generate reset link for user {user_id} because target user is an admin or developer. Only admins can reset passwords for other admins or developers."
+        )
+        return None
+
+    with _get_db_session() as session:
+        user = session.execute(
+            select(UserModel).where(UserModel.id == user_id)
+        ).scalar_one_or_none()
+
+    if user is None:
+        log(f"get_password_reset_link: No user found with id {user_id}")
+        return None
+
+    user_manager = current_app.user_manager  # type: ignore[attr-defined]
+
+    # Generate a secure token for password reset
+    token = user_manager.generate_token(user.id)
+
+    reset_link = url_for("user.reset_password", token=token, _external=True)
+
+    return reset_link
+
+
+PLAYGROUND_SECTIONS = (
+    "playground",
+    "playgroundtemplate",
+    "playgroundstatic",
+    "playgroundsources",
+    "playgroundmodules",
+    "playgroundpackages",
+)
+
+
+def _format_optional_datetime(value: Optional[datetime]) -> str:
+    if value is None:
+        return "Never"
+    return value.strftime("%Y-%m-%d")
+
+
+def _epoch_to_datetime(epoch_value: Optional[float]) -> Optional[datetime]:
+    if epoch_value is None:
+        return None
+    return datetime.fromtimestamp(epoch_value, timezone.utc).replace(tzinfo=None)
+
+
+def _latest_datetime(*values: Optional[datetime]) -> Optional[datetime]:
+    real_values = [value for value in values if value is not None]
+    if not real_values:
+        return None
+    return max(real_values)
+
+
+def _months_ago(months: int) -> datetime:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    month_index = now.month - months - 1
+    year = now.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(now.day, calendar.monthrange(year, month)[1])
+    return now.replace(year=year, month=month, day=day)
+
+
+def _resolve_current_user_id() -> Optional[int]:
+    try:
+        current_user_info = user_info()
+        user_id = getattr(current_user_info, "id", None)
+        if user_id is None and isinstance(current_user_info, dict):
+            user_id = current_user_info.get("id")
+        return int(user_id) if user_id is not None else None
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return None
+
+
+def _user_session_summary(user_id: int) -> Dict[str, Any]:
+    with _get_db_session() as session:
+        row = session.execute(
+            select(
+                func.count(func.distinct(UserDict.key)).label("session_count"),
+                func.max(UserDict.modtime).label("last_session_activity"),
+            ).where(UserDict.user_id == user_id)
+        ).one_or_none()
+    if row is None:
+        return {"session_count": 0, "last_session_activity": None}
+    return {
+        "session_count": int(row.session_count or 0),
+        "last_session_activity": row.last_session_activity,
+    }
+
+
+def inactive_developer_login_summary(months: int = 18) -> Dict[str, Any]:
+    """Return a cheap login-only summary for the inactive developer report."""
+    try:
+        months = max(1, int(months))
+    except Exception:
+        months = 18
+
+    cutoff_date = _months_ago(months)
+    with _get_db_session() as session:
+        developer_role = session.execute(
+            select(Role).where(Role.name == "developer")
+        ).scalar_one_or_none()
+        total_users = session.scalar(
+            select(func.count(UserModel.id)).where(
+                ~UserModel.social_id.startswith("disabled$")
+            )
+        )
+    if developer_role is None:
+        return {
+            "months": months,
+            "cutoff_date": cutoff_date,
+            "cutoff_date_display": _format_optional_datetime(cutoff_date),
+            "total_users": int(total_users or 0),
+            "developer_users": 0,
+            "developer_users_not_logged_in_since_cutoff": 0,
+            "developer_users_never_logged_in": 0,
+        }
+
+    developer_filters = (
+        UserRoles.role_id == developer_role.id,
+        UserModel.id.notin_([1, 2]),
+        ~UserModel.social_id.startswith("disabled$"),
+    )
+
+    def developer_count(*extra_filters: Any) -> int:
+        statement = (
+            select(func.count(func.distinct(UserModel.id)))
+            .select_from(UserModel)
+            .join(UserRoles, UserRoles.user_id == UserModel.id)
+            .where(*developer_filters, *extra_filters)
+        )
+        with _get_db_session() as session:
+            return int(session.scalar(statement) or 0)
+
+    return {
+        "months": months,
+        "cutoff_date": cutoff_date,
+        "cutoff_date_display": _format_optional_datetime(cutoff_date),
+        "total_users": int(total_users or 0),
+        "developer_users": developer_count(),
+        "developer_users_not_logged_in_since_cutoff": developer_count(
+            or_(UserModel.last_login.is_(None), UserModel.last_login < cutoff_date)
+        ),
+        "developer_users_never_logged_in": developer_count(
+            UserModel.last_login.is_(None)
+        ),
+    }
+
+
+def _playground_summary(user_id: int) -> Dict[str, Any]:
+    projects: Set[str] = set()
+    total_files = 0
+    module_files = 0
+    package_files = 0
+    latest_modtime: Optional[datetime] = None
+    latest_file = ""
+
+    for section in PLAYGROUND_SECTIONS:
+        try:
+            area = SavedFile(user_id, fix=False, section=section)
+            files = [
+                filename
+                for filename in area.list_of_files()
+                if os.path.basename(filename) != ".placeholder"
+            ]
+        except Exception as err:
+            log(
+                "inactive_developer_account_report: unable to list "
+                f"{section} for user {user_id}: {err}"
+            )
+            continue
+
+        for filename in files:
+            total_files += 1
+            if os.sep in filename:
+                projects.add(filename.split(os.sep, 1)[0])
+            else:
+                projects.add("default")
+            if section == "playgroundmodules" and filename.endswith(".py"):
+                module_files += 1
+            if section == "playgroundpackages":
+                package_files += 1
+            try:
+                file_modtime = _epoch_to_datetime(area.get_modtime(filename=filename))
+            except Exception:
+                file_modtime = None
+            if file_modtime is not None and (
+                latest_modtime is None or file_modtime > latest_modtime
+            ):
+                latest_modtime = file_modtime
+                latest_file = f"{section}/{filename}"
+
+    return {
+        "project_count": len(projects),
+        "projects": sorted(projects),
+        "file_count": total_files,
+        "module_file_count": module_files,
+        "package_file_count": package_files,
+        "latest_playground_modtime": latest_modtime,
+        "latest_playground_file": latest_file,
+        "has_python_modules": module_files > 0,
+    }
+
+
+def _developer_user_rows() -> List[Any]:
+    with _get_db_session() as session:
+        return (
+            session.execute(
+                select(UserModel)
+                .options(joinedload(UserModel.roles))
+                .join(UserRoles, UserRoles.user_id == UserModel.id)
+                .join(Role, Role.id == UserRoles.role_id)
+                .where(
+                    Role.name == "developer",
+                    UserModel.id.notin_([1, 2]),
+                    ~UserModel.social_id.startswith("disabled$"),
+                )
+                .distinct()
+            )
+            .unique()
+            .scalars()
+            .all()
+        )
+
+
+def inactive_developer_account_report(
+    months: int = 18, requesting_user_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Return developer accounts with no recent login, session, or playground activity."""
+    try:
+        months = max(1, int(months))
+    except Exception:
+        months = 18
+
+    cutoff_date = _months_ago(months)
+    if requesting_user_id is None:
+        requesting_user_id = _resolve_current_user_id()
+    rows: List[Dict[str, Any]] = []
+
+    for user in _developer_user_rows():
+        if requesting_user_id is not None and user.id == requesting_user_id:
+            continue
+        privileges = sorted(role.name for role in user.roles)
+
+        session_summary = _user_session_summary(user.id)
+        playground_summary = _playground_summary(user.id)
+        last_activity = _latest_datetime(
+            user.last_login,
+            session_summary["last_session_activity"],
+            playground_summary["latest_playground_modtime"],
+        )
+        if last_activity is not None and last_activity >= cutoff_date:
+            continue
+
+        row = {
+            "id": user.id,
+            "email": user.email or "",
+            "name": " ".join(
+                part for part in [user.first_name or "", user.last_name or ""] if part
+            ).strip(),
+            "active": bool(user.active),
+            "privileges": privileges,
+            "last_login": user.last_login,
+            "last_login_display": _format_optional_datetime(user.last_login),
+            "last_session_activity": session_summary["last_session_activity"],
+            "last_session_activity_display": _format_optional_datetime(
+                session_summary["last_session_activity"]
+            ),
+            "session_count": session_summary["session_count"],
+            "last_activity": last_activity,
+            "last_activity_display": _format_optional_datetime(last_activity),
+            "cutoff_date": cutoff_date,
+            "cutoff_date_display": _format_optional_datetime(cutoff_date),
+        }
+        row.update(playground_summary)
+        row["latest_playground_modtime_display"] = _format_optional_datetime(
+            row["latest_playground_modtime"]
+        )
+        rows.append(row)
+
+    rows.sort(key=lambda item: item["last_activity"] or datetime(1900, 1, 1))
+    return rows
+
+
+def delete_inactive_developer_accounts(
+    user_ids: List[int],
+    months: int = 18,
+    delete_shared: bool = False,
+    restart_if_needed: bool = True,
+    requesting_user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Delete selected stale developer accounts through docassemble's built-in cleanup."""
+    from docassemble.webapp.daredis import r, r_user
+
+    user_interviews: Callable[..., Any]
+    try:
+        from docassemble.base.hooks import user_interviews as modern_user_interviews
+        from docassemble.webapp.interview.helpers import delete_user_data
+
+        user_interviews = modern_user_interviews
+    except ModuleNotFoundError as err:
+        if err.name not in {
+            "docassemble.base.hooks",
+            "docassemble.webapp.interview",
+            "docassemble.webapp.interview.helpers",
+        }:
+            raise
+        # docassemble < 1.10 keeps these implementations in legacy modules.
+        from docassemble.webapp.server import user_interviews as legacy_user_interviews
+        from docassemble.webapp.backend import (
+            delete_user_data as legacy_delete_user_data,
+        )
+
+        user_interviews = legacy_user_interviews
+        delete_user_data = legacy_delete_user_data
+
+    if requesting_user_id is None:
+        requesting_user_id = _resolve_current_user_id()
+    candidate_lookup = {
+        int(row["id"]): row
+        for row in inactive_developer_account_report(
+            months, requesting_user_id=requesting_user_id
+        )
+    }
+    deleted: List[Dict[str, Any]] = []
+    skipped: List[int] = []
+    restart_needed = False
+
+    for raw_user_id in user_ids or []:
+        try:
+            user_id = int(raw_user_id)
+        except Exception:
+            continue
+        row = candidate_lookup.get(user_id)
+        if row is None or user_id in (1, 2) or user_id == requesting_user_id:
+            skipped.append(user_id)
+            continue
+        restart_needed = restart_needed or bool(row.get("has_python_modules"))
+        user_interviews(
+            user_id=user_id,
+            secret=None,
+            exclude_invalid=False,
+            action="delete_all",
+            delete_shared=delete_shared,
+            admin=True,
+        )
+        delete_user_data(user_id, r, r_user)
+        deleted.append(row)
+
+    if restart_needed and restart_if_needed:
+        restart_all()
+
+    return {
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "skipped": skipped,
+        "restart_needed": restart_needed,
+        "restart_requested": bool(restart_needed and restart_if_needed),
+    }
+
+
+class SessionSearchCriteriaError(ValueError):
+    """Raised when a session-search criterion is malformed or unsafe."""
+
+
+class _SessionSearchPathPart:
+    def __init__(self, kind: str, value: Any):
+        self.kind = kind
+        self.value = value
+
+
+def _split_session_search_criterion(line: str) -> Tuple[str, str]:
+    """Split ``path = value`` at an equals sign outside quotes and brackets."""
+    quote: Optional[str] = None
+    escaped = False
+    depth = 0
+    for index, character in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {"'", '"'}:
+            quote = character
+        elif character in "([":
+            depth += 1
+        elif character in ")]":
+            depth -= 1
+        elif character == "=" and depth == 0:
+            return line[:index].strip(), line[index + 1 :].strip()
+    raise SessionSearchCriteriaError(
+        "Each filter must use the format variable_name = partial text."
+    )
+
+
+def _parse_session_search_path(path: str) -> List[_SessionSearchPathPart]:
+    try:
+        node = ast.parse(path, mode="eval").body
+    except (SyntaxError, ValueError) as error:
+        raise SessionSearchCriteriaError(f"Invalid variable path: {path}") from error
+
+    parts: List[_SessionSearchPathPart] = []
+
+    def visit(current: ast.AST) -> None:
+        if isinstance(current, ast.Name):
+            if current.id.startswith("_"):
+                raise SessionSearchCriteriaError(f"Unsafe variable path: {path}")
+            parts.append(_SessionSearchPathPart("name", current.id))
+            return
+        if isinstance(current, ast.Attribute):
+            visit(current.value)
+            if current.attr.startswith("_"):
+                raise SessionSearchCriteriaError(f"Unsafe variable path: {path}")
+            parts.append(_SessionSearchPathPart("attribute", current.attr))
+            return
+        if isinstance(current, ast.Subscript):
+            visit(current.value)
+            slice_node = current.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(
+                slice_node.value, (str, int)
+            ):
+                parts.append(_SessionSearchPathPart("item", slice_node.value))
+                return
+            raise SessionSearchCriteriaError(
+                f"Only quoted keys and integer indexes are allowed in: {path}"
+            )
+        raise SessionSearchCriteriaError(
+            f"Only names, attributes, quoted keys, and integer indexes are allowed in: {path}"
+        )
+
+    visit(node)
+    return parts
+
+
+def parse_session_search_criteria(criteria_text: str) -> List[Dict[str, str]]:
+    """Parse one case-insensitive partial-match criterion per nonblank line."""
+    criteria: List[Dict[str, str]] = []
+    for line_number, raw_line in enumerate(str(criteria_text or "").splitlines(), 1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            path, query = _split_session_search_criterion(line)
+            if not path or not query:
+                raise SessionSearchCriteriaError(
+                    "Both the variable path and partial text are required."
+                )
+            _parse_session_search_path(path)
+        except SessionSearchCriteriaError as error:
+            raise SessionSearchCriteriaError(f"Line {line_number}: {error}") from error
+        criteria.append({"path": path, "query": query})
+    if not criteria:
+        raise SessionSearchCriteriaError("Enter at least one filter.")
+    return criteria
+
+
+def build_session_search_criteria_text(
+    variable_name: str,
+    variable_value: str,
+    *,
+    use_advanced_filters: bool = False,
+    advanced_criteria_text: str = "",
+) -> str:
+    """Return the criteria text submitted to the session-search parser."""
+    if use_advanced_filters:
+        return str(advanced_criteria_text or "").strip()
+    return f"{str(variable_name or '').strip()} = {str(variable_value or '').strip()}"
+
+
+def resolve_session_variable(variables: Dict[str, Any], path: str) -> Any:
+    """Resolve a restricted Python-style path without using ``eval``."""
+    value: Any = variables
+    for part in _parse_session_search_path(path):
+        if part.kind in {"name", "item"}:
+            value = value[part.value]
+        else:
+            value = (
+                value[part.value]
+                if isinstance(value, dict) and part.value in value
+                else getattr(value, part.value)
+            )
+    return value
+
+
+def _display_session_value(value: Any) -> str:
+    try:
+        return str(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
+
+
+def _session_matches_criteria(
+    filename: str, session_id: str, criteria: List[Dict[str, str]]
+) -> bool:
+    variables = get_session_variables(filename, session_id, secret=None, simplify=False)
+    for criterion in criteria:
+        value = resolve_session_variable(variables, criterion["path"])
+        if (
+            criterion["query"].casefold()
+            not in _display_session_value(value).casefold()
+        ):
+            return False
+    return True
+
+
+def _iso_date_text(value: Any) -> str:
+    if not value:
+        return ""
+    if hasattr(value, "format_date"):
+        return value.format_date("yyyy-MM-dd")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def format_session_users(session: Any, users_by_id: Dict[int, str]) -> str:
+    """Return a readable list of users associated with a session row or dict."""
+    if isinstance(session, dict):
+        raw_user_ids = session.get("user_ids")
+        if raw_user_ids is None:
+            raw_user_ids = session.get("user_id")
+    else:
+        raw_user_ids = getattr(session, "user_ids", None)
+        if raw_user_ids is None:
+            raw_user_ids = getattr(session, "user_id", None)
+    if not raw_user_ids:
+        return "Anonymous"
+
+    candidate_user_ids: List[Any]
+    if isinstance(raw_user_ids, str):
+        candidate_user_ids = raw_user_ids.split(",")
+    elif isinstance(raw_user_ids, (list, tuple, set)):
+        candidate_user_ids = list(raw_user_ids)
+    else:
+        candidate_user_ids = [raw_user_ids]
+
+    user_labels: List[str] = []
+    seen_user_ids: Set[int] = set()
+    for raw_user_id in candidate_user_ids:
+        try:
+            user_id = int(raw_user_id)
+        except (TypeError, ValueError):
+            continue
+        if user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(user_id)
+        if user_id in users_by_id:
+            user_labels.append(users_by_id[user_id])
+        else:
+            try:
+                user_record = get_users_and_name_by_ids([user_id])
+                if user_record:
+                    _, email, first_name, last_name = user_record[0]
+                    label = f"{email} {first_name} {last_name}".strip()
+                    users_by_id[user_id] = label or f"User ID {user_id}"
+                    user_labels.append(users_by_id[user_id])
+                else:
+                    user_labels.append(f"User ID {user_id}")
+            except Exception:
+                user_labels.append(f"User ID {user_id}")
+
+    return ", ".join(user_labels) if user_labels else "Anonymous"
 
 
 def speedy_get_sessions(
@@ -193,6 +1303,9 @@ def speedy_get_sessions(
     filename: Optional[str] = None,
     filter_step1: bool = True,
     metadata_key_name: str = "metadata",
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
+    search_criteria_text: Optional[str] = None,
 ) -> List[Tuple]:
     """
     Return a list of the most recent 500 sessions, optionally tied to a specific user ID.
@@ -207,7 +1320,8 @@ def speedy_get_sessions(
 SELECT 
     userdict.filename as filename,
     num_keys,
-    userdictkeys.user_id as user_id,
+    joined_users.user_id as user_id,
+    joined_users.user_ids as user_ids,
     mostrecent.modtime as modtime,  -- This retrieves the most recent modification time for each key
     userdict.key as key,
     jsonstorage.data->>'auto_title' as auto_title,
@@ -231,12 +1345,21 @@ NATURAL JOIN
             COUNT(key) > 1 OR :filter_step1 = False
     ) mostrecent
 LEFT JOIN 
-    userdictkeys ON userdictkeys.key = userdict.key
+    (
+        SELECT
+            key,
+            MIN(user_id) AS user_id,
+            STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids
+        FROM userdictkeys
+        GROUP BY key
+    ) joined_users ON joined_users.key = userdict.key
 LEFT JOIN 
     jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = :metadata
 WHERE 
     (userdict.user_id = :user_id OR :user_id is null)
     AND (userdict.filename = :filename OR :filename is null)
+    AND (:start_date is null OR DATE(mostrecent.modtime) >= CAST(:start_date AS DATE))
+    AND (:end_date is null OR DATE(mostrecent.modtime) <= CAST(:end_date AS DATE))
 ORDER BY 
     modtime DESC 
 LIMIT 500;
@@ -252,52 +1375,96 @@ LIMIT 500;
 
     # Ensure filter_step1 is a boolean
     filter_step1 = bool(filter_step1)
+    start_date_text = _iso_date_text(start_date) or None
+    end_date_text = _iso_date_text(end_date) or None
+    criteria = (
+        parse_session_search_criteria(search_criteria_text)
+        if search_criteria_text
+        else []
+    )
 
-    with db.connect() as con:
-        rs = con.execute(
-            get_sessions_query,
-            {
-                "user_id": user_id,
-                "filename": filename,
-                "filter_step1": filter_step1,
-                "metadata": metadata_key_name,
-            },
+    with _get_db_session() as session:
+        rows = list(
+            session.execute(
+                get_sessions_query,
+                {
+                    "user_id": user_id,
+                    "filename": filename,
+                    "filter_step1": filter_step1,
+                    "metadata": metadata_key_name,
+                    "start_date": start_date_text,
+                    "end_date": end_date_text,
+                },
+            )
         )
-    sessions = [session for session in rs]
+    sessions = []
+    for row in rows:
+        session_id = str(row.key or "")
+        if not session_id:
+            continue
+        if criteria:
+            try:
+                if not _session_matches_criteria(row.filename, session_id, criteria):
+                    continue
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                continue
+            except Exception as error:
+                log(
+                    "speedy_get_sessions: skipped session "
+                    f"{session_id} for {row.filename} because it could not be loaded: {error}"
+                )
+                continue
+        sessions.append(row)
 
     return sessions
 
 
-def get_session_details(session_id: str) -> Dict[str, str]:
+def get_session_details(session_id: str) -> Dict[str, Any]:
     """
-    Get filename, user_id, modtime, key, and other details for a given session ID.
+    Get filename, user_id, user_ids, modtime, key, and other details for a given session ID.
     """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        raise ValueError("Session ID must not be empty.")
+
     query = text(
         """
         SELECT
-        userdict.filename as filename,
-        userdict.user_id as user_id,
-        userdict.modtime as modtime,
-        userdict.key as key,
-        jsonstorage.data->>'auto_title' as auto_title,
-        jsonstorage.data->>'title' as title,
-        jsonstorage.data->>'description' as description,
-        jsonstorage.data->>'steps' as steps,
-        jsonstorage.data->>'progress' as progress
+            userdict.filename as filename,
+            userdict.user_id as user_id,
+            joined_users.user_ids as user_ids,
+            userdict.modtime as modtime,
+            userdict.key as key,
+            jsonstorage.data->>'auto_title' as auto_title,
+            jsonstorage.data->>'title' as title,
+            jsonstorage.data->>'description' as description,
+            jsonstorage.data->>'steps' as steps,
+            jsonstorage.data->>'progress' as progress
         FROM userdict
-        LEFT JOIN jsonstorage ON jsonstorage.key = userdict.key
+        LEFT JOIN (
+            SELECT
+                key,
+                STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids
+            FROM userdictkeys
+            GROUP BY key
+        ) joined_users ON joined_users.key = userdict.key
+        LEFT JOIN jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = 'metadata'
         WHERE userdict.key = :session_id
+        ORDER BY userdict.modtime DESC
         LIMIT 1;
         """
     )
-    with db.connect() as con:
-        rs = con.execute(query, {"session_id": session_id})
+    with _get_db_session() as session:
+        rs = session.execute(query, {"session_id": session_id})
         session_details = rs.fetchone()
+
     if session_details is None:
         raise ValueError(f"No session found with ID: {session_id}")
+
     return {
         "filename": session_details.filename,
         "user_id": session_details.user_id,
+        "user_ids": session_details.user_ids,
         "modtime": session_details.modtime,
         "key": session_details.key,
         "auto_title": session_details.auto_title,
@@ -314,7 +1481,9 @@ def get_file_ids_associated_with_session(
     """
     Get a list of file IDs associated with a given session ID.
     """
-    # files are stored in uploads db with a key that is the session id
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return []
     query = text(
         """
         SELECT indexno
@@ -324,9 +1493,9 @@ def get_file_ids_associated_with_session(
         ORDER BY indexno
     """
     )
-    with db.connect() as con:
-        rs = con.execute(
-            query, {"session_id": session_id, "yaml_filename": yaml_filename}
+    with _get_db_session() as session:
+        rs = session.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename or None}
         )
         file_ids = [row.indexno for row in rs]
     return file_ids
@@ -341,6 +1510,9 @@ def get_files_associated_with_session(
     """
     Return metadata for files associated with a session.
     """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return []
     files: List[Dict[str, Any]] = []
     query = text(
         """
@@ -351,25 +1523,48 @@ def get_files_associated_with_session(
         ORDER BY indexno
     """
     )
-    with db.connect() as con:
-        rs = con.execute(
-            query, {"session_id": session_id, "yaml_filename": yaml_filename}
+    with _get_db_session() as session:
+        rs = session.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename or None}
         )
         upload_rows = list(rs)
 
     for row in upload_rows:
         file_id = int(row.indexno)
-        filename = row.filename or f"file-{file_id}"
-        extension, mimetype = get_ext_and_mimetype(filename)
+        raw_filename = row.filename or f"file-{file_id}"
+        extension, mimetype = get_ext_and_mimetype(raw_filename)
         if not extension:
             continue
+        fullpath = None
+        filename = raw_filename
         try:
-            sf = SavedFile(file_id, extension=extension, fix=True)
-            fullpath = f"{sf.path}.{extension}"
+            file_info = get_info_from_file_number(
+                file_id, privileged=privileged, uids=uids
+            )
+            candidate_path = file_info.get("fullpath") or file_info.get("path")
+            if candidate_path and extension and not os.path.isfile(candidate_path):
+                if os.path.isfile(f"{candidate_path}.{extension}"):
+                    candidate_path = f"{candidate_path}.{extension}"
+            if candidate_path and os.path.isfile(candidate_path):
+                fullpath = candidate_path
+                filename = file_info.get("filename") or raw_filename
+                mimetype = file_info.get("mimetype") or mimetype
         except Exception:
+            pass
+
+        if not fullpath:
+            try:
+                sf = SavedFile(file_id, extension=extension, fix=True)
+                sf_path = f"{sf.path}.{extension}"
+                if os.path.isfile(sf_path):
+                    fullpath = sf_path
+                    filename = raw_filename
+            except Exception:
+                continue
+
+        if not fullpath or not os.path.isfile(fullpath):
             continue
-        if not os.path.isfile(fullpath):
-            continue
+
         files.append(
             {
                 "file_id": file_id,
@@ -414,7 +1609,7 @@ def build_session_files_zip(
         for item in files:
             file_id = item["file_id"]
             src_path = item.get("fullpath") or item.get("path")
-            if not os.path.isfile(src_path):
+            if not src_path or not os.path.isfile(src_path):
                 continue
             candidate = secure_filename_unicode_ok(
                 item.get("filename") or f"file-{file_id}"
@@ -449,14 +1644,16 @@ def download_file_by_id(
             `response(file=...)` call instead of a Flask response.
 
     Raises:
-        FileNotFound: If no record or filesystem path exists for the given ID,
-                      or the requested variant is missing on disk.
+        FileNotFoundError: If no record or filesystem path exists for the given ID,
+                           or the requested variant is missing on disk.
 
     Returns:
-        Response: A Flask Response object from `send_file`, with caching disabled.
+        Union[Response, Dict[str, Any]]: A Flask Response object from `send_file`, or file info dict.
     """
     # 1. Normalize to digits only
     number = re.sub(r"[^0-9]", "", str(file_number))
+    if not number:
+        raise FileNotFoundError(f"Invalid file ID: {file_number!r}")
 
     # 2. Lookup base info
     try:
@@ -467,7 +1664,7 @@ def download_file_by_id(
     if "path" not in file_info and "fullpath" not in file_info:
         raise FileNotFoundError(f"No filesystem path for file ID {number!r}")
 
-    base_path = file_info["path"]
+    base_path = file_info.get("path") or file_info.get("fullpath")
     extension_from_info = file_info.get("extension")
     default_fullpath = file_info.get("fullpath")
     if not default_fullpath and base_path and extension_from_info:
@@ -520,6 +1717,36 @@ def dashboard_get_session_variables(session_id: str, filename: str):
     """
     user_dict = get_session_variables(filename, session_id, secret=None, simplify=False)
     return serializable_dict(user_dict, include_internal=False)
+
+
+def dashboard_find_session_filename(session_id: str) -> Optional[str]:
+    """
+    Return the filename for a saved interview session key, when it can be
+    identified unambiguously.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return None
+
+    find_session_query = text("""
+SELECT
+    filename,
+    MAX(modtime) AS modtime
+FROM
+    userdict
+WHERE
+    key = :session_id
+GROUP BY
+    filename
+ORDER BY
+    modtime DESC;
+        """)
+    with _get_db_session() as session:
+        rows = list(session.execute(find_session_query, {"session_id": session_id}))
+
+    if len(rows) == 1:
+        return str(rows[0].filename)
+    return None
 
 
 class ALPackageInstaller(DAObject):
@@ -804,12 +2031,12 @@ LIMIT :limit
     """
     query = text(query_sql)
 
-    with db.connect() as con:
+    with _get_db_session() as session:
         for m in minutes_list:
             cutoff = datetime.utcnow() - timedelta(minutes=int(m))
             query_params = {"cutoff": cutoff, "limit": int(limit)}
             query_params.update(exclude_params)
-            rs = con.execute(query, query_params)
+            rs = session.execute(query, query_params)
             rows = []
             for row in rs:
                 # SQLAlchemy result rows may be mapping-like or tuple-like depending on version/context.
@@ -961,12 +2188,11 @@ def increment_index_value(by: int = 5000, index_name: str = "uploads_indexno_seq
         by (int): The amount to increment the file index value by. Defaults to 5000.
         index_name (str): The name of the sequence to increment. Defaults to "uploads_indexno_seq".
     """
-    with db.connect() as con:
-        con.execute(
+    with _db_session_scope() as session:
+        session.execute(
             text(f"SELECT setval(:index_name, nextval(:index_name) + :by);"),
             {"by": by, "index_name": index_name},
         )
-        con.commit()
 
 
 def get_current_index_value() -> int:
@@ -975,8 +2201,9 @@ def get_current_index_value() -> int:
     Returns:
         int: The current value of the file index sequence.
     """
-    query = db.session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
-    return query.fetchone()[0]
+    with _get_db_session() as session:
+        query = session.execute(text("SELECT last_value FROM uploads_indexno_seq"))
+        return query.fetchone()[0]
 
 
 def get_latest_s3_folder(prefix: str = "files/") -> Optional[int]:

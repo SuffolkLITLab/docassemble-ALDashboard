@@ -1,0 +1,123 @@
+:root {
+  --suffolk-blue: #15284b;
+  --suffolk-blue-rgb: 21, 40, 75;
+  --suffolk-gold: #fdb924;
+  --suffolk-gold-rgb: 253, 185, 36;
+}
+
+.navbar.bg-dark {
+  background-color: var(--suffolk-blue) !important;
+}
+
+.navbar-nav {
+  --bs-nav-link-color: rgba(255, 255, 255, 0.65);
+  --bs-nav-link-hover-color: rgba(255, 255, 255, 0.65);
+}
+
+.nav-link {
+  color: var(--bs-nav-link-color);
+}
+
+.nav-link:hover {
+  color: var(--bs-nav-link-hover-color);
+}
+
+.title-container {
+  align-items: center;
+  display: grid;
+  gap: 0 0.5em;
+  grid-template-areas: "logo title";
+  grid-template-columns: min-content min-content;
+  grid-template-rows: min-content;
+  justify-items: start;
+}
+
+.al-logo {
+  grid-area: logo;
+}
+
+.al-logo img {
+  max-height: 40px;
+}
+
+.al-title {
+  align-content: start;
+  align-items: start;
+  color: var(--bs-white);
+  display: grid;
+  gap: 0;
+  grid-area: title;
+  grid-template-areas:
+    "title-row-1"
+    "title-row-2";
+  grid-template-columns: min-content;
+  grid-template-rows: 1fr 1fr;
+  font-weight: 600;
+  justify-content: start;
+  justify-items: start;
+  line-height: 1em;
+}
+
+.title-row-1 {
+  color: var(--suffolk-gold);
+  font-size: 0.7em;
+  font-weight: 700;
+  grid-area: title-row-1;
+  text-transform: none;
+}
+
+.title-row-2 {
+  font-size: 1em;
+  font-weight: 700;
+  grid-area: title-row-2;
+  text-transform: none;
+}
+
+.danavbar-title {
+  max-width: unset;
+}
+
+@media only screen and (max-width: 800px) {
+  .al-title,
+  .al-logo {
+    font-size: 60%;
+    font-weight: 400;
+  }
+}
+
+.nav-pills .nav-link.active {
+  border-radius: var(--bs-btn-border-radius);
+  color: revert;
+  background-color: rgba(var(--bs-primary-rgb), 0.1);
+}
+
+a {
+  text-decoration: underline;
+}
+
+.input-group > :not(:first-child):not(.dropdown-menu):not(.valid-tooltip):not(.valid-feedback):not(.invalid-tooltip):not(.invalid-feedback) {
+  border-radius: 0;
+}
+
+.btn:focus,
+.btn.focus {
+  box-shadow: 0 0 0 1px rgba(var(--suffolk-blue-rgb), 0.25);
+}
+
+.accordion-item {
+  border: 1px solid rgba(var(--suffolk-blue-rgb), 0.2);
+  border-radius: 0.4rem;
+}
+
+.accordion-button:not(.collapsed) {
+  color: var(--suffolk-blue);
+  background-color: rgba(var(--suffolk-gold-rgb), 0.14);
+}
+
+.table.table-striped tbody tr:nth-of-type(odd) > * {
+  background-color: rgba(var(--suffolk-blue-rgb), 0.04);
+}
+
+.table thead th {
+  color: var(--suffolk-blue);
+}

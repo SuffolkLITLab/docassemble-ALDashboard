@@ -1,0 +1,4 @@
+{
+  "note": "Line one\\r\\nLine two",
+  "description": "Safe JSON export with escaped CRLF text."
+}

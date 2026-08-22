@@ -2,21 +2,38 @@
 
 from typing import Any, Dict
 
-from docassemble.webapp.worker_common import bg_context, workerapp  # type: ignore[import-untyped]
+try:
+    from docassemble.webapp.tasks.context import bg_context
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.tasks",
+        "docassemble.webapp.tasks.context",
+    }:
+        raise
+    # docassemble < 1.10 defines the worker context in worker_common.
+    from docassemble.webapp.worker_common import bg_context  # type: ignore[import-untyped]
+
+from docassemble.webapp.worker_common import workerapp  # type: ignore[import-untyped]
 
 from .api_dashboard_utils import (
+    alkiln_story_payload_from_options,
     autolabel_payload_from_options,
     bootstrap_payload_from_options,
+    docx_labeler_suggest_payload_from_options,
     docx_runs_payload_from_options,
     interview_lint_payload_from_options,
     pdf_fields_detect_payload_from_options,
     pdf_fields_relabel_payload_from_options,
     pdf_label_fields_payload_from_options,
+    pdf_repair_payload_from_options,
     relabel_payload_from_options,
     review_screen_payload_from_options,
     translation_payload_from_options,
     validate_docx_payload_from_options,
     validate_translation_payload_from_options,
+    variable_report_payload_from_options,
+    yaml_check_payload_from_options,
+    yaml_reformat_payload_from_options,
 )
 
 
@@ -33,9 +50,21 @@ def dashboard_autolabel_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @workerapp.task
+def dashboard_alkiln_story_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return alkiln_story_payload_from_options(payload)
+
+
+@workerapp.task
 def dashboard_docx_runs_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return docx_runs_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_docx_labeler_suggest_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return docx_labeler_suggest_payload_from_options(payload)
 
 
 @workerapp.task
@@ -90,3 +119,35 @@ def dashboard_pdf_fields_detect_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_pdf_fields_relabel_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return pdf_fields_relabel_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_yaml_check_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return yaml_check_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_yaml_reformat_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return yaml_reformat_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute PDF repair work inside a background docassemble context.
+
+    Args:
+        payload: Serialized request options for the repair operation.
+
+    Returns:
+        Dict[str, Any]: The PDF repair payload returned by the repair helper.
+    """
+    with bg_context():
+        return pdf_repair_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_variable_report_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return variable_report_payload_from_options(payload)

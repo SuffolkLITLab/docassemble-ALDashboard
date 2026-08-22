@@ -1,3 +1,4 @@
+# do not pre-load
 import base64
 import unittest
 from pathlib import Path
@@ -42,7 +43,6 @@ class TestPDFLabelFieldsAPI(unittest.TestCase):
                         "ascii"
                     ),
                     "include_pdf_base64": "true",
-                    "include_parse_stats": "true",
                 }
             )
 
@@ -50,7 +50,6 @@ class TestPDFLabelFieldsAPI(unittest.TestCase):
         self.assertEqual(payload["output_filename"], "labeled_test.pdf")
         self.assertEqual(payload["field_count"], 2)
         self.assertEqual(payload["fields"], ["name", "address"])
-        self.assertIn("parse_stats", payload)
         self.assertEqual(base64.b64decode(payload["pdf_base64"]), b"%PDF-labeled")
 
     def test_omits_optional_outputs(self):
@@ -69,12 +68,10 @@ class TestPDFLabelFieldsAPI(unittest.TestCase):
                         "ascii"
                     ),
                     "include_pdf_base64": "false",
-                    "include_parse_stats": "false",
                 }
             )
 
         self.assertNotIn("pdf_base64", payload)
-        self.assertNotIn("parse_stats", payload)
 
     def test_translates_pdf_labeling_error(self):
         with patch(
@@ -136,6 +133,7 @@ class TestPDFLabelFieldsAPI(unittest.TestCase):
                 }
             )
         self.assertEqual(payload["fields"], ["new1"])
+        self.assertNotIn("parse_stats", payload)
 
 
 if __name__ == "__main__":

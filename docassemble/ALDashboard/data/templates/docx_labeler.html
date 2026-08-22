@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AssemblyLine DOCX Labeler</title>
+    <link rel="icon" type="image/png" href="/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/bootstrap-theme.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/variables.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/litlabtheme/custom.css">
+    <link rel="stylesheet" href="/packagestatic/docassemble.ALDashboard/docx_labeler.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body>
+    <div id="app" class="dl-app">
+        <!-- Header -->
+        <header class="dl-header navbar bg-dark px-4 py-3">
+            <div class="container-fluid d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-3">
+                    <img src="/packagestatic/docassemble.ALDashboard/litlabtheme/dal-favicon.png" alt="LIT Lab logo" width="28" height="28">
+                    <div class="al-title">
+                        <h1 class="h4 fw-bold mb-0 text-white">AssemblyLine DOCX Labeler</h1>
+                        <p class="small mt-1 mb-0 text-white">Add or edit Jinja2 template variables</p>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <div id="auth-controls" class="position-relative"></div>
+                    <button id="utilities-btn" class="btn btn-outline-light btn-sm">
+                        Utilities
+                    </button>
+                    <button id="repair-btn" class="btn btn-outline-light btn-sm">
+                        Repair
+                    </button>
+                    <button id="settings-btn" class="btn btn-outline-light btn-sm">
+                        <svg class="me-1" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        Settings
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="dl-main">
+            <!-- Sidebar -->
+            <aside id="sidebar-panel" class="dl-sidebar">
+                <div class="dl-upload-section">
+                    <label class="d-block">
+                        <span class="visually-hidden">Choose DOCX file</span>
+                        <input type="file" id="file-input" accept=".docx" class="dl-file-input">
+                    </label>
+                    <button id="open-playground-btn" class="btn btn-sm btn-outline-secondary mt-2 hidden" title="Open a DOCX from the Playground templates folder">
+                        <svg style="width:14px;height:14px;" class="me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        Open from Playground
+                    </button>
+                    <p id="file-name" class="mt-2 small text-muted hidden"></p>
+                    <div id="ai-auth-notice" class="alert alert-warning small mt-2 mb-0 hidden"></div>
+                    <div id="interview-picker-sidebar-host" class="hidden mt-3">
+                        <div id="interview-picker-panel">
+                            <div class="small fw-medium mb-2">Interview variables source</div>
+                            <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Interview source mode">
+                                <input type="radio" class="btn-check" name="interview-source-mode" id="source-mode-playground" value="playground" checked>
+                                <label class="btn btn-outline-secondary" for="source-mode-playground">Playground</label>
+                                <input type="radio" class="btn-check" name="interview-source-mode" id="source-mode-installed" value="installed">
+                                <label class="btn btn-outline-secondary" for="source-mode-installed">Installed</label>
+                            </div>
+                            <div id="playground-fields">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1" for="playground-project">Project</label>
+                                    <select id="playground-project" class="form-select form-select-sm"></select>
+                                </div>
+                                <div>
+                                    <label class="form-label small mb-1" for="playground-yaml-file">YAML file</label>
+                                    <select id="playground-yaml-file" class="form-select form-select-sm"></select>
+                                </div>
+                            </div>
+                            <div id="installed-fields" class="hidden">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1" for="installed-package">Package</label>
+                                    <select id="installed-package" class="form-select form-select-sm"></select>
+                                </div>
+                                <div>
+                                    <label class="form-label small mb-1" for="installed-yaml-file">YAML file</label>
+                                    <select id="installed-yaml-file" class="form-select form-select-sm"></select>
+                                </div>
+                            </div>
+                            <p id="interview-variable-summary" class="small text-muted mt-2 mb-0 hidden"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="loading-state" class="hidden p-5 text-center">
+                    <svg class="loading-spinner dl-state-icon mx-auto text-primary" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p id="loading-message" class="mt-3 text-muted">Processing document...</p>
+                </div>
+
+                <!-- Error State -->
+                <div id="error-state" class="hidden alert alert-danger m-3">
+                    <p id="error-message" class="mb-0 small"></p>
+                </div>
+
+                <!-- Empty State -->
+                <div id="empty-state" class="flex-fill d-flex align-items-center justify-content-center p-4 text-center">
+                    <div>
+                        <svg class="dl-state-icon-lg mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                        </svg>
+                        <p class="mt-3 text-muted">Upload a DOCX file to get started</p>
+                    </div>
+                </div>
+
+                <!-- Main Panel (tabs for existing labels vs suggestions) -->
+                <div id="main-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                    <!-- Tabs -->
+                    <div class="dl-tabs">
+                        <button id="tab-existing" class="dl-tab tab-active">
+                            Existing Labels <span id="existing-count" class="dl-count-badge dl-count-badge-primary">0</span>
+                        </button>
+                        <button id="tab-manual" class="dl-tab hidden">
+                            Manual Labels <span id="manual-count" class="dl-count-badge dl-count-badge-warning">0</span>
+                        </button>
+                        <button id="tab-suggestions" class="dl-tab">
+                            AI Suggestions <span id="suggestions-count" class="dl-count-badge dl-count-badge-warning">0</span>
+                        </button>
+                    </div>
+
+                    <!-- Existing Labels Panel -->
+                    <div id="existing-panel" class="flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center gap-2">
+                            <button id="bulk-replace-btn" class="btn btn-sm btn-outline-primary">Bulk Replace</button>
+                            <button id="ai-relabel-btn" class="btn btn-sm btn-primary">AI Relabel All</button>
+                        </div>
+                        <div id="existing-labels-tree" class="flex-fill overflow-auto p-3"></div>
+                    </div>
+
+                    <!-- Manual Labels Panel -->
+                    <div id="manual-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center justify-content-between gap-2">
+                            <div class="small text-muted">Labels added from preview selections</div>
+                        </div>
+                        <div id="manual-labels-list" class="flex-fill overflow-auto p-3"></div>
+                    </div>
+
+                    <!-- Suggestions Panel -->
+                    <div id="suggestions-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                        <div class="dl-panel-toolbar d-flex align-items-center justify-content-between">
+                            <div class="d-flex gap-2">
+                                <button id="accept-all-btn" class="btn btn-sm btn-success">Accept All</button>
+                                <button id="regenerate-btn" class="btn btn-sm btn-outline-secondary">Regenerate</button>
+                            </div>
+                            <div class="form-check small mb-0">
+                                <input class="form-check-input" type="checkbox" id="toggle-low-confidence">
+                                <label class="form-check-label" for="toggle-low-confidence">Show low confidence</label>
+                            </div>
+                        </div>
+                        <div id="low-confidence-summary" class="small text-muted px-3 pt-2"></div>
+                        <div id="suggestions-validation" class="hidden mx-3 mt-2 alert alert-warning small"></div>
+                        <div id="suggestions-list" class="flex-fill overflow-auto p-3"></div>
+                    </div>
+
+                    <!-- Download Button -->
+                    <div class="dl-download-bar">
+                        <div id="syntax-validation" class="hidden alert small mb-2"></div>
+                        <button id="apply-highlights-btn" class="btn btn-outline-secondary w-100 py-2 fw-semibold mb-2" disabled>
+                            Apply Highlights
+                        </button>
+                        <button id="download-btn" class="btn btn-primary w-100 py-2 fw-semibold" disabled>
+                            Download Updated DOCX
+                        </button>
+                        <button id="save-playground-btn" class="btn btn-outline-success w-100 py-2 fw-semibold mt-2 hidden" disabled title="Save this DOCX back to the Playground templates folder">
+                            <svg style="width:14px;height:14px;" class="me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                            Save to Playground
+                        </button>
+                        <p id="download-status" class="mt-2 small text-muted text-center hidden"></p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Document Preview -->
+            <div class="dl-preview-area">
+                <div id="preview-empty" class="h-100 d-flex align-items-center justify-content-center text-center">
+                    <div>
+                        <svg class="dl-state-icon-xl mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <h3 class="mt-3 h5 text-muted">Document Preview</h3>
+                        <p class="mt-2 text-muted">Your document will appear here</p>
+                    </div>
+                </div>
+                <div id="preview-content" class="hidden dl-preview-card document-preview"></div>
+            </div>
+        </main>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-md">
+                <div class="dl-modal-header">
+                    <h2 class="h5 fw-semibold mb-0">AI Prompt Settings</h2>
+                    <button id="close-settings" class="btn btn-sm btn-light rounded">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="dl-modal-body" style="max-height:60vh;overflow-y:auto">
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="additional-instructions">Additional Instructions</label>
+                        <textarea id="additional-instructions" rows="4" placeholder="Add any specific instructions for the AI labeling process..." class="form-control"></textarea>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="context-text">Add Context (Optional)</label>
+                        <textarea id="context-text" rows="5" placeholder="Paste any optional background context that helps explain the template, source material, or domain." class="form-control"></textarea>
+                        <div class="form-text">Optional context for the AI prompt.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="custom-people">Custom People Names</label>
+                        <textarea id="custom-people" rows="3" placeholder='[["clients", "the people benefiting from the form"]]' class="form-control font-monospace small"></textarea>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="prompt-profile">Prompt Profile</label>
+                        <select id="prompt-profile" class="form-select">
+                            <option value="standard" selected>General forms</option>
+                            <option value="litigation_template">Litigation / pleading templates</option>
+                        </select>
+                        <div class="form-text">Use the litigation profile for pleadings with captions, bracketed drafting notes, and many visible blanks.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="generation-method">Suggestion Generation Method</label>
+                        <select id="generation-method" class="form-select">
+                            <option value="single">Single model, single run</option>
+                            <option value="multi_run" selected>Merge multiple runs (3 fixed runs)</option>
+                            <option value="multi_model">Multi-model ensemble</option>
+                        </select>
+                        <div class="form-text">Single pass, multiple runs of one model, or multi-model ensemble with judge review.</div>
+                    </div>
+                    <div id="generator-models-group" class="mb-4 hidden">
+                        <label class="form-label fw-medium" for="generator-models">Generator Models</label>
+                        <textarea id="generator-models" rows="3" placeholder="One model per line, or comma-separated" class="form-control font-monospace small"></textarea>
+                        <div class="form-text">Recommended for ensemble mode: 2-3 models.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-medium" for="judge-model">Judge Model</label>
+                        <input id="judge-model" type="text" class="form-control font-monospace small" placeholder="Leave blank to use the selected model">
+                        <div class="form-text">Used when candidates conflict or only low-confidence options are available.</div>
+                    </div>
+                    <div class="form-check mb-4">
+                        <input class="form-check-input" type="checkbox" id="defragment-runs" checked>
+                        <label class="form-check-label fw-medium" for="defragment-runs">
+                            Consolidate fragmented runs before labeling and download
+                        </label>
+                        <div class="form-text">Recommended when placeholder text is split across multiple runs.</div>
+                    </div>
+                    <div id="use-playground-vars-group" class="mb-4 hidden">
+                        <div class="d-flex align-items-start justify-content-between gap-3">
+                            <div class="form-check flex-grow-1 mb-0">
+                                <input class="form-check-input" type="checkbox" id="use-playground-variables">
+                                <label class="form-check-label fw-medium" for="use-playground-variables">
+                                    Prefer variables from selected interview
+                                </label>
+                                <div id="playground-settings-summary" class="form-text">
+                                    Select a Playground or installed interview from the sidebar to use its variable list in the prompt.
+                                </div>
+                            </div>
+                            <button type="button" id="change-interview-source-btn" class="btn btn-sm btn-outline-secondary hidden">
+                                Change
+                            </button>
+                        </div>
+                        <div id="settings-interview-picker-host" class="hidden mt-3"></div>
+                    </div>
+                    <div>
+                        <label class="form-label fw-medium" for="ai-model">AI Model</label>
+                        <input id="ai-model" type="text" class="form-control font-monospace small" placeholder="Type to find a model">
+                        <p class="form-text mb-1">Type to filter available models.</p>
+                        <div id="ai-model-suggestions" class="d-flex flex-wrap gap-1"></div>
+                    </div>
+                </div>
+                <div class="dl-modal-footer d-flex justify-content-end gap-2">
+                    <button id="reset-settings" class="btn btn-outline-secondary">Reset to Default</button>
+                    <button id="save-settings" class="btn btn-primary">Save Settings</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bulk Replace Modal -->
+        <div id="bulk-replace-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-sm">
+                <div class="dl-modal-header">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Bulk Find &amp; Replace</h2>
+                        <p class="text-muted small mb-0">Replace variable names across all labels</p>
+                    </div>
+                </div>
+                <div class="dl-modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-medium small">Find (regex supported)</label>
+                        <input type="text" id="bulk-find" placeholder="client|plaintiff" class="form-control font-monospace">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-medium small">Replace with</label>
+                        <input type="text" id="bulk-replace" placeholder="users[0]" class="form-control font-monospace">
+                    </div>
+                    <div id="bulk-preview" class="hidden p-3 bg-light rounded" style="max-height:12rem;overflow-y:auto">
+                        <p class="fw-medium small text-muted mb-2">Preview</p>
+                        <div id="bulk-preview-list" class="small"></div>
+                    </div>
+                </div>
+                <div class="dl-modal-footer d-flex justify-content-between">
+                    <button id="bulk-preview-btn" class="btn btn-outline-primary btn-sm">Preview Changes</button>
+                    <div class="d-flex gap-2">
+                        <button id="bulk-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                        <button id="bulk-apply" class="btn btn-primary btn-sm">Apply</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create/Edit Label Modal -->
+        <div id="edit-label-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-lg">
+                <div class="dl-modal-header">
+                    <h2 id="edit-label-title" class="h5 fw-semibold mb-0">Edit Label</h2>
+                    <button id="edit-close" class="btn btn-sm btn-light rounded">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex-fill d-flex overflow-hidden">
+                    <!-- Left: Input area -->
+                    <div class="w-50 p-3 border-end d-flex flex-column">
+                        <div class="mb-3">
+                            <label class="form-label fw-medium small">Current Value</label>
+                            <p id="edit-label-original" class="px-3 py-2 bg-light rounded font-monospace small break-all mb-0"></p>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-medium small">New Variable Name</label>
+                            <input type="text" id="edit-label-input" placeholder="{{ users[0].name.first }}" class="form-control font-monospace">
+                            <p class="form-text small">Click a variable on the right to insert it</p>
+                        </div>
+                    </div>
+                    <!-- Right: Variable picker tree -->
+                    <div class="w-50 d-flex flex-column bg-light">
+                        <div class="p-2 border-bottom">
+                            <input type="text" id="variable-search" placeholder="Search variables..." class="form-control form-control-sm">
+                        </div>
+                        <div id="variable-tree" class="flex-fill overflow-auto p-2 small"></div>
+                    </div>
+                </div>
+                <div class="dl-modal-footer d-flex justify-content-end gap-2">
+                    <button id="edit-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button id="edit-save" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Open from Playground modal -->
+        <div id="open-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Open from Playground</h2>
+                    <button id="close-open-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="open-pg-project">Project</label>
+                    <select id="open-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="open-pg-template">Template file</label>
+                    <select id="open-pg-template" class="form-select form-select-sm"></select>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="open-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="open-pg-confirm" class="btn btn-primary btn-sm">Open</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save to Playground modal -->
+        <div id="save-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
+                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                    <h2 class="h5 fw-semibold mb-0">Save to Playground</h2>
+                    <button id="close-save-playground" class="btn btn-sm btn-light">Close</button>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="save-pg-project">Project</label>
+                    <select id="save-pg-project" class="form-select form-select-sm"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small mb-1" for="save-pg-filename">Filename</label>
+                    <input id="save-pg-filename" type="text" class="form-control form-control-sm" placeholder="template.docx">
+                </div>
+                <p id="save-pg-status" class="small text-muted hidden"></p>
+                <div class="d-flex justify-content-end gap-2">
+                    <button id="save-pg-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                    <button id="save-pg-confirm" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Utilities Modal -->
+        <div id="utilities-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-lg">
+                <div class="dl-modal-header">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Utilities</h2>
+                        <p class="text-muted small mb-0">Run DOCX utilities on the active file or a separate upload.</p>
+                    </div>
+                    <button id="utilities-close" class="btn btn-sm btn-light rounded">Close</button>
+                </div>
+                <div class="dl-modal-body" style="max-height:65vh;overflow-y:auto">
+                    <div class="mb-3">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="utility-source" id="utility-source-active" checked>
+                            <label class="form-check-label" for="utility-source-active">Use active DOCX</label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="utility-source" id="utility-source-upload">
+                            <label class="form-check-label" for="utility-source-upload">Use a separate DOCX upload</label>
+                        </div>
+                        <input type="file" id="utility-file-input" accept=".docx" class="form-control form-control-sm hidden">
+                        <div id="utility-source-status" class="form-text">The active DOCX will be used when available.</div>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="validate">Validate</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="schema-validate">Validate with OOXML Schema</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="defragment-runs">Merge / Defragment Runs</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="cleanup-docx">Cleanup DOCX</button>
+                        <button class="btn btn-outline-primary utility-action-btn" data-action="highlight-jinja2">Highlight Jinja2</button>
+                    </div>
+                    <div id="utilities-result" class="mt-3 small"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Repair Modal -->
+        <div id="repair-modal" class="hidden dl-modal-overlay">
+            <div class="dl-modal dl-modal-lg">
+                <div class="dl-modal-header">
+                    <div>
+                        <h2 class="h5 fw-semibold mb-1">Repair</h2>
+                        <p class="text-muted small mb-0">Try increasingly aggressive rescue steps for broken DOCX files.</p>
+                    </div>
+                    <button id="repair-close" class="btn btn-sm btn-light rounded">Close</button>
+                </div>
+                <div class="dl-modal-body" style="max-height:65vh;overflow-y:auto">
+                    <div class="mb-3">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="repair-source" id="repair-source-active" checked>
+                            <label class="form-check-label" for="repair-source-active">Use active DOCX</label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="repair-source" id="repair-source-upload">
+                            <label class="form-check-label" for="repair-source-upload">Use a separate DOCX upload</label>
+                        </div>
+                        <input type="file" id="repair-file-input" accept=".docx" class="form-control form-control-sm hidden">
+                        <div id="repair-source-status" class="form-text">The active DOCX will be used when available.</div>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-outline-danger repair-action-btn" data-action="soffice-roundtrip">Roundtrip with LibreOffice</button>
+                        <button class="btn btn-outline-danger repair-action-btn" data-action="repair-xml">Conservative XML Repair</button>
+                        <button class="btn btn-outline-danger repair-action-btn" data-action="rescue-shell">Rebuild DOCX Shell from Extracted XML</button>
+                    </div>
+                    <div id="repair-result" class="mt-3 small"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Selection Popover (appears when text is highlighted in preview) -->
+        <div id="sel-popover" class="dl-sel-popover hidden">
+            <div class="dl-sel-popover-header">
+                <span class="fw-semibold small">Replace with Label</span>
+                <button id="sel-close" class="btn btn-sm btn-light p-0 px-1 lh-1" aria-label="Close">&times;</button>
+            </div>
+            <div class="dl-sel-popover-body">
+                <div class="dl-sel-selected-text font-monospace mb-2" id="sel-original-text"></div>
+                <label class="form-label small fw-medium mb-1" for="sel-var-input">Jinja2 replacement</label>
+                <input type="text" id="sel-var-input" class="form-control form-control-sm font-monospace" placeholder="{{ users[0].name.first }}">
+                <button id="sel-tree-toggle" class="dl-sel-var-tree-toggle mt-1" type="button">Browse variables…</button>
+                <div id="sel-var-panel" class="dl-sel-var-panel hidden">
+                    <input type="text" id="sel-var-search" class="form-control form-control-sm mb-1" placeholder="Search…">
+                    <div id="sel-var-tree" class="small"></div>
+                </div>
+            </div>
+            <div class="dl-sel-popover-footer">
+                <button id="sel-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                <button id="sel-save" class="btn btn-primary btn-sm">Add Label</button>
+            </div>
+        </div>
+    </div>
+
+    <script id="labeler-bootstrap" type="application/json">__LABELER_BOOTSTRAP_JSON__</script>
+    <script src="/packagestatic/docassemble.ALDashboard/docx_labeler_preview_utils.js"></script>
+    <script src="/packagestatic/docassemble.ALDashboard/docx_labeler.js"></script>
+</body>
+</html>

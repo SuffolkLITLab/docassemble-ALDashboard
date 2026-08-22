@@ -1,4 +1,16 @@
     (function() {
+        function parseBootstrapJson() {
+            var bootstrapEl = document.getElementById('labeler-bootstrap');
+            if (!bootstrapEl) return {};
+            try {
+                return JSON.parse(bootstrapEl.textContent || '{}');
+            } catch (_e) {
+                return {};
+            }
+        }
+
+        const LABELER_BOOTSTRAP = parseBootstrapJson();
+        const INITIAL_PLAYGROUND_SOURCE = LABELER_BOOTSTRAP.initialPlaygroundSource || {};
         const DOCX_LABELER_CONFIG = (typeof window !== 'undefined' && window.DOCX_LABELER_CONFIG)
             ? window.DOCX_LABELER_CONFIG
             : {};
@@ -164,6 +176,11 @@
             fileContent: null,
             originalHtml: '',
             playgroundSource: null,
+            initialPlaygroundSource: {
+                project: INITIAL_PLAYGROUND_SOURCE.project || '',
+                filename: INITIAL_PLAYGROUND_SOURCE.filename || '',
+                attempted: false
+            },
             runs: [],          // original runs from extract-runs endpoint
             existingLabels: [],
             suggestions: [],
@@ -1241,7 +1258,11 @@
             }
             renderAuthControls();
             updateAiUiState();
-            if (!shouldHideInterviewPicker()) {
+            if (state.auth.isAuthenticated) {
+                await fetchPlaygroundProjects();
+                await maybeOpenInitialPlaygroundTemplate();
+                await fetchInstalledPackages();
+            } else if (!shouldHideInterviewPicker()) {
                 await fetchPlaygroundProjects();
                 await fetchInstalledPackages();
             }
@@ -3009,6 +3030,22 @@
             }
         }
 
+        async function maybeOpenInitialPlaygroundTemplate() {
+            if (!state.auth.isAuthenticated) return;
+            if (state.initialPlaygroundSource.attempted) return;
+            var project = state.initialPlaygroundSource.project;
+            var filename = state.initialPlaygroundSource.filename;
+            if (!project || !filename) {
+                state.initialPlaygroundSource.attempted = true;
+                return;
+            }
+            state.initialPlaygroundSource.attempted = true;
+            if (state.playground.projects.indexOf(project) === -1) return;
+            state.playground.selectedProject = project;
+            renderInterviewPicker();
+            await openDocxTemplateFromPlayground(project, filename, { showSuccess: false });
+        }
+
         async function confirmOpenFromPlayground() {
             var openPgProject = document.getElementById('open-pg-project');
             var openPgTemplate = document.getElementById('open-pg-template');
@@ -3016,6 +3053,11 @@
             var filename = openPgTemplate.value;
             if (!filename) { showError('Select a template file.'); return; }
             openPlaygroundModalEl.classList.add('hidden');
+            await openDocxTemplateFromPlayground(project, filename);
+        }
+
+        async function openDocxTemplateFromPlayground(project, filename, options) {
+            options = options || {};
             showLoading('Loading ' + filename + ' from Playground...');
             try {
                 var data = await fetchJsonOrThrow(

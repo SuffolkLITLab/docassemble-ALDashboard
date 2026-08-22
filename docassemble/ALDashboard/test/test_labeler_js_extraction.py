@@ -35,11 +35,25 @@ class TestDocxLabelerJsExtraction(unittest.TestCase):
         )
 
     def test_html_has_no_inline_application_js(self):
-        """The only <script> tags should be CDN libs or the static JS src."""
-        script_tags = re.findall(r"<script[^>]*>", self.html)
-        for tag in script_tags:
-            # Every script tag must have a src attribute (no inline JS)
-            self.assertIn("src=", tag, f"Found inline <script> tag: {tag}")
+        """Only CDN scripts, bootstrap JSON data, and static JS src tags."""
+        script_tags = re.findall(r"<script([^>]*)>(.*?)</script>", self.html, re.DOTALL)
+        for attrs, body in script_tags:
+            body_stripped = body.strip()
+            if not body_stripped:
+                # Empty body = external src, fine
+                continue
+            if 'type="application/json"' in attrs:
+                # Bootstrap JSON data block, not executable JS
+                continue
+            self.fail(
+                f"Found inline <script> with executable JS:\n"
+                f"  attrs: {attrs}\n"
+                f"  body (first 120 chars): {body_stripped[:120]}"
+            )
+
+    def test_html_preserves_bootstrap_json_placeholder(self):
+        self.assertIn("__LABELER_BOOTSTRAP_JSON__", self.html)
+        self.assertIn('id="labeler-bootstrap"', self.html)
 
     def test_html_still_loads_mammoth_cdn(self):
         self.assertIn("mammoth", self.html)
@@ -87,6 +101,12 @@ class TestDocxLabelerJsExtraction(unittest.TestCase):
     def test_js_contains_api_calls(self):
         """Verify API endpoint references are present in the JS."""
         self.assertIn("/docx-labeler/api/", self.js)
+
+    def test_js_reads_bootstrap_json(self):
+        """JS must read bootstrap config injected by the server."""
+        self.assertIn("parseBootstrapJson", self.js)
+        self.assertIn("labeler-bootstrap", self.js)
+        self.assertIn("LABELER_BOOTSTRAP", self.js)
 
     def test_js_references_mammoth(self):
         """The JS should reference the mammoth library loaded from the CDN."""
@@ -251,6 +271,19 @@ class TestLabelerTemplateRendering(unittest.TestCase):
         self.assertIn("</head>", html)
         self.assertIn("<body", html)
         self.assertIn("</body>", html)
+
+    def test_docx_bootstrap_json_injection(self):
+        """Simulate the server-side bootstrap JSON injection for docx."""
+        html = _read_package_file("data", "templates", "docx_labeler.html")
+        rendered = html.replace(
+            "__LABELER_BOOTSTRAP_JSON__",
+            '{"apiBasePath":"/al","initialPlaygroundSource":{"project":"demo-project","filename":"test.docx"}}',
+        )
+        self.assertNotIn("__LABELER_BOOTSTRAP_JSON__", rendered)
+        self.assertIn(
+            '{"apiBasePath":"/al","initialPlaygroundSource":{"project":"demo-project","filename":"test.docx"}}',
+            rendered,
+        )
 
     def test_pdf_bootstrap_json_injection(self):
         """Simulate the server-side bootstrap JSON injection."""

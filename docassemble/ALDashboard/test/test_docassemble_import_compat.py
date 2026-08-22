@@ -270,3 +270,45 @@ def test_file_compat_falls_back_to_docassemble_1_9_layout():
     )
 
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+
+def test_aldashboard_file_helpers_fall_back_on_docassemble_1_9_layout():
+    package_root_str = str(PACKAGE_ROOT)
+    probe = textwrap.dedent(f"""
+        import ast
+        from pathlib import Path
+
+        package_root = Path({package_root_str!r})
+        source = (package_root / "aldashboard.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        # Verify fallback block exists for 1.10 -> 1.9 filenames/file_access imports
+        has_file_access_fallback = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try):
+                import_names = [
+                    alias.name
+                    for item in node.body if isinstance(item, ast.ImportFrom)
+                    for alias in item.names
+                ]
+                if "get_info_from_file_number" in import_names:
+                    # Check that handler contains fallback imports
+                    handler_modules = [
+                        item.module
+                        for handler in node.handlers
+                        for item in handler.body if isinstance(item, ast.ImportFrom)
+                    ]
+                    if "docassemble.webapp.backend" in handler_modules and "docassemble.webapp.files" in handler_modules:
+                        has_file_access_fallback = True
+
+        assert has_file_access_fallback, "aldashboard.py missing 1.9 fallback for file helpers"
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+

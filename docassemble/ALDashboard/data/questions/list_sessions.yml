@@ -119,10 +119,9 @@ fields:
       - Look up specific session ID: session_id
     default: browse
   - Session ID: session_id
-    required: True
-    show if:
-      variable: session_list_mode
-      is: session_id
+    required: False
+    js show if: |
+      val("session_list_mode") == "session_id"
   - Filename: filename
     required: False
     datatype: combobox
@@ -142,9 +141,11 @@ fields:
           )
         ),
       )
+    js show if: |
+      val("session_list_mode") != "session_id"
     show if:
       code: |
-        session_list_mode in ['browse', 'search'] and user_has_privilege(['admin', 'developer'])
+        user_has_privilege(['admin', 'developer'])
   - Filename: filename
     code: |
       sorted(
@@ -162,16 +163,20 @@ fields:
           )
         ),
       )
+    js show if: |
+      val("session_list_mode") != "session_id"
     show if:
       code: |
-        session_list_mode in ['browse', 'search'] and not user_has_privilege(['admin', 'developer'])
+        not user_has_privilege(['admin', 'developer'])
   - User (leave blank to view all sessions): chosen_user
     required: False
     datatype: integer
     input type: combobox
+    js show if: |
+      val("session_list_mode") != "session_id"
     show if:
       code: |
-        session_list_mode in ['browse', 'search'] and total_user_count <= 10000
+        total_user_count <= 10000
     code: |
       (
         speedy_get_users()
@@ -182,22 +187,22 @@ fields:
     required: False
     input type: ajax
     action: user_search_ajax
+    js show if: |
+      val("session_list_mode") != "session_id"
     show if:
       code: |
-        session_list_mode in ['browse', 'search'] and total_user_count > 10000
+        total_user_count > 10000
   - Filter out interviews that are on the first page: filter_step1
     required: False
     datatype: yesno
     default: True
-    show if:
-      code: |
-        session_list_mode in ['browse', 'search']
+    js show if: |
+      val("session_list_mode") != "session_id"
   - Use advanced answer-variable filters: session_search_use_advanced_filters
     datatype: yesno
     default: False
-    show if:
-      variable: session_list_mode
-      is: search
+    js show if: |
+      val("session_list_mode") == "search"
   - Variable name: session_search_variable_name
     js show if: |
       val("session_list_mode") == "search" && !val("session_search_use_advanced_filters")
@@ -223,15 +228,13 @@ fields:
   - Modified on or after: session_search_start_date
     datatype: date
     required: False
-    show if:
-      variable: session_list_mode
-      is: search
+    js show if: |
+      val("session_list_mode") == "search"
   - Modified on or before: session_search_end_date
     datatype: date
     required: False
-    show if:
-      variable: session_list_mode
-      is: search
+    js show if: |
+      val("session_list_mode") == "search"
 validation code: |
   if session_list_mode == "session_id":
     if not str(session_id or "").strip():
@@ -345,7 +348,6 @@ code: |
   session_search_end_date = None
   undefine("sessions_list")
 ---
-mandatory: True
 event: load_answer
 id: session list
 question: |

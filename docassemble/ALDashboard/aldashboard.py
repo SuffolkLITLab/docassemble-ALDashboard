@@ -103,13 +103,25 @@ from .database_compat import (
     database_session_scope as _db_session_scope,
     get_database_session as _get_db_session,
 )
-from .docassemble_compat import (
-    SavedFile,
-    directory_for,
-    get_ext_and_mimetype,
-    secure_filename_unicode_ok,
-    get_info_from_file_number,
-)
+from .docassemble_compat import SavedFile, directory_for
+
+try:
+    from docassemble.webapp.utils.filenames import (
+        get_ext_and_mimetype,
+        secure_filename_unicode_ok,
+    )
+    from docassemble.webapp.files.file_access import get_info_from_file_number
+except ModuleNotFoundError as err:
+    if err.name not in {
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.filenames",
+        "docassemble.webapp.files",
+        "docassemble.webapp.files.file_access",
+    }:
+        raise
+    from docassemble.webapp.backend import get_info_from_file_number
+    from docassemble.webapp.files import get_ext_and_mimetype
+    from docassemble.webapp.server import secure_filename_unicode_ok
 
 __all__ = [
     "install_from_github_url",

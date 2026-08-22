@@ -34,6 +34,8 @@ def _load_session_detail_helpers():
         "build_session_files_zip",
         "download_file_by_id",
         "format_session_users",
+        "get_allowed_interview_filenames",
+        "get_permitted_session_details",
     }
     namespace = {
         "Any": Any,
@@ -52,14 +54,26 @@ def _load_session_detail_helpers():
         "_get_db_session": None,
         "get_info_from_file_number": lambda *args, **kwargs: {},
         "SavedFile": None,
-        "get_ext_and_mimetype": lambda fn: (fn.rsplit(".", 1)[-1], "application/octet-stream") if "." in fn else (None, None),
+        "get_ext_and_mimetype": lambda fn: (
+            (fn.rsplit(".", 1)[-1], "application/octet-stream")
+            if "." in fn
+            else (None, None)
+        ),
         "secure_filename_unicode_ok": lambda fn: fn,
         "secure_filename": lambda fn: fn,
-        "send_file": lambda path, **kwargs: namedtuple("FlaskResponse", ["headers", "path"])({}, path),
-        "get_users_and_name_by_ids": lambda ids: [(uid, f"user{uid}@example.com", f"First{uid}", f"Last{uid}") for uid in ids],
+        "send_file": lambda path, **kwargs: namedtuple(
+            "FlaskResponse", ["headers", "path"]
+        )({}, path),
+        "get_users_and_name_by_ids": lambda ids: [
+            (uid, f"user{uid}@example.com", f"First{uid}", f"Last{uid}") for uid in ids
+        ],
         "log": lambda *args, **kwargs: None,
         "text": lambda value: value,
         "user_has_privilege": lambda privileges: False,
+        "user_privileges": lambda: ["user"],
+        "get_config": lambda key, default=None: default,
+        "user_logged_in": lambda: False,
+        "user_info": lambda: None,
     }
     found = set()
     for node in tree.body:
@@ -79,6 +93,8 @@ get_files_associated_with_session = aldashboard.get_files_associated_with_sessio
 build_session_files_zip = aldashboard.build_session_files_zip
 download_file_by_id = aldashboard.download_file_by_id
 format_session_users = aldashboard.format_session_users
+get_allowed_interview_filenames = aldashboard.get_allowed_interview_filenames
+get_permitted_session_details = aldashboard.get_permitted_session_details
 
 
 def test_get_session_details_success(monkeypatch):
@@ -246,7 +262,9 @@ def test_build_session_files_zip(monkeypatch, tmp_path):
     ]
 
     monkeypatch.setattr(
-        aldashboard, "get_files_associated_with_session", lambda *args, **kwargs: fake_files
+        aldashboard,
+        "get_files_associated_with_session",
+        lambda *args, **kwargs: fake_files,
     )
 
     zip_path = build_session_files_zip("session-test-zip")
@@ -298,13 +316,102 @@ def test_format_session_users_with_dict():
     assert format_session_users({"user_id": 1}, users_dict) == "Alice Admin"
 
     # Multiple user_ids string in dict
-    assert format_session_users({"user_ids": "1,2"}, users_dict) == "Alice Admin, Bob Beneficiary"
+    assert (
+        format_session_users({"user_ids": "1,2"}, users_dict)
+        == "Alice Admin, Bob Beneficiary"
+    )
 
     # Multiple user_ids list in dict
-    assert format_session_users({"user_ids": [1, 2]}, users_dict) == "Alice Admin, Bob Beneficiary"
+    assert (
+        format_session_users({"user_ids": [1, 2]}, users_dict)
+        == "Alice Admin, Bob Beneficiary"
+    )
 
     # Empty user
     assert format_session_users({"user_id": None}, users_dict) == "Anonymous"
 
     # Missing from cache, resolves lazily
     assert "user99@example.com" in format_session_users({"user_id": 99}, {})
+
+
+def test_get_allowed_interview_filenames_is_none_for_privileged_users(monkeypatch):
+    monkeypatch.setattr(aldashboard, "user_has_privilege", lambda privileges: True)
+
+    assert get_allowed_interview_filenames() is None
+
+
+def test_get_allowed_interview_filenames_uses_interview_viewers_config(monkeypatch):
+    monkeypatch.setattr(aldashboard, "user_has_privilege", lambda privileges: False)
+    monkeypatch.setattr(aldashboard, "user_privileges", lambda: ["user", "advocate"])
+    monkeypatch.setattr(
+        aldashboard,
+        "get_config",
+        lambda key, default=None: {
+            "interview viewers": {
+                "advocate": ["docassemble.MyPackage:data/questions/allowed.yml"],
+                "other": ["docassemble.MyPackage:data/questions/forbidden.yml"],
+            }
+        },
+    )
+
+    assert get_allowed_interview_filenames() == {
+        "docassemble.MyPackage:data/questions/allowed.yml"
+    }
+
+
+def test_get_permitted_session_details_enforces_the_allow_list(monkeypatch):
+    monkeypatch.setattr(
+        aldashboard,
+        "get_session_details",
+        lambda session_id: {
+            "filename": "docassemble.MyPackage:data/questions/forbidden.yml",
+            "key": session_id,
+        },
+    )
+
+    # An unrestricted user sees the session.
+    monkeypatch.setattr(aldashboard, "get_allowed_interview_filenames", lambda: None)
+    assert get_permitted_session_details("some-session")["key"] == "some-session"
+
+    # A user restricted to other interviews does not.
+    monkeypatch.setattr(
+        aldashboard,
+        "get_allowed_interview_filenames",
+        lambda: {"docassemble.MyPackage:data/questions/allowed.yml"},
+    )
+    assert get_permitted_session_details("some-session") is None
+
+    # ...but does see a session for an interview they are allowed to view.
+    monkeypatch.setattr(
+        aldashboard,
+        "get_allowed_interview_filenames",
+        lambda: {"docassemble.MyPackage:data/questions/forbidden.yml"},
+    )
+    assert get_permitted_session_details("some-session")["key"] == "some-session"
+
+
+def test_get_permitted_session_details_returns_none_for_missing_sessions(monkeypatch):
+    def missing(session_id):
+        raise ValueError(f"No session found with ID: {session_id}")
+
+    monkeypatch.setattr(aldashboard, "get_session_details", missing)
+    monkeypatch.setattr(aldashboard, "get_allowed_interview_filenames", lambda: None)
+
+    assert get_permitted_session_details("no-such-session") is None
+
+
+def test_format_session_users_only_looks_up_an_unknown_user_once(monkeypatch):
+    lookups = []
+
+    def fake_lookup(user_ids):
+        lookups.append(list(user_ids))
+        return []
+
+    monkeypatch.setattr(aldashboard, "get_users_and_name_by_ids", fake_lookup)
+
+    users_by_id = {}
+    assert format_session_users({"user_id": 42}, users_by_id) == "User ID 42"
+    assert format_session_users({"user_id": 42}, users_by_id) == "User ID 42"
+
+    assert lookups == [[42]]
+    assert users_by_id == {42: "User ID 42"}

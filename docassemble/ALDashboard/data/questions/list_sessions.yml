@@ -30,21 +30,16 @@ question: |
   Splash screen
 ---
 code: |
-  if user_has_privilege(["admin", "developer"]):
-    interviews = {interview["filename"]: interview for interview in interview_menu()}
-  else:
-    allowed_interviews = set()
-    for privilege in user_privileges():
-      allowed_interviews.update(
-        get_config("assembly line", {})
-        .get("interview viewers", {})
-        .get(privilege, [])
-      )
-    interviews = {
-      interview["filename"]: interview
-      for interview in interview_menu()
-      if interview["filename"] in allowed_interviews
-    }
+  # get_allowed_interview_filenames() returns None for admins and developers,
+  # who can see every interview, and otherwise the set of interviews listed
+  # under `assembly line: interview viewers:` for the user's privileges.
+  allowed_interview_filenames = get_allowed_interview_filenames()
+  interviews = {
+    interview["filename"]: interview
+    for interview in interview_menu()
+    if allowed_interview_filenames is None
+    or interview["filename"] in allowed_interview_filenames
+  }
 ---
 code: |
   # Compute current interview usage and apply heatmap styles
@@ -283,10 +278,6 @@ code: |
     search_criteria_text=session_search_resolved_criteria_text if session_list_mode == "search" else "",
   )
 ---
-code: |
-  # Ensure users_and_name_dict is always initialized
-  users_and_name_dict = {}
----
 need: sessions_list
 code: |
   # Only look up the names of users who actually appear in the sessions
@@ -394,9 +385,9 @@ subquestion: |
     <br/>
     <a href="${ interview_url_action('view_single_session', session_id=interview.key) }"><i class="fa-solid fa-magnifying-glass"></i>&nbsp;Details</a>
     <br/>
-    <a href="${ interview_url_action('view_session_variables', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+    <a href="${ interview_url_action('view_session_variables', session_id=interview.key) }"><i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
     <br/>
-    <a href="${ interview_url_action('view_session_files', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-paperclip"></i>&nbsp;Files</a>
+    <a href="${ interview_url_action('view_session_files', session_id=interview.key) }"><i class="fa-solid fa-paperclip"></i>&nbsp;Files</a>
   % if user_has_privilege('admin'):
     <br/>
     <a href="${ url_action('delete_session', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-trash"></i>&nbsp;Delete</a>
@@ -412,16 +403,32 @@ code: |
   session_list_mode = "session_id"
   undefine("session_id")
 ---
+# Recomputed on every screen so that following a "Details" link for one session
+# doesn't redisplay the session that was looked at before it.
+reconsider: True
+code: |
+  current_session_id = str(action_argument('session_id') or session_id or "").strip()
+---
+reconsider: True
+code: |
+  # None both when no such session exists and when this user isn't allowed to
+  # see it, so the screens below can't be used to browse other people's sessions.
+  single_session_details = get_permitted_session_details(current_session_id)
+---
+reconsider: True
+code: |
+  if single_session_details:
+    single_session_files = get_files_associated_with_session(
+      current_session_id,
+      yaml_filename=single_session_details.get('filename'),
+      privileged=user_has_privilege(['admin', 'developer'])
+    )
+  else:
+    single_session_files = []
+---
 event: view_single_session
 id: view single session
 question: |
-  <%
-    current_session_id = action_argument('session_id') or session_id
-    try:
-      single_session_details = get_session_details(current_session_id)
-    except Exception:
-      single_session_details = None
-  %>
   % if single_session_details:
   Session details for ${ single_session_details.get('title') or single_session_details.get("auto_title") or current_session_id }
   % else:
@@ -429,14 +436,6 @@ question: |
   % endif
 subquestion: |
   % if single_session_details:
-  <%
-    single_session_files = get_files_associated_with_session(
-      current_session_id,
-      yaml_filename=single_session_details.get('filename'),
-      privileged=user_has_privilege(['admin', 'developer'])
-    )
-    user_label = format_session_users(single_session_details, users_and_name_dict)
-  %>
   <table class="table">
     <thead>
       <tr>
@@ -456,16 +455,16 @@ subquestion: |
         % endif
       </td>
       <td>${ current_session_id }</td>
-      <td>${ user_label }</td>
+      <td>${ format_session_users(single_session_details, {}) }</td>
       <td>${ format_date(single_session_details.get('modtime'), "MMM d YYYY") }</td>
       <td>
         <a href="${ interview_url(i=single_session_details['filename'], session=current_session_id) }">
           <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>
         <br/>
-        <a href="${ interview_url_action('view_session_variables', session_id=current_session_id, filename=single_session_details.get('filename')) }">
+        <a href="${ interview_url_action('view_session_variables', session_id=current_session_id) }">
           <i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
         <br/>
-        <a href="${ interview_url_action('view_session_files', session_id=current_session_id, filename=single_session_details.get('filename')) }">
+        <a href="${ interview_url_action('view_session_files', session_id=current_session_id) }">
           <i class="fa-solid fa-paperclip"></i>&nbsp;Files (${ len(single_session_files) })</a>
         % if user_has_privilege('admin'):
         <br/>
@@ -492,39 +491,32 @@ subquestion: |
         <td>${ f.get('file_id') }</td>
         <td class="text-wrap text-break">${ f.get('filename') }</td>
         <td>
-          <a href="${ interview_url_action('download_session_file', session_id=current_session_id, filename=single_session_details.get('filename'), file_id=f.get('file_id')) }">
+          <a href="${ interview_url_action('download_session_file', session_id=current_session_id, file_id=f.get('file_id')) }">
             <i class="fa-solid fa-download"></i>&nbsp;Download</a>
         </td>
       </tr>
       % endfor
     </tbody>
   </table>
-  <a href="${ interview_url_action('download_all_session_files', session_id=current_session_id, filename=single_session_details.get('filename')) }">
+  <a href="${ interview_url_action('download_all_session_files', session_id=current_session_id) }">
     <i class="fa-solid fa-file-zipper"></i>&nbsp;Download all files (.zip)</a>
   % else:
-  <div class="alert alert-secondary mt-3">No uploaded files are associated with this session.</div>
+  <div class="alert alert-secondary mt-3">No files are associated with this session.</div>
   % endif
 
   % else:
-  <div class="alert alert-warning">No session found with ID: <code>${ current_session_id }</code></div>
+  <div class="alert alert-warning">No session found with ID: <code>${ current_session_id }</code>, or you do not have permission to view it.</div>
   % endif
 back button: True
 ---
 event: view_session_files
 id: view session files
 question: |
-  Files for session ${ action_argument('session_id') or session_id }
+  Files for session ${ current_session_id }
 subquestion: |
-  <%
-    target_sid = action_argument('session_id') or session_id
-    target_fn = action_argument('filename')
-    files_list = get_files_associated_with_session(
-      target_sid,
-      yaml_filename=target_fn,
-      privileged=user_has_privilege(['admin', 'developer'])
-    )
-  %>
-  % if files_list:
+  % if not single_session_details:
+  <div class="alert alert-warning">No session found with ID: <code>${ current_session_id }</code>, or you do not have permission to view it.</div>
+  % elif single_session_files:
   <table class="table">
     <thead>
       <tr>
@@ -534,82 +526,72 @@ subquestion: |
       </tr>
     </thead>
     <tbody>
-    % for f in files_list:
+    % for f in single_session_files:
       <tr>
         <td>${ f.get('file_id') }</td>
         <td class="text-wrap text-break">${ f.get('filename') }</td>
         <td>
-          <a href="${ interview_url_action('download_session_file', session_id=target_sid, filename=target_fn, file_id=f.get('file_id')) }">
+          <a href="${ interview_url_action('download_session_file', session_id=current_session_id, file_id=f.get('file_id')) }">
             <i class="fa-solid fa-download"></i>&nbsp;Download</a>
         </td>
       </tr>
     % endfor
     </tbody>
   </table>
-  <a href="${ interview_url_action('download_all_session_files', session_id=target_sid, filename=target_fn) }">
+  <a href="${ interview_url_action('download_all_session_files', session_id=current_session_id) }">
     <i class="fa-solid fa-file-zipper"></i>&nbsp;Download all files (.zip)</a>
   % else:
-  <div class="alert alert-secondary">No uploaded files are associated with this session.</div>
+  <div class="alert alert-secondary">No files are associated with this session.</div>
   % endif
 back button: True
 ---
 event: view_session_variables
 code: |
-  response(
-    binaryresponse=json.dumps(
-      dashboard_get_session_variables(
-        session_id=action_argument("session_id"),
-        filename=action_argument("filename"),
-      )
-    ).encode("utf-8"),
-    content_type="application/json",
-    response_code=200,
+  session_details_for_variables = get_permitted_session_details(action_argument("session_id"))
+  if not session_details_for_variables:
+    response(response="Session not found.", response_code=404, content_type="text/plain; charset=utf-8")
+  json_response(
+    dashboard_get_session_variables(
+      session_id=action_argument("session_id"),
+      filename=session_details_for_variables.get("filename"),
+    )
   )
 ---
 event: download_session_file
 code: |
-  target_session_id = action_argument('session_id')
-  target_filename = action_argument('filename')
-  requested_file_id = str(action_argument('file_id') or "")
-  allowed_file_ids = [
-    f.get("file_id")
-    for f in get_files_associated_with_session(
-      target_session_id,
-      yaml_filename=target_filename,
-      privileged=user_has_privilege(['admin', 'developer'])
-    )
-  ]
-
-  if not requested_file_id.isdigit() or int(requested_file_id) not in allowed_file_ids:
+  session_details_for_download = get_permitted_session_details(action_argument('session_id'))
+  if not session_details_for_download:
     response(response="File not found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
-
-  file_info = download_file_by_id(
-    requested_file_id,
-    privileged=user_has_privilege(['admin', 'developer']),
-    return_file_info=True
+  # Serving a DAFile rather than raw bytes gives the download its real filename.
+  file_to_download = get_session_file_for_download(
+    action_argument('session_id'),
+    action_argument('file_id'),
+    yaml_filename=session_details_for_download.get('filename'),
+    privileged=user_has_privilege(['admin', 'developer'])
   )
-  with open(file_info.get("path"), "rb") as fp:
-    payload = fp.read()
-  response(binaryresponse=payload, content_type=file_info.get("mimetype") or "application/octet-stream", response_code=200)
+  if not file_to_download:
+    response(response="File not found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  response(file=file_to_download)
 ---
 event: download_all_session_files
 code: |
-  target_session_id = action_argument('session_id')
-  target_filename = action_argument('filename')
-  zip_path = build_session_files_zip(
-    target_session_id,
-    yaml_filename=target_filename,
+  session_details_for_zip = get_permitted_session_details(action_argument('session_id'))
+  if not session_details_for_zip:
+    response(response="No files found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  session_files_zip = get_session_files_zip(
+    action_argument('session_id'),
+    yaml_filename=session_details_for_zip.get('filename'),
     privileged=user_has_privilege(['admin', 'developer'])
   )
-  if not zip_path:
+  if not session_files_zip:
     response(response="No files found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
-  with open(zip_path, "rb") as fp:
-    payload = fp.read()
-  response(binaryresponse=payload, content_type="application/zip", response_code=200)
+  response(file=session_files_zip)
 ---
 event: delete_session
 code: |
-  if interview_list(
+  if not user_has_privilege('admin'):
+    log("You do not have permission to delete this session.", "danger")
+  elif interview_list(
     action="delete",
     filename=action_argument("filename"),
     session=action_argument("session_id"),

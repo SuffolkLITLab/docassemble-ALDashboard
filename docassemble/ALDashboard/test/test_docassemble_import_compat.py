@@ -273,35 +273,81 @@ def test_file_compat_falls_back_to_docassemble_1_9_layout():
 
 
 def test_aldashboard_file_helpers_fall_back_on_docassemble_1_9_layout():
+    """The file-helper imports must fall back to the docassemble 1.9 locations
+    both when the 1.10 modules are missing entirely and when a 1.10 module
+    exists but doesn't export the symbol (a plain ImportError)."""
     package_root_str = str(PACKAGE_ROOT)
     probe = textwrap.dedent(f"""
         import ast
+        import sys
+        import types
         from pathlib import Path
 
         package_root = Path({package_root_str!r})
         source = (package_root / "aldashboard.py").read_text(encoding="utf-8")
+        lines = source.splitlines(keepends=True)
         tree = ast.parse(source)
 
-        # Verify fallback block exists for 1.10 -> 1.9 filenames/file_access imports
-        has_file_access_fallback = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Try):
-                import_names = [
-                    alias.name
-                    for item in node.body if isinstance(item, ast.ImportFrom)
-                    for alias in item.names
-                ]
-                if "get_info_from_file_number" in import_names:
-                    # Check that handler contains fallback imports
-                    handler_modules = [
-                        item.module
-                        for handler in node.handlers
-                        for item in handler.body if isinstance(item, ast.ImportFrom)
-                    ]
-                    if "docassemble.webapp.backend" in handler_modules and "docassemble.webapp.files" in handler_modules:
-                        has_file_access_fallback = True
+        block_source = None
+        for node in tree.body:
+            if not isinstance(node, ast.Try):
+                continue
+            import_names = [
+                alias.name
+                for item in node.body if isinstance(item, ast.ImportFrom)
+                for alias in item.names
+            ]
+            if "get_info_from_file_number" in import_names:
+                block_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+        assert block_source is not None, "aldashboard.py missing 1.9 fallback for file helpers"
 
-        assert has_file_access_fallback, "aldashboard.py missing 1.9 fallback for file helpers"
+        legacy_get_info = object()
+        legacy_get_ext = object()
+        legacy_secure_filename = object()
+
+        def run(setup):
+            for name in [name for name in sys.modules if name.startswith("docassemble")]:
+                del sys.modules[name]
+            for name in ("docassemble", "docassemble.webapp"):
+                package = types.ModuleType(name)
+                package.__path__ = []
+                sys.modules[name] = package
+            backend = types.ModuleType("docassemble.webapp.backend")
+            backend.get_info_from_file_number = legacy_get_info
+            files = types.ModuleType("docassemble.webapp.files")
+            files.__path__ = []
+            files.get_ext_and_mimetype = legacy_get_ext
+            server = types.ModuleType("docassemble.webapp.server")
+            server.secure_filename_unicode_ok = legacy_secure_filename
+            sys.modules["docassemble.webapp.backend"] = backend
+            sys.modules["docassemble.webapp.files"] = files
+            sys.modules["docassemble.webapp.server"] = server
+            setup()
+            namespace = {{}}
+            exec(compile(block_source, "aldashboard.py", "exec"), namespace)
+            assert namespace["get_info_from_file_number"] is legacy_get_info
+            assert namespace["get_ext_and_mimetype"] is legacy_get_ext
+            assert namespace["secure_filename_unicode_ok"] is legacy_secure_filename
+
+        # docassemble 1.9: none of the 1.10 modules exist.
+        def modules_missing():
+            sys.modules["docassemble.webapp.utils"] = None
+            sys.modules["docassemble.webapp.files.file_access"] = None
+
+        run(modules_missing)
+
+        # The module exists but predates the symbol, which raises a plain
+        # ImportError rather than a ModuleNotFoundError.
+        def module_without_symbol():
+            utils = types.ModuleType("docassemble.webapp.utils")
+            utils.__path__ = []
+            filenames = types.ModuleType("docassemble.webapp.utils.filenames")
+            filenames.get_ext_and_mimetype = object()
+            sys.modules["docassemble.webapp.utils"] = utils
+            sys.modules["docassemble.webapp.utils.filenames"] = filenames
+            sys.modules["docassemble.webapp.files.file_access"] = None
+
+        run(module_without_symbol)
     """)
     result = subprocess.run(
         [sys.executable, "-c", probe],
@@ -311,4 +357,3 @@ def test_aldashboard_file_helpers_fall_back_on_docassemble_1_9_layout():
     )
 
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-

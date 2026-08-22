@@ -16,28 +16,30 @@ features:
 modules:
   - .aldashboard
 ---
-#mandatory: True # Use while developing in playground
+mandatory: True
+code: |
+  session_list_mode
+  if session_list_mode in ["browse", "search"]:
+    load_answer
+  elif session_list_mode == "session_id":
+    view_single_session
+---
 continue button field: playground_splash
 id: splash screen
 question: |
   Splash screen
 ---
 code: |
-  if user_has_privilege(["admin", "developer"]):
-    interviews = {interview["filename"]: interview for interview in interview_menu()}
-  else:
-    allowed_interviews = set()
-    for privilege in user_privileges():
-      allowed_interviews.update(
-        get_config("assembly line", {})
-        .get("interview viewers", {})
-        .get(privilege, [])
-      )
-    interviews = {
-      interview["filename"]: interview
-      for interview in interview_menu()
-      if interview["filename"] in allowed_interviews
-    }
+  # get_allowed_interview_filenames() returns None for admins and developers,
+  # who can see every interview, and otherwise the set of interviews listed
+  # under `assembly line: interview viewers:` for the user's privileges.
+  allowed_interview_filenames = get_allowed_interview_filenames()
+  interviews = {
+    interview["filename"]: interview
+    for interview in interview_menu()
+    if allowed_interview_filenames is None
+    or interview["filename"] in allowed_interview_filenames
+  }
 ---
 code: |
   # Compute current interview usage and apply heatmap styles
@@ -109,7 +111,12 @@ fields:
     choices:
       - Browse recent sessions: browse
       - Search answer values: search
+      - Look up specific session ID: session_id
     default: browse
+  - Session ID: session_id
+    required: False
+    js show if: |
+      val("session_list_mode") == "session_id"
   - Filename: filename
     required: False
     datatype: combobox
@@ -129,10 +136,39 @@ fields:
           )
         ),
       )
+    js show if: |
+      val("session_list_mode") != "session_id"
+    show if:
+      code: |
+        user_has_privilege(['admin', 'developer'])
+  - Filename: filename
+    code: |
+      sorted(
+        list(interviews.keys()),
+        key=lambda fname: (
+          interviews.get(fname).get("title")
+          if isinstance(interviews.get(fname), dict)
+          else (
+            getattr(interviews.get(fname), "title", None)
+            or (
+              interviews.get(fname)
+              if isinstance(interviews.get(fname), str)
+              else fname
+            )
+          )
+        ),
+      )
+    js show if: |
+      val("session_list_mode") != "session_id"
+    show if:
+      code: |
+        not user_has_privilege(['admin', 'developer'])
   - User (leave blank to view all sessions): chosen_user
     required: False
     datatype: integer
     input type: combobox
+    js show if: |
+      val("session_list_mode") != "session_id"
     show if:
       code: |
         total_user_count <= 10000
@@ -146,6 +182,8 @@ fields:
     required: False
     input type: ajax
     action: user_search_ajax
+    js show if: |
+      val("session_list_mode") != "session_id"
     show if:
       code: |
         total_user_count > 10000
@@ -153,12 +191,13 @@ fields:
     required: False
     datatype: yesno
     default: True
+    js show if: |
+      val("session_list_mode") != "session_id"
   - Use advanced answer-variable filters: session_search_use_advanced_filters
     datatype: yesno
     default: False
-    show if:
-      variable: session_list_mode
-      is: search
+    js show if: |
+      val("session_list_mode") == "search"
   - Variable name: session_search_variable_name
     js show if: |
       val("session_list_mode") == "search" && !val("session_search_use_advanced_filters")
@@ -184,17 +223,18 @@ fields:
   - Modified on or after: session_search_start_date
     datatype: date
     required: False
-    show if:
-      variable: session_list_mode
-      is: search
+    js show if: |
+      val("session_list_mode") == "search"
   - Modified on or before: session_search_end_date
     datatype: date
     required: False
-    show if:
-      variable: session_list_mode
-      is: search
+    js show if: |
+      val("session_list_mode") == "search"
 validation code: |
-  if session_list_mode == "search":
+  if session_list_mode == "session_id":
+    if not str(session_id or "").strip():
+      validation_error("Please enter a session ID.", field="session_id")
+  elif session_list_mode == "search":
     if session_search_use_advanced_filters:
       session_search_resolved_criteria_text = build_session_search_criteria_text(
         "",
@@ -223,19 +263,19 @@ validation code: |
 code: |
   # chosen_user comes back as a string from the ajax field (large servers),
   # but as a real int from the combobox (small servers) - normalize it here so speedy_get_sessions() 
-  #always gets a proper int either way
+  # always gets a proper int either way
   if total_user_count > 10000 and chosen_user:
     chosen_user = int(chosen_user)
 ---
 code: |
-  # For debugging purposes
+  # Retrieve sessions once to render the browse/search table.
   sessions_list = speedy_get_sessions(
-    user_id=chosen_user,
-    filename=filename,
-    filter_step1=filter_step1,
+    user_id=chosen_user if session_list_mode in ["browse", "search"] else None,
+    filename=filename if session_list_mode in ["browse", "search"] else None,
+    filter_step1=filter_step1 if session_list_mode in ["browse", "search"] else False,
     start_date=session_search_start_date if session_list_mode == "search" else None,
     end_date=session_search_end_date if session_list_mode == "search" else None,
-    search_criteria_text=session_search_resolved_criteria_text,
+    search_criteria_text=session_search_resolved_criteria_text if session_list_mode == "search" else "",
   )
 ---
 need: sessions_list
@@ -246,8 +286,15 @@ code: |
   for interview in sessions_list:
     raw_user_ids = getattr(interview, "user_ids", None)
     if not raw_user_ids:
+      raw_user_ids = getattr(interview, "user_id", None)
+    if not raw_user_ids:
       continue
-    needed_user_ids.update(raw_user_ids.split(","))
+    if isinstance(raw_user_ids, str):
+      needed_user_ids.update(raw_user_ids.split(","))
+    elif isinstance(raw_user_ids, (list, tuple, set)):
+      needed_user_ids.update(str(x) for x in raw_user_ids)
+    else:
+      needed_user_ids.add(str(raw_user_ids))
 
   clean_ids = []
   for uid in needed_user_ids:
@@ -257,7 +304,7 @@ code: |
       continue
 
   users_and_name_dict = {
-    user_id: f"{email} {name} {last}"
+    user_id: f"{email} {name} {last}".strip()
     for user_id, email, name, last in get_users_and_name_by_ids(clean_ids)
   }
 ---
@@ -273,7 +320,7 @@ code: |
     existing_match = get_users_and_name_by_ids([original_id])
     if existing_match:
       user_id, email, name, last = existing_match[0]
-      json_response([[str(user_id), f"{email} {name} {last}"]])
+      json_response([[str(user_id), f"{email} {name} {last}".strip()]])
   except (TypeError, ValueError):
     pass
   results = [
@@ -292,18 +339,18 @@ code: |
   session_search_end_date = None
   undefine("sessions_list")
 ---
-mandatory: True
 event: load_answer
 id: session list
 question: |
   % if filename:
   ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for ${ nicer_interview_filename(interviews.get(filename, {"title": filename}).get('title', filename)) }
   % elif chosen_user:
-  ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for User ID ${ chosen_user}
+  ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for User ID ${ chosen_user }
   % else:
   ${ "Matching" if session_list_mode == "search" else "Recently started" } sessions for all users
   % endif
 subquestion: |
+  ${ action_button_html(url_action('go_to_session_id_lookup'), label='Find Session By ID') }
 
   <table class="table">
     <thead>
@@ -336,7 +383,11 @@ subquestion: |
       <a href="${ interview_url(i=interview.filename, session=interview.key) }">
         <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>
     <br/>
-    <a href="${ interview_url_action('view_session_variables', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+    <a href="${ interview_url_action('view_single_session', session_id=interview.key) }"><i class="fa-solid fa-magnifying-glass"></i>&nbsp;Details</a>
+    <br/>
+    <a href="${ interview_url_action('view_session_variables', session_id=interview.key) }"><i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+    <br/>
+    <a href="${ interview_url_action('view_session_files', session_id=interview.key) }"><i class="fa-solid fa-paperclip"></i>&nbsp;Files</a>
   % if user_has_privilege('admin'):
     <br/>
     <a href="${ url_action('delete_session', session_id=interview.key, filename=interview.filename) }"><i class="fa-solid fa-trash"></i>&nbsp;Delete</a>
@@ -347,22 +398,200 @@ subquestion: |
   </table>
 back button: True
 ---
+event: go_to_session_id_lookup
+code: |
+  session_list_mode = "session_id"
+  undefine("session_id")
+---
+# Recomputed on every screen so that following a "Details" link for one session
+# doesn't redisplay the session that was looked at before it.
+reconsider: True
+code: |
+  current_session_id = str(action_argument('session_id') or session_id or "").strip()
+---
+reconsider: True
+code: |
+  # None both when no such session exists and when this user isn't allowed to
+  # see it, so the screens below can't be used to browse other people's sessions.
+  single_session_details = get_permitted_session_details(current_session_id)
+---
+reconsider: True
+code: |
+  if single_session_details:
+    single_session_files = get_files_associated_with_session(
+      current_session_id,
+      yaml_filename=single_session_details.get('filename'),
+      privileged=user_has_privilege(['admin', 'developer'])
+    )
+  else:
+    single_session_files = []
+---
+event: view_single_session
+id: view single session
+question: |
+  % if single_session_details:
+  Session details for ${ single_session_details.get('title') or single_session_details.get("auto_title") or current_session_id }
+  % else:
+  Session ${ current_session_id } not found
+  % endif
+subquestion: |
+  % if single_session_details:
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Session ID</th>
+        <th>User</th>
+        <th>Modified</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tr>
+      <td class="text-wrap text-break">
+        <strong>${ single_session_details.get('title') or single_session_details.get("auto_title") or current_session_id }</strong>
+        % if single_session_details.get('filename'):
+        <br/>
+        ${ nicer_interview_filename(single_session_details.get('filename')) }
+        % endif
+      </td>
+      <td>${ current_session_id }</td>
+      <td>${ format_session_users(single_session_details, {}) }</td>
+      <td>${ format_date(single_session_details.get('modtime'), "MMM d YYYY") }</td>
+      <td>
+        <a href="${ interview_url(i=single_session_details['filename'], session=current_session_id) }">
+          <i class="fa-solid fa-folder-open"></i>&nbsp;Join</a>
+        <br/>
+        <a href="${ interview_url_action('view_session_variables', session_id=current_session_id) }">
+          <i class="fa-solid fa-eye"></i>&nbsp;Vars</a>
+        <br/>
+        <a href="${ interview_url_action('view_session_files', session_id=current_session_id) }">
+          <i class="fa-solid fa-paperclip"></i>&nbsp;Files (${ len(single_session_files) })</a>
+        % if user_has_privilege('admin'):
+        <br/>
+        <a href="${ url_action('delete_session', session_id=current_session_id, filename=single_session_details.get('filename')) }">
+          <i class="fa-solid fa-trash"></i>&nbsp;Delete</a>
+        % endif
+      </td>
+    </tr>
+  </table>
+
+  % if single_session_files:
+  <h2 class="h5 mt-4">Files for this session</h2>
+  <table class="table table-sm">
+    <thead>
+      <tr>
+        <th>File ID</th>
+        <th>Filename</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      % for f in single_session_files:
+      <tr>
+        <td>${ f.get('file_id') }</td>
+        <td class="text-wrap text-break">${ f.get('filename') }</td>
+        <td>
+          <a href="${ interview_url_action('download_session_file', session_id=current_session_id, file_id=f.get('file_id')) }">
+            <i class="fa-solid fa-download"></i>&nbsp;Download</a>
+        </td>
+      </tr>
+      % endfor
+    </tbody>
+  </table>
+  <a href="${ interview_url_action('download_all_session_files', session_id=current_session_id) }">
+    <i class="fa-solid fa-file-zipper"></i>&nbsp;Download all files (.zip)</a>
+  % else:
+  <div class="alert alert-secondary mt-3">No files are associated with this session.</div>
+  % endif
+
+  % else:
+  <div class="alert alert-warning">No session found with ID: <code>${ current_session_id }</code>, or you do not have permission to view it.</div>
+  % endif
+back button: True
+---
+event: view_session_files
+id: view session files
+question: |
+  Files for session ${ current_session_id }
+subquestion: |
+  % if not single_session_details:
+  <div class="alert alert-warning">No session found with ID: <code>${ current_session_id }</code>, or you do not have permission to view it.</div>
+  % elif single_session_files:
+  <table class="table">
+    <thead>
+      <tr>
+        <th>File ID</th>
+        <th>Filename</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    % for f in single_session_files:
+      <tr>
+        <td>${ f.get('file_id') }</td>
+        <td class="text-wrap text-break">${ f.get('filename') }</td>
+        <td>
+          <a href="${ interview_url_action('download_session_file', session_id=current_session_id, file_id=f.get('file_id')) }">
+            <i class="fa-solid fa-download"></i>&nbsp;Download</a>
+        </td>
+      </tr>
+    % endfor
+    </tbody>
+  </table>
+  <a href="${ interview_url_action('download_all_session_files', session_id=current_session_id) }">
+    <i class="fa-solid fa-file-zipper"></i>&nbsp;Download all files (.zip)</a>
+  % else:
+  <div class="alert alert-secondary">No files are associated with this session.</div>
+  % endif
+back button: True
+---
 event: view_session_variables
 code: |
-  response(
-    binaryresponse=json.dumps(
-      dashboard_get_session_variables(
-        session_id=action_argument("session_id"),
-        filename=action_argument("filename"),
-      )
-    ).encode("utf-8"),
-    content_type="application/json",
-    response_code=200,
+  session_details_for_variables = get_permitted_session_details(action_argument("session_id"))
+  if not session_details_for_variables:
+    response(response="Session not found.", response_code=404, content_type="text/plain; charset=utf-8")
+  json_response(
+    dashboard_get_session_variables(
+      session_id=action_argument("session_id"),
+      filename=session_details_for_variables.get("filename"),
+    )
   )
+---
+event: download_session_file
+code: |
+  session_details_for_download = get_permitted_session_details(action_argument('session_id'))
+  if not session_details_for_download:
+    response(response="File not found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  # Serving a DAFile rather than raw bytes gives the download its real filename.
+  file_to_download = get_session_file_for_download(
+    action_argument('session_id'),
+    action_argument('file_id'),
+    yaml_filename=session_details_for_download.get('filename'),
+    privileged=user_has_privilege(['admin', 'developer'])
+  )
+  if not file_to_download:
+    response(response="File not found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  response(file=file_to_download)
+---
+event: download_all_session_files
+code: |
+  session_details_for_zip = get_permitted_session_details(action_argument('session_id'))
+  if not session_details_for_zip:
+    response(response="No files found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  session_files_zip = get_session_files_zip(
+    action_argument('session_id'),
+    yaml_filename=session_details_for_zip.get('filename'),
+    privileged=user_has_privilege(['admin', 'developer'])
+  )
+  if not session_files_zip:
+    response(response="No files found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
+  response(file=session_files_zip)
 ---
 event: delete_session
 code: |
-  if interview_list(
+  if not user_has_privilege('admin'):
+    log("You do not have permission to delete this session.", "danger")
+  elif interview_list(
     action="delete",
     filename=action_argument("filename"),
     session=action_argument("session_id"),

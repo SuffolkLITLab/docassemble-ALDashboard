@@ -28,7 +28,6 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
 from typing import Any, List, Tuple, Dict, Optional, Callable, Set
 import math
-
 import docassemble.webapp.worker
 
 try:
@@ -84,6 +83,7 @@ from docassemble.base.util import (
     DAFileList,
     get_config,
     user_has_privilege,
+    user_privileges,
     DACloudStorage,
     user_info,
     user_logged_in,
@@ -93,6 +93,11 @@ from docassemble.base.util import (
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 import werkzeug
+from flask import send_file
+from werkzeug.utils import secure_filename
+import tempfile
+import zipfile
+
 import importlib.resources
 from datetime import date, datetime, timedelta, timezone
 from .database_compat import (
@@ -100,6 +105,27 @@ from .database_compat import (
     get_database_session as _get_db_session,
 )
 from .docassemble_compat import SavedFile
+
+try:
+    from docassemble.webapp.utils.filenames import (
+        get_ext_and_mimetype,
+        secure_filename_unicode_ok,
+    )
+    from docassemble.webapp.files.file_access import get_info_from_file_number
+except ImportError as err:
+    # A plain ImportError (rather than ModuleNotFoundError) means the module
+    # exists but does not export the symbol, which is also a 1.9/1.10 layout
+    # difference, so fall back in both cases.
+    if err.name not in {
+        "docassemble.webapp.utils",
+        "docassemble.webapp.utils.filenames",
+        "docassemble.webapp.files",
+        "docassemble.webapp.files.file_access",
+    }:
+        raise
+    from docassemble.webapp.backend import get_info_from_file_number
+    from docassemble.webapp.files import get_ext_and_mimetype
+    from docassemble.webapp.server import secure_filename_unicode_ok
 
 __all__ = [
     "install_from_github_url",
@@ -130,9 +156,18 @@ __all__ = [
     "nicer_interview_filename",
     "list_question_files_in_package",
     "list_question_files_in_docassemble_packages",
+    "get_session_details",
     "increment_index_value",
     "get_current_index_value",
     "get_latest_s3_folder",
+    "get_file_ids_associated_with_session",
+    "get_files_associated_with_session",
+    "build_session_files_zip",
+    "download_file_by_id",
+    "get_allowed_interview_filenames",
+    "get_permitted_session_details",
+    "get_session_file_for_download",
+    "get_session_files_zip",
     "get_user_details",
     "disable_user_mfa",
     "get_password_reset_link",
@@ -1235,10 +1270,15 @@ def _iso_date_text(value: Any) -> str:
 
 
 def format_session_users(session: Any, users_by_id: Dict[int, str]) -> str:
-    """Return a readable list of users associated with a session row."""
-    raw_user_ids = getattr(session, "user_ids", None)
-    if raw_user_ids is None:
-        raw_user_ids = getattr(session, "user_id", None)
+    """Return a readable list of users associated with a session row or dict."""
+    if isinstance(session, dict):
+        raw_user_ids = session.get("user_ids")
+        if raw_user_ids is None:
+            raw_user_ids = session.get("user_id")
+    else:
+        raw_user_ids = getattr(session, "user_ids", None)
+        if raw_user_ids is None:
+            raw_user_ids = getattr(session, "user_id", None)
     if not raw_user_ids:
         return "Anonymous"
 
@@ -1260,7 +1300,23 @@ def format_session_users(session: Any, users_by_id: Dict[int, str]) -> str:
         if user_id in seen_user_ids:
             continue
         seen_user_ids.add(user_id)
-        user_labels.append(users_by_id.get(user_id, f"User ID {user_id}"))
+        if user_id in users_by_id:
+            user_labels.append(users_by_id[user_id])
+        else:
+            try:
+                user_record = get_users_and_name_by_ids([user_id])
+                if user_record:
+                    _, email, first_name, last_name = user_record[0]
+                    label = f"{email} {first_name} {last_name}".strip()
+                    users_by_id[user_id] = label or f"User ID {user_id}"
+                    user_labels.append(users_by_id[user_id])
+                else:
+                    # Cache the placeholder too, so a deleted user id that shows
+                    # up on many rows only costs one query.
+                    users_by_id[user_id] = f"User ID {user_id}"
+                    user_labels.append(users_by_id[user_id])
+            except Exception:
+                user_labels.append(f"User ID {user_id}")
 
     return ", ".join(user_labels) if user_labels else "Anonymous"
 
@@ -1384,6 +1440,414 @@ LIMIT 500;
         sessions.append(row)
 
     return sessions
+
+
+def get_session_details(session_id: str) -> Dict[str, Any]:
+    """
+    Get filename, user_id, user_ids, modtime, key, and other details for a given session ID.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        raise ValueError("Session ID must not be empty.")
+
+    query = text("""
+        SELECT
+            userdict.filename as filename,
+            userdict.user_id as user_id,
+            joined_users.user_ids as user_ids,
+            userdict.modtime as modtime,
+            userdict.key as key,
+            jsonstorage.data->>'auto_title' as auto_title,
+            jsonstorage.data->>'title' as title,
+            jsonstorage.data->>'description' as description,
+            jsonstorage.data->>'steps' as steps,
+            jsonstorage.data->>'progress' as progress
+        FROM userdict
+        LEFT JOIN (
+            SELECT
+                key,
+                STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids
+            FROM userdictkeys
+            GROUP BY key
+        ) joined_users ON joined_users.key = userdict.key
+        LEFT JOIN jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = 'metadata'
+        WHERE userdict.key = :session_id
+        ORDER BY userdict.modtime DESC
+        LIMIT 1;
+        """)
+    with _get_db_session() as session:
+        rs = session.execute(query, {"session_id": session_id})
+        session_details = rs.fetchone()
+
+    if session_details is None:
+        raise ValueError(f"No session found with ID: {session_id}")
+
+    return {
+        "filename": session_details.filename,
+        "user_id": session_details.user_id,
+        "user_ids": session_details.user_ids,
+        "modtime": session_details.modtime,
+        "key": session_details.key,
+        "auto_title": session_details.auto_title,
+        "title": session_details.title,
+        "description": session_details.description,
+        "steps": session_details.steps,
+        "progress": session_details.progress,
+    }
+
+
+def get_file_ids_associated_with_session(
+    session_id: str, yaml_filename: Optional[str] = None
+) -> List[int]:
+    """
+    Get a list of file IDs associated with a given session ID.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return []
+    query = text("""
+        SELECT indexno
+        FROM uploads
+        WHERE key = :session_id
+          AND (:yaml_filename IS NULL OR yamlfile = :yaml_filename)
+        ORDER BY indexno
+    """)
+    with _get_db_session() as session:
+        rs = session.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename or None}
+        )
+        file_ids = [row.indexno for row in rs]
+    return file_ids
+
+
+def get_files_associated_with_session(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return metadata for files associated with a session.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return []
+    files: List[Dict[str, Any]] = []
+    query = text("""
+        SELECT indexno, filename
+        FROM uploads
+        WHERE key = :session_id
+          AND (:yaml_filename IS NULL OR yamlfile = :yaml_filename)
+        ORDER BY indexno
+    """)
+    with _get_db_session() as session:
+        rs = session.execute(
+            query, {"session_id": session_id, "yaml_filename": yaml_filename or None}
+        )
+        upload_rows = list(rs)
+
+    for row in upload_rows:
+        file_id = int(row.indexno)
+        raw_filename = row.filename or f"file-{file_id}"
+        extension, mimetype = get_ext_and_mimetype(raw_filename)
+        if not extension:
+            log(
+                f"get_files_associated_with_session: skipping file {file_id} in session "
+                f"{session_id} because {raw_filename!r} has no extension"
+            )
+            continue
+        fullpath = None
+        filename = raw_filename
+        try:
+            file_info = get_info_from_file_number(
+                file_id, privileged=privileged, uids=uids
+            )
+            candidate_path = file_info.get("fullpath") or file_info.get("path")
+            if candidate_path and extension and not os.path.isfile(candidate_path):
+                if os.path.isfile(f"{candidate_path}.{extension}"):
+                    candidate_path = f"{candidate_path}.{extension}"
+            if candidate_path and os.path.isfile(candidate_path):
+                fullpath = candidate_path
+                filename = file_info.get("filename") or raw_filename
+                mimetype = file_info.get("mimetype") or mimetype
+        except Exception as err:
+            log(
+                f"get_files_associated_with_session: get_info_from_file_number failed for "
+                f"file {file_id} in session {session_id}: {err}"
+            )
+
+        if not fullpath:
+            try:
+                sf = SavedFile(file_id, extension=extension, fix=True)
+                sf_path = f"{sf.path}.{extension}"
+                if os.path.isfile(sf_path):
+                    fullpath = sf_path
+                    filename = raw_filename
+            except Exception as err:
+                log(
+                    f"get_files_associated_with_session: skipping file {file_id} in session "
+                    f"{session_id} because it could not be located on disk: {err}"
+                )
+                continue
+
+        if not fullpath or not os.path.isfile(fullpath):
+            log(
+                f"get_files_associated_with_session: skipping file {file_id} in session "
+                f"{session_id} because it is missing from disk"
+            )
+            continue
+
+        files.append(
+            {
+                "file_id": file_id,
+                "filename": filename,
+                "path": fullpath,
+                "fullpath": fullpath,
+                "mimetype": mimetype,
+                "extension": extension,
+            }
+        )
+    return files
+
+
+def build_session_files_zip(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+) -> Optional[str]:
+    """
+    Build a temporary ZIP containing all files associated with a session.
+    Returns the ZIP path or None if no files were found.
+    """
+    files = get_files_associated_with_session(
+        session_id=session_id,
+        yaml_filename=yaml_filename,
+        privileged=privileged,
+        uids=uids,
+    )
+    if not files:
+        return None
+
+    safe_session_id = secure_filename_unicode_ok(str(session_id))
+    tmp = tempfile.NamedTemporaryFile(
+        delete=False, suffix=f"-session-{safe_session_id}.zip"
+    )
+    zip_path = tmp.name
+    tmp.close()
+
+    used_names = set()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in files:
+            file_id = item["file_id"]
+            src_path = item.get("fullpath") or item.get("path")
+            if not src_path or not os.path.isfile(src_path):
+                continue
+            candidate = secure_filename_unicode_ok(
+                item.get("filename") or f"file-{file_id}"
+            )
+            if not candidate:
+                candidate = f"file-{file_id}"
+            arcname = candidate
+            if arcname in used_names:
+                arcname = f"{file_id}-{candidate}"
+            used_names.add(arcname)
+            zf.write(src_path, arcname=arcname)
+    return zip_path
+
+
+def get_allowed_interview_filenames() -> Optional[Set[str]]:
+    """
+    Return the set of interview filenames the current user may look at sessions
+    for, or None if the user is unrestricted (admins and developers).
+
+    Non-privileged users are limited to the interviews listed under
+    `assembly line: interview viewers:` in the configuration for one of the
+    privileges they hold.
+    """
+    if user_has_privilege(["admin", "developer"]):
+        return None
+    allowed_filenames: Set[str] = set()
+    interview_viewers = get_config("assembly line", {}).get("interview viewers", {})
+    for privilege in user_privileges():
+        allowed_filenames.update(interview_viewers.get(privilege, []))
+    return allowed_filenames
+
+
+def get_permitted_session_details(session_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Return `get_session_details()` for a session if the current user is allowed
+    to view it, and None if the session doesn't exist or the user isn't allowed
+    to see it.
+
+    The interview filename is always resolved from the database rather than
+    trusted from the caller, so an action argument can't be used to get around
+    the interview allow-list.
+    """
+    try:
+        session_details = get_session_details(session_id)
+    except Exception:
+        return None
+    allowed_filenames = get_allowed_interview_filenames()
+    if allowed_filenames is None:
+        return session_details
+    if session_details.get("filename") in allowed_filenames:
+        return session_details
+    log(
+        f"get_permitted_session_details: user {user_info().id if user_logged_in() else 'anonymous'} "
+        f"is not allowed to view session {session_id}"
+    )
+    return None
+
+
+def get_session_file_for_download(
+    session_id: str,
+    file_id: Any,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+) -> Optional[DAFile]:
+    """
+    Return a DAFile copy of one file belonging to the given session, suitable for
+    `response(file=...)`, or None if the file isn't part of that session.
+
+    The path comes from `get_files_associated_with_session()`, which has already
+    resolved and verified it, so this serves exactly the files that were listed.
+    """
+    requested_file_id = str(file_id or "").strip()
+    if not requested_file_id.isdigit():
+        return None
+    for item in get_files_associated_with_session(
+        session_id, yaml_filename=yaml_filename, privileged=privileged
+    ):
+        if int(item["file_id"]) != int(requested_file_id):
+            continue
+        the_file = DAFile()
+        the_file.initialize(
+            filename=item.get("filename") or f"file-{requested_file_id}"
+        )
+        the_file.copy_into(item["path"])
+        if item.get("mimetype"):
+            the_file.set_mimetype(item["mimetype"])
+        the_file.commit()
+        return the_file
+    return None
+
+
+def get_session_files_zip(
+    session_id: str,
+    yaml_filename: Optional[str] = None,
+    privileged: Optional[bool] = False,
+) -> Optional[DAFile]:
+    """
+    Return a DAFile ZIP of every file associated with a session, or None if the
+    session has no files. The temporary ZIP written to disk is always removed.
+    """
+    zip_path = build_session_files_zip(
+        session_id, yaml_filename=yaml_filename, privileged=privileged
+    )
+    if not zip_path:
+        return None
+    try:
+        the_zip = DAFile()
+        the_zip.initialize(
+            filename=f"session-{secure_filename_unicode_ok(str(session_id))}-files.zip"
+        )
+        the_zip.copy_into(zip_path)
+        the_zip.set_mimetype("application/zip")
+        the_zip.commit()
+    finally:
+        try:
+            os.unlink(zip_path)
+        except OSError as err:
+            log(f"get_session_files_zip: could not remove {zip_path}: {err}")
+    return the_zip
+
+
+def download_file_by_id(
+    file_number: str,
+    privileged: Optional[bool] = False,
+    uids: Optional[List[Any]] = None,
+    extension: Optional[str] = None,
+    filename_override: Optional[str] = None,
+    return_file_info: Optional[bool] = False,
+):
+    """Fetches a file by its ID and returns a Flask Response for downloading it.
+
+    Args:
+        file_number (str): Raw file ID (may contain non-digit characters).
+        privileged (bool): Whether to perform an admin/advocate lookup. Defaults to False.
+        uids (list, optional): List of session UIDs for scoping the lookup. Defaults to None.
+        extension (str, optional): File extension to force (e.g. "pdf"). Defaults to None.
+        filename_override (str, optional): Specific filename to serve (e.g. "report.docx"). Defaults to None.
+        return_file_info (bool, optional): If True, return metadata needed for a
+            `response(file=...)` call instead of a Flask response.
+
+    Raises:
+        FileNotFoundError: If no record or filesystem path exists for the given ID,
+                           or the requested variant is missing on disk.
+
+    Returns:
+        Union[Response, Dict[str, Any]]: A Flask Response object from `send_file`, or file info dict.
+    """
+    # 1. Normalize to digits only
+    number = re.sub(r"[^0-9]", "", str(file_number))
+    if not number:
+        raise FileNotFoundError(f"Invalid file ID: {file_number!r}")
+
+    # 2. Lookup base info
+    try:
+        file_info = get_info_from_file_number(number, privileged=privileged, uids=uids)
+    except Exception:
+        raise FileNotFoundError(f"No record for file ID {number!r}")
+
+    if "path" not in file_info and "fullpath" not in file_info:
+        raise FileNotFoundError(f"No filesystem path for file ID {number!r}")
+
+    base_path = file_info.get("path") or file_info.get("fullpath")
+    extension_from_info = file_info.get("extension")
+    default_fullpath = file_info.get("fullpath")
+    if not default_fullpath and base_path and extension_from_info:
+        default_fullpath = f"{base_path}.{extension_from_info}"
+
+    # 3. Resolve which physical file to serve
+    if extension:
+        ext = secure_filename(extension)
+        candidate = f"{base_path}.{ext}"
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Extension variant not found: {candidate}")
+        the_path = candidate
+        _, mimetype = get_ext_and_mimetype(candidate)
+
+    elif filename_override:
+        safe_name = secure_filename_unicode_ok(filename_override)
+        candidate = os.path.join(os.path.dirname(base_path), safe_name)
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Filename variant not found: {candidate}")
+        the_path = candidate
+        _, mimetype = get_ext_and_mimetype(safe_name)
+
+    else:
+        the_path = default_fullpath or base_path
+        mimetype = file_info.get("mimetype")
+
+    # 4. Final sanity check
+    if not os.path.isfile(the_path):
+        raise FileNotFoundError(f"File not found on disk: {the_path}")
+
+    if return_file_info:
+        return {
+            "file_id": int(number),
+            "path": the_path,
+            "mimetype": mimetype,
+            "filename": os.path.basename(the_path),
+        }
+
+    # 5. Build and return the download response
+    resp = send_file(the_path, mimetype=mimetype)
+    resp.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+    )
+    return resp
 
 
 def dashboard_get_session_variables(session_id: str, filename: str):

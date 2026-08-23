@@ -1,0 +1,40 @@
+id: mn_district
+name: Minnesota District Court
+jurisdiction: Minnesota
+extends: generic
+description: >-
+  The Minnesota District Court caption: state and county on the left against
+  the court and judicial district on the right, followed by the court file
+  number and case type, then the party block. Modeled on Minnesota Judicial
+  Branch statewide forms such as CIV602.
+
+labels:
+  docket: "Court File Number:"
+  plaintiff: "Plaintiff / Petitioner"
+  defendant: "Defendant / Respondent"
+
+caption:
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["STATE OF MINNESOTA", "DISTRICT COURT"]
+        style: CourtCaptionHeading
+      - cells:
+          - "COUNTY OF {{ county }}"
+          - "{{ judicial_district }} JUDICIAL DISTRICT"
+        style: CourtCaptionHeading
+      - cells: ["", ""]
+      - cells: ["", "{{ docket_label }} {{ docket_number }}"]
+      - cells: ["", "Case Type: {{ case_type }}"]
+  - type: spacer
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["{{ users }},", ""]
+      - cells: ["        Plaintiff / Petitioner,", "{{ document_title }}"]
+      - cells: ["v.", ""]
+      - cells: ["{{ other_parties }},", ""]
+      - cells: ["        Defendant / Respondent.", ""]
+  - type: rule

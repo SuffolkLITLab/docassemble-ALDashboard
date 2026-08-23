@@ -1996,16 +1996,78 @@ def variable_report_payload_from_options(
     report_title = str(raw.get("report_title") or "Interview Variable Report").strip()
     infer_assemblyline = parse_bool(raw.get("infer_assemblyline"), default=True)
 
+    from .court_form_generator import COURT_FORM_SHAPES
+
+    shape = str(raw.get("shape") or "intake").strip().lower()
+    if shape not in ("intake",) + tuple(COURT_FORM_SHAPES):
+        raise DashboardAPIValidationError(
+            "`shape` must be one of: intake, " + ", ".join(COURT_FORM_SHAPES) + "."
+        )
+    court_profile = str(raw.get("court_profile") or "").strip() or None
+    include_certificate_of_service = (
+        parse_bool(raw.get("include_certificate_of_service"))
+        if raw.get("include_certificate_of_service") is not None
+        else None
+    )
+    # The DOCX is the deliverable for a court shape, so return it by default
+    # there and keep the intake response as small as it has always been.
+    include_docx_base64 = parse_bool(
+        raw.get("include_docx_base64"), default=shape != "intake"
+    )
+
     res = generate_variable_report(
         [yaml_text],
         report_title=report_title,
         infer_assemblyline=infer_assemblyline,
+        shape=shape,
+        court_profile=court_profile,
+        include_certificate_of_service=include_certificate_of_service,
     )
-    return {
+    payload: Dict[str, Any] = {
         "mako_markdown": res["mako_markdown"],
         "variables_count": res["variables_count"],
         "list_count": res["list_count"],
         "scalar_count": res["scalar_count"],
+        "shape": res.get("shape", shape),
+    }
+    for key in ("profile_id", "profile_name", "sections", "styles"):
+        if key in res:
+            payload[key] = res[key]
+    if include_docx_base64:
+        docx_path = res.get("docx_path")
+        if docx_path and os.path.isfile(docx_path):
+            with open(docx_path, "rb") as handle:
+                payload["docx_base64"] = base64.b64encode(handle.read()).decode("ascii")
+    return payload
+
+
+def court_form_profiles_payload_from_request() -> Dict[str, Any]:
+    """List the court form shapes and jurisdiction profiles this server has."""
+    return court_form_profiles_payload_from_options(merge_raw_options(_request_dict()))
+
+
+def court_form_profiles_payload_from_options(
+    raw_options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    from .court_form_generator import COURT_FORM_SHAPES, SHAPE_LABELS
+    from .court_form_profiles import SECTION_NAMES, list_court_form_profiles
+
+    profiles = [
+        {
+            "id": profile["id"],
+            "name": profile["name"],
+            "jurisdiction": profile.get("jurisdiction", ""),
+            "description": profile.get("description", ""),
+        }
+        for profile in list_court_form_profiles()
+    ]
+    return {
+        "shapes": [
+            {"value": shape, "label": SHAPE_LABELS.get(shape, shape)}
+            for shape in ("intake",) + tuple(COURT_FORM_SHAPES)
+        ],
+        "profiles": profiles,
+        "sections": list(SECTION_NAMES),
     }
 
 
@@ -2476,11 +2538,76 @@ def build_openapi_spec() -> Dict[str, Any]:
             },
             f"{DASHBOARD_API_BASE_PATH}/variable-report": {
                 "post": {
-                    "summary": "Generate interview variable report (Mako+Markdown and Jinja2 DOCX)",
+                    "summary": (
+                        "Draft a document from an interview's variables "
+                        "(Mako+Markdown and Jinja2 DOCX)"
+                    ),
                     "description": (
                         "Accepts interview YAML via `yaml_text`, upload, or playground selection, "
                         "extracts all variables, infers AssemblyLine built-ins, and returns "
-                        "Mako+Markdown plain text and variable metrics."
+                        "Mako+Markdown plain text and variable metrics. Set `shape` to draft a "
+                        "court document instead of the intake summary: `court_form`, `motion`, "
+                        "`affidavit` or `letter`. Court shapes take the caption, running footer, "
+                        "signature block and certificate of service from the jurisdiction profile "
+                        "named by `court_profile`, and return the DOCX as `docx_base64` along with "
+                        "a `sections` map saying whether each fixed section came from the profile "
+                        "YAML (`yaml`) or from a Word-authored override (`docx`)."
+                    ),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "yaml_text": {"type": "string"},
+                                        "file_content_base64": {"type": "string"},
+                                        "playground_project": {"type": "string"},
+                                        "playground_yaml_file": {"type": "string"},
+                                        "report_title": {"type": "string"},
+                                        "infer_assemblyline": {"type": "boolean"},
+                                        "shape": {
+                                            "type": "string",
+                                            "enum": [
+                                                "intake",
+                                                "court_form",
+                                                "motion",
+                                                "affidavit",
+                                                "letter",
+                                            ],
+                                            "default": "intake",
+                                        },
+                                        "court_profile": {
+                                            "type": "string",
+                                            "description": (
+                                                "Jurisdiction profile id, as listed by "
+                                                "/court-form/profiles."
+                                            ),
+                                        },
+                                        "include_certificate_of_service": {
+                                            "type": "boolean"
+                                        },
+                                        "include_docx_base64": {
+                                            "type": "boolean",
+                                            "description": (
+                                                "Defaults to true for court shapes and false "
+                                                "for the intake shape."
+                                            ),
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }
+            },
+            f"{DASHBOARD_API_BASE_PATH}/court-form/profiles": {
+                "post": {
+                    "summary": "List court form shapes and jurisdiction profiles",
+                    "description": (
+                        "Returns the template `shapes` this server can draft, the jurisdiction "
+                        "`profiles` installed on it, and the `sections` a profile may define. "
+                        "Profiles are editable YAML; any section can be replaced by a "
+                        "Word-authored .docx fragment."
                     ),
                 }
             },

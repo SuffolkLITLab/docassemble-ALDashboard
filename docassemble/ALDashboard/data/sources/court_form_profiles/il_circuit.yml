@@ -1,0 +1,94 @@
+id: il_circuit
+name: Illinois Circuit Court (standardized form)
+jurisdiction: Illinois
+extends: generic
+description: >-
+  The Illinois Supreme Court standardized statewide form layout: the approval
+  notice above the caption, a boxed caption with the "For Court Use Only" panel
+  and the case number beside the parties, the "Enter the Case Number" running
+  header, and the form-code / page / revision footer.
+
+styles:
+  CourtCaptionHeading:
+    font: Arial
+    size: 12
+    bold: true
+    align: left
+  CourtCaptionText:
+    font: Arial
+    size: 11
+  CourtDocumentTitle:
+    font: Arial
+    size: 12
+  CourtSectionHeading:
+    font: Arial
+    size: 11
+  CourtBodyText:
+    font: Arial
+    size: 11
+    line_spacing: 1.15
+  CourtFieldLabel:
+    font: Arial
+    size: 11
+  CourtSignatureText:
+    font: Arial
+    size: 11
+  CourtFooterText:
+    font: Arial
+    size: 8
+  CourtSmallPrint:
+    font: Arial
+    size: 8
+
+labels:
+  docket: "Case Number"
+  plaintiff: "Plaintiff / Petitioner"
+  defendant: "Defendant / Respondent"
+
+caption:
+  - type: paragraph
+    style: CourtSmallPrint
+    text: >-
+      This form is approved by the Illinois Supreme Court and is required to be
+      used in all Illinois Circuit Courts.
+  - type: table
+    widths: [2.3, 2.3, 1.9]
+    borders: box
+    rows:
+      - cells:
+          - "STATE OF ILLINOIS,\nCIRCUIT COURT\n\n{{ county }} COUNTY"
+          - "{{ document_title }}"
+          - "For Court Use Only"
+        style: CourtCaptionText
+      - cells:
+          - "{{ users }}\nPlaintiff / Petitioner (First, middle, last name)"
+          - ""
+          - ""
+      - cells:
+          - "v."
+          - ""
+          - "{{ docket_label }}\n{{ docket_number }}"
+      - cells:
+          - "{{ other_parties }}\nDefendant / Respondent (First, middle, last name)"
+          - ""
+          - ""
+  - type: spacer
+
+header:
+  - type: paragraph
+    style: CourtSmallPrint
+    text: >-
+      Enter the Case Number given by the Circuit Clerk: {{ docket_number }}
+
+footer:
+  - type: table
+    widths: [2.2, 2.2, 2.1]
+    borders: none
+    rows:
+      - cells: ["{{ form_code }}", "", "{{ form_revision }}"]
+        style: CourtFooterText
+  - type: paragraph
+    style: CourtFooterText
+    text: ""
+    page_numbers: true
+    page_numbers_align: center

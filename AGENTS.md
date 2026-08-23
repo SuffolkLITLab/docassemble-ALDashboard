@@ -56,3 +56,47 @@ name.
 Run the focused Python tests for export and attachment mapping, then the static
 labeler extraction tests. When changing browser behavior, also run a JavaScript
 syntax check.
+
+## Court form shapes
+
+The Interview Intake Document Generator can draft a court filing instead of an
+intake summary. Implementation:
+
+- `docassemble/ALDashboard/court_form_profiles.py`: loading, `extends:`
+  merging, Word style application, `.docx` fragment resolution and splicing.
+- `docassemble/ALDashboard/court_form_generator.py`: the four shapes
+  (`court_form`, `motion`, `affidavit`, `letter`) and the block renderer.
+- `docassemble/ALDashboard/data/sources/court_form_profiles/*.yml`: one file
+  per court.
+- `docassemble/ALDashboard/data/templates/court_forms/<profile>/<section>.docx`:
+  optional Word-authored override for a single section.
+
+`shape="intake"` is the default of `generate_variable_report()` and must stay
+that way: the ALWeaver's `variable_report.py` calls it without a shape.
+
+### Where a court's layout belongs
+
+No caption, footer, font or party label goes in Python. A new court is a new
+YAML file and nothing else; if drafting a court needs a code change, the block
+vocabulary is missing something and that is what should grow.
+
+### The two kinds of placeholder
+
+Profile text mixes two kinds of `{{ ... }}` and they are not interchangeable:
+
+- Draft-time keys (`document_title`, `docket_label`, `form_code`,
+  `form_revision`, `court_rule_citation`, `labels.*`) are substituted while
+  drafting and must not survive into the output.
+- Everything else — `{{ trial_court }}`, `{{ docket_number }}`,
+  `{{ users[0].signature }}` — passes through untouched as the profile's
+  contract with the interview.
+
+Fields discovered in the interview are separate again and are always wrapped in
+`showifdef()`. Do not "unify" these three; the tests assert each one.
+
+### Verification
+
+Run `test/test_court_form_generator.py`. It generates every shape against every
+shipped profile, asserts each caption carries that jurisdiction's boilerplate
+and docket label, and checks that a `.docx` fragment replaces only its own
+section while the profile's Word styles survive.

@@ -1,0 +1,56 @@
+id: vt_superior
+name: Vermont Superior Court
+jurisdiction: Vermont
+extends: generic
+description: >-
+  The Vermont Superior Court caption: the centered "STATE OF VERMONT" line over
+  a two-column block pairing the court and unit on the left with the division
+  and docket number on the right, then a two-column party block with name and
+  date of birth. Modeled on Vermont Judiciary Form 823.
+
+labels:
+  docket: "Docket No."
+  plaintiff: "Plaintiff"
+  defendant: "Defendant"
+
+caption:
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "STATE OF VERMONT"
+  - type: spacer
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["SUPERIOR COURT", "{{ division }} DIVISION"]
+        style: CourtCaptionHeading
+      - cells: ["{{ unit }} Unit", "{{ docket_label }} {{ docket_number }}"]
+  - type: spacer
+  - type: table
+    widths: [3.25, 3.25]
+    borders: bottom
+    rows:
+      - cells: ["Plaintiff", "Defendant"]
+        style: CourtFieldLabel
+      - cells:
+          - "{{ users }}"
+          - "{{ other_parties }}"
+      - cells: ["Name                              DOB", "Name                              DOB"]
+        style: CourtSmallPrint
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "v."
+  - type: spacer
+
+footer:
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["{{ form_code }}", "{{ document_title }}"]
+        style: CourtFooterText
+  - type: paragraph
+    style: CourtFooterText
+    text: ""
+    page_numbers: true
+    page_numbers_align: center

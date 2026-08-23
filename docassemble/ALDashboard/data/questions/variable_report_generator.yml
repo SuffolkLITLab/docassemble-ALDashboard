@@ -135,9 +135,8 @@ fields:
       interview's screens become the middle of the document.
   - Court / jurisdiction profile: court_profile
     datatype: dropdown
-    show if:
-      variable: report_shape
-      is not: intake
+    js show if: |
+      val("report_shape") != "intake"
     code: |
       [
         {"label": item["label"], "value": item["value"]}
@@ -153,9 +152,8 @@ fields:
   - Include a certificate of service: include_certificate_of_service
     datatype: yesno
     default: False
-    show if:
-      variable: report_shape
-      is not: intake
+    js show if: |
+      val("report_shape") != "intake"
   - Show internal variable names in labels: show_variable_names
     datatype: yesno
     default: False

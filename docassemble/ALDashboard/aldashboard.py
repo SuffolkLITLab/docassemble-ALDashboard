@@ -1539,7 +1539,10 @@ def get_permitted_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
     # one session key can have userdict rows for more than one interview, and
     # `get_session_details()` only reports the most recently modified one.
     allowed_filenames = get_allowed_interview_filenames()
-    if allowed_filenames is not None and upload.get("yamlfile") not in allowed_filenames:
+    if (
+        allowed_filenames is not None
+        and upload.get("yamlfile") not in allowed_filenames
+    ):
         log(
             f"get_permitted_upload_details: user {user_info().id if user_logged_in() else 'anonymous'} "
             f"is not allowed to view interview {upload.get('yamlfile')} for file {upload.get('file_id')}"

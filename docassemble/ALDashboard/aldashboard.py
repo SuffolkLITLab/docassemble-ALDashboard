@@ -160,6 +160,8 @@ __all__ = [
     "increment_index_value",
     "get_current_index_value",
     "get_latest_s3_folder",
+    "get_upload_details",
+    "get_permitted_upload_details",
     "get_file_ids_associated_with_session",
     "get_files_associated_with_session",
     "build_session_files_zip",
@@ -1494,6 +1496,49 @@ def get_session_details(session_id: str) -> Dict[str, Any]:
         "steps": session_details.steps,
         "progress": session_details.progress,
     }
+
+
+def get_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
+    """Resolve a docassemble file number to its upload and owning session."""
+    requested_file_id = str(file_id or "").strip()
+    if not requested_file_id.isdigit():
+        return None
+
+    query = text("""
+        SELECT indexno, key, yamlfile, filename
+        FROM uploads
+        WHERE indexno = :file_id
+        LIMIT 1
+    """)
+    with _get_db_session() as session:
+        upload = session.execute(query, {"file_id": int(requested_file_id)}).fetchone()
+
+    if upload is None:
+        return None
+    return {
+        "indexno": int(upload.indexno),
+        "file_id": int(upload.indexno),
+        "key": upload.key,
+        "yamlfile": upload.yamlfile,
+        "filename": upload.filename,
+    }
+
+
+def get_permitted_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
+    """
+    Resolve a file number and return it only when its owning session is visible.
+
+    The owning interview and permission are resolved through the session record,
+    so callers cannot use upload metadata or action arguments to bypass the
+    interview-viewer allow-list.
+    """
+    upload = get_upload_details(file_id)
+    if not upload or not upload.get("key"):
+        return None
+    session_details = get_permitted_session_details(upload["key"])
+    if not session_details:
+        return None
+    return {**upload, "session": session_details}
 
 
 def get_file_ids_associated_with_session(

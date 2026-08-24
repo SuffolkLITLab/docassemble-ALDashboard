@@ -23,6 +23,8 @@ code: |
     load_answer
   elif session_list_mode == "session_id":
     view_single_session
+  elif session_list_mode == "file_id":
+    view_file_by_id
 ---
 continue button field: playground_splash
 id: splash screen
@@ -112,11 +114,18 @@ fields:
       - Browse recent sessions: browse
       - Search answer values: search
       - Look up specific session ID: session_id
+      - Look up file number: file_id
     default: browse
   - Session ID: session_id
     required: False
     js show if: |
       val("session_list_mode") == "session_id"
+  - File number: file_id_lookup
+    datatype: integer
+    required: False
+    min: 1
+    js show if: |
+      val("session_list_mode") == "file_id"
   - Filename: filename
     required: False
     datatype: combobox
@@ -137,7 +146,7 @@ fields:
         ),
       )
     js show if: |
-      val("session_list_mode") != "session_id"
+      ["browse", "search"].includes(val("session_list_mode"))
     show if:
       code: |
         user_has_privilege(['admin', 'developer'])
@@ -159,7 +168,7 @@ fields:
         ),
       )
     js show if: |
-      val("session_list_mode") != "session_id"
+      ["browse", "search"].includes(val("session_list_mode"))
     show if:
       code: |
         not user_has_privilege(['admin', 'developer'])
@@ -168,7 +177,7 @@ fields:
     datatype: integer
     input type: combobox
     js show if: |
-      val("session_list_mode") != "session_id"
+      ["browse", "search"].includes(val("session_list_mode"))
     show if:
       code: |
         total_user_count <= 10000
@@ -183,7 +192,7 @@ fields:
     input type: ajax
     action: user_search_ajax
     js show if: |
-      val("session_list_mode") != "session_id"
+      ["browse", "search"].includes(val("session_list_mode"))
     show if:
       code: |
         total_user_count > 10000
@@ -192,7 +201,7 @@ fields:
     datatype: yesno
     default: True
     js show if: |
-      val("session_list_mode") != "session_id"
+      ["browse", "search"].includes(val("session_list_mode"))
   - Use advanced answer-variable filters: session_search_use_advanced_filters
     datatype: yesno
     default: False
@@ -234,6 +243,9 @@ validation code: |
   if session_list_mode == "session_id":
     if not str(session_id or "").strip():
       validation_error("Please enter a session ID.", field="session_id")
+  elif session_list_mode == "file_id":
+    if not str(file_id_lookup or "").strip():
+      validation_error("Please enter a file number.", field="file_id_lookup")
   elif session_list_mode == "search":
     if session_search_use_advanced_filters:
       session_search_resolved_criteria_text = build_session_search_criteria_text(
@@ -402,6 +414,46 @@ event: go_to_session_id_lookup
 code: |
   session_list_mode = "session_id"
   undefine("session_id")
+---
+reconsider: True
+code: |
+  current_file_id = str(action_argument('file_id') or file_id_lookup or "").strip()
+---
+reconsider: True
+code: |
+  # This returns None for both missing files and files whose owning interview
+  # the current user cannot inspect, to avoid exposing sequential file IDs.
+  permitted_upload_details = get_permitted_upload_details(current_file_id)
+---
+event: view_file_by_id
+id: view file by id
+question: |
+  % if permitted_upload_details:
+  File #${ permitted_upload_details.get('file_id') }
+  % else:
+  File #${ current_file_id } not found
+  % endif
+subquestion: |
+  % if permitted_upload_details:
+  <% file_session = permitted_upload_details['session'] %>
+  <table class="table">
+    <tbody>
+      <tr><th scope="row">Filename</th><td class="text-wrap text-break">${ permitted_upload_details.get('filename') or 'Unknown' }</td></tr>
+      <tr><th scope="row">Interview</th><td class="text-wrap text-break">${ file_session.get('filename') or permitted_upload_details.get('yamlfile') }</td></tr>
+      <tr><th scope="row">Session</th><td class="text-wrap text-break">${ permitted_upload_details.get('key') }</td></tr>
+      <tr><th scope="row">User</th><td>${ format_session_users(file_session, {}) }</td></tr>
+      <tr><th scope="row">Modified</th><td>${ format_date(file_session.get('modtime'), "MMM d YYYY") }</td></tr>
+    </tbody>
+  </table>
+
+  <a class="btn btn-primary" href="${ interview_url_action('download_file_number', file_id=permitted_upload_details.get('file_id')) }">
+    <i class="fa-solid fa-download"></i>&nbsp;Download</a>
+  <a class="btn btn-secondary" href="${ interview_url_action('view_single_session', session_id=permitted_upload_details.get('key')) }">
+    <i class="fa-solid fa-magnifying-glass"></i>&nbsp;View session</a>
+  % else:
+  <div class="alert alert-warning">No file found with number <code>${ current_file_id }</code>, or you do not have permission to view its session.</div>
+  % endif
+back button: True
 ---
 # Recomputed on every screen so that following a "Details" link for one session
 # doesn't redisplay the session that was looked at before it.
@@ -572,6 +624,24 @@ code: |
   if not file_to_download:
     response(response="File not found for this session.", response_code=404, content_type="text/plain; charset=utf-8")
   response(file=file_to_download)
+---
+event: download_file_number
+code: |
+  # Re-resolve both ownership and authorization instead of trusting values from
+  # the result page or serving a guessed file number directly.
+  upload_for_download = get_permitted_upload_details(action_argument('file_id'))
+  if not upload_for_download:
+    response(response="File not found.", response_code=404, content_type="text/plain; charset=utf-8")
+  owning_session = upload_for_download['session']
+  file_from_number = get_session_file_for_download(
+    upload_for_download['key'],
+    upload_for_download['file_id'],
+    yaml_filename=owning_session.get('filename'),
+    privileged=user_has_privilege(['admin', 'developer'])
+  )
+  if not file_from_number:
+    response(response="File not found.", response_code=404, content_type="text/plain; charset=utf-8")
+  response(file=file_from_number)
 ---
 event: download_all_session_files
 code: |

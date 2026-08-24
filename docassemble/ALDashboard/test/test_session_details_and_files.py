@@ -29,6 +29,8 @@ def _load_session_detail_helpers():
     lines = source.splitlines(keepends=True)
     names = {
         "get_session_details",
+        "get_upload_details",
+        "get_permitted_upload_details",
         "get_file_ids_associated_with_session",
         "get_files_associated_with_session",
         "build_session_files_zip",
@@ -88,6 +90,8 @@ def _load_session_detail_helpers():
 
 aldashboard = _load_session_detail_helpers()
 get_session_details = aldashboard.get_session_details
+get_upload_details = aldashboard.get_upload_details
+get_permitted_upload_details = aldashboard.get_permitted_upload_details
 get_file_ids_associated_with_session = aldashboard.get_file_ids_associated_with_session
 get_files_associated_with_session = aldashboard.get_files_associated_with_session
 build_session_files_zip = aldashboard.build_session_files_zip
@@ -175,6 +179,103 @@ def test_get_session_details_empty_key():
         get_session_details("   ")
 
 
+def test_get_upload_details_resolves_owning_session(monkeypatch):
+    Row = namedtuple("Row", ["indexno", "key", "yamlfile", "filename"])
+    row = Row(12345, "abc123", "docassemble.Foo:data/questions/foo.yml", "motion.pdf")
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            assert params == {"file_id": 12345}
+            assert "WHERE indexno = :file_id" in query
+            return namedtuple("Result", ["fetchone"])(lambda: row)
+
+    monkeypatch.setattr(aldashboard, "_get_db_session", FakeSession)
+
+    assert get_upload_details(" 12345 ") == {
+        "indexno": 12345,
+        "file_id": 12345,
+        "key": "abc123",
+        "yamlfile": "docassemble.Foo:data/questions/foo.yml",
+        "filename": "motion.pdf",
+    }
+
+
+def test_get_upload_details_returns_none_for_invalid_or_missing_ids(monkeypatch):
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            return namedtuple("Result", ["fetchone"])(lambda: None)
+
+    monkeypatch.setattr(aldashboard, "_get_db_session", FakeSession)
+
+    assert get_upload_details("not-a-number") is None
+    assert get_upload_details("99999") is None
+
+
+def test_get_permitted_upload_details_rejects_unauthorized_interview(monkeypatch):
+    monkeypatch.setattr(
+        aldashboard,
+        "get_upload_details",
+        lambda file_id: {
+            "indexno": 12345,
+            "file_id": 12345,
+            "key": "secret-session",
+            "yamlfile": "docassemble.Secret:data/questions/secret.yml",
+            "filename": "secret.pdf",
+        },
+    )
+    monkeypatch.setattr(
+        aldashboard, "get_permitted_session_details", lambda session_id: None
+    )
+
+    assert get_permitted_upload_details(12345) is None
+
+
+def test_get_permitted_upload_details_includes_authorized_session(monkeypatch):
+    upload = {
+        "indexno": 12345,
+        "file_id": 12345,
+        "key": "allowed-session",
+        "yamlfile": "docassemble.Allowed:data/questions/allowed.yml",
+        "filename": "allowed.pdf",
+    }
+    session = {"key": "allowed-session", "filename": upload["yamlfile"]}
+    monkeypatch.setattr(aldashboard, "get_upload_details", lambda file_id: upload)
+    monkeypatch.setattr(
+        aldashboard, "get_permitted_session_details", lambda session_id: session
+    )
+
+    assert get_permitted_upload_details(12345) == {**upload, "session": session}
+
+
+def test_file_number_workflow_reauthorizes_download_by_file_id():
+    source = (PACKAGE_ROOT / "data" / "questions" / "list_sessions.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Look up file number: file_id" in source
+    assert "event: view_file_by_id" in source
+    assert "event: download_file_number" in source
+    assert (
+        "upload_for_download = "
+        "get_permitted_upload_details(action_argument('file_id'))"
+    ) in source
+    assert "upload_for_download['key']" in source
+    assert "upload_for_download['file_id']" in source
+    assert "session_id=permitted_upload_details.get('key')" in source
+
+
 def test_get_file_ids_associated_with_session(monkeypatch):
     Row = namedtuple("Row", ["indexno"])
     rows = [Row(101), Row(102), Row(103)]
@@ -248,6 +349,50 @@ def test_get_files_associated_with_session(monkeypatch, tmp_path):
     assert files[0]["extension"] == "pdf"
     assert files[1]["file_id"] == 202
     assert files[1]["filename"] == "data.docx"
+
+
+def test_get_files_associated_with_session_materializes_saved_file(
+    monkeypatch, tmp_path
+):
+    saved_path = tmp_path / "saved-file"
+    Row = namedtuple("Row", ["indexno", "filename"])
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            return [Row(321, "cloud.pdf")]
+
+    class FakeSavedFile:
+        def __init__(self, file_id, extension=None, fix=False):
+            assert (file_id, extension, fix) == (321, "pdf", True)
+            self.path = str(saved_path)
+            # SavedFile(..., fix=True) retrieves an S3 object to this local path.
+            saved_path.with_suffix(".pdf").write_text("cloud content")
+
+    monkeypatch.setattr(aldashboard, "_get_db_session", FakeSession)
+    monkeypatch.setattr(
+        aldashboard,
+        "get_info_from_file_number",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    monkeypatch.setattr(aldashboard, "SavedFile", FakeSavedFile)
+
+    files = get_files_associated_with_session("cloud-session")
+    assert files == [
+        {
+            "file_id": 321,
+            "filename": "cloud.pdf",
+            "path": str(saved_path.with_suffix(".pdf")),
+            "fullpath": str(saved_path.with_suffix(".pdf")),
+            "mimetype": "application/octet-stream",
+            "extension": "pdf",
+        }
+    ]
 
 
 def test_build_session_files_zip(monkeypatch, tmp_path):

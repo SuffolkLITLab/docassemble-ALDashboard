@@ -33,6 +33,7 @@ def _load_session_detail_helpers():
         "get_permitted_upload_details",
         "get_file_ids_associated_with_session",
         "get_files_associated_with_session",
+        "get_session_file_for_download",
         "build_session_files_zip",
         "download_file_by_id",
         "format_session_users",
@@ -54,6 +55,7 @@ def _load_session_detail_helpers():
         "re": __import__("re"),
         "os": __import__("os"),
         "_get_db_session": None,
+        "DAFile": None,
         "get_info_from_file_number": lambda *args, **kwargs: {},
         "SavedFile": None,
         "get_ext_and_mimetype": lambda fn: (
@@ -94,6 +96,7 @@ get_upload_details = aldashboard.get_upload_details
 get_permitted_upload_details = aldashboard.get_permitted_upload_details
 get_file_ids_associated_with_session = aldashboard.get_file_ids_associated_with_session
 get_files_associated_with_session = aldashboard.get_files_associated_with_session
+get_session_file_for_download = aldashboard.get_session_file_for_download
 build_session_files_zip = aldashboard.build_session_files_zip
 download_file_by_id = aldashboard.download_file_by_id
 format_session_users = aldashboard.format_session_users
@@ -198,7 +201,6 @@ def test_get_upload_details_resolves_owning_session(monkeypatch):
     monkeypatch.setattr(aldashboard, "_get_db_session", FakeSession)
 
     assert get_upload_details(" 12345 ") == {
-        "indexno": 12345,
         "file_id": 12345,
         "key": "abc123",
         "yamlfile": "docassemble.Foo:data/questions/foo.yml",
@@ -221,6 +223,10 @@ def test_get_upload_details_returns_none_for_invalid_or_missing_ids(monkeypatch)
 
     assert get_upload_details("not-a-number") is None
     assert get_upload_details("99999") is None
+    # Non-decimal digits pass `str.isdigit()` but `int()` rejects them, so they
+    # have to be turned away before the conversion rather than raising.
+    assert get_upload_details("\u00b2") is None
+    assert get_session_file_for_download("session-abc", "\u00b2") is None
 
 
 def test_get_permitted_upload_details_rejects_unauthorized_interview(monkeypatch):
@@ -228,7 +234,6 @@ def test_get_permitted_upload_details_rejects_unauthorized_interview(monkeypatch
         aldashboard,
         "get_upload_details",
         lambda file_id: {
-            "indexno": 12345,
             "file_id": 12345,
             "key": "secret-session",
             "yamlfile": "docassemble.Secret:data/questions/secret.yml",
@@ -244,7 +249,6 @@ def test_get_permitted_upload_details_rejects_unauthorized_interview(monkeypatch
 
 def test_get_permitted_upload_details_includes_authorized_session(monkeypatch):
     upload = {
-        "indexno": 12345,
         "file_id": 12345,
         "key": "allowed-session",
         "yamlfile": "docassemble.Allowed:data/questions/allowed.yml",
@@ -255,6 +259,62 @@ def test_get_permitted_upload_details_includes_authorized_session(monkeypatch):
     monkeypatch.setattr(
         aldashboard, "get_permitted_session_details", lambda session_id: session
     )
+    monkeypatch.setattr(
+        aldashboard, "get_allowed_interview_filenames", lambda: {upload["yamlfile"]}
+    )
+
+    assert get_permitted_upload_details(12345) == {**upload, "session": session}
+
+
+def test_get_permitted_upload_details_rejects_upload_from_other_interview(monkeypatch):
+    """
+    A session key can have userdict rows for more than one interview, and
+    `get_session_details()` only reports the most recently modified one, so the
+    upload's own interview has to be checked against the allow-list too.
+    """
+    upload = {
+        "file_id": 12345,
+        "key": "shared-session",
+        "yamlfile": "docassemble.Secret:data/questions/secret.yml",
+        "filename": "secret.pdf",
+    }
+    # The session resolves to the permitted interview, but the file doesn't
+    # belong to it.
+    session = {
+        "key": "shared-session",
+        "filename": "docassemble.Allowed:data/questions/allowed.yml",
+    }
+    monkeypatch.setattr(aldashboard, "get_upload_details", lambda file_id: upload)
+    monkeypatch.setattr(
+        aldashboard, "get_permitted_session_details", lambda session_id: session
+    )
+    monkeypatch.setattr(
+        aldashboard,
+        "get_allowed_interview_filenames",
+        lambda: {"docassemble.Allowed:data/questions/allowed.yml"},
+    )
+
+    assert get_permitted_upload_details(12345) is None
+
+
+def test_get_permitted_upload_details_allows_any_interview_for_privileged_users(
+    monkeypatch,
+):
+    upload = {
+        "file_id": 12345,
+        "key": "shared-session",
+        "yamlfile": "docassemble.Other:data/questions/other.yml",
+        "filename": "other.pdf",
+    }
+    session = {
+        "key": "shared-session",
+        "filename": "docassemble.Allowed:data/questions/allowed.yml",
+    }
+    monkeypatch.setattr(aldashboard, "get_upload_details", lambda file_id: upload)
+    monkeypatch.setattr(
+        aldashboard, "get_permitted_session_details", lambda session_id: session
+    )
+    monkeypatch.setattr(aldashboard, "get_allowed_interview_filenames", lambda: None)
 
     assert get_permitted_upload_details(12345) == {**upload, "session": session}
 
@@ -267,13 +327,10 @@ def test_file_number_workflow_reauthorizes_download_by_file_id():
     assert "Look up file number: file_id" in source
     assert "event: view_file_by_id" in source
     assert "event: download_file_number" in source
-    assert (
-        "upload_for_download = "
-        "get_permitted_upload_details(action_argument('file_id'))"
-    ) in source
-    assert "upload_for_download['key']" in source
-    assert "upload_for_download['file_id']" in source
-    assert "session_id=permitted_upload_details.get('key')" in source
+    # Downloads must never take a session ID from the caller: the file number
+    # alone determines the owning session, and that is what gets authorized.
+    assert "download_session_file" not in source
+    assert "get_permitted_upload_details" in source
 
 
 def test_get_file_ids_associated_with_session(monkeypatch):

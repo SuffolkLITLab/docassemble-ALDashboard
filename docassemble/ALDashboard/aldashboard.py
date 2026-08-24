@@ -160,7 +160,6 @@ __all__ = [
     "increment_index_value",
     "get_current_index_value",
     "get_latest_s3_folder",
-    "get_upload_details",
     "get_permitted_upload_details",
     "get_file_ids_associated_with_session",
     "get_files_associated_with_session",
@@ -1501,7 +1500,9 @@ def get_session_details(session_id: str) -> Dict[str, Any]:
 def get_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
     """Resolve a docassemble file number to its upload and owning session."""
     requested_file_id = str(file_id or "").strip()
-    if not requested_file_id.isdigit():
+    # `isdigit()` alone is True for non-decimal digits like "\u00b2", which `int()`
+    # rejects, so check for ASCII digits before converting.
+    if not (requested_file_id.isascii() and requested_file_id.isdigit()):
         return None
 
     query = text("""
@@ -1516,7 +1517,6 @@ def get_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
     if upload is None:
         return None
     return {
-        "indexno": int(upload.indexno),
         "file_id": int(upload.indexno),
         "key": upload.key,
         "yamlfile": upload.yamlfile,
@@ -1526,14 +1526,24 @@ def get_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
 
 def get_permitted_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
     """
-    Resolve a file number and return it only when its owning session is visible.
+    Resolve a file number and return it only when the current user may see it.
 
-    The owning interview and permission are resolved through the session record,
-    so callers cannot use upload metadata or action arguments to bypass the
-    interview-viewer allow-list.
+    Both the upload's interview and its owning session are resolved from the
+    database rather than trusted from the caller, so an action argument can't be
+    used to get around the interview-viewer allow-list.
     """
     upload = get_upload_details(file_id)
     if not upload or not upload.get("key"):
+        return None
+    # The upload's own interview has to be checked separately from the session's:
+    # one session key can have userdict rows for more than one interview, and
+    # `get_session_details()` only reports the most recently modified one.
+    allowed_filenames = get_allowed_interview_filenames()
+    if allowed_filenames is not None and upload.get("yamlfile") not in allowed_filenames:
+        log(
+            f"get_permitted_upload_details: user {user_info().id if user_logged_in() else 'anonymous'} "
+            f"is not allowed to view interview {upload.get('yamlfile')} for file {upload.get('file_id')}"
+        )
         return None
     session_details = get_permitted_session_details(upload["key"])
     if not session_details:
@@ -1759,7 +1769,9 @@ def get_session_file_for_download(
     resolved and verified it, so this serves exactly the files that were listed.
     """
     requested_file_id = str(file_id or "").strip()
-    if not requested_file_id.isdigit():
+    # `isdigit()` alone is True for non-decimal digits like "\u00b2", which `int()`
+    # rejects, so check for ASCII digits before converting.
+    if not (requested_file_id.isascii() and requested_file_id.isdigit()):
         return None
     for item in get_files_associated_with_session(
         session_id, yaml_filename=yaml_filename, privileged=privileged

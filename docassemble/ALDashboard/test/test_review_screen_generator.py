@@ -112,6 +112,24 @@ fields:
         self.assertIn("subquestion: |", output)
         self.assertIn("First name: ${ showifdef('users[0].name.first') }", output)
 
+    def test_multiline_question_preserves_mako_control_lines(self):
+        sample = """
+---
+question: |
+  % if decedent.was_married:
+  Is ${ spouse.name_full() } named in the will?
+  % else:
+  Are ${ dependents.full_names() } named in the will?
+  % endif
+yesno: spouse_decedent_in_will
+"""
+        output = generate_review_screen_yaml([sample])
+
+        self.assertNotIn(r"\\n", output)
+        self.assertIn("<strong>\n      % if decedent.was_married:", output)
+        self.assertIn("      % endif\n      </strong>", output)
+        list(YAML(typ="safe", pure=True).load_all(output))
+
     def test_show_if_code_generates_matching_if_and_endif(self):
         sample = """
 ---

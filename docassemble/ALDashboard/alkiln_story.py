@@ -1,4 +1,5 @@
 import ast
+import difflib
 import glob
 import json
 import os
@@ -235,6 +236,7 @@ class StoryOptions:
     question_id: str = "review_screen"
     include_trigger_column: bool = False
     synthesize_target_number: bool = True
+    include_screen_definitions: bool = False
     ignore_anywhere_in_var_name: Sequence[str] = tuple(
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME
     )
@@ -617,14 +619,121 @@ def _escape_likely_unescaped_inner_quotes(json_text: str) -> str:
     return "".join(output)
 
 
-def build_feature_text(rows: Sequence[str], options: StoryOptions) -> str:
+SCREEN_DEFINITION_MARKER = "# ALKiln screen: "
+
+
+def screen_definitions_from_yaml(
+    yaml_text: str, *, source_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Return the user-visible screens and the variables each one defines.
+
+    The compact result is also embedded in Weaver-generated feature files. It
+    gives a later sync a stable semantic baseline even when labels or source
+    formatting change.
+    """
+    screens: List[Dict[str, Any]] = []
+    for index, doc in enumerate(
+        load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    ):
+        fields = doc.get("fields")
+        has_screen_content = any(
+            key in doc
+            for key in (
+                "question",
+                "subquestion",
+                "fields",
+                "review",
+                "continue button field",
+            )
+        )
+        if not has_screen_content:
+            continue
+        screen_id = str(doc.get("id") or doc.get("event") or "").strip()
+        if not screen_id:
+            screen_id = f"screen_{index + 1}"
+        field_names: List[str] = []
+        if isinstance(fields, list):
+            for field in fields:
+                variable, _field_info = _field_variable_and_info(field)
+                if variable and variable not in field_names:
+                    field_names.append(variable)
+        continue_field = doc.get("continue button field")
+        if _looks_like_variable_name(continue_field):
+            normalized_continue_field = str(continue_field)
+            if normalized_continue_field not in field_names:
+                field_names.append(normalized_continue_field)
+        screens.append(
+            {
+                "id": screen_id,
+                "question": str(doc.get("question") or "").strip(),
+                "fields": field_names,
+            }
+        )
+    return screens
+
+
+def screen_definitions_from_feature(feature_text: str) -> List[Dict[str, Any]]:
+    """Read screen metadata previously embedded in a generated feature."""
+    screens: List[Dict[str, Any]] = []
+    for line in str(feature_text or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(SCREEN_DEFINITION_MARKER):
+            continue
+        try:
+            value = json.loads(stripped[len(SCREEN_DEFINITION_MARKER) :])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict) or not str(value.get("id") or "").strip():
+            continue
+        fields = value.get("fields")
+        screens.append(
+            {
+                "id": str(value["id"]),
+                "question": str(value.get("question") or ""),
+                "fields": (
+                    [str(item) for item in fields] if isinstance(fields, list) else []
+                ),
+            }
+        )
+    return screens
+
+
+def _feature_variable_names(feature_text: str) -> List[str]:
+    variables: List[str] = []
+    for line in str(feature_text or "").splitlines():
+        match = re.match(r"^\s*\|\s*([^|]+?)\s*\|", line)
+        if not match:
+            continue
+        variable = match.group(1).strip()
+        if variable in {"var", "variable"} or variable in variables:
+            continue
+        variables.append(variable)
+    return variables
+
+
+def build_feature_text(
+    rows: Sequence[str],
+    options: StoryOptions,
+    *,
+    screen_definitions: Optional[Sequence[Mapping[str, Any]]] = None,
+) -> str:
     lines = [
         f"Feature: {options.feature_description or options.scenario_description}",
-        "",
-        f"Scenario: {options.scenario_description}",
-        f'  Given I start the interview at "{options.yaml_file_name}"',
-        f'  And the user gets to "{options.question_id}" with this data:',
     ]
+    if options.include_screen_definitions:
+        lines.extend(
+            SCREEN_DEFINITION_MARKER
+            + json.dumps(dict(screen), ensure_ascii=False, sort_keys=True)
+            for screen in (screen_definitions or [])
+        )
+    lines.extend(
+        [
+            "",
+            f"Scenario: {options.scenario_description}",
+            f'  Given I start the interview at "{options.yaml_file_name}"',
+            f'  And the user gets to "{options.question_id}" with this data:',
+        ]
+    )
     if options.include_trigger_column:
         lines.append("    | var | value | trigger |")
     else:
@@ -1626,7 +1735,12 @@ def story_from_docassemble_yaml(
         options=story_options,
         source_path=resolved_source_path,
     )
-    feature_text = build_feature_text(rows, story_options)
+    screen_definitions = screen_definitions_from_yaml(
+        yaml_text, source_path=resolved_source_path
+    )
+    feature_text = build_feature_text(
+        rows, story_options, screen_definitions=screen_definitions
+    )
     return {
         "rows": rows,
         "feature_text": feature_text,
@@ -1637,4 +1751,62 @@ def story_from_docassemble_yaml(
         "feature_description": story_options.feature_description,
         "scenario_description": story_options.scenario_description,
         "source_type": "yaml",
+        "screen_definitions": screen_definitions,
     }
+
+
+def sync_story_from_docassemble_yaml(
+    existing_feature_text: str,
+    yaml_text: str,
+    *,
+    filename: str = "interview.yml",
+    source_path: Optional[str] | object = _DEFAULT_YAML_SOURCE_PATH,
+    options: Optional[StoryOptions] = None,
+) -> Dict[str, Any]:
+    """Regenerate a YAML-backed story and summarize its semantic changes."""
+    if options is None:
+        options = StoryOptions(
+            yaml_file_name=_clean_yaml_filename(filename),
+            question_id=detect_yaml_ending_screen(
+                yaml_text,
+                source_path=(source_path if isinstance(source_path, str) else None),
+            ),
+            include_screen_definitions=True,
+        )
+    elif not options.include_screen_definitions:
+        options = replace(options, include_screen_definitions=True)
+    generated = story_from_docassemble_yaml(
+        yaml_text,
+        filename=filename,
+        source_path=source_path,
+        options=options,
+    )
+    proposed = str(generated["feature_text"])
+    old_screens = screen_definitions_from_feature(existing_feature_text)
+    new_screens = list(generated["screen_definitions"])
+    old_ids = {str(screen["id"]) for screen in old_screens}
+    new_ids = {str(screen["id"]) for screen in new_screens}
+    old_variables = set(_feature_variable_names(existing_feature_text))
+    new_variables = set(_feature_variable_names(proposed))
+    diff = "".join(
+        difflib.unified_diff(
+            str(existing_feature_text or "").splitlines(keepends=True),
+            proposed.splitlines(keepends=True),
+            fromfile="existing feature",
+            tofile="synced feature",
+        )
+    )
+    generated.update(
+        {
+            "existing_feature_text": str(existing_feature_text or ""),
+            "proposed_feature_text": proposed,
+            "diff": diff,
+            "unchanged": str(existing_feature_text or "") == proposed,
+            "screen_baseline_available": bool(old_screens),
+            "added_screens": sorted(new_ids - old_ids),
+            "removed_screens": sorted(old_ids - new_ids),
+            "added_functionality": sorted(new_variables - old_variables),
+            "removed_functionality": sorted(old_variables - new_variables),
+        }
+    )
+    return generated

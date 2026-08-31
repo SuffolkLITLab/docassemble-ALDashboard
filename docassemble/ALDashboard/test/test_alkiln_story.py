@@ -201,6 +201,25 @@ question: Done
         )["proposed_feature_text"]
         self.assertIn("I check all pages for accessibility issues", reenabled)
 
+    def test_sync_updates_the_managed_entrypoint_and_ending_screen(self):
+        existing = """Feature: Managed
+
+Scenario: Managed
+  Given I start the interview at "old.yml"
+  And the user gets to "old_done" with this data:
+    | var | value |
+    | existing | keep |\n"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            "---\nevent: new_done\nquestion: Done\n",
+            filename="new.yml",
+            options=StoryOptions(yaml_file_name="new.yml", question_id="new_done"),
+        )
+        proposed = result["proposed_feature_text"]
+        self.assertIn('I start the interview at "new.yml"', proposed)
+        self.assertIn('the user gets to "new_done"', proposed)
+        self.assertNotIn('"old.yml"', proposed)
+
     def test_rows_from_variables_handles_nested_objects_and_dates(self):
         rows = rows_from_variables(
             {

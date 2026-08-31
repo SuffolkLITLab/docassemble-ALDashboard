@@ -750,6 +750,31 @@ def _set_accessibility_all_step(feature_text: str, enabled: bool) -> str:
     )
 
 
+def _set_managed_story_destination(
+    feature_text: str, *, yaml_file_name: str, question_id: str
+) -> str:
+    """Update the two destinations Weaver explicitly manages."""
+    start_pattern = re.compile(
+        r'^(\s*(?:Given|When|Then|And|But)\s+I start the interview at ")[^"]+("\s*)$',
+        flags=re.I | re.M,
+    )
+    target_pattern = re.compile(
+        r'^(\s*(?:Given|When|Then|And|But)\s+the user gets to ")[^"]+(" with this data:\s*)$',
+        flags=re.I | re.M,
+    )
+    updated, start_count = start_pattern.subn(
+        rf"\g<1>{yaml_file_name}\g<2>", feature_text, count=1
+    )
+    updated, target_count = target_pattern.subn(
+        rf"\g<1>{question_id}\g<2>", updated, count=1
+    )
+    if start_count != 1 or target_count != 1:
+        raise ValueError(
+            "The managed ALKiln test does not have Weaver's expected start and Story Table steps."
+        )
+    return updated
+
+
 def build_feature_text(
     rows: Sequence[str],
     options: StoryOptions,
@@ -1812,8 +1837,13 @@ def sync_story_from_docassemble_yaml(
         options=options,
     )
     cleaned_existing = _without_screen_definition_comments(existing_feature_text)
+    destination_existing = _set_managed_story_destination(
+        cleaned_existing,
+        yaml_file_name=options.yaml_file_name,
+        question_id=options.question_id,
+    )
     configured_existing = _set_accessibility_all_step(
-        cleaned_existing, options.check_all_pages_for_accessibility
+        destination_existing, options.check_all_pages_for_accessibility
     )
     new_screens = list(generated["screen_definitions"])
     old_variables = set(_feature_variable_names(configured_existing))

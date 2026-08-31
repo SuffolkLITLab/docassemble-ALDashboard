@@ -13,7 +13,6 @@ from docassemble.ALDashboard.alkiln_story import (
     load_docassemble_json_text,
     rows_from_variables,
     rows_from_yaml_heuristics,
-    screen_definitions_from_feature,
     screen_definitions_from_yaml,
     sync_story_from_docassemble_yaml,
     story_from_docassemble_yaml,
@@ -35,7 +34,7 @@ def read_fixture(name):
 
 
 class TestALKilnStory(unittest.TestCase):
-    def test_generated_story_can_record_every_screen_definition(self):
+    def test_yaml_analysis_reports_screens_without_embedding_them(self):
         yaml_text = """---
 id: intro
 question: Welcome
@@ -71,14 +70,12 @@ question: Download
             options=StoryOptions(
                 yaml_file_name="main.yml",
                 question_id="download",
-                include_screen_definitions=True,
             ),
         )
-        self.assertEqual(
-            screen_definitions_from_feature(result["feature_text"]), screens
-        )
+        self.assertEqual(result["screen_definitions"], screens)
+        self.assertNotIn("# ALKiln screen:", result["feature_text"])
 
-    def test_sync_reports_added_and_removed_screens_and_functionality(self):
+    def test_sync_only_adds_new_rows_and_removes_legacy_metadata(self):
         old_yaml = """---
 id: old_screen
 question: Old
@@ -102,7 +99,6 @@ question: Download
         options = StoryOptions(
             yaml_file_name="main.yml",
             question_id="download",
-            include_screen_definitions=True,
         )
         existing = story_from_docassemble_yaml(
             old_yaml, filename="main.yml", options=options
@@ -112,11 +108,46 @@ question: Download
         )
 
         self.assertEqual(result["added_screens"], ["new_screen"])
-        self.assertEqual(result["removed_screens"], ["old_screen"])
+        self.assertEqual(result["removed_screens"], [])
         self.assertEqual(result["added_functionality"], ["new_value"])
-        self.assertEqual(result["removed_functionality"], ["old_value"])
-        self.assertTrue(result["screen_baseline_available"])
+        self.assertEqual(result["removed_functionality"], [])
+        self.assertFalse(result["screen_baseline_available"])
+        self.assertIn("| old_value | Sample answer |", result["proposed_feature_text"])
+        self.assertIn("| new_value | Sample answer |", result["proposed_feature_text"])
+        self.assertNotIn("# ALKiln screen:", result["proposed_feature_text"])
         self.assertIn("+", result["diff"])
+
+    def test_sync_preserves_custom_story_text(self):
+        existing = """Feature: Carefully authored
+
+Scenario: Special path
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value |
+    | existing_value | keep me |
+
+  Then I take a screenshot
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - Added: added_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+        self.assertIn("Feature: Carefully authored", result["proposed_feature_text"])
+        self.assertIn("Then I take a screenshot", result["proposed_feature_text"])
+        self.assertIn(
+            "| added_value | Sample answer |", result["proposed_feature_text"]
+        )
 
     def test_rows_from_variables_handles_nested_objects_and_dates(self):
         rows = rows_from_variables(

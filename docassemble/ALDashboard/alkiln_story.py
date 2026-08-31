@@ -236,7 +236,6 @@ class StoryOptions:
     question_id: str = "review_screen"
     include_trigger_column: bool = False
     synthesize_target_number: bool = True
-    include_screen_definitions: bool = False
     ignore_anywhere_in_var_name: Sequence[str] = tuple(
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME
     )
@@ -619,7 +618,7 @@ def _escape_likely_unescaped_inner_quotes(json_text: str) -> str:
     return "".join(output)
 
 
-SCREEN_DEFINITION_MARKER = "# ALKiln screen: "
+_LEGACY_SCREEN_DEFINITION_MARKER = "# ALKiln screen: "
 
 
 def screen_definitions_from_yaml(
@@ -627,9 +626,8 @@ def screen_definitions_from_yaml(
 ) -> List[Dict[str, Any]]:
     """Return the user-visible screens and the variables each one defines.
 
-    The compact result is also embedded in Weaver-generated feature files. It
-    gives a later sync a stable semantic baseline even when labels or source
-    formatting change.
+    The compact result lets callers associate newly inferred rows with their
+    current source screens without adding metadata to the generated story.
     """
     screens: List[Dict[str, Any]] = []
     for index, doc in enumerate(
@@ -672,32 +670,6 @@ def screen_definitions_from_yaml(
     return screens
 
 
-def screen_definitions_from_feature(feature_text: str) -> List[Dict[str, Any]]:
-    """Read screen metadata previously embedded in a generated feature."""
-    screens: List[Dict[str, Any]] = []
-    for line in str(feature_text or "").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith(SCREEN_DEFINITION_MARKER):
-            continue
-        try:
-            value = json.loads(stripped[len(SCREEN_DEFINITION_MARKER) :])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if not isinstance(value, dict) or not str(value.get("id") or "").strip():
-            continue
-        fields = value.get("fields")
-        screens.append(
-            {
-                "id": str(value["id"]),
-                "question": str(value.get("question") or ""),
-                "fields": (
-                    [str(item) for item in fields] if isinstance(fields, list) else []
-                ),
-            }
-        )
-    return screens
-
-
 def _feature_variable_names(feature_text: str) -> List[str]:
     variables: List[str] = []
     for line in str(feature_text or "").splitlines():
@@ -711,21 +683,46 @@ def _feature_variable_names(feature_text: str) -> List[str]:
     return variables
 
 
+def _without_screen_definition_comments(feature_text: str) -> str:
+    """Remove the legacy machine-only screen inventory from a feature."""
+    lines = str(feature_text or "").splitlines(keepends=True)
+    return "".join(
+        line
+        for line in lines
+        if not line.strip().startswith(_LEGACY_SCREEN_DEFINITION_MARKER)
+    )
+
+
+def _append_rows_to_first_variable_table(feature_text: str, rows: Sequence[str]) -> str:
+    """Add rows to the first ALKiln variable table without rewriting the story."""
+    if not rows:
+        return feature_text
+    lines = feature_text.splitlines(keepends=True)
+    header_index: Optional[int] = None
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*\|\s*(?:var|variable)\s*\|", line, flags=re.I):
+            header_index = index
+            break
+    if header_index is None:
+        raise ValueError("The managed ALKiln test has no variable table to sync.")
+    insert_at = header_index + 1
+    while insert_at < len(lines) and re.match(r"^\s*\|", lines[insert_at]):
+        insert_at += 1
+    newline = "\r\n" if "\r\n" in feature_text else "\n"
+    additions = [f"    {row}{newline}" for row in rows]
+    if insert_at == len(lines) and lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += newline
+    lines[insert_at:insert_at] = additions
+    return "".join(lines)
+
+
 def build_feature_text(
     rows: Sequence[str],
     options: StoryOptions,
-    *,
-    screen_definitions: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> str:
     lines = [
         f"Feature: {options.feature_description or options.scenario_description}",
     ]
-    if options.include_screen_definitions:
-        lines.extend(
-            SCREEN_DEFINITION_MARKER
-            + json.dumps(dict(screen), ensure_ascii=False, sort_keys=True)
-            for screen in (screen_definitions or [])
-        )
     lines.extend(
         [
             "",
@@ -1738,9 +1735,7 @@ def story_from_docassemble_yaml(
     screen_definitions = screen_definitions_from_yaml(
         yaml_text, source_path=resolved_source_path
     )
-    feature_text = build_feature_text(
-        rows, story_options, screen_definitions=screen_definitions
-    )
+    feature_text = build_feature_text(rows, story_options)
     return {
         "rows": rows,
         "feature_text": feature_text,
@@ -1763,7 +1758,7 @@ def sync_story_from_docassemble_yaml(
     source_path: Optional[str] | object = _DEFAULT_YAML_SOURCE_PATH,
     options: Optional[StoryOptions] = None,
 ) -> Dict[str, Any]:
-    """Regenerate a YAML-backed story and summarize its semantic changes."""
+    """Add newly inferred fixture rows without removing or rewriting old ones."""
     if options is None:
         options = StoryOptions(
             yaml_file_name=_clean_yaml_filename(filename),
@@ -1771,23 +1766,34 @@ def sync_story_from_docassemble_yaml(
                 yaml_text,
                 source_path=(source_path if isinstance(source_path, str) else None),
             ),
-            include_screen_definitions=True,
         )
-    elif not options.include_screen_definitions:
-        options = replace(options, include_screen_definitions=True)
     generated = story_from_docassemble_yaml(
         yaml_text,
         filename=filename,
         source_path=source_path,
         options=options,
     )
-    proposed = str(generated["feature_text"])
-    old_screens = screen_definitions_from_feature(existing_feature_text)
+    cleaned_existing = _without_screen_definition_comments(existing_feature_text)
     new_screens = list(generated["screen_definitions"])
-    old_ids = {str(screen["id"]) for screen in old_screens}
-    new_ids = {str(screen["id"]) for screen in new_screens}
-    old_variables = set(_feature_variable_names(existing_feature_text))
-    new_variables = set(_feature_variable_names(proposed))
+    old_variables = set(_feature_variable_names(cleaned_existing))
+    added_rows: List[str] = []
+    added_variables: List[str] = []
+    for row in generated["rows"]:
+        row_variables = _feature_variable_names(str(row))
+        if not row_variables or row_variables[0] in old_variables:
+            continue
+        old_variables.add(row_variables[0])
+        added_variables.append(row_variables[0])
+        added_rows.append(str(row))
+    proposed = _append_rows_to_first_variable_table(cleaned_existing, added_rows)
+    added_variable_set = set(added_variables)
+    added_screens = sorted(
+        str(screen["id"])
+        for screen in new_screens
+        if added_variable_set.intersection(
+            str(field) for field in screen.get("fields", [])
+        )
+    )
     diff = "".join(
         difflib.unified_diff(
             str(existing_feature_text or "").splitlines(keepends=True),
@@ -1802,11 +1808,11 @@ def sync_story_from_docassemble_yaml(
             "proposed_feature_text": proposed,
             "diff": diff,
             "unchanged": str(existing_feature_text or "") == proposed,
-            "screen_baseline_available": bool(old_screens),
-            "added_screens": sorted(new_ids - old_ids),
-            "removed_screens": sorted(old_ids - new_ids),
-            "added_functionality": sorted(new_variables - old_variables),
-            "removed_functionality": sorted(old_variables - new_variables),
+            "screen_baseline_available": False,
+            "added_screens": added_screens,
+            "removed_screens": [],
+            "added_functionality": added_variables,
+            "removed_functionality": [],
         }
     )
     return generated

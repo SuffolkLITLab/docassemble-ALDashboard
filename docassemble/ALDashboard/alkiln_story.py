@@ -236,6 +236,7 @@ class StoryOptions:
     question_id: str = "review_screen"
     include_trigger_column: bool = False
     synthesize_target_number: bool = True
+    check_all_pages_for_accessibility: bool = True
     ignore_anywhere_in_var_name: Sequence[str] = tuple(
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME
     )
@@ -619,6 +620,7 @@ def _escape_likely_unescaped_inner_quotes(json_text: str) -> str:
 
 
 _LEGACY_SCREEN_DEFINITION_MARKER = "# ALKiln screen: "
+ACCESSIBILITY_ALL_STEP = "I check all pages for accessibility issues"
 
 
 def screen_definitions_from_yaml(
@@ -716,6 +718,38 @@ def _append_rows_to_first_variable_table(feature_text: str, rows: Sequence[str])
     return "".join(lines)
 
 
+def _set_accessibility_all_step(feature_text: str, enabled: bool) -> str:
+    """Set accessibility mode without rewriting the rest of the story."""
+    lines = feature_text.splitlines(keepends=True)
+    step_pattern = re.compile(
+        r"^\s*(?:Given|When|Then|And|But)\s+"
+        + re.escape(ACCESSIBILITY_ALL_STEP)
+        + r"\s*$",
+        flags=re.I,
+    )
+    matching = [
+        index for index, line in enumerate(lines) if step_pattern.match(line.rstrip())
+    ]
+    if not enabled:
+        return "".join(
+            line for index, line in enumerate(lines) if index not in matching
+        )
+    if matching:
+        return feature_text
+    start_pattern = re.compile(
+        r'^\s*(?:Given|When|Then|And|But)\s+I start the interview at "[^"]+"\s*$',
+        flags=re.I,
+    )
+    for index, line in enumerate(lines):
+        if start_pattern.match(line.rstrip()):
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            lines.insert(index + 1, f"  And {ACCESSIBILITY_ALL_STEP}{newline}")
+            return "".join(lines)
+    raise ValueError(
+        "The managed ALKiln test has no interview-start step for accessibility mode."
+    )
+
+
 def build_feature_text(
     rows: Sequence[str],
     options: StoryOptions,
@@ -728,9 +762,11 @@ def build_feature_text(
             "",
             f"Scenario: {options.scenario_description}",
             f'  Given I start the interview at "{options.yaml_file_name}"',
-            f'  And the user gets to "{options.question_id}" with this data:',
         ]
     )
+    if options.check_all_pages_for_accessibility:
+        lines.append(f"  And {ACCESSIBILITY_ALL_STEP}")
+    lines.append(f'  And the user gets to "{options.question_id}" with this data:')
     if options.include_trigger_column:
         lines.append("    | var | value | trigger |")
     else:
@@ -767,6 +803,7 @@ def story_from_docassemble_json(
         "question_id": story_options.question_id,
         "feature_description": story_options.feature_description,
         "scenario_description": story_options.scenario_description,
+        "accessibility_enabled": story_options.check_all_pages_for_accessibility,
     }
 
 
@@ -1745,6 +1782,7 @@ def story_from_docassemble_yaml(
         "question_id": story_options.question_id,
         "feature_description": story_options.feature_description,
         "scenario_description": story_options.scenario_description,
+        "accessibility_enabled": story_options.check_all_pages_for_accessibility,
         "source_type": "yaml",
         "screen_definitions": screen_definitions,
     }
@@ -1774,8 +1812,11 @@ def sync_story_from_docassemble_yaml(
         options=options,
     )
     cleaned_existing = _without_screen_definition_comments(existing_feature_text)
+    configured_existing = _set_accessibility_all_step(
+        cleaned_existing, options.check_all_pages_for_accessibility
+    )
     new_screens = list(generated["screen_definitions"])
-    old_variables = set(_feature_variable_names(cleaned_existing))
+    old_variables = set(_feature_variable_names(configured_existing))
     added_rows: List[str] = []
     added_variables: List[str] = []
     for row in generated["rows"]:
@@ -1785,7 +1826,7 @@ def sync_story_from_docassemble_yaml(
         old_variables.add(row_variables[0])
         added_variables.append(row_variables[0])
         added_rows.append(str(row))
-    proposed = _append_rows_to_first_variable_table(cleaned_existing, added_rows)
+    proposed = _append_rows_to_first_variable_table(configured_existing, added_rows)
     added_variable_set = set(added_variables)
     added_screens = sorted(
         str(screen["id"])
@@ -1813,6 +1854,7 @@ def sync_story_from_docassemble_yaml(
             "removed_screens": [],
             "added_functionality": added_variables,
             "removed_functionality": [],
+            "accessibility_enabled": options.check_all_pages_for_accessibility,
         }
     )
     return generated

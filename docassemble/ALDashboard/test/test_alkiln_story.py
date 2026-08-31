@@ -34,6 +34,30 @@ def read_fixture(name):
 
 
 class TestALKilnStory(unittest.TestCase):
+    def test_generated_stories_enable_accessibility_checks_by_default(self):
+        result = story_from_docassemble_json(
+            {"variables": {"answer": 42}},
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+        story = result["feature_text"]
+        start = '  Given I start the interview at "main.yml"'
+        accessibility = "  And I check all pages for accessibility issues"
+        self.assertIn(accessibility, story)
+        self.assertLess(story.index(start), story.index(accessibility))
+
+    def test_accessibility_checks_can_be_disabled(self):
+        result = story_from_docassemble_json(
+            {"variables": {"answer": 42}},
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="done",
+                check_all_pages_for_accessibility=False,
+            ),
+        )
+        self.assertNotIn(
+            "I check all pages for accessibility issues", result["feature_text"]
+        )
+
     def test_yaml_analysis_reports_screens_without_embedding_them(self):
         yaml_text = """---
 id: intro
@@ -148,6 +172,34 @@ question: Done
         self.assertIn(
             "| added_value | Sample answer |", result["proposed_feature_text"]
         )
+
+    def test_sync_can_turn_accessibility_checks_on_and_off(self):
+        yaml_text = (
+            "---\nfields:\n  - Name: user_name\n---\nevent: done\nquestion: Done\n"
+        )
+        enabled = story_from_docassemble_yaml(
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )["feature_text"]
+        disabled = sync_story_from_docassemble_yaml(
+            enabled,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="done",
+                check_all_pages_for_accessibility=False,
+            ),
+        )["proposed_feature_text"]
+        self.assertNotIn("I check all pages for accessibility issues", disabled)
+        reenabled = sync_story_from_docassemble_yaml(
+            disabled,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )["proposed_feature_text"]
+        self.assertIn("I check all pages for accessibility issues", reenabled)
 
     def test_rows_from_variables_handles_nested_objects_and_dates(self):
         rows = rows_from_variables(
@@ -709,6 +761,23 @@ question: Done
         self.assertEqual(payload["yaml_file_name"], "intake.yml")
         self.assertEqual(payload["question_id"], "done")
         self.assertIn("| user_email | user@example.com |", payload["rows"])
+
+    def test_api_payload_defaults_accessibility_on_and_accepts_opt_out(self):
+        enabled = alkiln_story_payload_from_options(
+            {"json_text": '{"variables":{"answer":42}}'}
+        )
+        self.assertIn(
+            "I check all pages for accessibility issues", enabled["feature_text"]
+        )
+        disabled = alkiln_story_payload_from_options(
+            {
+                "json_text": '{"variables":{"answer":42}}',
+                "check_all_pages_for_accessibility": False,
+            }
+        )
+        self.assertNotIn(
+            "I check all pages for accessibility issues", disabled["feature_text"]
+        )
 
     def test_api_payload_accepts_yaml_file_content_base64(self):
         yaml_text = (

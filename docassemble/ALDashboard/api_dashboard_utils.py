@@ -1927,6 +1927,9 @@ def alkiln_story_payload_from_options(
     synthesize_target_number = parse_bool(
         raw.get("synthesize_target_number"), default=True
     )
+    check_all_pages_for_accessibility = parse_bool(
+        raw.get("check_all_pages_for_accessibility"), default=True
+    )
 
     options = StoryOptions(
         feature_description=feature_description,
@@ -1935,6 +1938,7 @@ def alkiln_story_payload_from_options(
         question_id=question_id or "review_screen",
         include_trigger_column=include_trigger_column,
         synthesize_target_number=synthesize_target_number,
+        check_all_pages_for_accessibility=check_all_pages_for_accessibility,
         ignore_anywhere_in_var_name=ignore_anywhere,
     )
     if yaml_text is not None:
@@ -2526,6 +2530,13 @@ def build_openapi_spec() -> Dict[str, Any]:
                                         "scenario_description": {"type": "string"},
                                         "include_trigger_column": {"type": "boolean"},
                                         "synthesize_target_number": {"type": "boolean"},
+                                        "check_all_pages_for_accessibility": {
+                                            "type": "boolean",
+                                            "default": True,
+                                            "description": (
+                                                "Add ALKiln's all-pages accessibility step."
+                                            ),
+                                        },
                                         "ignore_anywhere_in_var_name": {
                                             "type": "array",
                                             "items": {"type": "string"},

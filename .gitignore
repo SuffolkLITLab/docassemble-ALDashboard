@@ -10,6 +10,9 @@ venv/
 build/
 dist/
 
+# Node tooling
+node_modules/
+
 # Local secrets
 .env
 .env.*
@@ -17,3 +20,6 @@ dist/
 *Zone.Identifier*
 
 .codex
+
+# Accessibility check output
+axe-results.json

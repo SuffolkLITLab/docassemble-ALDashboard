@@ -682,8 +682,21 @@
 .field-count-inline {
     font-size: 0.75rem;
     font-weight: 400;
-    color: #7589a1;
+    color: #4f647d;
     margin-left: 0.3rem;
+}
+
+.pdf-labeler-app .btn-outline-danger {
+    color: #8a1c28;
+    border-color: #8a1c28;
+}
+
+/* Same reasoning as .btn-outline-danger above: Bootstrap's default
+   secondary (#6c757d) falls under 4.5:1 on this app's light modal/panel
+   backgrounds. Darkened to Bootstrap's own secondary-hover shade. */
+.pdf-labeler-app .btn-outline-secondary {
+    color: #565e64;
+    border-color: #565e64;
 }
 .fields-mode-toggle .btn {
     font-size: 0.72rem;

@@ -1,0 +1,60 @@
+name: Flask browser accessibility
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: browser-accessibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-accessibility:
+    name: Check Flask labelers with axe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Start an isolated temporary docassemble server
+        id: github_server
+        uses: suffolkLITLab/ALKiln/action_for_github_server@v5
+        with:
+          DOCASSEMBLECLI_VERSION: '0.0.25'
+
+      - name: Install this checkout on the temporary server
+        uses: SuffolkLITLab/ALActions/da_package@main
+        with:
+          SERVER_URL: ${{ steps.github_server.outputs.SERVER_URL }}
+          DOCASSEMBLE_DEVELOPER_API_KEY: ${{ steps.github_server.outputs.DOCASSEMBLE_DEVELOPER_API_KEY }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Check dialog keyboard behaviour
+        run: npm run test:dialogs
+
+      - name: Check Flask labeler accessibility
+        env:
+          SERVER_URL: ${{ steps.github_server.outputs.SERVER_URL }}
+          EDITOR_EMAIL: ${{ steps.github_server.outputs.DA_ADMIN_EMAIL }}
+          EDITOR_PASSWORD: ${{ steps.github_server.outputs.DA_ADMIN_PASSWORD }}
+        run: node .github/scripts/labeler_a11y.js
+
+      - name: Upload axe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axe-results
+          path: axe-results.json
+          if-no-files-found: ignore

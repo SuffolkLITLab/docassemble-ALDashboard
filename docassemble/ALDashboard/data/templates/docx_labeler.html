@@ -118,20 +118,20 @@
                 <!-- Main Panel (tabs for existing labels vs suggestions) -->
                 <div id="main-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
                     <!-- Tabs -->
-                    <div class="dl-tabs">
-                        <button id="tab-existing" class="dl-tab tab-active">
+                    <div class="dl-tabs" role="tablist" aria-label="Label views">
+                        <button id="tab-existing" class="dl-tab tab-active" type="button" role="tab" aria-controls="existing-panel" aria-selected="true">
                             Existing Labels <span id="existing-count" class="dl-count-badge dl-count-badge-primary">0</span>
                         </button>
-                        <button id="tab-manual" class="dl-tab hidden">
+                        <button id="tab-manual" class="dl-tab hidden" type="button" role="tab" aria-controls="manual-panel" aria-selected="false" tabindex="-1">
                             Manual Labels <span id="manual-count" class="dl-count-badge dl-count-badge-warning">0</span>
                         </button>
-                        <button id="tab-suggestions" class="dl-tab">
+                        <button id="tab-suggestions" class="dl-tab" type="button" role="tab" aria-controls="suggestions-panel" aria-selected="false" tabindex="-1">
                             AI Suggestions <span id="suggestions-count" class="dl-count-badge dl-count-badge-warning">0</span>
                         </button>
                     </div>
 
                     <!-- Existing Labels Panel -->
-                    <div id="existing-panel" class="flex-fill d-flex flex-column overflow-hidden">
+                    <div id="existing-panel" class="flex-fill d-flex flex-column overflow-hidden" role="tabpanel" aria-labelledby="tab-existing" tabindex="0">
                         <div class="dl-panel-toolbar d-flex align-items-center gap-2">
                             <button id="bulk-replace-btn" class="btn btn-sm btn-outline-primary">Bulk Replace</button>
                             <button id="ai-relabel-btn" class="btn btn-sm btn-primary">AI Relabel All</button>
@@ -140,7 +140,7 @@
                     </div>
 
                     <!-- Manual Labels Panel -->
-                    <div id="manual-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                    <div id="manual-panel" class="hidden flex-fill d-flex flex-column overflow-hidden" role="tabpanel" aria-labelledby="tab-manual" tabindex="0">
                         <div class="dl-panel-toolbar d-flex align-items-center justify-content-between gap-2">
                             <div class="small text-muted">Labels added from preview selections</div>
                         </div>
@@ -148,7 +148,7 @@
                     </div>
 
                     <!-- Suggestions Panel -->
-                    <div id="suggestions-panel" class="hidden flex-fill d-flex flex-column overflow-hidden">
+                    <div id="suggestions-panel" class="hidden flex-fill d-flex flex-column overflow-hidden" role="tabpanel" aria-labelledby="tab-suggestions" tabindex="0">
                         <div class="dl-panel-toolbar d-flex align-items-center justify-content-between">
                             <div class="d-flex gap-2">
                                 <button id="accept-all-btn" class="btn btn-sm btn-success">Accept All</button>
@@ -198,11 +198,11 @@
         </main>
 
         <!-- Settings Modal -->
-        <div id="settings-modal" class="hidden dl-modal-overlay">
+        <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" class="hidden dl-modal-overlay">
             <div class="dl-modal dl-modal-md">
                 <div class="dl-modal-header">
-                    <h2 class="h5 fw-semibold mb-0">AI Prompt Settings</h2>
-                    <button id="close-settings" class="btn btn-sm btn-light rounded">
+                    <h2 id="settings-modal-title" class="h5 fw-semibold mb-0">AI Prompt Settings</h2>
+                    <button id="close-settings" class="btn btn-sm btn-light rounded" aria-label="Close AI prompt settings">
                         <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
@@ -281,18 +281,18 @@
                     </div>
                 </div>
                 <div class="dl-modal-footer d-flex justify-content-end gap-2">
-                    <button id="reset-settings" class="btn btn-outline-secondary">Reset to Default</button>
+                    <button id="reset-settings" class="btn btn-outline-dark">Reset to Default</button>
                     <button id="save-settings" class="btn btn-primary">Save Settings</button>
                 </div>
             </div>
         </div>
 
         <!-- Bulk Replace Modal -->
-        <div id="bulk-replace-modal" class="hidden dl-modal-overlay">
+        <div id="bulk-replace-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-replace-modal-title" class="hidden dl-modal-overlay">
             <div class="dl-modal dl-modal-sm">
                 <div class="dl-modal-header">
                     <div>
-                        <h2 class="h5 fw-semibold mb-1">Bulk Find &amp; Replace</h2>
+                        <h2 id="bulk-replace-modal-title" class="h5 fw-semibold mb-1">Bulk Find &amp; Replace</h2>
                         <p class="text-muted small mb-0">Replace variable names across all labels</p>
                     </div>
                 </div>
@@ -321,11 +321,11 @@
         </div>
 
         <!-- Create/Edit Label Modal -->
-        <div id="edit-label-modal" class="hidden dl-modal-overlay">
+        <div id="edit-label-modal" role="dialog" aria-modal="true" aria-labelledby="edit-label-title" class="hidden dl-modal-overlay">
             <div class="dl-modal dl-modal-lg">
                 <div class="dl-modal-header">
                     <h2 id="edit-label-title" class="h5 fw-semibold mb-0">Edit Label</h2>
-                    <button id="edit-close" class="btn btn-sm btn-light rounded">
+                    <button id="edit-close" class="btn btn-sm btn-light rounded" aria-label="Close label editor">
                         <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
@@ -360,10 +360,10 @@
         </div>
 
         <!-- Open from Playground modal -->
-        <div id="open-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="open-playground-modal" role="dialog" aria-modal="true" aria-labelledby="open-playground-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
-                    <h2 class="h5 fw-semibold mb-0">Open from Playground</h2>
+                    <h2 id="open-playground-modal-title" class="h5 fw-semibold mb-0">Open from Playground</h2>
                     <button id="close-open-playground" class="btn btn-sm btn-light">Close</button>
                 </div>
                 <div class="mb-2">
@@ -382,10 +382,10 @@
         </div>
 
         <!-- Save to Playground modal -->
-        <div id="save-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="save-playground-modal" role="dialog" aria-modal="true" aria-labelledby="save-playground-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
-                    <h2 class="h5 fw-semibold mb-0">Save to Playground</h2>
+                    <h2 id="save-playground-modal-title" class="h5 fw-semibold mb-0">Save to Playground</h2>
                     <button id="close-save-playground" class="btn btn-sm btn-light">Close</button>
                 </div>
                 <div class="mb-2">
@@ -405,11 +405,11 @@
         </div>
 
         <!-- Utilities Modal -->
-        <div id="utilities-modal" class="hidden dl-modal-overlay">
+        <div id="utilities-modal" role="dialog" aria-modal="true" aria-labelledby="utilities-modal-title" class="hidden dl-modal-overlay">
             <div class="dl-modal dl-modal-lg">
                 <div class="dl-modal-header">
                     <div>
-                        <h2 class="h5 fw-semibold mb-1">Utilities</h2>
+                        <h2 id="utilities-modal-title" class="h5 fw-semibold mb-1">Utilities</h2>
                         <p class="text-muted small mb-0">Run DOCX utilities on the active file or a separate upload.</p>
                     </div>
                     <button id="utilities-close" class="btn btn-sm btn-light rounded">Close</button>
@@ -440,11 +440,11 @@
         </div>
 
         <!-- Repair Modal -->
-        <div id="repair-modal" class="hidden dl-modal-overlay">
+        <div id="repair-modal" role="dialog" aria-modal="true" aria-labelledby="repair-modal-title" class="hidden dl-modal-overlay">
             <div class="dl-modal dl-modal-lg">
                 <div class="dl-modal-header">
                     <div>
-                        <h2 class="h5 fw-semibold mb-1">Repair</h2>
+                        <h2 id="repair-modal-title" class="h5 fw-semibold mb-1">Repair</h2>
                         <p class="text-muted small mb-0">Try increasingly aggressive rescue steps for broken DOCX files.</p>
                     </div>
                     <button id="repair-close" class="btn btn-sm btn-light rounded">Close</button>
@@ -496,6 +496,7 @@
     </div>
 
     <script id="labeler-bootstrap" type="application/json">__LABELER_BOOTSTRAP_JSON__</script>
+    <script src="/packagestatic/docassemble.ALDashboard/labeler_dialogs.js"></script>
     <script src="/packagestatic/docassemble.ALDashboard/docx_labeler_preview_utils.js"></script>
     <script src="/packagestatic/docassemble.ALDashboard/docx_labeler.js"></script>
 </body>

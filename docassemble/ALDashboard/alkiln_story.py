@@ -624,7 +624,10 @@ ACCESSIBILITY_ALL_STEP = "I check all pages for accessibility issues"
 
 
 def screen_definitions_from_yaml(
-    yaml_text: str, *, source_path: Optional[str] = None
+    yaml_text: str,
+    *,
+    source_path: Optional[str] = None,
+    parsed_documents: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """Return the user-visible screens and the variables each one defines.
 
@@ -632,9 +635,12 @@ def screen_definitions_from_yaml(
     current source screens without adding metadata to the generated story.
     """
     screens: List[Dict[str, Any]] = []
-    for index, doc in enumerate(
-        load_docassemble_yaml_text(yaml_text, source_path=source_path)
-    ):
+    documents = (
+        parsed_documents
+        if parsed_documents is not None
+        else load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    )
+    for index, doc in enumerate(documents):
         fields = doc.get("fields")
         has_screen_content = any(
             key in doc
@@ -942,20 +948,18 @@ def _resolve_local_include_path(include_ref: str, source_path: str) -> Optional[
     return None
 
 
-def load_docassemble_yaml_text(
-    yaml_text: Any,
+def _expand_docassemble_yaml_documents(
+    docs: Sequence[Mapping[str, Any]],
     *,
-    source_path: Optional[str] = None,
-    _seen_paths: Optional[set[str]] = None,
+    source_path: Optional[str],
+    seen_paths: set[str],
 ) -> List[Mapping[str, Any]]:
-    docs = _load_yaml_documents(yaml_text)
     normalized_source_path = _normalize_yaml_source_path(source_path)
     if not normalized_source_path:
-        return docs
+        return list(docs)
 
-    seen_paths = _seen_paths if _seen_paths is not None else set()
     if normalized_source_path in seen_paths:
-        return docs
+        return list(docs)
     seen_paths.add(normalized_source_path)
 
     expanded_docs: List[Mapping[str, Any]] = []
@@ -970,14 +974,43 @@ def load_docassemble_yaml_text(
             try:
                 with open(include_path, "r", encoding="utf-8") as include_file:
                     expanded_docs.extend(
-                        load_docassemble_yaml_text(
-                            include_file.read(),
+                        _expand_docassemble_yaml_documents(
+                            _load_yaml_documents(include_file.read()),
                             source_path=include_path,
-                            _seen_paths=seen_paths,
+                            seen_paths=seen_paths,
                         )
                     )
             except OSError:
                 continue
+    return expanded_docs
+
+
+def _load_docassemble_yaml_documents(
+    yaml_text: Any,
+    *,
+    source_path: Optional[str] = None,
+    _seen_paths: Optional[set[str]] = None,
+) -> tuple[List[Mapping[str, Any]], List[Mapping[str, Any]]]:
+    primary_docs = _load_yaml_documents(yaml_text)
+    expanded_docs = _expand_docassemble_yaml_documents(
+        primary_docs,
+        source_path=source_path,
+        seen_paths=_seen_paths if _seen_paths is not None else set(),
+    )
+    return primary_docs, expanded_docs
+
+
+def load_docassemble_yaml_text(
+    yaml_text: Any,
+    *,
+    source_path: Optional[str] = None,
+    _seen_paths: Optional[set[str]] = None,
+) -> List[Mapping[str, Any]]:
+    _primary_docs, expanded_docs = _load_docassemble_yaml_documents(
+        yaml_text,
+        source_path=source_path,
+        _seen_paths=_seen_paths,
+    )
     return expanded_docs
 
 
@@ -1679,10 +1712,17 @@ def rows_from_yaml_heuristics(
     *,
     options: Optional[StoryOptions] = None,
     source_path: Optional[str] = None,
+    parsed_documents: Optional[
+        tuple[Sequence[Mapping[str, Any]], Sequence[Mapping[str, Any]]]
+    ] = None,
 ) -> List[str]:
     story_options = options or StoryOptions()
-    primary_docs = _load_yaml_documents(yaml_text)
-    docs = load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    if parsed_documents is None:
+        primary_docs, docs = _load_docassemble_yaml_documents(
+            yaml_text, source_path=source_path
+        )
+    else:
+        primary_docs, docs = parsed_documents
     people_lists = _declared_al_people_lists(docs)
     rows: List[str] = []
 
@@ -1739,8 +1779,13 @@ def detect_yaml_ending_screen(
     fallback: str = "review_screen",
     *,
     source_path: Optional[str] = None,
+    parsed_documents: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> str:
-    docs = load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    docs = (
+        parsed_documents
+        if parsed_documents is not None
+        else load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    )
     final_candidate: Optional[str] = None
     for doc in docs:
         candidate: Optional[str] = None
@@ -1776,11 +1821,17 @@ def story_from_docassemble_yaml(
             if isinstance(source_path, str)
             else None
         )
+    parsed_documents = _load_docassemble_yaml_documents(
+        yaml_text, source_path=resolved_source_path
+    )
+    expanded_documents = parsed_documents[1]
     if options is None:
         story_options = StoryOptions(
             yaml_file_name=yaml_file_name,
             question_id=detect_yaml_ending_screen(
-                yaml_text, source_path=resolved_source_path
+                yaml_text,
+                source_path=resolved_source_path,
+                parsed_documents=expanded_documents,
             ),
         )
     else:
@@ -1793,9 +1844,12 @@ def story_from_docassemble_yaml(
         yaml_text,
         options=story_options,
         source_path=resolved_source_path,
+        parsed_documents=parsed_documents,
     )
     screen_definitions = screen_definitions_from_yaml(
-        yaml_text, source_path=resolved_source_path
+        yaml_text,
+        source_path=resolved_source_path,
+        parsed_documents=expanded_documents,
     )
     feature_text = build_feature_text(rows, story_options)
     return {

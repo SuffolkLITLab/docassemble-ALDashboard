@@ -99,6 +99,27 @@ question: Download
         self.assertEqual(result["screen_definitions"], screens)
         self.assertNotIn("# ALKiln screen:", result["feature_text"])
 
+    @patch("docassemble.ALDashboard.alkiln_story._load_yaml_documents")
+    def test_story_generation_parses_main_yaml_once(self, load_yaml_documents):
+        yaml_text = "---\nfields:\n  - Name: client_name\n---\nevent: done\n"
+        load_yaml_documents.return_value = [
+            {"fields": [{"Name": "client_name"}]},
+            {"event": "done"},
+        ]
+
+        result = story_from_docassemble_yaml(
+            yaml_text,
+            filename="main.yml",
+        )
+
+        self.assertEqual(result["question_id"], "done")
+        main_yaml_calls = [
+            call
+            for call in load_yaml_documents.call_args_list
+            if call.args and call.args[0] == yaml_text
+        ]
+        self.assertEqual(len(main_yaml_calls), 1)
+
     def test_sync_only_adds_new_rows_and_removes_legacy_metadata(self):
         old_yaml = """---
 id: old_screen

@@ -2,8 +2,8 @@
   "name": "docassemble-aldashboard-static-checks",
   "private": true,
   "engines": {
-    "node": ">=22"
-  },
+    "node": ">=22.13.0"
+  }
   "scripts": {
     "format": "prettier --write $npm_package_config_jsFiles",
     "format:check": "prettier --check $npm_package_config_jsFiles",

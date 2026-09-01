@@ -1,4 +1,5 @@
 import ast
+import difflib
 import glob
 import json
 import os
@@ -235,6 +236,7 @@ class StoryOptions:
     question_id: str = "review_screen"
     include_trigger_column: bool = False
     synthesize_target_number: bool = True
+    check_all_pages_for_accessibility: bool = True
     ignore_anywhere_in_var_name: Sequence[str] = tuple(
         DEFAULT_IGNORE_ANYWHERE_IN_VAR_NAME
     )
@@ -617,14 +619,219 @@ def _escape_likely_unescaped_inner_quotes(json_text: str) -> str:
     return "".join(output)
 
 
-def build_feature_text(rows: Sequence[str], options: StoryOptions) -> str:
+_LEGACY_SCREEN_DEFINITION_MARKER = "# ALKiln screen: "
+ACCESSIBILITY_ALL_STEP = "I check all pages for accessibility issues"
+
+
+def screen_definitions_from_yaml(
+    yaml_text: str,
+    *,
+    source_path: Optional[str] = None,
+    parsed_documents: Optional[Sequence[Mapping[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Return the user-visible screens and the variables each one defines.
+
+    The compact result lets callers associate newly inferred rows with their
+    current source screens without adding metadata to the generated story.
+    """
+    screens: List[Dict[str, Any]] = []
+    documents = (
+        parsed_documents
+        if parsed_documents is not None
+        else load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    )
+    for index, doc in enumerate(documents):
+        fields = doc.get("fields")
+        has_screen_content = any(
+            key in doc
+            for key in (
+                "question",
+                "subquestion",
+                "fields",
+                "review",
+                "continue button field",
+            )
+        )
+        if not has_screen_content:
+            continue
+        screen_id = str(doc.get("id") or doc.get("event") or "").strip()
+        if not screen_id:
+            screen_id = f"screen_{index + 1}"
+        field_names: List[str] = []
+        if isinstance(fields, list):
+            for field in fields:
+                variable, _field_info = _field_variable_and_info(field)
+                if variable and variable not in field_names:
+                    field_names.append(variable)
+        continue_field = doc.get("continue button field")
+        if _looks_like_variable_name(continue_field):
+            normalized_continue_field = str(continue_field)
+            if normalized_continue_field not in field_names:
+                field_names.append(normalized_continue_field)
+        screens.append(
+            {
+                "id": screen_id,
+                "question": str(doc.get("question") or "").strip(),
+                "fields": field_names,
+            }
+        )
+    return screens
+
+
+def _feature_variable_names(feature_text: str) -> List[str]:
+    variables: List[str] = []
+    for line in str(feature_text or "").splitlines():
+        match = re.match(r"^\s*\|\s*([^|]+?)\s*\|", line)
+        if not match:
+            continue
+        variable = match.group(1).strip()
+        if variable in {"var", "variable"} or variable in variables:
+            continue
+        variables.append(variable)
+    return variables
+
+
+def _managed_variable_table(
+    feature_text: str,
+) -> tuple[List[str], int, int, List[str]]:
+    """Return the lines, bounds, and columns of Weaver's managed Story Table."""
+    lines = str(feature_text or "").splitlines(keepends=True)
+    target_pattern = re.compile(
+        r'^\s*(?:Given|When|Then|And|But)\s+the user gets to "[^"]+" with this data:\s*$',
+        flags=re.I,
+    )
+    header_pattern = re.compile(r"^\s*\|\s*(?:var|variable)\s*\|", flags=re.I)
+    for target_index, line in enumerate(lines):
+        if not target_pattern.match(line.rstrip()):
+            continue
+        header_index = target_index + 1
+        while header_index < len(lines) and not lines[header_index].strip():
+            header_index += 1
+        if header_index >= len(lines) or not header_pattern.match(lines[header_index]):
+            break
+        columns = [
+            cell.strip() for cell in lines[header_index].strip().strip("|").split("|")
+        ]
+        normalized_columns = [column.lower() for column in columns]
+        if normalized_columns not in (
+            ["var", "value"],
+            ["variable", "value"],
+            ["var", "value", "trigger"],
+            ["variable", "value", "trigger"],
+        ):
+            raise ValueError(
+                "The managed ALKiln variable table must have var, value, and optional trigger columns."
+            )
+        table_end = header_index + 1
+        while table_end < len(lines) and re.match(r"^\s*\|", lines[table_end]):
+            table_end += 1
+        return lines, header_index, table_end, columns
+    raise ValueError("The managed ALKiln test has no variable table to sync.")
+
+
+def _managed_feature_variable_names(feature_text: str) -> List[str]:
+    """Return variables from only Weaver's managed Story Table."""
+    lines, header_index, table_end, _columns = _managed_variable_table(feature_text)
+    return _feature_variable_names("".join(lines[header_index + 1 : table_end]))
+
+
+def _without_screen_definition_comments(feature_text: str) -> str:
+    """Remove the legacy machine-only screen inventory from a feature."""
+    lines = str(feature_text or "").splitlines(keepends=True)
+    return "".join(
+        line
+        for line in lines
+        if not line.strip().startswith(_LEGACY_SCREEN_DEFINITION_MARKER)
+    )
+
+
+def _append_rows_to_first_variable_table(feature_text: str, rows: Sequence[str]) -> str:
+    """Add rows to the managed ALKiln variable table without rewriting the story."""
+    if not rows:
+        return feature_text
+    lines, _header_index, insert_at, _columns = _managed_variable_table(feature_text)
+    newline = "\r\n" if "\r\n" in feature_text else "\n"
+    additions = [f"    {row}{newline}" for row in rows]
+    if insert_at == len(lines) and lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += newline
+    lines[insert_at:insert_at] = additions
+    return "".join(lines)
+
+
+def _set_accessibility_all_step(feature_text: str, enabled: bool) -> str:
+    """Set accessibility mode without rewriting the rest of the story."""
+    lines = feature_text.splitlines(keepends=True)
+    step_pattern = re.compile(
+        r"^\s*(?:Given|When|Then|And|But)\s+"
+        + re.escape(ACCESSIBILITY_ALL_STEP)
+        + r"\s*$",
+        flags=re.I,
+    )
+    matching = [
+        index for index, line in enumerate(lines) if step_pattern.match(line.rstrip())
+    ]
+    if not enabled:
+        return "".join(
+            line for index, line in enumerate(lines) if index not in matching
+        )
+    if matching:
+        return feature_text
+    start_pattern = re.compile(
+        r'^\s*(?:Given|When|Then|And|But)\s+I start the interview at "[^"]+"\s*$',
+        flags=re.I,
+    )
+    for index, line in enumerate(lines):
+        if start_pattern.match(line.rstrip()):
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            lines.insert(index + 1, f"  And {ACCESSIBILITY_ALL_STEP}{newline}")
+            return "".join(lines)
+    raise ValueError(
+        "The managed ALKiln test has no interview-start step for accessibility mode."
+    )
+
+
+def _set_managed_story_destination(
+    feature_text: str, *, yaml_file_name: str, question_id: str
+) -> str:
+    """Update the two destinations Weaver explicitly manages."""
+    start_pattern = re.compile(
+        r'^(\s*(?:Given|When|Then|And|But)\s+I start the interview at ")[^"]+("\s*)$',
+        flags=re.I | re.M,
+    )
+    target_pattern = re.compile(
+        r'^(\s*(?:Given|When|Then|And|But)\s+the user gets to ")[^"]+(" with this data:\s*)$',
+        flags=re.I | re.M,
+    )
+    updated, start_count = start_pattern.subn(
+        rf"\g<1>{yaml_file_name}\g<2>", feature_text, count=1
+    )
+    updated, target_count = target_pattern.subn(
+        rf"\g<1>{question_id}\g<2>", updated, count=1
+    )
+    if start_count != 1 or target_count != 1:
+        raise ValueError(
+            "The managed ALKiln test does not have Weaver's expected start and Story Table steps."
+        )
+    return updated
+
+
+def build_feature_text(
+    rows: Sequence[str],
+    options: StoryOptions,
+) -> str:
     lines = [
         f"Feature: {options.feature_description or options.scenario_description}",
-        "",
-        f"Scenario: {options.scenario_description}",
-        f'  Given I start the interview at "{options.yaml_file_name}"',
-        f'  And the user gets to "{options.question_id}" with this data:',
     ]
+    lines.extend(
+        [
+            "",
+            f"Scenario: {options.scenario_description}",
+            f'  Given I start the interview at "{options.yaml_file_name}"',
+        ]
+    )
+    if options.check_all_pages_for_accessibility:
+        lines.append(f"  And {ACCESSIBILITY_ALL_STEP}")
+    lines.append(f'  And the user gets to "{options.question_id}" with this data:')
     if options.include_trigger_column:
         lines.append("    | var | value | trigger |")
     else:
@@ -661,6 +868,7 @@ def story_from_docassemble_json(
         "question_id": story_options.question_id,
         "feature_description": story_options.feature_description,
         "scenario_description": story_options.scenario_description,
+        "accessibility_enabled": story_options.check_all_pages_for_accessibility,
     }
 
 
@@ -774,20 +982,18 @@ def _resolve_local_include_path(include_ref: str, source_path: str) -> Optional[
     return None
 
 
-def load_docassemble_yaml_text(
-    yaml_text: Any,
+def _expand_docassemble_yaml_documents(
+    docs: Sequence[Mapping[str, Any]],
     *,
-    source_path: Optional[str] = None,
-    _seen_paths: Optional[set[str]] = None,
+    source_path: Optional[str],
+    seen_paths: set[str],
 ) -> List[Mapping[str, Any]]:
-    docs = _load_yaml_documents(yaml_text)
     normalized_source_path = _normalize_yaml_source_path(source_path)
     if not normalized_source_path:
-        return docs
+        return list(docs)
 
-    seen_paths = _seen_paths if _seen_paths is not None else set()
     if normalized_source_path in seen_paths:
-        return docs
+        return list(docs)
     seen_paths.add(normalized_source_path)
 
     expanded_docs: List[Mapping[str, Any]] = []
@@ -802,14 +1008,43 @@ def load_docassemble_yaml_text(
             try:
                 with open(include_path, "r", encoding="utf-8") as include_file:
                     expanded_docs.extend(
-                        load_docassemble_yaml_text(
-                            include_file.read(),
+                        _expand_docassemble_yaml_documents(
+                            _load_yaml_documents(include_file.read()),
                             source_path=include_path,
-                            _seen_paths=seen_paths,
+                            seen_paths=seen_paths,
                         )
                     )
             except OSError:
                 continue
+    return expanded_docs
+
+
+def _load_docassemble_yaml_documents(
+    yaml_text: Any,
+    *,
+    source_path: Optional[str] = None,
+    _seen_paths: Optional[set[str]] = None,
+) -> tuple[List[Mapping[str, Any]], List[Mapping[str, Any]]]:
+    primary_docs = _load_yaml_documents(yaml_text)
+    expanded_docs = _expand_docassemble_yaml_documents(
+        primary_docs,
+        source_path=source_path,
+        seen_paths=_seen_paths if _seen_paths is not None else set(),
+    )
+    return primary_docs, expanded_docs
+
+
+def load_docassemble_yaml_text(
+    yaml_text: Any,
+    *,
+    source_path: Optional[str] = None,
+    _seen_paths: Optional[set[str]] = None,
+) -> List[Mapping[str, Any]]:
+    _primary_docs, expanded_docs = _load_docassemble_yaml_documents(
+        yaml_text,
+        source_path=source_path,
+        _seen_paths=_seen_paths,
+    )
     return expanded_docs
 
 
@@ -1511,10 +1746,19 @@ def rows_from_yaml_heuristics(
     *,
     options: Optional[StoryOptions] = None,
     source_path: Optional[str] = None,
+    parsed_documents: Optional[
+        tuple[Sequence[Mapping[str, Any]], Sequence[Mapping[str, Any]]]
+    ] = None,
 ) -> List[str]:
     story_options = options or StoryOptions()
-    primary_docs = _load_yaml_documents(yaml_text)
-    docs = load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    primary_docs: Sequence[Mapping[str, Any]]
+    docs: Sequence[Mapping[str, Any]]
+    if parsed_documents is None:
+        primary_docs, docs = _load_docassemble_yaml_documents(
+            yaml_text, source_path=source_path
+        )
+    else:
+        primary_docs, docs = parsed_documents
     people_lists = _declared_al_people_lists(docs)
     rows: List[str] = []
 
@@ -1571,8 +1815,13 @@ def detect_yaml_ending_screen(
     fallback: str = "review_screen",
     *,
     source_path: Optional[str] = None,
+    parsed_documents: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> str:
-    docs = load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    docs = (
+        parsed_documents
+        if parsed_documents is not None
+        else load_docassemble_yaml_text(yaml_text, source_path=source_path)
+    )
     final_candidate: Optional[str] = None
     for doc in docs:
         candidate: Optional[str] = None
@@ -1608,11 +1857,17 @@ def story_from_docassemble_yaml(
             if isinstance(source_path, str)
             else None
         )
+    parsed_documents = _load_docassemble_yaml_documents(
+        yaml_text, source_path=resolved_source_path
+    )
+    expanded_documents = parsed_documents[1]
     if options is None:
         story_options = StoryOptions(
             yaml_file_name=yaml_file_name,
             question_id=detect_yaml_ending_screen(
-                yaml_text, source_path=resolved_source_path
+                yaml_text,
+                source_path=resolved_source_path,
+                parsed_documents=expanded_documents,
             ),
         )
     else:
@@ -1625,6 +1880,12 @@ def story_from_docassemble_yaml(
         yaml_text,
         options=story_options,
         source_path=resolved_source_path,
+        parsed_documents=parsed_documents,
+    )
+    screen_definitions = screen_definitions_from_yaml(
+        yaml_text,
+        source_path=resolved_source_path,
+        parsed_documents=expanded_documents,
     )
     feature_text = build_feature_text(rows, story_options)
     return {
@@ -1636,5 +1897,93 @@ def story_from_docassemble_yaml(
         "question_id": story_options.question_id,
         "feature_description": story_options.feature_description,
         "scenario_description": story_options.scenario_description,
+        "accessibility_enabled": story_options.check_all_pages_for_accessibility,
         "source_type": "yaml",
+        "screen_definitions": screen_definitions,
     }
+
+
+def sync_story_from_docassemble_yaml(
+    existing_feature_text: str,
+    yaml_text: str,
+    *,
+    filename: str = "interview.yml",
+    source_path: Optional[str] | object = _DEFAULT_YAML_SOURCE_PATH,
+    options: Optional[StoryOptions] = None,
+) -> Dict[str, Any]:
+    """Add newly inferred fixture rows without removing or rewriting old ones."""
+    if options is None:
+        options = StoryOptions(
+            yaml_file_name=_clean_yaml_filename(filename),
+            question_id=detect_yaml_ending_screen(
+                yaml_text,
+                source_path=(source_path if isinstance(source_path, str) else None),
+            ),
+        )
+    cleaned_existing = _without_screen_definition_comments(existing_feature_text)
+    destination_existing = _set_managed_story_destination(
+        cleaned_existing,
+        yaml_file_name=options.yaml_file_name,
+        question_id=options.question_id,
+    )
+    configured_existing = _set_accessibility_all_step(
+        destination_existing, options.check_all_pages_for_accessibility
+    )
+    _lines, _header_index, _table_end, table_columns = _managed_variable_table(
+        configured_existing
+    )
+    table_has_trigger_column = len(table_columns) == 3
+    sync_options = (
+        options
+        if options.include_trigger_column == table_has_trigger_column
+        else replace(options, include_trigger_column=table_has_trigger_column)
+    )
+    generated = story_from_docassemble_yaml(
+        yaml_text,
+        filename=filename,
+        source_path=source_path,
+        options=sync_options,
+    )
+    new_screens = list(generated["screen_definitions"])
+    old_variables = set(_managed_feature_variable_names(configured_existing))
+    added_rows: List[str] = []
+    added_variables: List[str] = []
+    for row in generated["rows"]:
+        row_variables = _feature_variable_names(str(row))
+        if not row_variables or row_variables[0] in old_variables:
+            continue
+        old_variables.add(row_variables[0])
+        added_variables.append(row_variables[0])
+        added_rows.append(str(row))
+    proposed = _append_rows_to_first_variable_table(configured_existing, added_rows)
+    added_variable_set = set(added_variables)
+    added_screens = sorted(
+        str(screen["id"])
+        for screen in new_screens
+        if added_variable_set.intersection(
+            str(field) for field in screen.get("fields", [])
+        )
+    )
+    diff = "".join(
+        difflib.unified_diff(
+            str(existing_feature_text or "").splitlines(keepends=True),
+            proposed.splitlines(keepends=True),
+            fromfile="existing feature",
+            tofile="synced feature",
+        )
+    )
+    generated.update(
+        {
+            "existing_feature_text": str(existing_feature_text or ""),
+            "proposed_feature_text": proposed,
+            "diff": diff,
+            "unchanged": str(existing_feature_text or "") == proposed,
+            "screen_baseline_available": False,
+            "added_screens": added_screens,
+            "removed_screens": [],
+            "added_functionality": added_variables,
+            "removed_functionality": [],
+            "accessibility_enabled": options.check_all_pages_for_accessibility,
+        }
+    )
+    return generated

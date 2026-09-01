@@ -143,7 +143,9 @@ def test_get_session_details_success(monkeypatch):
 
         def execute(self, query, params):
             assert params["session_id"] == "test-session-key"
+            assert params["yaml_filename"] is None
             assert "WHERE userdict.key = :session_id" in query
+            assert "userdict.filename = :yaml_filename" in query
             assert "jsonstorage.tags = 'metadata'" in query
             assert "ORDER BY userdict.modtime DESC" in query
             return namedtuple("Result", ["fetchone"])(lambda: fake_row)
@@ -175,6 +177,43 @@ def test_get_session_details_not_found(monkeypatch):
 
     with pytest.raises(ValueError, match="No session found with ID: missing-key"):
         get_session_details("missing-key")
+
+
+def test_get_session_details_can_select_one_interview_for_a_shared_key(monkeypatch):
+    selected_filename = "docassemble.Allowed:data/questions/allowed.yml"
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            assert params == {
+                "session_id": "shared-key",
+                "yaml_filename": selected_filename,
+            }
+            row_values = {
+                "filename": selected_filename,
+                "user_id": 1,
+                "user_ids": "1",
+                "modtime": datetime(2026, 8, 22, 12, 0, 0),
+                "key": "shared-key",
+                "auto_title": None,
+                "title": "Allowed interview",
+                "description": None,
+                "steps": None,
+                "progress": None,
+            }
+            Row = namedtuple("Row", row_values)
+            return namedtuple("Result", ["fetchone"])(lambda: Row(**row_values))
+
+    monkeypatch.setattr(aldashboard, "_get_db_session", FakeSession)
+
+    details = get_session_details("shared-key", yaml_filename=selected_filename)
+    assert details["filename"] == selected_filename
+    assert details["title"] == "Allowed interview"
 
 
 def test_get_session_details_empty_key():
@@ -241,7 +280,9 @@ def test_get_permitted_upload_details_rejects_unauthorized_interview(monkeypatch
         },
     )
     monkeypatch.setattr(
-        aldashboard, "get_permitted_session_details", lambda session_id: None
+        aldashboard,
+        "get_permitted_session_details",
+        lambda session_id, yaml_filename=None: None,
     )
 
     assert get_permitted_upload_details(12345) is None
@@ -256,14 +297,19 @@ def test_get_permitted_upload_details_includes_authorized_session(monkeypatch):
     }
     session = {"key": "allowed-session", "filename": upload["yamlfile"]}
     monkeypatch.setattr(aldashboard, "get_upload_details", lambda file_id: upload)
-    monkeypatch.setattr(
-        aldashboard, "get_permitted_session_details", lambda session_id: session
-    )
+    permitted_calls = []
+
+    def permitted_session(session_id, yaml_filename=None):
+        permitted_calls.append((session_id, yaml_filename))
+        return session
+
+    monkeypatch.setattr(aldashboard, "get_permitted_session_details", permitted_session)
     monkeypatch.setattr(
         aldashboard, "get_allowed_interview_filenames", lambda: {upload["yamlfile"]}
     )
 
     assert get_permitted_upload_details(12345) == {**upload, "session": session}
+    assert permitted_calls == [(upload["key"], upload["yamlfile"])]
 
 
 def test_get_permitted_upload_details_rejects_upload_from_other_interview(monkeypatch):
@@ -286,7 +332,9 @@ def test_get_permitted_upload_details_rejects_upload_from_other_interview(monkey
     }
     monkeypatch.setattr(aldashboard, "get_upload_details", lambda file_id: upload)
     monkeypatch.setattr(
-        aldashboard, "get_permitted_session_details", lambda session_id: session
+        aldashboard,
+        "get_permitted_session_details",
+        lambda session_id, yaml_filename=None: session,
     )
     monkeypatch.setattr(
         aldashboard,
@@ -312,7 +360,9 @@ def test_get_permitted_upload_details_allows_any_interview_for_privileged_users(
     }
     monkeypatch.setattr(aldashboard, "get_upload_details", lambda file_id: upload)
     monkeypatch.setattr(
-        aldashboard, "get_permitted_session_details", lambda session_id: session
+        aldashboard,
+        "get_permitted_session_details",
+        lambda session_id, yaml_filename=None: session,
     )
     monkeypatch.setattr(aldashboard, "get_allowed_interview_filenames", lambda: None)
 
@@ -565,7 +615,7 @@ def test_get_permitted_session_details_enforces_the_allow_list(monkeypatch):
     monkeypatch.setattr(
         aldashboard,
         "get_session_details",
-        lambda session_id: {
+        lambda session_id, yaml_filename=None: {
             "filename": "docassemble.MyPackage:data/questions/forbidden.yml",
             "key": session_id,
         },
@@ -592,8 +642,31 @@ def test_get_permitted_session_details_enforces_the_allow_list(monkeypatch):
     assert get_permitted_session_details("some-session")["key"] == "some-session"
 
 
+def test_get_permitted_session_details_scopes_a_shared_key_to_the_interview(
+    monkeypatch,
+):
+    allowed_filename = "docassemble.MyPackage:data/questions/allowed.yml"
+    calls = []
+
+    def session_details(session_id, yaml_filename=None):
+        calls.append((session_id, yaml_filename))
+        return {"filename": yaml_filename, "key": session_id}
+
+    monkeypatch.setattr(aldashboard, "get_session_details", session_details)
+    monkeypatch.setattr(
+        aldashboard, "get_allowed_interview_filenames", lambda: {allowed_filename}
+    )
+
+    details = get_permitted_session_details(
+        "shared-session", yaml_filename=allowed_filename
+    )
+
+    assert details == {"filename": allowed_filename, "key": "shared-session"}
+    assert calls == [("shared-session", allowed_filename)]
+
+
 def test_get_permitted_session_details_returns_none_for_missing_sessions(monkeypatch):
-    def missing(session_id):
+    def missing(session_id, yaml_filename=None):
         raise ValueError(f"No session found with ID: {session_id}")
 
     monkeypatch.setattr(aldashboard, "get_session_details", missing)

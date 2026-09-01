@@ -1443,9 +1443,11 @@ LIMIT 500;
     return sessions
 
 
-def get_session_details(session_id: str) -> Dict[str, Any]:
+def get_session_details(
+    session_id: str, yaml_filename: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    Get filename, user_id, user_ids, modtime, key, and other details for a given session ID.
+    Get details for a session ID, optionally scoped to one interview filename.
     """
     session_id = str(session_id or "").strip()
     if not session_id:
@@ -1473,11 +1475,18 @@ def get_session_details(session_id: str) -> Dict[str, Any]:
         ) joined_users ON joined_users.key = userdict.key
         LEFT JOIN jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = 'metadata'
         WHERE userdict.key = :session_id
+          AND (:yaml_filename IS NULL OR userdict.filename = :yaml_filename)
         ORDER BY userdict.modtime DESC
         LIMIT 1;
         """)
     with _get_db_session() as session:
-        rs = session.execute(query, {"session_id": session_id})
+        rs = session.execute(
+            query,
+            {
+                "session_id": session_id,
+                "yaml_filename": yaml_filename or None,
+            },
+        )
         session_details = rs.fetchone()
 
     if session_details is None:
@@ -1548,7 +1557,9 @@ def get_permitted_upload_details(file_id: Any) -> Optional[Dict[str, Any]]:
             f"is not allowed to view interview {upload.get('yamlfile')} for file {upload.get('file_id')}"
         )
         return None
-    session_details = get_permitted_session_details(upload["key"])
+    session_details = get_permitted_session_details(
+        upload["key"], yaml_filename=upload.get("yamlfile")
+    )
     if not session_details:
         return None
     return {**upload, "session": session_details}
@@ -1732,7 +1743,9 @@ def get_allowed_interview_filenames() -> Optional[Set[str]]:
     return allowed_filenames
 
 
-def get_permitted_session_details(session_id: str) -> Optional[Dict[str, Any]]:
+def get_permitted_session_details(
+    session_id: str, yaml_filename: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
     Return `get_session_details()` for a session if the current user is allowed
     to view it, and None if the session doesn't exist or the user isn't allowed
@@ -1743,7 +1756,7 @@ def get_permitted_session_details(session_id: str) -> Optional[Dict[str, Any]]:
     the interview allow-list.
     """
     try:
-        session_details = get_session_details(session_id)
+        session_details = get_session_details(session_id, yaml_filename=yaml_filename)
     except Exception:
         return None
     allowed_filenames = get_allowed_interview_filenames()

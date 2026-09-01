@@ -13,6 +13,8 @@ from docassemble.ALDashboard.alkiln_story import (
     load_docassemble_json_text,
     rows_from_variables,
     rows_from_yaml_heuristics,
+    screen_definitions_from_yaml,
+    sync_story_from_docassemble_yaml,
     story_from_docassemble_yaml,
     story_from_docassemble_json,
 )
@@ -32,6 +34,315 @@ def read_fixture(name):
 
 
 class TestALKilnStory(unittest.TestCase):
+    def test_generated_stories_enable_accessibility_checks_by_default(self):
+        result = story_from_docassemble_json(
+            {"variables": {"answer": 42}},
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+        story = result["feature_text"]
+        start = '  Given I start the interview at "main.yml"'
+        accessibility = "  And I check all pages for accessibility issues"
+        self.assertIn(accessibility, story)
+        self.assertLess(story.index(start), story.index(accessibility))
+
+    def test_accessibility_checks_can_be_disabled(self):
+        result = story_from_docassemble_json(
+            {"variables": {"answer": 42}},
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="done",
+                check_all_pages_for_accessibility=False,
+            ),
+        )
+        self.assertNotIn(
+            "I check all pages for accessibility issues", result["feature_text"]
+        )
+
+    def test_yaml_analysis_reports_screens_without_embedding_them(self):
+        yaml_text = """---
+id: intro
+question: Welcome
+continue button field: intro_seen
+---
+id: details
+question: Details
+fields:
+  - Name: client_name
+  - Age: client_age
+---
+id: download
+event: download
+question: Download
+"""
+        screens = screen_definitions_from_yaml(yaml_text)
+        self.assertEqual(
+            screens,
+            [
+                {"id": "intro", "question": "Welcome", "fields": ["intro_seen"]},
+                {
+                    "id": "details",
+                    "question": "Details",
+                    "fields": ["client_name", "client_age"],
+                },
+                {"id": "download", "question": "Download", "fields": []},
+            ],
+        )
+
+        result = story_from_docassemble_yaml(
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="download",
+            ),
+        )
+        self.assertEqual(result["screen_definitions"], screens)
+        self.assertNotIn("# ALKiln screen:", result["feature_text"])
+
+    @patch("docassemble.ALDashboard.alkiln_story._load_yaml_documents")
+    def test_story_generation_parses_main_yaml_once(self, load_yaml_documents):
+        yaml_text = "---\nfields:\n  - Name: client_name\n---\nevent: done\n"
+        load_yaml_documents.return_value = [
+            {"fields": [{"Name": "client_name"}]},
+            {"event": "done"},
+        ]
+
+        result = story_from_docassemble_yaml(
+            yaml_text,
+            filename="main.yml",
+        )
+
+        self.assertEqual(result["question_id"], "done")
+        main_yaml_calls = [
+            call
+            for call in load_yaml_documents.call_args_list
+            if call.args and call.args[0] == yaml_text
+        ]
+        self.assertEqual(len(main_yaml_calls), 1)
+
+    def test_sync_only_adds_new_rows_and_removes_legacy_metadata(self):
+        old_yaml = """---
+id: old_screen
+question: Old
+fields:
+  - Old value: old_value
+---
+id: download
+event: download
+question: Download
+"""
+        new_yaml = """---
+id: new_screen
+question: New
+fields:
+  - New value: new_value
+---
+id: download
+event: download
+question: Download
+"""
+        options = StoryOptions(
+            yaml_file_name="main.yml",
+            question_id="download",
+        )
+        existing = story_from_docassemble_yaml(
+            old_yaml, filename="main.yml", options=options
+        )["feature_text"]
+        result = sync_story_from_docassemble_yaml(
+            existing, new_yaml, filename="main.yml", options=options
+        )
+
+        self.assertEqual(result["added_screens"], ["new_screen"])
+        self.assertEqual(result["removed_screens"], [])
+        self.assertEqual(result["added_functionality"], ["new_value"])
+        self.assertEqual(result["removed_functionality"], [])
+        self.assertFalse(result["screen_baseline_available"])
+        self.assertIn("| old_value | Sample answer |", result["proposed_feature_text"])
+        self.assertIn("| new_value | Sample answer |", result["proposed_feature_text"])
+        self.assertNotIn("# ALKiln screen:", result["proposed_feature_text"])
+        self.assertIn("+", result["diff"])
+
+    def test_sync_preserves_custom_story_text(self):
+        existing = """Feature: Carefully authored
+
+Scenario: Special path
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value |
+    | existing_value | keep me |
+
+  Then I take a screenshot
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - Added: added_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+        self.assertIn("Feature: Carefully authored", result["proposed_feature_text"])
+        self.assertIn("Then I take a screenshot", result["proposed_feature_text"])
+        self.assertIn(
+            "| added_value | Sample answer |", result["proposed_feature_text"]
+        )
+
+    def test_sync_matches_an_existing_trigger_column(self):
+        existing = """Feature: Trigger table
+
+Scenario: Trigger table
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value | trigger |
+    | existing_value | keep me |  |
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - Added: added_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+
+        self.assertIn(
+            "| added_value | Sample answer |  |",
+            result["proposed_feature_text"],
+        )
+        self.assertEqual(result["rows"], ["| added_value | Sample answer |  |"])
+
+    def test_sync_drops_configured_trigger_column_for_a_two_column_table(self):
+        existing = """Feature: Two-column table
+
+Scenario: Two-column table
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value |
+    | existing_value | keep me |
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - Added: added_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="done",
+                include_trigger_column=True,
+            ),
+        )
+
+        self.assertIn(
+            "| added_value | Sample answer |", result["proposed_feature_text"]
+        )
+        self.assertNotIn(
+            "| added_value | Sample answer |  |", result["proposed_feature_text"]
+        )
+        self.assertEqual(result["rows"], ["| added_value | Sample answer |"])
+
+    def test_sync_only_deduplicates_variables_in_the_managed_table(self):
+        existing = """Feature: Multiple tables
+
+Scenario: Multiple tables
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value |
+    | existing_value | keep me |
+
+  Then I preserve a custom table
+    | new_value | custom meaning |
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - New: new_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+        proposed = result["proposed_feature_text"]
+
+        self.assertEqual(proposed.count("| new_value |"), 2)
+        self.assertIn("| new_value | Sample answer |", proposed)
+        self.assertIn("| new_value | custom meaning |", proposed)
+        self.assertEqual(result["added_functionality"], ["new_value"])
+
+    def test_sync_can_turn_accessibility_checks_on_and_off(self):
+        yaml_text = (
+            "---\nfields:\n  - Name: user_name\n---\nevent: done\nquestion: Done\n"
+        )
+        enabled = story_from_docassemble_yaml(
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )["feature_text"]
+        disabled = sync_story_from_docassemble_yaml(
+            enabled,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="done",
+                check_all_pages_for_accessibility=False,
+            ),
+        )["proposed_feature_text"]
+        self.assertNotIn("I check all pages for accessibility issues", disabled)
+        reenabled = sync_story_from_docassemble_yaml(
+            disabled,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )["proposed_feature_text"]
+        self.assertIn("I check all pages for accessibility issues", reenabled)
+
+    def test_sync_updates_the_managed_entrypoint_and_ending_screen(self):
+        existing = """Feature: Managed
+
+Scenario: Managed
+  Given I start the interview at "old.yml"
+  And the user gets to "old_done" with this data:
+    | var | value |
+    | existing | keep |\n"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            "---\nevent: new_done\nquestion: Done\n",
+            filename="new.yml",
+            options=StoryOptions(yaml_file_name="new.yml", question_id="new_done"),
+        )
+        proposed = result["proposed_feature_text"]
+        self.assertIn('I start the interview at "new.yml"', proposed)
+        self.assertIn('the user gets to "new_done"', proposed)
+        self.assertNotIn('"old.yml"', proposed)
+
     def test_rows_from_variables_handles_nested_objects_and_dates(self):
         rows = rows_from_variables(
             {
@@ -592,6 +903,23 @@ question: Done
         self.assertEqual(payload["yaml_file_name"], "intake.yml")
         self.assertEqual(payload["question_id"], "done")
         self.assertIn("| user_email | user@example.com |", payload["rows"])
+
+    def test_api_payload_defaults_accessibility_on_and_accepts_opt_out(self):
+        enabled = alkiln_story_payload_from_options(
+            {"json_text": '{"variables":{"answer":42}}'}
+        )
+        self.assertIn(
+            "I check all pages for accessibility issues", enabled["feature_text"]
+        )
+        disabled = alkiln_story_payload_from_options(
+            {
+                "json_text": '{"variables":{"answer":42}}',
+                "check_all_pages_for_accessibility": False,
+            }
+        )
+        self.assertNotIn(
+            "I check all pages for accessibility issues", disabled["feature_text"]
+        )
 
     def test_api_payload_accepts_yaml_file_content_base64(self):
         yaml_text = (

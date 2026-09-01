@@ -411,6 +411,23 @@
   background-color: var(--bs-light);
 }
 
+/* Repair buttons live in the repair modal body, not the header.
+   Darkened from Bootstrap's .btn-outline-danger for WCAG AA contrast
+   (9.2:1 on the modal's light background). */
+.repair-action-btn {
+  color: #8a1c28;
+  border-color: #8a1c28;
+}
+
+/* Bootstrap's default secondary (#6c757d) falls just under 4.5:1 on the
+   modal footer/body background (var(--bs-light), #f8f9fa): 4.45:1.
+   Darkened to Bootstrap's own secondary-hover shade, which clears AA on
+   both white and the modal-light background. */
+.dl-app .btn-outline-secondary {
+  color: #565e64;
+  border-color: #565e64;
+}
+
 /* ============================================================
    Empty / loading / error state icons
    ============================================================ */

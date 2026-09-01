@@ -70,7 +70,7 @@ class TestDocxLabelerJsExtraction(unittest.TestCase):
         self.assertGreater(len(self.js.strip()), 1000)
 
     def test_js_contains_iife_wrapper(self):
-        self.assertIn("(function()", self.js)
+        self.assertRegex(self.js, r"\(function\s*\(\)")
         self.assertTrue(self.js.strip().endswith("})();"))
 
     def test_js_contains_variable_tree(self):
@@ -186,7 +186,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def test_js_contains_field_types(self):
         self.assertIn("FIELD_TYPES", self.js)
         for ft in ["text", "multiline", "checkbox", "signature", "radio"]:
-            self.assertIn(f"'{ft}'", self.js)
+            self.assertRegex(self.js, rf"[\"']{re.escape(ft)}[\"']")
 
     def test_js_contains_core_functions(self):
         expected = [
@@ -237,9 +237,10 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
 
     def test_new_text_fields_only_auto_size_name_and_address_like_names(self):
         self.assertIn("function looksLikeSingleLineAutoSizeField", self.js)
-        self.assertIn(
-            "autoSize: type === 'text' && looksLikeSingleLineAutoSizeField(",
+        self.assertRegex(
             self.js,
+            r"autoSize:\s*type === [\"']text[\"']\s*&&\s*"
+            r"looksLikeSingleLineAutoSizeField\(",
         )
 
     def test_auto_size_preview_starts_from_field_height(self):
@@ -247,9 +248,10 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertNotIn("pxSize = Math.min(pxSize, maxPxSize);", self.js)
 
     def test_pdf_field_default_is_ten_point_helvetica(self):
-        self.assertIn(
-            "HARD_DEFAULTS = { font: 'Helvetica', fontSize: 10",
+        self.assertRegex(
             self.js,
+            r"HARD_DEFAULTS\s*=\s*\{\s*font:\s*[\"']Helvetica[\"'],"
+            r"\s*fontSize:\s*10",
         )
 
 

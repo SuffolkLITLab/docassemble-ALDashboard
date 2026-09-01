@@ -72,8 +72,8 @@
                         <span class="form-check-label">Deduplicate repeated names</span>
                     </label>
                     <button id="export-btn" class="btn btn-primary btn-sm" disabled>Export PDF</button>
-                    <button id="test-filling-btn" class="btn btn-outline-info btn-sm" disabled title="Generate a filled PDF preview">Test filling</button>
-                    <button id="save-playground-btn" class="btn btn-outline-success btn-sm hidden" disabled title="Save this PDF back to the Playground templates folder">
+                    <button id="test-filling-btn" class="btn btn-outline-light btn-sm" disabled title="Generate a filled PDF preview">Test filling</button>
+                    <button id="save-playground-btn" class="btn btn-outline-light btn-sm hidden" disabled title="Save this PDF back to the Playground templates folder">
                         <svg class="icon-16 me-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
                         Save to Playground
                     </button>
@@ -114,7 +114,7 @@
                         <p class="mt-2 text-muted">Drag and drop a PDF here or use the upload button above.</p>
                     </div>
                 </div>
-                <div id="pdf-loading" class="loading-modal hidden" role="status" aria-live="polite" aria-modal="true">
+                <div id="pdf-loading" class="loading-modal hidden" role="status" aria-live="polite">
                     <div class="loading-modal-card">
                         <svg class="loading-spinner icon-48 mx-auto text-primary" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -248,10 +248,10 @@
             <p id="success-toast-message" class="mb-0"></p>
         </div>
 
-        <div id="settings-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 32rem;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
-                    <h2 class="h5 fw-semibold mb-0">AI Settings</h2>
+                    <h2 id="settings-modal-title" class="h5 fw-semibold mb-0">AI Settings</h2>
                     <button id="close-settings" class="btn btn-sm btn-light">Close</button>
                 </div>
                 <div class="mb-3">
@@ -338,10 +338,10 @@
         </div>
 
         <!-- Open from Playground modal -->
-        <div id="open-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="open-playground-modal" role="dialog" aria-modal="true" aria-labelledby="open-playground-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
-                    <h2 class="h5 fw-semibold mb-0">Open from Playground</h2>
+                    <h2 id="open-playground-modal-title" class="h5 fw-semibold mb-0">Open from Playground</h2>
                     <button id="close-open-playground" class="btn btn-sm btn-light">Close</button>
                 </div>
                 <div class="mb-2">
@@ -360,10 +360,10 @@
         </div>
 
         <!-- Save to Playground modal -->
-        <div id="save-playground-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="save-playground-modal" role="dialog" aria-modal="true" aria-labelledby="save-playground-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 30rem;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
-                    <h2 class="h5 fw-semibold mb-0">Save to Playground</h2>
+                    <h2 id="save-playground-modal-title" class="h5 fw-semibold mb-0">Save to Playground</h2>
                     <button id="close-save-playground" class="btn btn-sm btn-light">Close</button>
                 </div>
                 <div class="mb-2">
@@ -389,11 +389,11 @@
             </div>
         </div>
 
-        <div id="field-rename-summary-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1090;">
+        <div id="field-rename-summary-modal" role="dialog" aria-modal="true" aria-labelledby="field-rename-summary-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1090;">
             <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 42rem; max-height: 85vh; overflow-y: auto;">
                 <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
                     <div>
-                        <h2 class="h5 fw-semibold mb-1">Field Names Changed</h2>
+                        <h2 id="field-rename-summary-modal-title" class="h5 fw-semibold mb-1">Field Names Changed</h2>
                         <p id="field-rename-summary-context" class="small text-muted mb-0"></p>
                     </div>
                     <button id="field-rename-summary-close" class="btn-close" aria-label="Close"></button>
@@ -405,11 +405,11 @@
             </div>
         </div>
 
-        <div id="accessibility-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="accessibility-modal" role="dialog" aria-modal="true" aria-labelledby="accessibility-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 62rem; max-height: 92vh; overflow: auto;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
                     <div>
-                        <h2 class="h5 fw-semibold mb-0">PDF Accessibility</h2>
+                        <h2 id="accessibility-modal-title" class="h5 fw-semibold mb-0">PDF Accessibility</h2>
                         <p class="small text-muted mb-0 mt-1">Tooltips, field order, image alt text, metadata, and tag structure.</p>
                     </div>
                     <button id="close-accessibility" class="btn btn-sm btn-light">Close</button>
@@ -469,11 +469,11 @@
             </div>
         </div>
 
-        <div id="normalization-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="normalization-modal" role="dialog" aria-modal="true" aria-labelledby="normalization-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 58rem; max-height: 90vh; overflow: auto;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
                     <div>
-                        <h2 class="h5 fw-semibold mb-0">Normalize PDF Fields</h2>
+                        <h2 id="normalization-modal-title" class="h5 fw-semibold mb-0">Normalize PDF Fields</h2>
                         <p class="small text-muted mb-0 mt-1">Apply court-PDF cleanup heuristics to the current fields.</p>
                     </div>
                     <button id="close-normalization" class="btn btn-sm btn-light">Close</button>
@@ -611,11 +611,11 @@
             </div>
         </div>
 
-        <div id="repair-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="repair-modal" role="dialog" aria-modal="true" aria-labelledby="repair-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow p-3" style="width: 100%; max-width: 40rem; max-height: 90vh; overflow: auto;">
                 <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
                     <div>
-                        <h2 class="h5 fw-semibold mb-0">PDF Repair Tools</h2>
+                        <h2 id="repair-modal-title" class="h5 fw-semibold mb-0">PDF Repair Tools</h2>
                         <p class="small text-muted mb-0 mt-1">Run one repair action at a time on the current PDF.</p>
                     </div>
                     <button id="close-repair" class="btn btn-sm btn-light">Close</button>
@@ -719,9 +719,9 @@
             </div>
         </div>
 
-        <div id="password-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
+        <div id="password-modal" role="dialog" aria-modal="true" aria-labelledby="password-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
             <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 28rem;">
-                <h2 class="h5 fw-semibold mb-2">Password Required</h2>
+                <h2 id="password-modal-title" class="h5 fw-semibold mb-2">Password Required</h2>
                 <p class="small text-muted mb-3">This PDF is password-protected. Enter the password to unlock it.</p>
                 <div id="password-error" class="hidden alert alert-danger small mb-3"></div>
                 <div class="mb-3">
@@ -735,12 +735,12 @@
             </div>
         </div>
 
-        <div id="repair-prompt-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
+        <div id="repair-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="repair-prompt-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1080;">
             <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 32rem;">
                 <div class="d-flex align-items-start gap-3 mb-3">
                     <svg class="flex-shrink-0 mt-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                     <div>
-                        <h2 class="h5 fw-semibold mb-1">PDF Cannot Be Opened</h2>
+                        <h2 id="repair-prompt-modal-title" class="h5 fw-semibold mb-1">PDF Cannot Be Opened</h2>
                         <p id="repair-prompt-message" class="small text-muted mb-0">This PDF could not be rendered. Would you like to try repairing it?</p>
                     </div>
                 </div>
@@ -751,10 +751,10 @@
             </div>
         </div>
 
-        <div id="utilities-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
+        <div id="utilities-modal" role="dialog" aria-modal="true" aria-labelledby="utilities-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
             <div class="bg-white border shadow rounded p-4" style="width: 100%; max-width: 36rem; max-height: 85vh; overflow-y: auto;">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h2 class="h5 fw-semibold mb-0">Utilities</h2>
+                    <h2 id="utilities-modal-title" class="h5 fw-semibold mb-0">Utilities</h2>
                     <button id="utilities-close" class="btn-close" aria-label="Close"></button>
                 </div>
                 <section class="border rounded p-3 mb-3">
@@ -866,11 +866,11 @@
             </div>
         </div>
 
-        <div id="page-manager-modal" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.52); z-index: 1070;">
+        <div id="page-manager-modal" role="dialog" aria-modal="true" aria-labelledby="page-manager-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.52); z-index: 1070;">
             <div class="bg-white border shadow rounded p-4" style="width: min(94vw, 82rem); max-height: 92vh; overflow-y: auto;">
                 <div class="d-flex align-items-start justify-content-between gap-3 border-bottom pb-3 mb-3">
                     <div>
-                        <h2 class="h5 fw-semibold mb-1">Manage Pages</h2>
+                        <h2 id="page-manager-modal-title" class="h5 fw-semibold mb-1">Manage Pages</h2>
                         <p class="small text-muted mb-0">Reorder pages by dragging cards, remove pages, insert pages from another PDF, or add split points for multi-document export.</p>
                     </div>
                     <button id="close-page-manager" class="btn btn-sm btn-light">Close</button>
@@ -924,6 +924,7 @@
     </div>
 
     <script id="labeler-bootstrap" type="application/json">__LABELER_BOOTSTRAP_JSON__</script>
+    <script src="/packagestatic/docassemble.ALDashboard/labeler_dialogs.js"></script>
     <script type="module" src="/packagestatic/docassemble.ALDashboard/pdf_labeler.js"></script>
 </body>
 </html>

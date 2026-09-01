@@ -194,6 +194,108 @@ question: Done
             "| added_value | Sample answer |", result["proposed_feature_text"]
         )
 
+    def test_sync_matches_an_existing_trigger_column(self):
+        existing = """Feature: Trigger table
+
+Scenario: Trigger table
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value | trigger |
+    | existing_value | keep me |  |
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - Added: added_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+
+        self.assertIn(
+            "| added_value | Sample answer |  |",
+            result["proposed_feature_text"],
+        )
+        self.assertEqual(result["rows"], ["| added_value | Sample answer |  |"])
+
+    def test_sync_drops_configured_trigger_column_for_a_two_column_table(self):
+        existing = """Feature: Two-column table
+
+Scenario: Two-column table
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value |
+    | existing_value | keep me |
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - Added: added_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(
+                yaml_file_name="main.yml",
+                question_id="done",
+                include_trigger_column=True,
+            ),
+        )
+
+        self.assertIn(
+            "| added_value | Sample answer |", result["proposed_feature_text"]
+        )
+        self.assertNotIn(
+            "| added_value | Sample answer |  |", result["proposed_feature_text"]
+        )
+        self.assertEqual(result["rows"], ["| added_value | Sample answer |"])
+
+    def test_sync_only_deduplicates_variables_in_the_managed_table(self):
+        existing = """Feature: Multiple tables
+
+Scenario: Multiple tables
+  Given I start the interview at "main.yml"
+  And the user gets to "done" with this data:
+    | var | value |
+    | existing_value | keep me |
+
+  Then I preserve a custom table
+    | new_value | custom meaning |
+"""
+        yaml_text = """---
+id: details
+question: Details
+fields:
+  - New: new_value
+---
+event: done
+question: Done
+"""
+        result = sync_story_from_docassemble_yaml(
+            existing,
+            yaml_text,
+            filename="main.yml",
+            options=StoryOptions(yaml_file_name="main.yml", question_id="done"),
+        )
+        proposed = result["proposed_feature_text"]
+
+        self.assertEqual(proposed.count("| new_value |"), 2)
+        self.assertIn("| new_value | Sample answer |", proposed)
+        self.assertIn("| new_value | custom meaning |", proposed)
+        self.assertEqual(result["added_functionality"], ["new_value"])
+
     def test_sync_can_turn_accessibility_checks_on_and_off(self):
         yaml_text = (
             "---\nfields:\n  - Name: user_name\n---\nevent: done\nquestion: Done\n"

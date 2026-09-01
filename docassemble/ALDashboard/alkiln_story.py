@@ -691,6 +691,50 @@ def _feature_variable_names(feature_text: str) -> List[str]:
     return variables
 
 
+def _managed_variable_table(
+    feature_text: str,
+) -> tuple[List[str], int, int, List[str]]:
+    """Return the lines, bounds, and columns of Weaver's managed Story Table."""
+    lines = str(feature_text or "").splitlines(keepends=True)
+    target_pattern = re.compile(
+        r'^\s*(?:Given|When|Then|And|But)\s+the user gets to "[^"]+" with this data:\s*$',
+        flags=re.I,
+    )
+    header_pattern = re.compile(r"^\s*\|\s*(?:var|variable)\s*\|", flags=re.I)
+    for target_index, line in enumerate(lines):
+        if not target_pattern.match(line.rstrip()):
+            continue
+        header_index = target_index + 1
+        while header_index < len(lines) and not lines[header_index].strip():
+            header_index += 1
+        if header_index >= len(lines) or not header_pattern.match(lines[header_index]):
+            break
+        columns = [
+            cell.strip() for cell in lines[header_index].strip().strip("|").split("|")
+        ]
+        normalized_columns = [column.lower() for column in columns]
+        if normalized_columns not in (
+            ["var", "value"],
+            ["variable", "value"],
+            ["var", "value", "trigger"],
+            ["variable", "value", "trigger"],
+        ):
+            raise ValueError(
+                "The managed ALKiln variable table must have var, value, and optional trigger columns."
+            )
+        table_end = header_index + 1
+        while table_end < len(lines) and re.match(r"^\s*\|", lines[table_end]):
+            table_end += 1
+        return lines, header_index, table_end, columns
+    raise ValueError("The managed ALKiln test has no variable table to sync.")
+
+
+def _managed_feature_variable_names(feature_text: str) -> List[str]:
+    """Return variables from only Weaver's managed Story Table."""
+    lines, header_index, table_end, _columns = _managed_variable_table(feature_text)
+    return _feature_variable_names("".join(lines[header_index + 1 : table_end]))
+
+
 def _without_screen_definition_comments(feature_text: str) -> str:
     """Remove the legacy machine-only screen inventory from a feature."""
     lines = str(feature_text or "").splitlines(keepends=True)
@@ -702,20 +746,10 @@ def _without_screen_definition_comments(feature_text: str) -> str:
 
 
 def _append_rows_to_first_variable_table(feature_text: str, rows: Sequence[str]) -> str:
-    """Add rows to the first ALKiln variable table without rewriting the story."""
+    """Add rows to the managed ALKiln variable table without rewriting the story."""
     if not rows:
         return feature_text
-    lines = feature_text.splitlines(keepends=True)
-    header_index: Optional[int] = None
-    for index, line in enumerate(lines):
-        if re.match(r"^\s*\|\s*(?:var|variable)\s*\|", line, flags=re.I):
-            header_index = index
-            break
-    if header_index is None:
-        raise ValueError("The managed ALKiln test has no variable table to sync.")
-    insert_at = header_index + 1
-    while insert_at < len(lines) and re.match(r"^\s*\|", lines[insert_at]):
-        insert_at += 1
+    lines, _header_index, insert_at, _columns = _managed_variable_table(feature_text)
     newline = "\r\n" if "\r\n" in feature_text else "\n"
     additions = [f"    {row}{newline}" for row in rows]
     if insert_at == len(lines) and lines and not lines[-1].endswith(("\n", "\r")):
@@ -1717,6 +1751,8 @@ def rows_from_yaml_heuristics(
     ] = None,
 ) -> List[str]:
     story_options = options or StoryOptions()
+    primary_docs: Sequence[Mapping[str, Any]]
+    docs: Sequence[Mapping[str, Any]]
     if parsed_documents is None:
         primary_docs, docs = _load_docassemble_yaml_documents(
             yaml_text, source_path=source_path
@@ -1884,12 +1920,6 @@ def sync_story_from_docassemble_yaml(
                 source_path=(source_path if isinstance(source_path, str) else None),
             ),
         )
-    generated = story_from_docassemble_yaml(
-        yaml_text,
-        filename=filename,
-        source_path=source_path,
-        options=options,
-    )
     cleaned_existing = _without_screen_definition_comments(existing_feature_text)
     destination_existing = _set_managed_story_destination(
         cleaned_existing,
@@ -1899,8 +1929,23 @@ def sync_story_from_docassemble_yaml(
     configured_existing = _set_accessibility_all_step(
         destination_existing, options.check_all_pages_for_accessibility
     )
+    _lines, _header_index, _table_end, table_columns = _managed_variable_table(
+        configured_existing
+    )
+    table_has_trigger_column = len(table_columns) == 3
+    sync_options = (
+        options
+        if options.include_trigger_column == table_has_trigger_column
+        else replace(options, include_trigger_column=table_has_trigger_column)
+    )
+    generated = story_from_docassemble_yaml(
+        yaml_text,
+        filename=filename,
+        source_path=source_path,
+        options=sync_options,
+    )
     new_screens = list(generated["screen_definitions"])
-    old_variables = set(_feature_variable_names(configured_existing))
+    old_variables = set(_managed_feature_variable_names(configured_existing))
     added_rows: List[str] = []
     added_variables: List[str] = []
     for row in generated["rows"]:

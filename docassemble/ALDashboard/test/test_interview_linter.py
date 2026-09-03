@@ -128,6 +128,38 @@ question: Hello
         )
 
     @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
+    def test_lint_interview_content_reuses_wcag_validation_findings(self, mock_collect):
+        accessibility_finding = type(
+            "FakeAccessibilityFinding",
+            (),
+            {
+                "message_id": "accessibility_future_rule",
+                "severity": "error",
+                "message": "Accessibility issue.",
+                "summary": "Accessibility issue",
+                "code": "EA999",
+                "finding_class": "accessibility",
+                "line_number": 3,
+                "context": {"screen_id": "q1"},
+            },
+        )()
+        mock_collect.return_value = [accessibility_finding]
+        yaml_content = """
+---
+id: q1
+question: Hello
+"""
+        result = lint_interview_content(yaml_content, lint_mode="wcag-basic")
+        self.assertEqual(
+            [finding["rule_id"] for finding in result["findings"]],
+            ["accessibility-future-rule"],
+        )
+        self.assertEqual(mock_collect.call_count, 1)
+        self.assertEqual(
+            mock_collect.call_args.kwargs["lint_mode"], "accessibility"
+        )
+
+    @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
     def test_lint_interview_content_keeps_current_report_shape(self, mock_collect):
         mock_collect.side_effect = [[FakeDAYamlFinding()], []]
         yaml_content = """

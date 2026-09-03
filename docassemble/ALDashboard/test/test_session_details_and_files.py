@@ -28,6 +28,8 @@ def _load_session_detail_helpers():
     tree = ast.parse(source)
     lines = source.splitlines(keepends=True)
     names = {
+        "_current_user_permissions",
+        "can_access_user_sessions",
         "get_session_details",
         "get_upload_details",
         "get_permitted_upload_details",
@@ -588,6 +590,7 @@ def test_format_session_users_with_dict():
 
 def test_get_allowed_interview_filenames_is_none_for_privileged_users(monkeypatch):
     monkeypatch.setattr(aldashboard, "user_has_privilege", lambda privileges: True)
+    monkeypatch.setattr(aldashboard, "user_logged_in", lambda: True)
 
     assert get_allowed_interview_filenames() is None
 

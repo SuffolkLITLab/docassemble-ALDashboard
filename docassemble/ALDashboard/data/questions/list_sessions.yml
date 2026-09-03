@@ -32,9 +32,10 @@ question: |
   Splash screen
 ---
 code: |
-  # get_allowed_interview_filenames() returns None for admins and developers,
-  # who can see every interview, and otherwise the set of interviews listed
-  # under `assembly line: interview viewers:` for the user's privileges.
+  # get_allowed_interview_filenames() returns None for admins, developers, and
+  # support users with both account and session access. Otherwise it returns the
+  # interviews listed under `assembly line: interview viewers:` for the user's
+  # privileges.
   allowed_interview_filenames = get_allowed_interview_filenames()
   interviews = {
     interview["filename"]: interview
@@ -57,7 +58,7 @@ code: |
 code: |
   # Used to decide whether it's safe to load every user into the dropdown below, 
   # or whether the server has too many users for that
-  if user_has_privilege(["admin", "developer"]):
+  if can_access_user_sessions():
     total_user_count = get_user_count()
   else:
     total_user_count = 0
@@ -149,7 +150,7 @@ fields:
       ["browse", "search"].includes(val("session_list_mode"))
     show if:
       code: |
-        user_has_privilege(['admin', 'developer'])
+        can_access_user_sessions()
   - Filename: filename
     code: |
       sorted(
@@ -171,7 +172,7 @@ fields:
       ["browse", "search"].includes(val("session_list_mode"))
     show if:
       code: |
-        not user_has_privilege(['admin', 'developer'])
+        not can_access_user_sessions()
   - User (leave blank to view all sessions): chosen_user
     required: False
     datatype: integer
@@ -184,7 +185,7 @@ fields:
     code: |
       (
         speedy_get_users()
-        if user_has_privilege(["admin", "developer"])
+        if can_access_user_sessions()
         else [{user_info().id: user_info().email}]
       )
   - User (leave blank to view all sessions): chosen_user

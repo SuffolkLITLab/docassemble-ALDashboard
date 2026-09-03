@@ -200,7 +200,7 @@ def list_playground_projects() -> List[str]:
     if uid is None:
         return []
     try:
-        from docassemble.webapp.files import SavedFile
+        from .docassemble_compat import SavedFile
 
         playground = SavedFile(uid, fix=False, section="playground")
         projects = playground.list_of_dirs() or []
@@ -218,8 +218,7 @@ def list_playground_yaml_files(project: str = "default") -> List[Dict[str, str]]
     if uid is None:
         return []
     try:
-        from docassemble.webapp.files import SavedFile
-        from docassemble.webapp.backend import directory_for
+        from .docassemble_compat import SavedFile, directory_for
 
         area = SavedFile(uid, fix=True, section="playground")
         project_dir = directory_for(area, project or "default")
@@ -828,6 +827,7 @@ def run_deterministic_rules(
             "accessibility",
             "style",
             "general",
+            "translatability",
         }:
             continue
         rendered = _dayaml_finding_to_dashboard(finding, line_lookup=line_lookup)

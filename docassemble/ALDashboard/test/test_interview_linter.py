@@ -71,6 +71,34 @@ question: Hello
         self.assertEqual(findings[0]["problematic_text"], "problem text")
 
     @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
+    def test_full_mode_keeps_dayamlchecker_translatability_findings(self, mock_collect):
+        translatability_finding = type(
+            "FakeTranslatabilityFinding",
+            (),
+            {
+                "message_id": "translatability_future_rule",
+                "severity": "warning",
+                "message": "Translatability issue.",
+                "summary": "Translatability issue",
+                "code": "WT999",
+                "finding_class": "translatability",
+                "line_number": 3,
+                "context": {"screen_id": "q1"},
+            },
+        )()
+        mock_collect.side_effect = [[translatability_finding], []]
+        yaml_content = """
+---
+id: q1
+question: Hello
+"""
+        findings = self._findings(yaml_content)
+        self.assertEqual(
+            [finding["rule_id"] for finding in findings],
+            ["translatability-future-rule"],
+        )
+
+    @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
     def test_wcag_mode_only_uses_accessibility_findings(self, mock_collect):
         style_finding = FakeDAYamlFinding()
         accessibility_finding = type(

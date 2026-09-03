@@ -18,6 +18,12 @@ A single tool and interview to centralize some tedious Docassemble admin configu
 1. validate DOCX Jinja2 templates
 1. Generate a [custom bootstrap theme](https://suffolklitlab.org/docassemble-AssemblyLine-documentation/docs/customization/overview#creating-a-custom-theme-from-source-instead-of-with-a-theme-generator) for your interviews.
 
+The Interview Text Linter delegates YAML structure, accessibility, translatability,
+and Assembly Line style checks to [DAYamlChecker](https://github.com/SuffolkLITLab/DAYamlChecker).
+The dashboard adds its report navigation, readability scores, and spellcheck around
+those structured findings. Optional style LLM checks use DAYamlChecker's standard
+`OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL` configuration.
+
 Ideas:
 1. Add a link to the dispatch directive for an existing file in an existing package.
 1. Generate translation files [TBD].

@@ -50,7 +50,8 @@ fields:
     datatype: yesno
     default: False
     help: |
-      Uses the configured `docassemble.ALToolbox.llms` provider and may take longer.
+      Uses DAYamlChecker's style LLM checks and the configured OpenAI-compatible
+      environment variables. It may take longer.
   - Lint mode: lint_mode
     datatype: radio
     default: full

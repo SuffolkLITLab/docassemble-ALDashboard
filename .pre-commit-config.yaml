@@ -1,0 +1,11 @@
+repos:
+  - repo: local
+    hooks:
+      - id: da-build
+        name: docassemble build checks
+        entry: scripts/run_da_build_checks.sh
+        language: python
+        additional_dependencies:
+          - dayamlchecker>=1.5.0
+        pass_filenames: false
+        always_run: true

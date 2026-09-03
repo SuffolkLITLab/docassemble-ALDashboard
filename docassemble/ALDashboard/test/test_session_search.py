@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import pytest
+
 
 @contextmanager
 def _unavailable_database_session():
@@ -59,6 +61,7 @@ def _load_session_search_helpers():
         "log": lambda *args, **kwargs: None,
         "text": lambda value: value,
         "user_has_privilege": lambda privileges: False,
+        "can_access_user_sessions": lambda user_id=None: False,
     }
     found = set()
     for node in tree.body:
@@ -218,16 +221,63 @@ def test_speedy_get_sessions_groups_user_rows_in_sql(monkeypatch):
     )
 
     assert [session.key for session in sessions] == ["abc", "def"]
-    assert "MIN(user_id) AS user_id" in executed["query"]
+    assert "MIN(userdictkeys.user_id) AS user_id" in executed["query"]
     assert (
-        "STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids"
+        "STRING_AGG(DISTINCT CAST(userdictkeys.user_id AS TEXT), ',') AS user_ids"
         in executed["query"]
     )
-    assert ") joined_users ON joined_users.key = userdict.key" in executed["query"]
-    assert "DATE(mostrecent.modtime) >= CAST(:start_date AS DATE)" in executed["query"]
-    assert "DATE(mostrecent.modtime) <= CAST(:end_date AS DATE)" in executed["query"]
+    assert "JOIN mostrecent ON mostrecent.key = userdictkeys.key" in executed["query"]
+    assert "DATE(MAX(modtime)) >= CAST(:start_date AS DATE)" in executed["query"]
+    assert "DATE(MAX(modtime)) <= CAST(:end_date AS DATE)" in executed["query"]
+    assert executed["query"].index("LIMIT 500") < executed["query"].index(
+        "SELECT \n    userdict.filename"
+    )
     assert executed["params"]["start_date"] == "2026-01-01"
     assert executed["params"]["end_date"] == "2026-01-31"
+
+
+def test_speedy_get_sessions_rechecks_access_to_selected_user(monkeypatch):
+    monkeypatch.setattr(
+        aldashboard, "can_access_user_sessions", lambda user_id=None: False
+    )
+
+    with pytest.raises(Exception, match="permission"):
+        speedy_get_sessions(
+            user_id=42,
+            filename="pkg:data/questions/a.yml",
+        )
+
+
+def test_speedy_get_sessions_filters_anonymous_sessions_by_temporary_user(
+    monkeypatch,
+):
+    executed = {}
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, *args, **kwargs):
+            executed["query"] = args[0]
+            executed["params"] = args[1]
+            return []
+
+    monkeypatch.setattr(aldashboard, "_get_db_session", Connection)
+    monkeypatch.setattr(
+        aldashboard, "can_access_user_sessions", lambda user_id=None: True
+    )
+
+    assert speedy_get_sessions(temp_user_id=73, filename=None) == []
+    assert "target_user.temp_user_id = :temp_user_id" in executed["query"]
+    assert executed["params"]["temp_user_id"] == 73
+
+
+def test_speedy_get_sessions_rejects_registered_and_anonymous_filters_together():
+    with pytest.raises(ValueError, match="either user_id or temp_user_id"):
+        speedy_get_sessions(user_id=42, temp_user_id=73)
 
 
 def test_speedy_get_sessions_can_filter_by_answer_criteria(monkeypatch):

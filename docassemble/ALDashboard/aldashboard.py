@@ -24,7 +24,7 @@ from flask import current_app, flash, redirect
 
 # SQLAlchemy expressions are shared by both the legacy engine and Flask extension.
 from sqlalchemy.sql import text
-from sqlalchemy import func, or_, select
+from sqlalchemy import bindparam, func, or_, select
 from sqlalchemy.orm import joinedload
 from typing import Any, List, Tuple, Dict, Optional, Callable, Set
 import math
@@ -170,8 +170,11 @@ __all__ = [
     "get_session_file_for_download",
     "get_session_files_zip",
     "get_user_details",
+    "can_access_user_sessions",
     "disable_user_mfa",
     "get_password_reset_link",
+    "send_password_reset_email",
+    "recent_account_activity_report",
     "inactive_developer_login_summary",
     "inactive_developer_account_report",
     "delete_inactive_developer_accounts",
@@ -574,7 +577,11 @@ def get_users_and_name_by_ids(ids: List[int]) -> List[Tuple[int, str, str, str]]
         return results
 
 
-def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, str]]:
+def search_users_by_email(
+    wordstart: str,
+    limit: int = 20,
+    exclude_privileged: bool = False,
+) -> List[Tuple[int, str]]:
     """
     Search for users whose email starts with the given text. Used by the input type: ajax field on large servers,
     so we never load the full user table - just return a handful of matches as the admin types.
@@ -583,12 +590,14 @@ def search_users_by_email(wordstart: str, limit: int = 20) -> List[Tuple[int, st
     if not wordstart:
         return []
 
-    statement = (
-        select(UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name)
-        .where(UserModel.email.istartswith(wordstart))
-        .limit(limit)
-    )
-
+    statement = select(
+        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
+    ).where(UserModel.email.istartswith(wordstart))
+    if exclude_privileged:
+        statement = statement.where(
+            ~UserModel.roles.any(Role.name.in_(["admin", "developer", "cron"]))
+        )
+    statement = statement.limit(limit)
     with _get_db_session() as session:
         users = session.execute(statement).all()
 
@@ -644,7 +653,9 @@ def get_user_details(user_id: int) -> Optional[Dict]:
     Returns:
         A dictionary with user details, or None if the user is not found. Keys include:
         id, email, first_name, last_name, active, account_type, privileges (list of str),
-        mfa_enabled (bool), and mfa_type (str or None: "app", "sms", or None).
+        mfa_enabled (bool), mfa_type (str or None: "app", "sms", or None),
+        last_login (datetime or None), session_count (int), and
+        last_session_activity (datetime or None).
     """
     with _get_db_session() as session:
         user = (
@@ -671,6 +682,8 @@ def get_user_details(user_id: int) -> Optional[Dict]:
 
     account_type = re.sub(r"\$.*", "", user.social_id) if user.social_id else "unknown"
 
+    session_summary = _user_session_summary(user.id)
+
     return {
         "id": user.id,
         "email": user.email,
@@ -681,7 +694,47 @@ def get_user_details(user_id: int) -> Optional[Dict]:
         "privileges": privileges,
         "mfa_enabled": mfa_enabled,
         "mfa_type": mfa_type,
+        "last_login": getattr(user, "last_login", None),
+        "session_count": session_summary["session_count"],
+        "last_session_activity": session_summary["last_session_activity"],
     }
+
+
+def _current_user_permissions() -> Set[str]:
+    """Return the current user's configured docassemble permissions."""
+    if not user_logged_in():
+        return set()
+    try:
+        return set(getattr(user_info(), "permissions", []) or [])
+    except (AttributeError, TypeError, RuntimeError):
+        return set()
+
+
+def can_access_user_sessions(user_id: Optional[int] = None) -> bool:
+    """Whether the current user may inspect another account's sessions.
+
+    Docassemble's ``access_sessions`` permission grants access to other users'
+    sessions. The user-centered entry point also requires ``access_user_info``.
+    Non-admin support users may not use it to inspect protected accounts.
+    """
+    if not user_logged_in():
+        return False
+    if user_id is not None:
+        try:
+            target_user_id = int(user_id)
+        except (TypeError, ValueError):
+            return False
+        if target_user_id == _resolve_current_user_id():
+            return True
+    if user_has_privilege(["admin", "developer"]):
+        return True
+    permissions = _current_user_permissions()
+    if not {"access_sessions", "access_user_info"}.issubset(permissions):
+        return False
+    if user_id is None:
+        return True
+    privileged = is_user_privileged(target_user_id)
+    return privileged is False
 
 
 def disable_user_mfa(user_id: int) -> bool:
@@ -774,6 +827,203 @@ def get_password_reset_link(user_id: int) -> Optional[str]:
     reset_link = url_for("user.reset_password", token=token, _external=True)
 
     return reset_link
+
+
+def send_password_reset_email(user_id: int) -> Dict[str, Any]:
+    """Ask docassemble's user manager to send its standard reset email.
+
+    This deliberately uses the same authorization and protected-account rules
+    as :func:`get_password_reset_link`, and delegates token generation, message
+    templates, and delivery to docassemble's built-in forgot-password flow.
+    """
+    if not user_logged_in() or (
+        not user_has_privilege("admin")
+        and "edit_user_password" not in _current_user_permissions()
+    ):
+        log("send_password_reset_email: current user lacks permission")
+        return {
+            "sent": False,
+            "message": "You do not have permission to send a reset email.",
+        }
+
+    if is_user_privileged(user_id) and not user_has_privilege(["admin", "developer"]):
+        log(
+            "send_password_reset_email: refusing protected target "
+            f"user {user_id} for a non-admin support user"
+        )
+        return {
+            "sent": False,
+            "message": "Only an administrator can reset this account.",
+        }
+
+    with _get_db_session() as session:
+        user = session.execute(
+            select(UserModel).where(UserModel.id == user_id)
+        ).scalar_one_or_none()
+
+    if user is None or not user.email:
+        log(f"send_password_reset_email: no email address for user {user_id}")
+        return {
+            "sent": False,
+            "message": "This account does not have an email address.",
+        }
+
+    user_manager = current_app.user_manager  # type: ignore[attr-defined]
+    if not getattr(user_manager, "enable_forgot_password", False):
+        return {
+            "sent": False,
+            "message": "Password reset email is disabled on this server.",
+        }
+    if not current_app.config.get("ALLOW_CHANGING_PASSWORD", True):
+        return {
+            "sent": False,
+            "message": "Password changes are disabled on this server.",
+        }
+
+    try:
+        user_manager.send_reset_password_email(user.email)
+    except Exception as error:
+        log(
+            "send_password_reset_email: delivery failed for "
+            f"user {user_id}: {error.__class__.__name__}: {error}"
+        )
+        return {
+            "sent": False,
+            "message": "The server could not send the reset email.",
+        }
+    return {"sent": True, "message": "The password reset email was sent."}
+
+
+def recent_account_activity_report(
+    days: int = 30,
+    user_limit: int = 200,
+    anonymous_limit: int = 100,
+) -> Dict[str, Any]:
+    """Return recent login activity and grouped anonymous session activity.
+
+    Anonymous activity is grouped by docassemble's temporary user identifier.
+    The interview/session tables do not contain a reliable historical source IP.
+    """
+    if not can_access_user_sessions():
+        return {"authorized": False, "users": [], "anonymous": []}
+    try:
+        days = min(365, max(1, int(days)))
+    except (TypeError, ValueError):
+        days = 30
+    try:
+        user_limit = min(500, max(1, int(user_limit)))
+    except (TypeError, ValueError):
+        user_limit = 200
+    try:
+        anonymous_limit = min(500, max(1, int(anonymous_limit)))
+    except (TypeError, ValueError):
+        anonymous_limit = 100
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+
+    user_statement = (
+        select(
+            UserModel.id,
+            UserModel.email,
+            UserModel.first_name,
+            UserModel.last_name,
+            UserModel.last_login,
+        )
+        .where(
+            UserModel.last_login.isnot(None),
+            UserModel.last_login >= cutoff,
+            ~UserModel.social_id.startswith("disabled$"),
+        )
+        .order_by(UserModel.last_login.desc())
+        .limit(user_limit)
+    )
+    if not user_has_privilege(["admin", "developer"]):
+        user_statement = user_statement.where(
+            ~UserModel.roles.any(Role.name.in_(["admin", "developer", "cron"]))
+        )
+
+    recent_user_sessions_statement = text("""
+        SELECT
+            userdictkeys.user_id AS user_id,
+            COUNT(DISTINCT userdictkeys.key) AS recent_session_count,
+            MAX(userdict.modtime) AS last_session_activity
+        FROM userdictkeys
+        JOIN userdict
+          ON userdict.key = userdictkeys.key
+         AND userdict.filename = userdictkeys.filename
+        WHERE userdictkeys.user_id IN :user_ids
+          AND userdict.modtime >= :cutoff
+        GROUP BY userdictkeys.user_id
+    """).bindparams(bindparam("user_ids", expanding=True))
+
+    anonymous_statement = text("""
+        SELECT
+            userdictkeys.temp_user_id AS temp_user_id,
+            COUNT(DISTINCT userdictkeys.key) AS session_count,
+            MAX(userdict.modtime) AS last_activity
+        FROM userdictkeys
+        JOIN userdict
+          ON userdict.key = userdictkeys.key
+         AND userdict.filename = userdictkeys.filename
+        WHERE userdictkeys.user_id IS NULL
+          AND userdictkeys.temp_user_id IS NOT NULL
+          AND userdict.modtime >= :cutoff
+        GROUP BY userdictkeys.temp_user_id
+        ORDER BY last_activity DESC
+        LIMIT :anonymous_limit
+    """)
+
+    with _get_db_session() as session:
+        user_rows = session.execute(user_statement).all()
+        if user_rows:
+            recent_user_session_rows = session.execute(
+                recent_user_sessions_statement,
+                {"user_ids": [row.id for row in user_rows], "cutoff": cutoff},
+            ).all()
+        else:
+            recent_user_session_rows = []
+        anonymous_rows = session.execute(
+            anonymous_statement,
+            {"cutoff": cutoff, "anonymous_limit": anonymous_limit},
+        ).all()
+
+    recent_sessions_by_user = {
+        row.user_id: {
+            "recent_session_count": int(row.recent_session_count or 0),
+            "last_session_activity": row.last_session_activity,
+        }
+        for row in recent_user_session_rows
+    }
+
+    return {
+        "authorized": True,
+        "days": days,
+        "cutoff": cutoff,
+        "users": [
+            {
+                "id": row.id,
+                "email": row.email or "",
+                "name": " ".join(
+                    part for part in (row.first_name or "", row.last_name or "") if part
+                ),
+                "last_login": row.last_login,
+                "recent_session_count": recent_sessions_by_user.get(row.id, {}).get(
+                    "recent_session_count", 0
+                ),
+                "last_session_activity": recent_sessions_by_user.get(row.id, {}).get(
+                    "last_session_activity"
+                ),
+            }
+            for row in user_rows
+        ],
+        "anonymous": [
+            {
+                "temp_user_id": row.temp_user_id,
+                "session_count": int(row.session_count or 0),
+                "last_activity": row.last_activity,
+            }
+            for row in anonymous_rows
+        ],
+    }
 
 
 PLAYGROUND_SECTIONS = (
@@ -1324,6 +1574,7 @@ def format_session_users(session: Any, users_by_id: Dict[int, str]) -> str:
 
 def speedy_get_sessions(
     user_id: Optional[int] = None,
+    temp_user_id: Optional[int] = None,
     filename: Optional[str] = None,
     filter_step1: bool = True,
     metadata_key_name: str = "metadata",
@@ -1332,7 +1583,8 @@ def speedy_get_sessions(
     search_criteria_text: Optional[str] = None,
 ) -> List[Tuple]:
     """
-    Return a list of the most recent 500 sessions, optionally tied to a specific user ID.
+    Return the 500 most recently active sessions, optionally tied to a registered
+    user ID or an anonymous temporary-user ID.
 
     Each session is a tuple with named columns:
     filename,
@@ -1341,9 +1593,45 @@ def speedy_get_sessions(
     key
     """
     get_sessions_query = text("""
+WITH mostrecent AS (
+    SELECT
+        key,
+        MAX(modtime) AS modtime,
+        COUNT(key) AS num_keys
+    FROM userdict
+    WHERE
+        (user_id = :user_id OR :user_id IS NULL)
+        AND (
+            :temp_user_id IS NULL
+            OR EXISTS (
+                SELECT 1
+                FROM userdictkeys AS target_user
+                WHERE target_user.key = userdict.key
+                  AND target_user.filename = userdict.filename
+                  AND target_user.temp_user_id = :temp_user_id
+            )
+        )
+        AND (filename = :filename OR :filename IS NULL)
+    GROUP BY key
+    HAVING
+        (COUNT(key) > 1 OR :filter_step1 = FALSE)
+        AND (:start_date IS NULL OR DATE(MAX(modtime)) >= CAST(:start_date AS DATE))
+        AND (:end_date IS NULL OR DATE(MAX(modtime)) <= CAST(:end_date AS DATE))
+    ORDER BY modtime DESC
+    LIMIT 500
+),
+joined_users AS (
+    SELECT
+        userdictkeys.key,
+        MIN(userdictkeys.user_id) AS user_id,
+        STRING_AGG(DISTINCT CAST(userdictkeys.user_id AS TEXT), ',') AS user_ids
+    FROM userdictkeys
+    JOIN mostrecent ON mostrecent.key = userdictkeys.key
+    GROUP BY userdictkeys.key
+)
 SELECT 
     userdict.filename as filename,
-    num_keys,
+    mostrecent.num_keys,
     joined_users.user_id as user_id,
     joined_users.user_ids as user_ids,
     mostrecent.modtime as modtime,  -- This retrieves the most recent modification time for each key
@@ -1353,45 +1641,46 @@ SELECT
     jsonstorage.data->>'description' as description,
     jsonstorage.data->>'steps' as steps,
     jsonstorage.data->>'progress' as progress
-FROM 
-    userdict 
-NATURAL JOIN 
-    (
-        SELECT 
-            key,
-            MAX(modtime) AS modtime,  -- Calculate the most recent modification time for each key
-            COUNT(key) AS num_keys
-        FROM 
-            userdict
-        GROUP BY 
-            key
-        HAVING 
-            COUNT(key) > 1 OR :filter_step1 = False
-    ) mostrecent
-LEFT JOIN 
-    (
-        SELECT
-            key,
-            MIN(user_id) AS user_id,
-            STRING_AGG(DISTINCT CAST(user_id AS TEXT), ',') AS user_ids
-        FROM userdictkeys
-        GROUP BY key
-    ) joined_users ON joined_users.key = userdict.key
+FROM mostrecent
+JOIN userdict
+    ON userdict.key = mostrecent.key AND userdict.modtime = mostrecent.modtime
+LEFT JOIN joined_users ON joined_users.key = userdict.key
 LEFT JOIN 
     jsonstorage ON jsonstorage.key = userdict.key AND jsonstorage.tags = :metadata
-WHERE 
-    (userdict.user_id = :user_id OR :user_id is null)
-    AND (userdict.filename = :filename OR :filename is null)
-    AND (:start_date is null OR DATE(mostrecent.modtime) >= CAST(:start_date AS DATE))
-    AND (:end_date is null OR DATE(mostrecent.modtime) <= CAST(:end_date AS DATE))
+WHERE
+    (userdict.user_id = :user_id OR :user_id IS NULL)
+    AND (
+        :temp_user_id IS NULL
+        OR EXISTS (
+            SELECT 1
+            FROM userdictkeys AS target_user
+            WHERE target_user.key = userdict.key
+              AND target_user.filename = userdict.filename
+              AND target_user.temp_user_id = :temp_user_id
+        )
+    )
+    AND (userdict.filename = :filename OR :filename IS NULL)
 ORDER BY 
     modtime DESC 
 LIMIT 500;
         """)
-    if not filename:
-        if not user_has_privilege(["admin", "developer"]):
+    if user_id is not None and temp_user_id is not None:
+        raise ValueError("Filter by either user_id or temp_user_id, not both.")
+    if user_id and not can_access_user_sessions(user_id):
+        raise Exception("You do not have permission to view this user's sessions.")
+    if temp_user_id is not None:
+        if not can_access_user_sessions():
             raise Exception(
-                "You must provide a filename to filter sessions unless you are a developer or administrator."
+                "You do not have permission to view this anonymous user's sessions."
+            )
+        try:
+            temp_user_id = int(temp_user_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Invalid temporary user ID.") from error
+    if not filename:
+        if not can_access_user_sessions():
+            raise Exception(
+                "You must provide a filename to filter sessions unless you have access to other users' sessions."
             )
         filename = None  # Explicitly treat empty string as equivalent to None
     if not user_id:
@@ -1413,6 +1702,7 @@ LIMIT 500;
                 get_sessions_query,
                 {
                     "user_id": user_id,
+                    "temp_user_id": temp_user_id,
                     "filename": filename,
                     "filter_step1": filter_step1,
                     "metadata": metadata_key_name,
@@ -1728,13 +2018,14 @@ def build_session_files_zip(
 def get_allowed_interview_filenames() -> Optional[Set[str]]:
     """
     Return the set of interview filenames the current user may look at sessions
-    for, or None if the user is unrestricted (admins and developers).
+    for, or None if the user is unrestricted (admins, developers, and users
+    granted both ``access_user_info`` and ``access_sessions``).
 
     Non-privileged users are limited to the interviews listed under
     `assembly line: interview viewers:` in the configuration for one of the
     privileges they hold.
     """
-    if user_has_privilege(["admin", "developer"]):
+    if can_access_user_sessions():
         return None
     allowed_filenames: Set[str] = set()
     interview_viewers = get_config("assembly line", {}).get("interview viewers", {})

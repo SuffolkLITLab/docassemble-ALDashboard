@@ -19,7 +19,20 @@ from ruamel.yaml.compat import StringIO
 try:
     from docassemble.base.parse import Interview, InterviewSourceString, Question
 except Exception:  # pragma: no cover - depends on the server's packages
-    Interview = None  # type: ignore[assignment]
+    Interview = None  # type: ignore[assignment, misc]
+
+
+def _parser_runtime_available():
+    """The parser needs the request-local state that the webapp initializes."""
+    if Interview is None:
+        return False
+    try:
+        from docassemble.base.thread_context import this_thread
+
+        return this_thread._get_current_object() is not None
+    except (ImportError, RuntimeError):
+        return False
+
 
 PACKAGE = "docassemble.ALDashboard"
 QUESTIONS_DIR = os.path.join(
@@ -36,7 +49,10 @@ def _question_files():
     return sorted(glob.glob(os.path.join(QUESTIONS_DIR, "*.yml")))
 
 
-@unittest.skipIf(Interview is None, "docassemble.base is not installed")
+@unittest.skipUnless(
+    _parser_runtime_available(),
+    "docassemble parser requires an active webapp request context",
+)
 class TestPackagedQuestionBlocksParse(unittest.TestCase):
     def test_every_question_block_builds(self):
         yaml = YAML(typ="safe", pure=True)

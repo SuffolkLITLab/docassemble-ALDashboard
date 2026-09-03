@@ -561,9 +561,7 @@ def dashboard_kiln_story():
 @cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
 def dashboard_variable_report():
     return _run_endpoint(
-        court_form_profiles_payload_from_request,
-        variable_report_payload_from_request,
-        dashboard_variable_report_task,
+        variable_report_payload_from_request, dashboard_variable_report_task
     )
 
 

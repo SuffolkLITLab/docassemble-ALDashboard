@@ -25,6 +25,7 @@ from .api_dashboard_utils import (
     pdf_fields_detect_payload_from_options,
     pdf_fields_relabel_payload_from_options,
     pdf_label_fields_payload_from_options,
+    court_form_profiles_payload_from_options,
     pdf_repair_payload_from_options,
     relabel_payload_from_options,
     review_screen_payload_from_options,
@@ -151,3 +152,9 @@ def dashboard_pdf_repair_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 def dashboard_variable_report_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     with bg_context():
         return variable_report_payload_from_options(payload)
+
+
+@workerapp.task
+def dashboard_court_form_profiles_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with bg_context():
+        return court_form_profiles_payload_from_options(payload)

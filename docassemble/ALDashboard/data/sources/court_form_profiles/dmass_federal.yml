@@ -1,0 +1,69 @@
+id: dmass_federal
+name: U.S. District Court, District of Massachusetts
+jurisdiction: Federal (D. Mass.)
+extends: generic
+description: >-
+  The federal pleading caption under Fed. R. Civ. P. 10(a) as used in the
+  District of Massachusetts: the court name over the "for the" line and the
+  district, then the party block separated by the traditional column of close
+  parentheses with the civil action number beside it. Body text is double
+  spaced to match D. Mass. Local Rule 5.1.
+
+styles:
+  CourtBodyText:
+    font: Times New Roman
+    size: 12
+    line_spacing: 2.0
+    space_after: 0
+  CourtCaptionText:
+    font: Times New Roman
+    size: 12
+
+labels:
+  docket: "Civil Action No."
+  plaintiff: "Plaintiff(s)"
+  defendant: "Defendant(s)"
+
+caption:
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "UNITED STATES DISTRICT COURT"
+  - type: paragraph
+    style: CourtCaptionText
+    text: "for the"
+    align: center
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "District of Massachusetts"
+  - type: spacer
+  - type: table
+    widths: [3.0, 0.3, 3.2]
+    borders: none
+    rows:
+      - cells: ["{{ users }},", ")", ""]
+      - cells: ["", ")", "{{ docket_label }} {{ docket_number }}"]
+      - cells: ["                Plaintiff(s),", ")", ""]
+      - cells: ["", ")", ""]
+      - cells: ["        v.", ")", "Jury Trial: {{ jury_trial }}"]
+      - cells: ["", ")", ""]
+      - cells: ["{{ other_parties }},", ")", ""]
+      - cells: ["                Defendant(s).", ")", ""]
+  - type: rule
+
+certificate_of_service:
+  - type: paragraph
+    style: CourtDocumentTitle
+    text: "CERTIFICATE OF SERVICE"
+  - type: paragraph
+    style: CourtBodyText
+    text: >-
+      I hereby certify that this document filed through the CM/ECF system will
+      be sent electronically to the registered participants as identified on
+      the Notice of Electronic Filing (NEF) and paper copies will be sent to
+      those indicated as non-registered participants on {{ service_date }}.
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["Date: {{ service_date }}", "{{ users[0].signature }}"]
+      - cells: ["", "{{ users[0] }}"]

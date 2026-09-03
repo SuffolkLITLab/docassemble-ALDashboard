@@ -120,6 +120,40 @@ question: |
 fields:
   - Document Title: report_title
     default: ${ meta_info["display_title"] }
+  - Template shape: report_shape
+    datatype: radio
+    default: intake
+    code: |
+      [
+        {"label": item["label"], "value": item["value"]}
+        for item in list_court_form_shapes()
+      ]
+    help: |
+      The intake shape lists every variable the interview gathers. The court
+      shapes arrange the same variables into a filing: the jurisdiction profile
+      supplies the caption, running footer and signature block, and the
+      interview's screens become the middle of the document.
+  - Court / jurisdiction profile: court_profile
+    datatype: dropdown
+    js show if: |
+      val("report_shape") != "intake"
+    code: |
+      [
+        {"label": item["label"], "value": item["value"]}
+        for item in list_court_form_profile_choices()
+      ]
+    default: generic
+    help: |
+      Profiles are editable YAML in
+      `data/sources/court_form_profiles/`, and any section can be replaced
+      with a Word-authored `.docx` in `data/templates/court_forms/<profile>/`.
+      Fonts and spacing are Word styles, so a court that wants a different
+      face is a one-line change.
+  - Include a certificate of service: include_certificate_of_service
+    datatype: yesno
+    default: False
+    js show if: |
+      val("report_shape") != "intake"
   - Show internal variable names in labels: show_variable_names
     datatype: yesno
     default: False
@@ -167,6 +201,14 @@ code: |
   _md_name = md_filename if _save_to_pg and defined('md_filename') else meta_info["md_filename"]
   _docx_name = docx_filename if _save_to_pg and defined('docx_filename') else meta_info["docx_filename"]
 
+  _shape = report_shape if defined('report_shape') else "intake"
+  _profile = court_profile if _shape != "intake" and defined('court_profile') else None
+  _certificate = (
+    include_certificate_of_service
+    if _shape != "intake" and defined('include_certificate_of_service')
+    else None
+  )
+
   report_result = generate_variable_report(
     report_yaml_texts,
     report_title=report_title,
@@ -174,6 +216,9 @@ code: |
     show_variable_names=show_variable_names,
     show_variable_types=show_variable_types,
     max_list_cols=max_list_cols,
+    shape=_shape,
+    court_profile=_profile,
+    include_certificate_of_service=_certificate,
   )
 
   if _save_to_pg:
@@ -206,6 +251,16 @@ question: |
   ${ report_title }
 subquestion: |
   Files combined: **${ len(source_filenames) }** | Interview screens & objects processed: **${ len(report_result["groups"]) }** | Total variables: **${ report_result["variables_count"] }**
+
+  % if report_result.get("profile_name"):
+  Shape: **${ report_result.get("shape") }** | Court profile: **${ report_result.get("profile_name") }**
+
+  Fixed sections drawn: ${ ", ".join(f"{name} ({origin})" for name, origin in sorted(report_result.get("sections", {}).items())) }
+  <br/>
+  <small>`yaml` means the section came from the profile; `docx` means a Word-authored fragment replaced it.</small>
+
+  Word styles defined in the DOCX: ${ ", ".join(report_result.get("styles", [])) }
+  % endif
 
   ### Download Output Files
   * **[Download Mako + Markdown Draft (${ _md_name })](${ markdown_download.url_for(attachment=True) })**

@@ -1,0 +1,54 @@
+id: ma_trial_court
+name: Massachusetts Trial Court
+jurisdiction: Massachusetts
+extends: generic
+description: >-
+  Caption used across the Massachusetts Trial Court departments: the
+  Commonwealth line, the department and division, and the county "ss" line
+  beside the docket number. Modeled on the captions in the AssemblyLine
+  Massachusetts packages and on Trial Court forms.
+
+labels:
+  docket: "DOCKET NO."
+  plaintiff: "Plaintiff"
+  defendant: "Defendant"
+
+caption:
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "COMMONWEALTH OF MASSACHUSETTS"
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "THE TRIAL COURT"
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "{{ trial_court.department }}"
+  - type: spacer
+  - type: table
+    widths: [3.4, 3.1]
+    borders: none
+    rows:
+      - cells: ["{{ trial_court.address.county }}, ss", "{{ trial_court }}"]
+      - cells: ["", "{{ docket_label }} {{ docket_number }}"]
+      - cells: ["", ""]
+      - cells: ["{{ users }}", ""]
+      - cells: ["        Plaintiff", ""]
+      - cells: ["v.", "{{ document_title }}"]
+      - cells: ["{{ other_parties }}", ""]
+      - cells: ["        Defendant", ""]
+  - type: rule
+
+jurat:
+  - type: spacer
+  - type: paragraph
+    style: CourtBodyText
+    text: "Signed under the pains and penalties of perjury."
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["Date: {{ signature_date }}", "{{ users[0].signature }}"]
+      - cells: ["", "{{ users[0] }}"]
+
+body:
+  affidavit_closing: "Signed under the pains and penalties of perjury."

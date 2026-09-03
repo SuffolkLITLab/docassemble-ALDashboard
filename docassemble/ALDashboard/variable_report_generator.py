@@ -130,6 +130,33 @@ class QuestionGroupSpec:
     lists: List[VariableSpec] = field(default_factory=list)
 
 
+def list_court_form_shapes() -> List[Dict[str, str]]:
+    """The template shapes a report can be drafted in, for a dropdown."""
+    from .court_form_generator import COURT_FORM_SHAPES, SHAPE_LABELS
+
+    shapes = ["intake"] + list(COURT_FORM_SHAPES)
+    return [
+        {"value": shape, "label": SHAPE_LABELS.get(shape, shape)} for shape in shapes
+    ]
+
+
+def list_court_form_profile_choices() -> List[Dict[str, str]]:
+    """Jurisdiction profiles available on this server, for a dropdown."""
+    from .court_form_profiles import list_court_form_profiles
+
+    return [
+        {
+            "value": profile["id"],
+            "label": (
+                f"{profile['name']} ({profile['jurisdiction']})"
+                if profile.get("jurisdiction")
+                else profile["name"]
+            ),
+        }
+        for profile in list_court_form_profiles()
+    ]
+
+
 def list_variable_report_playground_projects() -> List[str]:
     from .interview_linter import list_playground_projects
 
@@ -842,32 +869,82 @@ def generate_variable_report(
     show_variable_types: bool = False,
     max_list_cols: int = 4,
     output_docx_path: Optional[str] = None,
+    shape: str = "intake",
+    court_profile: Optional[str] = None,
+    fragment_dirs: Optional[List[str]] = None,
+    include_certificate_of_service: Optional[bool] = None,
+    numbered_paragraphs: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    """Draft a document from an interview's variables.
+
+    ``shape`` selects the template shape. ``"intake"`` is the original field and
+    value summary and stays the default, so existing callers -- the Weaver's
+    ``variable_report.py`` among them -- are unaffected. The other shapes draft
+    a court document using the jurisdiction profile named by ``court_profile``
+    (see ``court_form_profiles``).
+    """
     groups, variables = extract_interview_questions_and_variables(
         yaml_texts, infer_assemblyline=infer_assemblyline
     )
-    mako_markdown = generate_mako_markdown_report(
-        groups,
-        variables,
-        report_title=report_title,
-        show_variable_names=show_variable_names,
-        show_variable_types=show_variable_types,
-        max_list_cols=max_list_cols,
-    )
-    docx_file_path = generate_docx_report(
-        groups,
-        variables,
-        report_title=report_title,
-        output_path=output_docx_path,
-        show_variable_names=show_variable_names,
-        show_variable_types=show_variable_types,
-        max_list_cols=max_list_cols,
-    )
+
+    shape_name = str(shape or "intake").strip().lower()
+
+    if shape_name == "intake":
+        mako_markdown = generate_mako_markdown_report(
+            groups,
+            variables,
+            report_title=report_title,
+            show_variable_names=show_variable_names,
+            show_variable_types=show_variable_types,
+            max_list_cols=max_list_cols,
+        )
+        docx_file_path = generate_docx_report(
+            groups,
+            variables,
+            report_title=report_title,
+            output_path=output_docx_path,
+            show_variable_names=show_variable_names,
+            show_variable_types=show_variable_types,
+            max_list_cols=max_list_cols,
+        )
+        court_details: Dict[str, Any] = {}
+    else:
+        from .court_form_generator import (
+            generate_court_form_docx,
+            generate_court_form_markdown,
+        )
+        from .court_form_profiles import load_court_form_profile
+
+        profile = load_court_form_profile(court_profile, fragment_dirs=fragment_dirs)
+        mako_markdown = generate_court_form_markdown(
+            groups,
+            variables,
+            shape=shape_name,
+            profile=profile,
+            document_title=report_title,
+        )
+        court_result = generate_court_form_docx(
+            groups,
+            variables,
+            shape=shape_name,
+            profile=profile,
+            document_title=report_title,
+            output_path=output_docx_path,
+            include_certificate_of_service=include_certificate_of_service,
+            numbered_paragraphs=numbered_paragraphs,
+        )
+        docx_file_path = court_result["docx_path"]
+        court_details = {
+            "profile_id": court_result["profile_id"],
+            "profile_name": court_result["profile_name"],
+            "sections": court_result["sections"],
+            "styles": court_result["styles"],
+        }
 
     list_count = sum(1 for v in variables.values() if v.is_list)
     scalar_count = sum(1 for v in variables.values() if not v.is_list)
 
-    return {
+    result: Dict[str, Any] = {
         "variables": variables,
         "groups": groups,
         "mako_markdown": mako_markdown,
@@ -875,7 +952,10 @@ def generate_variable_report(
         "variables_count": len(variables),
         "list_count": list_count,
         "scalar_count": scalar_count,
+        "shape": shape_name,
     }
+    result.update(court_details)
+    return result
 
 
 def save_variable_report_to_playground(
@@ -1034,6 +1114,9 @@ def generate_and_save_playground_variable_report(
     show_variable_types: bool = False,
     max_list_cols: int = 4,
     report_title: Optional[str] = None,
+    shape: str = "intake",
+    court_profile: Optional[str] = None,
+    include_certificate_of_service: Optional[bool] = None,
 ) -> Dict[str, Any]:
     project = str(selected_playground_project or "default")
     filenames = [str(f) for f in selected_filenames]
@@ -1050,6 +1133,9 @@ def generate_and_save_playground_variable_report(
         show_variable_names=show_variable_names,
         show_variable_types=show_variable_types,
         max_list_cols=max_list_cols,
+        shape=shape,
+        court_profile=court_profile,
+        include_certificate_of_service=include_certificate_of_service,
     )
 
     if save_to_playground:

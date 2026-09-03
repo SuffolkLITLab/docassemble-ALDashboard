@@ -1,0 +1,96 @@
+id: mi_scao
+name: Michigan SCAO-approved form
+jurisdiction: Michigan
+extends: generic
+description: >-
+  The Michigan State Court Administrative Office form layout: a boxed caption
+  naming the district, circuit or probate court beside the case number and
+  judge, court address and telephone boxes, a boxed party block with the
+  centered "v", and the "Approved, SCAO" / form number / court rule footer.
+  Modeled on SCAO form MC 02.
+
+styles:
+  CourtCaptionHeading:
+    font: Arial
+    size: 10
+    bold: true
+    align: left
+  CourtCaptionText:
+    font: Arial
+    size: 9
+  CourtDocumentTitle:
+    font: Arial
+    size: 11
+  CourtSectionHeading:
+    font: Arial
+    size: 10
+  CourtBodyText:
+    font: Arial
+    size: 10
+    line_spacing: 1.15
+  CourtFieldLabel:
+    font: Arial
+    size: 8
+  CourtSignatureText:
+    font: Arial
+    size: 10
+  CourtFooterText:
+    font: Arial
+    size: 7
+  CourtSmallPrint:
+    font: Arial
+    size: 7
+
+page:
+  margins:
+    top: 0.5
+    bottom: 0.5
+    left: 0.75
+    right: 0.75
+
+labels:
+  docket: "CASE NO."
+  plaintiff: "Plaintiff(s)/Petitioner(s)"
+  defendant: "Defendant(s)/Respondent(s)"
+
+caption:
+  - type: table
+    widths: [2.4, 2.4, 2.2]
+    borders: grid
+    rows:
+      - cells:
+          - "STATE OF MICHIGAN\n        JUDICIAL DISTRICT\n        JUDICIAL CIRCUIT\n{{ county }} COUNTY PROBATE"
+          - "{{ document_title }}"
+          - "{{ docket_label }} and JUDGE\n\n{{ docket_number }}"
+        style: CourtCaptionText
+      - cells:
+          - "Court address\n{{ trial_court.address.block() }}"
+          - ""
+          - "Court telephone no.\n{{ trial_court.phone_number }}"
+        style: CourtCaptionText
+  - type: table
+    widths: [3.0, 0.6, 3.4]
+    borders: grid
+    rows:
+      - cells:
+          - "{{ labels.plaintiff }}\n\n{{ users }}"
+          - "v"
+          - "{{ labels.defendant }}\n\n{{ other_parties }}"
+        style: CourtCaptionText
+  - type: spacer
+
+footer:
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["Approved, SCAO", ""]
+        style: CourtFooterText
+      - cells: ["{{ form_code }}, Rev. {{ form_revision }}", ""]
+        style: CourtFooterText
+      - cells: ["{{ court_rule_citation }}", ""]
+        style: CourtFooterText
+  - type: paragraph
+    style: CourtFooterText
+    text: ""
+    page_numbers: true

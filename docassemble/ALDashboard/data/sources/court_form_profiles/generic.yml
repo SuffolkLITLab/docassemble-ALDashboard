@@ -1,0 +1,165 @@
+id: generic
+name: Generic court form
+jurisdiction: ""
+description: >-
+  A neutral caption that reads correctly in most trial courts. Used when no
+  jurisdiction profile is chosen, and a reasonable starting point for a court
+  this package does not ship a profile for.
+
+page:
+  margins:
+    top: 1.0
+    bottom: 1.0
+    left: 1.0
+    right: 1.0
+
+# Fonts, sizes and spacing live here, and are written into the generated
+# document as real Word styles. Change a font for a whole court in one line.
+styles:
+  CourtCaptionHeading:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    bold: true
+    align: center
+    space_after: 0
+    keep_with_next: true
+  CourtCaptionText:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    align: left
+    space_after: 0
+  CourtDocumentTitle:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    bold: true
+    all_caps: true
+    align: center
+    space_before: 12
+    space_after: 12
+    keep_with_next: true
+  CourtSectionHeading:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    bold: true
+    align: left
+    space_before: 12
+    space_after: 6
+    keep_with_next: true
+  CourtBodyText:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    align: left
+    line_spacing: 1.5
+    space_after: 10
+  CourtFieldLabel:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    bold: true
+    space_after: 0
+  CourtSignatureText:
+    based_on: Normal
+    font: Times New Roman
+    size: 12
+    align: left
+    space_after: 0
+  CourtFooterText:
+    based_on: Normal
+    font: Times New Roman
+    size: 9
+    align: left
+    space_after: 0
+  CourtSmallPrint:
+    based_on: Normal
+    font: Times New Roman
+    size: 9
+    italic: true
+    space_after: 0
+
+labels:
+  docket: "Case No."
+  plaintiff: "Plaintiff"
+  defendant: "Defendant"
+  versus: "v."
+
+caption:
+  - type: paragraph
+    style: CourtCaptionHeading
+    text: "IN THE {{ trial_court }}"
+  - type: spacer
+  - type: table
+    widths: [3.4, 3.1]
+    borders: none
+    rows:
+      - cells: ["{{ users }},", "{{ docket_label }} {{ docket_number }}"]
+      - cells: ["        Plaintiff,", ""]
+      - cells: ["v.", "{{ document_title }}"]
+      - cells: ["{{ other_parties }},", ""]
+      - cells: ["        Defendant.", ""]
+  - type: rule
+
+footer:
+  - type: paragraph
+    style: CourtFooterText
+    text: "{{ document_title }}"
+    page_numbers: true
+
+signature:
+  - type: spacer
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["Date: {{ signature_date }}", "{{ users[0].signature }}"]
+      - cells: ["", "{{ users[0] }}"]
+      - cells: ["", "{{ users[0].address.block() }}"]
+      - cells: ["", "{{ users[0].phone_number }}"]
+      - cells: ["", "{{ users[0].email }}"]
+
+certificate_of_service:
+  - type: paragraph
+    style: CourtDocumentTitle
+    text: "CERTIFICATE OF SERVICE"
+  - type: paragraph
+    style: CourtBodyText
+    text: >-
+      I certify that on {{ service_date }} I served a copy of this
+      {{ document_title }} on all parties of record, by
+      {{ service_method }}.
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["Date: {{ service_date }}", "{{ users[0].signature }}"]
+      - cells: ["", "{{ users[0] }}"]
+
+jurat:
+  - type: spacer
+  - type: paragraph
+    style: CourtBodyText
+    text: "Signed under the penalties of perjury."
+  - type: table
+    widths: [3.25, 3.25]
+    borders: none
+    rows:
+      - cells: ["Date: {{ signature_date }}", "{{ users[0].signature }}"]
+      - cells: ["", "{{ users[0] }}"]
+
+body:
+  title_style: CourtDocumentTitle
+  heading_style: CourtSectionHeading
+  text_style: CourtBodyText
+  label_style: CourtFieldLabel
+  numbered_paragraphs: true
+  motion_intro: >-
+    NOW COMES {{ users[0] }}, who respectfully moves this Court as follows:
+  motion_prayer: >-
+    WHEREFORE, {{ users[0] }} respectfully requests that this Court grant the
+    relief requested above, together with any further relief the Court deems
+    just and proper.
+  affidavit_intro: "I, {{ users[0] }}, state as follows:"

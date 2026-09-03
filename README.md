@@ -49,6 +49,8 @@ When installed on a docassemble server, ALDashboard exposes a Flask API at:
 - `POST /al/api/v1/dashboard/bootstrap/compile`
 - `POST /al/api/v1/dashboard/translation/validate`
 - `POST /al/api/v1/dashboard/review-screen/draft`
+- `POST /al/api/v1/dashboard/variable-report`
+- `POST /al/api/v1/dashboard/court-form/profiles`
 - `POST /al/api/v1/dashboard/docx/validate`
 - `POST /al/api/v1/dashboard/yaml/check`
 - `POST /al/api/v1/dashboard/yaml/reformat`
@@ -72,6 +74,15 @@ celery modules:
 ```
 
 ### Endpoint Notes
+
+- `POST /al/api/v1/dashboard/variable-report`
+  - Input: interview YAML via `yaml_text`, upload, or `playground_project` + `playground_yaml_file`; optional `report_title`, `infer_assemblyline`.
+  - Optional `shape`: `intake` (default), `court_form`, `motion`, `affidavit`, `letter`. See [Court form shapes](#court-form-shapes).
+  - Court shapes also take `court_profile` and `include_certificate_of_service`, and return `docx_base64` by default.
+  - Output: `mako_markdown`, variable metrics, and for court shapes `profile_id`, `profile_name`, `styles`, and a `sections` map naming the template each fixed section came from.
+- `POST /al/api/v1/dashboard/court-form/profiles`
+  - Input: none.
+  - Output: the `shapes` this server can draft, the jurisdiction `profiles` installed on it, and the `sections` a profile may define.
 
 - `POST /al/api/v1/dashboard/translation`
   - Input: `interview_path`, one or more target languages (`tr_langs`), optional GPT settings.
@@ -106,6 +117,8 @@ celery modules:
   - Input: translation XLSX.
   - Output: structured errors/warnings/empty rows.
 - `POST /al/api/v1/dashboard/review-screen/draft`
+- `POST /al/api/v1/dashboard/variable-report`
+- `POST /al/api/v1/dashboard/court-form/profiles`
   - Input: one or more YAML files.
   - Output: generated review-screen YAML draft.
 - `POST /al/api/v1/dashboard/docx/validate`
@@ -149,6 +162,74 @@ Live docs:
 
 - `GET /al/api/v1/dashboard/openapi.json`
 - `GET /al/api/v1/dashboard/docs`
+
+## Court form shapes
+
+The Interview Intake Document Generator can arrange an interview's variables
+into a draft court filing rather than a list of fields. The interview's screens
+become the middle of the document; a **jurisdiction profile** supplies the parts
+the court fixes.
+
+Shapes:
+
+| Shape | What it drafts |
+| --- | --- |
+| `intake` | The original field-and-value summary. Still the default. |
+| `court_form` | Caption, title, the interview's screens as numbered sections, signature block. |
+| `motion` | The same, wrapped in a "NOW COMES" introduction and a prayer for relief, with a certificate of service. |
+| `affidavit` | The same, introduced as sworn statements and closed with the jurisdiction's perjury language and a jurat. |
+| `letter` | No caption: sender, date, recipient, `RE:` line, body, closing. |
+
+Profiles shipped with the package, each modeled on that court's real forms:
+`ma_trial_court`, `il_circuit`, `vt_superior`, `mi_scao`, `mn_district`,
+`dmass_federal`, and a neutral `generic`.
+
+### Editing the templates
+
+Nothing about a court's layout is compiled into Python.
+
+- **Profiles** are YAML in `docassemble/ALDashboard/data/sources/court_form_profiles/`.
+  Each defines the caption, running header and footer, signature block,
+  certificate of service and jurat as ordered blocks, plus the Word styles the
+  document should use. Adding `nh_circuit.yml` adds an `nh_circuit` profile to
+  the dropdown with no code change. A profile can `extends:` another so a new
+  court only states what differs.
+- **Word-authored overrides** go in
+  `docassemble/ALDashboard/data/templates/court_forms/<profile id>/<section>.docx`.
+  A fragment replaces just that section and is copied in verbatim; the rest of
+  the form still comes from the profile. Use this when a caption is easier to
+  draw in Word than to describe.
+- **Fonts and spacing are Word styles.** Everything the generator writes is
+  tagged `CourtBodyText`, `CourtCaptionHeading`, `CourtDocumentTitle` and so on,
+  so a court that wants Arial instead of Times is a one-line edit to the
+  profile rather than a sweep through the layout.
+
+Servers that would rather not fork the package can point the
+`court form profiles` configuration key at their own directory of profiles.
+
+Both README files under those directories document the block and placeholder
+syntax in full.
+
+### From Python
+
+```python
+from docassemble.ALDashboard.variable_report_generator import generate_variable_report
+
+result = generate_variable_report(
+    [yaml_text],
+    report_title="Motion to Vacate Default Judgment",
+    shape="motion",
+    court_profile="ma_trial_court",
+    output_docx_path="/tmp/motion.docx",
+)
+result["sections"]   # {'caption': 'yaml', 'signature': 'yaml', ...}
+```
+
+This is the entry point the ALWeaver's `variable_report.py` already calls, so
+the Weaver reaches the court shapes by passing `shape` and `court_profile`
+through. `docassemble.ALDashboard.court_form_generator.generate_court_form_docx`
+is available directly when a caller has already extracted the interview's
+groups and variables.
 
 ## MCP Bridge API
 

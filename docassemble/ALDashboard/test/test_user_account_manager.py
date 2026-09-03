@@ -302,3 +302,31 @@ def test_recent_activity_report_is_permission_gated_and_groups_anonymous_users()
     assert "LIMIT :anonymous_limit" in source
     assert "COUNT(DISTINCT userdictkeys.key) AS recent_session_count" in source
     assert ".order_by(UserModel.last_login.desc())" in source
+    assert "except (TypeError, ValueError):\n        user_limit = 200" in source
+    assert "except (TypeError, ValueError):\n        anonymous_limit = 100" in source
+
+
+def test_recent_activity_user_action_rejects_invalid_user_ids():
+    path = PACKAGE_ROOT / "data" / "questions" / "manage_users.yml"
+    documents = list(YAML(typ="safe").load_all(path.read_text(encoding="utf-8")))
+    user_action = next(
+        document
+        for document in documents
+        if isinstance(document, dict) and document.get("event") == "view_activity_user"
+    )
+
+    assert "except (TypeError, ValueError)" in user_action["code"]
+    assert "response_code=400" in user_action["code"]
+
+
+def test_reset_email_confirmation_labels_an_account_without_email():
+    path = PACKAGE_ROOT / "data" / "questions" / "manage_users.yml"
+    documents = list(YAML(typ="safe").load_all(path.read_text(encoding="utf-8")))
+    confirmation = next(
+        document
+        for document in documents
+        if isinstance(document, dict)
+        and document.get("id") == "confirm send reset email"
+    )
+
+    assert "no email address" in confirmation["subquestion"]

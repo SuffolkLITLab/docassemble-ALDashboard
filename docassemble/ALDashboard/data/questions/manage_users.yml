@@ -345,7 +345,7 @@ question: |
   Send a password reset email?
 subquestion: |
   Docassemble will send its standard password reset message to
-  **${ user_details["email"] if user_details else user_label }**.
+  **${ (user_details["email"] or "no email address") if user_details else user_label }**.
 
   The message will contain a private, expiring reset link. Sending it may cause
   the user to lose access to encrypted saved answers after they reset their password.
@@ -368,6 +368,7 @@ code: |
     send_reset_email_result = {"sent": False, "message": "No email was sent."}
 ---
 event: send_reset_email_complete_screen
+id: password reset email result
 question: |
   ${ "Password reset email sent" if send_reset_email_result["sent"] else "Password reset email not sent" }
 subquestion: |
@@ -410,6 +411,7 @@ code: |
   view_managed_sessions_screen
 ---
 event: view_managed_sessions_screen
+id: managed user sessions
 question: |
   Saved interviews and answers for ${ managed_session_subject }
 subquestion: |
@@ -451,6 +453,7 @@ code: |
   recent_activity_data = recent_account_activity_report(recent_activity_days)
 ---
 event: recent_activity_report_screen
+id: recent account activity report
 question: |
   Recently active users
 subquestion: |
@@ -500,7 +503,10 @@ back button: True
 ---
 event: view_activity_user
 code: |
-  chosen_user = int(action_argument("user_id"))
+  try:
+    chosen_user = int(action_argument("user_id"))
+  except (TypeError, ValueError):
+    response(response="Invalid user identifier.", response_code=400)
   if not user_has_privilege("admin") and is_user_privileged(chosen_user):
     response(response="You do not have permission to view this user's information.", response_code=403)
   undefine("user_details", "user_label", "managed_user_sessions", "managed_sessions", "managed_session_subject")

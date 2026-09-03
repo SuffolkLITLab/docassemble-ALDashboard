@@ -910,8 +910,14 @@ def recent_account_activity_report(
         days = min(365, max(1, int(days)))
     except (TypeError, ValueError):
         days = 30
-    user_limit = min(500, max(1, int(user_limit)))
-    anonymous_limit = min(500, max(1, int(anonymous_limit)))
+    try:
+        user_limit = min(500, max(1, int(user_limit)))
+    except (TypeError, ValueError):
+        user_limit = 200
+    try:
+        anonymous_limit = min(500, max(1, int(anonymous_limit)))
+    except (TypeError, ValueError):
+        anonymous_limit = 100
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     user_statement = (

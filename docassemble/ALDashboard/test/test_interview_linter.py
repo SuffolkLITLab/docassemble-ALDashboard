@@ -129,7 +129,7 @@ question: Hello
 
     @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
     def test_lint_interview_content_keeps_current_report_shape(self, mock_collect):
-        mock_collect.side_effect = [[], [FakeDAYamlFinding()], []]
+        mock_collect.side_effect = [[FakeDAYamlFinding()], []]
         yaml_content = """
 ---
 id: q1
@@ -141,6 +141,8 @@ question: Hello
         self.assertIn("findings_by_severity", result)
         self.assertEqual(result["findings"][0]["rule_id"], "style-new-future-rule")
         self.assertEqual(len(result["findings_by_severity"]["yellow"]), 1)
+        self.assertEqual(mock_collect.call_count, 2)
+        self.assertTrue(mock_collect.call_args_list[0].kwargs["include_style"])
 
     def _findings(self, yaml_content, lint_mode="full"):
         docs = load_interview(yaml_content)
@@ -170,7 +172,7 @@ question: Hello
 
     @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
     def test_lint_output_groups_by_severity(self, mock_collect):
-        mock_collect.side_effect = [[], [FakeDAYamlFinding()], []]
+        mock_collect.side_effect = [[FakeDAYamlFinding()], []]
         yaml_content = """
 ---
 id: q1

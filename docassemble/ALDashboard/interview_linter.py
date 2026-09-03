@@ -613,7 +613,7 @@ def _collect_dayamlchecker_findings(
         return []
 
 
-def _run_dayamlchecker(content: str) -> List[str]:
+def _dayamlchecker_yaml_errors(findings: Sequence[Any]) -> List[str]:
     yaml_message_ids = {
         "yaml_duplicate_key",
         "yaml_parse_error",
@@ -625,10 +625,15 @@ def _run_dayamlchecker(content: str) -> List[str]:
     }
     return [
         _stringify(getattr(finding, "message", finding)).strip()
-        for finding in _collect_dayamlchecker_findings(content)
+        for finding in findings
         if _stringify(getattr(finding, "message_id", "")) in yaml_message_ids
         and _stringify(getattr(finding, "message", finding)).strip()
     ]
+
+
+def _run_dayamlchecker(content: str) -> List[str]:
+    """Return only parse/validation errors from a DAYamlChecker run."""
+    return _dayamlchecker_yaml_errors(_collect_dayamlchecker_findings(content))
 
 
 
@@ -796,6 +801,7 @@ def run_deterministic_rules(
     raw_content: str,
     lint_mode: str = DEFAULT_LINT_MODE,
     include_llm: bool = False,
+    dayaml_default_findings: Optional[Sequence[Any]] = None,
 ) -> List[Dict[str, Any]]:
     resolved_lint_mode = normalize_lint_mode(lint_mode)
     dayaml_findings: List[Any] = []
@@ -804,14 +810,17 @@ def run_deterministic_rules(
             _collect_dayamlchecker_findings(raw_content, lint_mode="accessibility")
         )
     else:
-        dayaml_findings.extend(
-            _collect_dayamlchecker_findings(
-                raw_content,
-                lint_mode="default",
-                include_style=True,
-                include_style_llm=include_llm,
+        if dayaml_default_findings is None:
+            dayaml_findings.extend(
+                _collect_dayamlchecker_findings(
+                    raw_content,
+                    lint_mode="default",
+                    include_style=True,
+                    include_style_llm=include_llm,
+                )
             )
-        )
+        else:
+            dayaml_findings.extend(dayaml_default_findings)
         dayaml_findings.extend(
             _collect_dayamlchecker_findings(raw_content, lint_mode="accessibility")
         )
@@ -869,7 +878,13 @@ def lint_interview_content(
     lint_mode: str = DEFAULT_LINT_MODE,
 ) -> Dict[str, Any]:
     resolved_lint_mode = normalize_lint_mode(lint_mode)
-    yaml_errors = _run_dayamlchecker(content)
+    dayaml_default_findings = _collect_dayamlchecker_findings(
+        content,
+        lint_mode="default",
+        include_style=resolved_lint_mode == "full",
+        include_style_llm=include_llm and resolved_lint_mode == "full",
+    )
+    yaml_errors = _dayamlchecker_yaml_errors(dayaml_default_findings)
     yaml_parsed: List[dict]
     if not yaml_errors:
         try:
@@ -921,6 +936,7 @@ def lint_interview_content(
         content,
         lint_mode=resolved_lint_mode,
         include_llm=include_llm,
+        dayaml_default_findings=dayaml_default_findings,
     )
     findings = _attach_screen_links_and_evidence(findings, screen_catalog)
 

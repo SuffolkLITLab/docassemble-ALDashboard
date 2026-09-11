@@ -65,7 +65,10 @@ def test_new_docassemble_import_locations_are_covered():
             "docassemble.webapp.daredis",
         },
         "api_dashboard_worker.py": {"docassemble.webapp.tasks.context"},
-        "translation.py": {"docassemble.webapp.utils.helpers"},
+        "translation.py": {
+            "docassemble.base.interview_source",
+            "docassemble.webapp.utils.helpers",
+        },
         "aldashboard.py": {
             "docassemble.webapp.interview.models",
             "docassemble.webapp.utils.helpers",
@@ -348,6 +351,53 @@ def test_aldashboard_file_helpers_fall_back_on_docassemble_1_9_layout():
             sys.modules["docassemble.webapp.files.file_access"] = None
 
         run(module_without_symbol)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+
+def test_translation_interview_source_falls_back_on_docassemble_1_9_layout():
+    package_root_str = str(PACKAGE_ROOT)
+    probe = textwrap.dedent(f"""
+        import ast
+        import sys
+        import types
+        from pathlib import Path
+
+        package_root = Path({package_root_str!r})
+        source = (package_root / "translation.py").read_text(encoding="utf-8")
+        lines = source.splitlines(keepends=True)
+        tree = ast.parse(source)
+
+        block_source = None
+        for node in tree.body:
+            if not isinstance(node, ast.Try):
+                continue
+            import_names = [
+                alias.name
+                for item in node.body if isinstance(item, ast.ImportFrom)
+                for alias in item.names
+            ]
+            if "interview_source_from_string" in import_names:
+                block_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+                break
+        assert block_source is not None, "translation.py missing fallback for interview_source_from_string"
+
+        legacy_interview_source_loader = object()
+        parse_module = types.ModuleType("docassemble.base.parse")
+        parse_module.interview_source_from_string = legacy_interview_source_loader
+        sys.modules["docassemble.base.parse"] = parse_module
+        sys.modules["docassemble.base.interview_source"] = None
+
+        namespace = {{}}
+        exec(compile(block_source, "translation.py", "exec"), namespace)
+        assert namespace["interview_source_from_string"] is legacy_interview_source_loader
     """)
     result = subprocess.run(
         [sys.executable, "-c", probe],

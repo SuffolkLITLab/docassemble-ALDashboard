@@ -123,3 +123,6 @@ data:
   - name: Compile Bootstrap theme
     url: ${ interview_url(i=user_info().package + ":compile_bootstrap.yml", reset=1) }
     image: palette
+  - name: Package commit report
+    url: ${ interview_url(i=user_info().package + ":package_commit_report.yml", reset=1) }
+    image: code-branch

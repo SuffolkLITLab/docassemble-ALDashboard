@@ -25,6 +25,15 @@ import docassemble.base.pdftk
 import docassemble.base.util
 import docassemble.base.core  # for backward-compatibility with data pickled in earlier versions
 
+try:
+    # docassemble 1.10 moved this loader out of base.parse.
+    from docassemble.base.interview_source import interview_source_from_string
+except ModuleNotFoundError as err:
+    if err.name != "docassemble.base.interview_source":
+        raise
+    # docassemble < 1.10 exports it from the monolithic parser module.
+    from docassemble.base.parse import interview_source_from_string
+
 from docassemble.webapp.translations import setup_translation
 
 if not in_celery:
@@ -286,14 +295,14 @@ def translation_file(
     if tr_lang is None or not re.search(r"\S", tr_lang):
         raise ValueError("You must provide a language")
     try:
-        interview_source = docassemble.base.parse.interview_source_from_string(
-            yaml_filename
-        )
+        interview_source = interview_source_from_string(yaml_filename)
     except DAError:
         raise ValueError("Invalid interview")
     interview_source.update()
     interview_source.translating = True
-    interview = interview_source.get_interview()
+    # In 1.10 InterviewSource no longer has get_interview(); Interview(source=)
+    # is supported by both layouts.
+    interview = docassemble.base.parse.Interview(source=interview_source)
     if not model:
         model = "gpt-5-nano"
     if reasoning_effort is None:

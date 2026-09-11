@@ -49,7 +49,7 @@ subquestion: |
   </div>
 buttons:
   - Exit: exit
-  - Restart: restart
+  - Regenerate: restart
 ---
 template: column_explanation
 subject: |

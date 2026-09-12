@@ -6,7 +6,8 @@ import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from typing import Any, List, Optional, Tuple, Union, Literal, cast
+from threading import Lock
+from typing import Any, Callable, List, Optional, Tuple, Union, Literal, cast
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -81,15 +82,13 @@ from mako.lexer import Lexer
 mako.runtime.UNDEFINED = DAEmpty()
 
 # Attempts allowed at one fragment whose draft will not parse as Mako, each one
-# on the next model in the fallback list. Four, so that the list -- the
-# configured model, the two older models after it in the chain, and the
-# provider's own small model -- is reachable to its end. Only fragments that
-# keep coming back broken cost this much, and only one call each.
-MAX_MAKO_RETRIES = 4
+# on the next model in the fallback list. Five accommodates a custom configured
+# model, the three named fallbacks, and the provider's own small model. The
+# default model needs only four of these attempts.
+MAX_MAKO_RETRIES = 5
 
-# How many times a batch may be halved before its remaining fragments are given
-# up on. Three halvings take a 25-fragment batch down to 3, and a fragment on
-# its own is retried as plain text rather than split again.
+# How many times a batch may be halved before every remaining fragment is sent
+# through the plain-text singleton fallback.
 MAX_BATCH_SPLIT_DEPTH = 3
 
 # Requests in flight at once. Batches are independent, so this is purely about
@@ -209,6 +208,7 @@ def translate_fragments_gpt(
     reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = "low",
     max_fragments_per_batch: int = DEFAULT_MAX_FRAGMENTS_PER_BATCH,
     max_parallel_requests: int = DEFAULT_MAX_PARALLEL_REQUESTS,
+    request_cost_callback: Optional[Callable[[float], None]] = None,
 ) -> Dict[Union[int, str], str]:
     """Use an AI model to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
@@ -229,12 +229,14 @@ def translate_fragments_gpt(
         max_fragments_per_batch: How many fragments to translate per request. One request
             per fragment is slow; a whole interview in one request comes back misaligned.
         max_parallel_requests: How many requests to keep in flight at once.
+        request_cost_callback: Optional callback receiving the estimated cost
+            of each completed API request, including retries.
     Returns:
         A dictionary where the keys are the indices of the fragments and the values are the translated text.
     """
     if not model:
         model = DEFAULT_TRANSLATION_MODEL
-    is_gpt5_model = model.startswith("gpt-5")
+    is_gpt5_model = model.startswith(("gpt-5", "gpt-6"))
     applied_reasoning_effort = reasoning_effort or "low"
     try:
         language_in_english = language_name(source_language)
@@ -300,7 +302,7 @@ def translate_fragments_gpt(
         """One request. Explicit arguments, because the two model families differ."""
         system_message = batch_prompt if json_mode else single_prompt
         if is_gpt5_model:
-            return chat_completion(
+            response = chat_completion(
                 system_message=system_message,
                 user_message=user_message,
                 model=model,
@@ -311,17 +313,32 @@ def translate_fragments_gpt(
                 openai_api=openai_api,
                 reasoning_effort=applied_reasoning_effort,
             )
-        return chat_completion(
-            system_message=system_message,
-            user_message=user_message,
-            model=model,
-            json_mode=json_mode,
-            max_output_tokens=max_output_tokens,
-            openai_base_url=openai_base_url,
-            max_input_tokens=max_input_tokens,
-            openai_api=openai_api,
-            temperature=0.0,
-        )
+        else:
+            response = chat_completion(
+                system_message=system_message,
+                user_message=user_message,
+                model=model,
+                json_mode=json_mode,
+                max_output_tokens=max_output_tokens,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
+                openai_api=openai_api,
+                temperature=0.0,
+            )
+        if request_cost_callback is not None:
+            output_text = (
+                response
+                if isinstance(response, str)
+                else json.dumps(response, ensure_ascii=False, default=str)
+            )
+            request_cost_callback(
+                estimate_cost(
+                    estimate_tokens(system_message + user_message, model),
+                    estimate_tokens(output_text, model),
+                    model=model,
+                )
+            )
+        return response
 
     def translate_one(row_number: int, text_to_translate: str) -> Dict[int, str]:
         """Translate a single fragment as plain text.
@@ -360,7 +377,16 @@ def translate_fragments_gpt(
         if not isinstance(segments, list):
             log("Translation response had no 'segments' list")
             return {}
-        wanted = {str(row_number) for row_number, _text in batch}
+        expected_ids = [str(row_number) for row_number, _text in batch]
+        returned_ids = [
+            str(segment.get("id", ""))
+            for segment in segments
+            if isinstance(segment, dict)
+        ]
+        if returned_ids != expected_ids:
+            log("Translation response segment IDs were missing, duplicated, or reordered")
+            return {}
+        wanted = set(expected_ids)
         translated: Dict[int, str] = {}
         for segment in segments:
             if not isinstance(segment, dict):
@@ -401,20 +427,34 @@ def translate_fragments_gpt(
         retry = [
             (row_number, text) for row_number, text in batch if row_number in problems
         ]
-        if depth >= MAX_BATCH_SPLIT_DEPTH:
-            log(
-                f"Giving up on {len(retry)} fragment(s) after {depth} retries: "
-                f"{sorted(problems.values())[:3]}"
-            )
-            return good
-
         if len(retry) == 1:
             row_number, text = retry[0]
             log(f"Re-translating row {row_number} on its own: {problems[row_number]}")
             try:
-                good.update(translate_one(row_number, text))
+                singleton = translate_one(row_number, text)
+                if not alignment_problems(retry, singleton):
+                    good.update(singleton)
+                else:
+                    log(f"Plain-text retry for row {row_number} failed verification")
             except Exception as err:
                 log(f"Exception when calling chatcompletion: {err}")
+            return good
+
+        if depth >= MAX_BATCH_SPLIT_DEPTH:
+            log(
+                f"Re-translating {len(retry)} fragment(s) separately after "
+                f"{depth} batch retries: {sorted(problems.values())[:3]}"
+            )
+            for row_number, text in retry:
+                try:
+                    singleton_batch = [(row_number, text)]
+                    singleton = translate_one(row_number, text)
+                    if not alignment_problems(singleton_batch, singleton):
+                        good.update(singleton)
+                    else:
+                        log(f"Plain-text retry for row {row_number} failed verification")
+                except Exception as err:
+                    log(f"Exception when calling chatcompletion: {err}")
             return good
 
         middle = len(retry) // 2
@@ -878,6 +918,12 @@ def translation_file(
         hold_for_draft_translation = []
         undrafted_segments = 0
         estimated_cost_usd = 0.0
+        request_costs: List[float] = []
+        request_cost_lock = Lock()
+
+        def record_request_cost(cost: float) -> None:
+            with request_cost_lock:
+                request_costs.append(cost)
         for question in interview.all_questions:
             if not hasattr(question, "translations"):
                 continue
@@ -1034,6 +1080,7 @@ def translation_file(
                     max_input_tokens=max_input_tokens,
                     max_output_tokens=max_output_tokens,
                     reasoning_effort=reasoning_effort,
+                    request_cost_callback=record_request_cost,
                 )
                 for row_key, translated_text in response.items():
                     try:
@@ -1044,6 +1091,7 @@ def translation_file(
                         )
 
             final_translations: Dict[int, str] = {}
+            ai_drafted_rows = set()
             if validate_mako:
 
                 def translate_with_retries(
@@ -1115,6 +1163,7 @@ def translation_file(
                             max_input_tokens=max_input_tokens,
                             max_output_tokens=max_output_tokens,
                             reasoning_effort=reasoning_effort,
+                            request_cost_callback=record_request_cost,
                         )
                         # Attempt to get an int key; if present, use it. Otherwise try the str key.
                         candidate = retry_response.get(row_number)
@@ -1135,6 +1184,7 @@ def translation_file(
                             f"Unable to create valid Mako translation for row {row_number}; leaving draft empty."
                         )
                         return ""
+                    ai_drafted_rows.add(row_number)
                     return candidate or ""
 
                 for (
@@ -1157,6 +1207,8 @@ def translation_file(
                     translation_text = translated_fragments.get(row_number)
                     if translation_text is None:
                         translation_text = ""
+                    if translation_text:
+                        ai_drafted_rows.add(row_number)
                     final_translations[row_number] = translation_text
 
             # A fragment with no draft is not an error -- the row is simply left
@@ -1165,23 +1217,17 @@ def translation_file(
             undrafted_segments = sum(
                 1
                 for row_number, _original_text, _source_language in hold_for_draft_translation
-                if not final_translations.get(row_number)
+                if row_number not in ai_drafted_rows
             )
             if undrafted_segments:
                 log(
                     f"AI translation produced no draft for {undrafted_segments} of "
                     f"{len(hold_for_draft_translation)} segments using model {model}"
                 )
-            drafted_input_tokens = sum(
-                estimate_tokens(original_text, model)
-                for _row_number, original_text, _source_language in hold_for_draft_translation
-            )
-            drafted_output_tokens = sum(
-                estimate_tokens(text, model) for text in final_translations.values()
-            )
-            estimated_cost_usd = estimate_cost(
-                drafted_input_tokens, drafted_output_tokens, model=model
-            )
+            # Each callback represents one completed API request. Summing these
+            # estimates applies large-context pricing per request and includes
+            # prompt overhead, batch-split calls, and Mako fallback attempts.
+            estimated_cost_usd = sum(request_costs)
 
             for (
                 row_number,

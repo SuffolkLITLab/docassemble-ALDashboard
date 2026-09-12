@@ -48,10 +48,6 @@ DEFAULT_OUTPUT_RATIO = 2.0
 # Per-entry JSON overhead: the id, the field names, the punctuation.
 JSON_ITEM_OVERHEAD_TOKENS = 12
 
-# Never plan a batch smaller than this, even if the caller passes silly limits.
-MIN_CONTENT_BUDGET_TOKENS = 256
-
-
 class ModelPricing(NamedTuple):
     """What a model costs and how much it can be given at once.
 
@@ -211,11 +207,13 @@ def batch_limits(
     # cap limits how much source text we can send. For translation this binds
     # long before any input limit does.
     output_bound = int(output_cap / max(output_ratio, 0.1))
-    if output_bound < input_cap:
-        input_cap = output_bound
+    input_content_bound = max(input_cap - max(overhead_tokens, 0), 0)
+    if output_bound < input_content_bound:
         reason = "output limit"
 
-    content_budget = max(input_cap - overhead_tokens, MIN_CONTENT_BUDGET_TOKENS)
+    # Prompt overhead consumes the input window, not the output window. Keep the
+    # two bounds separate and use the tighter one for source content.
+    content_budget = min(input_content_bound, output_bound)
     return BatchLimits(content_budget, max(1, max_fragments_per_batch), reason)
 
 
@@ -255,6 +253,11 @@ def plan_batches(
         cost = estimate_tokens(text, model) + JSON_ITEM_OVERHEAD_TOKENS
         too_many = len(current) >= limits.max_fragments
         too_big = current_tokens + cost > limits.content_budget_tokens
+        if cost > limits.content_budget_tokens:
+            raise ValueError(
+                f"Fragment at row {row_number} needs {cost} tokens but the "
+                f"request content budget is {limits.content_budget_tokens}"
+            )
         if current and (too_many or too_big):
             batches.append(current)
             current = []
@@ -301,15 +304,17 @@ def estimate_cost(
 # belongs to a different row far more reliably than reading the prose would.
 _MAKO_EXPRESSION = re.compile(r"\$\{.*?\}", re.DOTALL)
 _JINJA_TAG = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
-_MAKO_DIRECTIVE = re.compile(
-    r"^[ \t]*%[ \t]*(if|elif|else|endif|for|endfor|while|endwhile)\b",
-    re.MULTILINE,
-)
+_MAKO_DIRECTIVE = re.compile(r"^[ \t]*%(?!%)[^\r\n]*", re.MULTILINE)
 _WHITESPACE = re.compile(r"\s+")
-# A quoted string inside a placeholder is user-visible text that a translator is
-# right to translate: `${'do' if x else 'do not'}` properly becomes
-# `${'sí' if x else 'no'}`. Compare the code around the quotes, not the quotes.
-_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+# String literals are normally executable data and must remain exact. The one
+# supported exception is a ternary whose two results are display text, such as
+# `${'do' if claim_jurytrial else 'do not'}`.
+_DISPLAY_CONDITIONAL = re.compile(
+    r"^(?P<first>'[^']*'|\"[^\"]*\")\s+if\b(?P<condition>.+)\belse\s+"
+    r"(?P<second>'[^']*'|\"[^\"]*\")$",
+    re.DOTALL,
+)
+_HTML_TAG = re.compile(r"</?[^>]+>", re.DOTALL)
 
 # How far a translation may stray from the size of its source before we stop
 # believing it belongs to that source. Wide on purpose: real translations swing
@@ -329,18 +334,30 @@ LENGTH_CHECK_MIN_TOKENS = 5
 def _placeholders(text: str) -> List[str]:
     """Return a fragment's code placeholders, reduced to their code skeleton.
 
-    Two things are normalised away before comparing. Whitespace, because
-    `${ user.name }` and `${user.name}` are the same expression. And the
-    contents of quoted strings, because those are user-visible text that a
-    translator is supposed to translate -- real translation files turn
-    `${'do' if claim_jurytrial else 'do not'}` into
-    `${'sí' if claim_jurytrial else 'no'}`, and that is correct.
+    Whitespace is normalized because `${ user.name }` and `${user.name}` are
+    equivalent. Quoted literals remain exact unless they are the two display
+    results of a ternary expression; real translation files correctly translate
+    those while preserving the condition itself.
 
     What is left is the variable names and the structure, which is what has to
     survive intact and what makes a fragment identifiable.
     """
     found = _MAKO_EXPRESSION.findall(text) + _JINJA_TAG.findall(text)
-    return sorted(_WHITESPACE.sub("", _QUOTED.sub("''", item)) for item in found)
+    skeletons: List[str] = []
+    for item in found:
+        masked = item
+        if item.startswith("${") and item.endswith("}"):
+            body = item[2:-1].strip()
+            conditional = _DISPLAY_CONDITIONAL.match(body)
+            if conditional:
+                masked = "${'' if " + conditional.group("condition") + " else ''}"
+        skeletons.append(_WHITESPACE.sub("", masked))
+    return sorted(skeletons)
+
+
+def _html_tags(text: str) -> List[str]:
+    """Return HTML tags, whose names and attributes must remain executable."""
+    return [match.group(0).strip() for match in _HTML_TAG.finditer(text)]
 
 
 def _has_prose(text: str) -> bool:
@@ -351,11 +368,48 @@ def _has_prose(text: str) -> bool:
     return bool(re.search(r"[^\W\d_]{2,}", without_code))
 
 
-def _directive_counts(text: str) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    for keyword in _MAKO_DIRECTIVE.findall(text):
-        counts[keyword] = counts.get(keyword, 0) + 1
-    return counts
+def _remove_unquoted_whitespace(text: str) -> str:
+    """Remove formatting whitespace while preserving string-literal content."""
+    result: List[str] = []
+    quote: Optional[str] = None
+    escaped = False
+    for character in text:
+        if quote:
+            result.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+        elif character in {"'", '"'}:
+            quote = character
+            result.append(character)
+        elif not character.isspace():
+            result.append(character)
+    return "".join(result)
+
+
+def _directives(text: str) -> List[str]:
+    """Return ordered, whitespace-normalized Mako control lines.
+
+    The executable expression is part of the row fingerprint. Merely counting
+    ``if`` and ``for`` keywords lets a swapped or rewritten condition through.
+    """
+    return [
+        _remove_unquoted_whitespace(match.group(0))
+        for match in _MAKO_DIRECTIVE.finditer(text)
+    ]
+
+
+def _uses_dense_script(text: str) -> bool:
+    """Return whether text uses a script that packs meaning into fewer glyphs."""
+    return bool(
+        re.search(
+            "[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\u0e00-\u0e7f]",
+            text,
+        )
+    )
 
 
 def alignment_problems(
@@ -391,7 +445,10 @@ def alignment_problems(
         if _placeholders(source) != _placeholders(translated):
             problems[row_number] = "placeholders do not match the source"
             continue
-        if _directive_counts(source) != _directive_counts(translated):
+        if _html_tags(source) != _html_tags(translated):
+            problems[row_number] = "HTML tags do not match the source"
+            continue
+        if _directives(source) != _directives(translated):
             problems[row_number] = "Mako directives do not match the source"
             continue
 
@@ -411,7 +468,8 @@ def alignment_problems(
         source_tokens = estimate_tokens(source.strip(), model)
         if source_tokens >= LENGTH_CHECK_MIN_TOKENS:
             ratio = estimate_tokens(stripped, model) / source_tokens
-            if ratio < MIN_LENGTH_RATIO or ratio > MAX_LENGTH_RATIO:
+            minimum_ratio = 0.15 if _uses_dense_script(stripped) else MIN_LENGTH_RATIO
+            if ratio < minimum_ratio or ratio > MAX_LENGTH_RATIO:
                 problems[row_number] = f"length {ratio:.2f}x the source"
                 continue
 

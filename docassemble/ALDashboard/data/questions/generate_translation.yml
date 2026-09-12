@@ -83,13 +83,14 @@ fields:
   - Model to use (nano is normally smart enough): model
     input type: radio
     choices:
-      - GPT-5 Nano (cheapest, default): gpt-5-nano
+      - GPT-5.6 Luna (cheapest, default): gpt-5.6-luna
+      - GPT-5 Nano (legacy): gpt-5-nano
       - GPT-5 Mini (more reasoning): gpt-5-mini
       - GPT-5 (highest quality): gpt-5
       - GPT-4.1 Mini (legacy): gpt-4.1-mini
       - GPT-4.1 (legacy): gpt-4.1
     show if: use_gpt
-    default: gpt-5-nano
+    default: gpt-5.6-luna
   - Validate GPT draft Mako syntax (slower but safer): validate_mako
     datatype: yesno
     default: True
@@ -128,7 +129,7 @@ subquestion: |
   Percentage of rows that are not translated: %${ translations[index].untranslated_segments/translations[index].total_rows * 100 }
 
   % if translations[index].preserved_values:
-  Number of rows holding a choice value that is kept in the original language (shaded grey, already filled in): ${ translations[index].preserved_values }
+  Number of rows holding a machine-facing value that is kept in the original language (shaded grey, already filled in): ${ translations[index].preserved_values }
   % endif
   % if translations[index].undrafted_segments:
   **Rows the AI could not draft (left blank for a human): ${ translations[index].undrafted_segments }**

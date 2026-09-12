@@ -71,6 +71,11 @@ class TestFallbackChain(unittest.TestCase):
         max_retries = _module_constant("MAX_MAKO_RETRIES")
         self.assertLessEqual(len(self.chain) + 1, max_retries + 1)
 
+    def test_custom_model_can_reach_chain_and_provider_fallback(self):
+        """A custom model adds one candidate ahead of the ordinary list."""
+        max_retries = _module_constant("MAX_MAKO_RETRIES")
+        self.assertGreaterEqual(max_retries, 1 + len(self.chain) + 1)
+
     def test_the_last_resort_is_the_providers_own_small_model(self):
         """The named chain is all OpenAI; something has to work elsewhere."""
         source = (PACKAGE_ROOT / "translation.py").read_text(encoding="utf-8")

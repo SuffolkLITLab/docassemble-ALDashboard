@@ -2,6 +2,8 @@
 """Choice values must survive translation unchanged. See issue #287."""
 
 import unittest
+from types import ModuleType
+from typing import Any, Optional
 
 import pluggy
 
@@ -14,13 +16,13 @@ from docassemble.ALDashboard.translation_stable_values import (
     stable_values_to_preserve,
 )
 
+_thread_context: Optional[ModuleType]
 try:
     # docassemble 1.10 keeps per-request state in a contextvar that only the
     # web application populates, so the tests have to stand in for the server.
-    from docassemble.base.thread_context import empty_globals, global_context
+    import docassemble.base.thread_context as _thread_context
 except ModuleNotFoundError:  # pragma: no cover - docassemble < 1.10
-    empty_globals = None
-    global_context = None
+    _thread_context = None
 
 hookimpl = pluggy.HookimplMarker("docassemble")
 
@@ -58,14 +60,14 @@ class DefaultsPlugin:
 
 
 _plugin = DefaultsPlugin()
-_context = None
+_context: Optional[Any] = None
 
 
 def setUpModule():
     pm.register(_plugin, name="aldashboard_stable_value_test_defaults")
     global _context
-    if global_context is not None:
-        _context = global_context(empty_globals())
+    if _thread_context is not None:
+        _context = _thread_context.global_context(_thread_context.empty_globals())
         _context.__enter__()
 
 
@@ -86,8 +88,8 @@ def parse_interview(yaml_text: str) -> Interview:
     return Interview(source=source)
 
 
-def translatable_segments(interview: Interview) -> set:
-    segments = set()
+def translatable_segments(interview: Interview) -> set[str]:
+    segments: set[str] = set()
     for question in interview.all_questions:
         segments.update(getattr(question, "translations", []))
     return segments

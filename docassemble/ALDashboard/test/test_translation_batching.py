@@ -120,11 +120,20 @@ class TestBatchLimits(unittest.TestCase):
         self.assertLess(older.content_budget_tokens, luna.content_budget_tokens)
         self.assertLessEqual(older.content_budget_tokens, 32_768)
 
-    def test_absurd_limits_still_give_a_usable_budget(self):
+    def test_prompt_overhead_cannot_override_a_hard_caller_limit(self):
         limits = batch_limits(
-            model="gpt-5.6-luna", max_input_tokens=1, overhead_tokens=9
+            model="gpt-5.6-luna", max_output_tokens=100, overhead_tokens=60
         )
-        self.assertGreater(limits.content_budget_tokens, 0)
+        self.assertEqual(limits.content_budget_tokens, 50)
+
+    def test_input_overhead_and_output_limit_are_separate_bounds(self):
+        limits = batch_limits(
+            model="gpt-5.6-luna",
+            max_input_tokens=100,
+            max_output_tokens=1_000,
+            overhead_tokens=60,
+        )
+        self.assertEqual(limits.content_budget_tokens, 40)
 
 
 class TestPlanBatches(unittest.TestCase):
@@ -168,12 +177,10 @@ class TestPlanBatches(unittest.TestCase):
             if len(batch) > 1:
                 self.assertLessEqual(total, 2_000)
 
-    def test_one_oversized_fragment_gets_its_own_batch(self):
+    def test_one_oversized_fragment_fails_instead_of_exceeding_the_limit(self):
         fragments = [(0, "short"), (1, "word " * 5_000), (2, "short")]
-        batches = plan_batches(fragments, model="gpt-5.6-luna", max_input_tokens=1_000)
-        oversized = [batch for batch in batches if any(row == 1 for row, _ in batch)]
-        self.assertEqual(len(oversized), 1)
-        self.assertEqual(len(oversized[0]), 1)
+        with self.assertRaisesRegex(ValueError, "row 1"):
+            plan_batches(fragments, model="gpt-5.6-luna", max_input_tokens=1_000)
 
     def test_empty_input(self):
         self.assertEqual(plan_batches([], model="gpt-5.6-luna"), [])
@@ -230,6 +237,28 @@ class TestAlignmentProblems(unittest.TestCase):
         self.assertEqual(alignment_problems(fragments, good), {})
         self.assertIn(0, alignment_problems(fragments, bad))
 
+    def test_mako_directive_expressions_must_survive(self):
+        fragments = [(0, "% if user.is_tenant:\nYou are a tenant\n% endif")]
+        swapped_condition = {
+            0: "% if user.is_landlord:\nUsted es inquilino\n% endif"
+        }
+        self.assertIn(0, alignment_problems(fragments, swapped_condition))
+
+    def test_mako_directive_whitespace_may_change(self):
+        fragments = [(0, "% if user.is_tenant:\nYou are a tenant\n% endif")]
+        translated = {0: "%if  user.is_tenant :\nUsted es inquilino\n% endif"}
+        self.assertEqual(alignment_problems(fragments, translated), {})
+
+    def test_whitespace_inside_a_directive_string_is_significant(self):
+        fragments = [(0, '% if answer == "a b":\nMatch\n% endif')]
+        translated = {0: '% if answer == "ab":\nCoincide\n% endif'}
+        self.assertIn(0, alignment_problems(fragments, translated))
+
+    def test_other_python_line_directives_must_survive(self):
+        fragments = [(0, "% try:\nDo something\n% except ValueError:\nRecover")]
+        translated = {0: "% try:\nHaga algo\n% except TypeError:\nRecupérese"}
+        self.assertIn(0, alignment_problems(fragments, translated))
+
     def test_empty_translation_of_nonempty_source_is_reported(self):
         self.assertIn(0, alignment_problems([(0, "Hello")], {0: "   "}))
 
@@ -283,6 +312,20 @@ class TestAlignmentProblems(unittest.TestCase):
         translations = {0: "Dijiste que ${'sí' if otra_cosa else 'no'} quieres jurado"}
         self.assertIn(0, alignment_problems(fragments, translations))
 
+    def test_machine_facing_string_argument_must_not_be_translated(self):
+        fragments = [
+            (0, '${ action_button_html(url_action("save_changes"), label="Save") }')
+        ]
+        translations = {
+            0: '${ action_button_html(url_action("guardar_cambios"), label="Guardar") }'
+        }
+        self.assertIn(0, alignment_problems(fragments, translations))
+
+    def test_html_tags_must_survive(self):
+        fragments = [(0, '<a href="/help">Read more</a>')]
+        translations = {0: '<a href="/ayuda">Leer más</a>'}
+        self.assertIn(0, alignment_problems(fragments, translations))
+
     def test_dense_scripts_are_not_flagged_as_too_short(self):
         """Characters are not comparable across scripts; tokens are."""
         fragments = [(0, "Excessive foot traffic"), (1, "Destruction of property")]
@@ -295,8 +338,8 @@ class TestAlignmentProblems(unittest.TestCase):
         ]
         self.assertIn(0, alignment_problems(fragments, {0: "mo vèt"}))
 
-    def test_a_code_only_fragment_may_look_like_another_code_fragment(self):
-        """`${ today().format(...) }` differing only in its format string."""
+    def test_a_code_only_fragment_cannot_change_a_format_string(self):
+        """Quoted machine-facing arguments are executable data, not prose."""
         fragments = [
             (0, '${ today().format("YYYY-MM-dd") }'),
             (1, '${ today().format("yyyy-MM-dd") }'),
@@ -305,7 +348,7 @@ class TestAlignmentProblems(unittest.TestCase):
             0: '${ today().format("yyyy-MM-dd") }',
             1: '${ today().format("YYYY-MM-dd") }',
         }
-        self.assertEqual(alignment_problems(fragments, translations), {})
+        self.assertEqual(set(alignment_problems(fragments, translations)), {0, 1})
 
     def test_prose_swapped_for_a_stable_value_is_flagged(self):
         """Seen for real in a shipped eviction_vi.xlsx."""

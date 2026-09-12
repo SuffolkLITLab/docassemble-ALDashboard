@@ -398,6 +398,9 @@ def translation_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str
             "untranslated_words": result.untranslated_words,
             "untranslated_segments": result.untranslated_segments,
             "total_rows": result.total_rows,
+            "preserved_values": result.preserved_values,
+            "undrafted_segments": result.undrafted_segments,
+            "estimated_cost_usd": result.estimated_cost_usd,
         }
         if include_xlsx_base64:
             with open(result.file.path(), "rb") as handle:

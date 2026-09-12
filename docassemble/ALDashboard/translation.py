@@ -1,9 +1,13 @@
 import hashlib
+import json
 import math
 import os
 import re
 import tempfile
-from typing import Any, List, Optional, Tuple, Union, Literal
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from threading import Lock
+from typing import Any, Callable, List, Optional, Tuple, Union, Literal, cast
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -57,29 +61,104 @@ except ModuleNotFoundError as err:
     # docassemble < 1.10 keeps this helper in the monolithic server module.
     from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
-from docassemble.ALToolbox.llms import chat_completion
+from docassemble.ALToolbox.llms import chat_completion, get_default_model
+
+from docassemble.ALDashboard.translation_stable_values import (
+    StableValue,
+    stable_values_to_preserve,
+)
+from docassemble.ALDashboard.translation_batching import (
+    DEFAULT_MAX_FRAGMENTS_PER_BATCH,
+    alignment_problems,
+    estimate_cost,
+    estimate_tokens,
+    plan_batches,
+)
 
 import tiktoken
-import mako.template
 import mako.runtime
+from mako.lexer import Lexer
 
 mako.runtime.UNDEFINED = DAEmpty()
 
-MAX_MAKO_RETRIES = 3
+# Attempts allowed at one fragment whose draft will not parse as Mako, each one
+# on the next model in the fallback list. Five accommodates a custom configured
+# model, the three named fallbacks, and the provider's own small model. The
+# default model needs only four of these attempts.
+MAX_MAKO_RETRIES = 5
+
+# How many times a batch may be halved before every remaining fragment is sent
+# through the plain-text singleton fallback.
+MAX_BATCH_SPLIT_DEPTH = 3
+
+# Requests in flight at once. Batches are independent, so this is purely about
+# not annoying the API; it is the second big lever on how long a draft takes.
+DEFAULT_MAX_PARALLEL_REQUESTS = 4
+
+# The cheapest current tier. Translation is not a reasoning-heavy job, and the
+# batch planner is tuned against this family's limits. A server that has not
+# deployed it can pass any other model through the `model` argument.
+DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
+
+# Tried in order when a model keeps returning Mako that will not parse. What
+# breaks a repeated failure is a *different* model, not a dearer one, so this
+# drops back through older generations and never climbs: terra and sol cost 10x
+# and 17x what luna does, which is not a bill to run up on a retry.
+#
+# Cost is the constraint, so the entries are the older models that are actually
+# cheaper than the default, blended over a million tokens in and out:
+# gpt-4.1-nano $0.50 and gpt-5-nano $0.45 against luna's $1.40. gpt-5.4-nano
+# ($1.45) and gpt-4.1 ($10.00) are older but dearer, so they are left out.
+# `test_translation_fallback_chain` holds this to it.
+#
+# These names are all OpenAI's. Whatever the server actually talks to gets the
+# last word: `small_model_for_fallback` is appended after this chain, and it is
+# the entry that still means something on another provider.
+TRANSLATION_MODEL_FALLBACK_CHAIN = (
+    "gpt-5.6-luna",
+    "gpt-4.1-nano",
+    "gpt-5-nano",
+)
 
 
 def is_valid_mako_block(text: str) -> Tuple[bool, Optional[str]]:
     """
-    Return True if the provided text can be rendered as Mako without raising an error.
+    Return True if the provided text parses as Mako without raising an error.
     Empty strings are treated as valid.
+
+    This lexes the template rather than rendering it. Rendering runs whatever
+    Python the draft translation happens to contain, and it runs once per
+    drafted fragment, so lexing is both the safe choice and much the faster one.
+    `translation_validation` checks translation files the same way.
     """
     if not text:
         return True, None
     try:
-        mako.template.Template(text).render()
+        Lexer(text).parse()
         return True, None
     except Exception as err:  # pragma: no cover - logging only
-        return False, str(err)
+        return False, str(err) or err.__class__.__name__
+
+
+@lru_cache(maxsize=1)
+def small_model_for_fallback() -> Optional[str]:
+    """The small model this server's provider offers, or None if it cannot say.
+
+    The named fallback chain is a list of OpenAI models, which is no use to a
+    server pointed at some other endpoint. ALToolbox resolves a "small" model
+    from the docassemble configuration, then the configured model sets, then the
+    endpoint's own model list, so it is the one fallback that does not assume
+    who the provider is.
+
+    Cached: resolving it can call the models endpoint, and this is consulted
+    once per fragment that needs a retry. A server changing providers mid-process
+    is not a case worth re-querying for.
+    """
+    try:
+        return get_default_model(model_type="small")
+    except Exception as err:
+        log(f"Could not work out a small model to fall back to: {err}")
+        return None
 
 
 DEFAULT_LANGUAGE = "en"
@@ -121,12 +200,15 @@ def translate_fragments_gpt(
     tr_lang: str,
     interview_context: Optional[str] = None,
     special_words: Optional[Dict[int, str]] = None,
-    model: Optional[str] = "gpt-5-nano",
+    model: Optional[str] = DEFAULT_TRANSLATION_MODEL,
     openai_base_url: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     max_input_tokens: Optional[int] = None,
     openai_api: Optional[str] = None,
     reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = "low",
+    max_fragments_per_batch: int = DEFAULT_MAX_FRAGMENTS_PER_BATCH,
+    max_parallel_requests: int = DEFAULT_MAX_PARALLEL_REQUESTS,
+    request_cost_callback: Optional[Callable[[float], None]] = None,
 ) -> Dict[Union[int, str], str]:
     """Use an AI model to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
@@ -138,18 +220,23 @@ def translate_fragments_gpt(
         source_language: The language of the original text.
         tr_lang: The language to translate the text into.
         special_words: A dictionary of special words that should be translated in a specific way.
-        model: The GPT model to use. The default is "gpt-5-nano"
+        model: The GPT model to use. Defaults to DEFAULT_TRANSLATION_MODEL.
         openai_base_url: The base URL for the OpenAI API. If not provided, the default OpenAI URL will be used.
         max_output_tokens: The maximum number of tokens to generate in the output.
         max_input_tokens: The maximum number of tokens in the input. If not provided, it will be set to 4000.
         openai_api: The OpenAI API key. If not provided, it will use the key from the configuration.
         reasoning_effort: Controls the reasoning effort for thinking models like GPT-5. Defaults to "low".
+        max_fragments_per_batch: How many fragments to translate per request. One request
+            per fragment is slow; a whole interview in one request comes back misaligned.
+        max_parallel_requests: How many requests to keep in flight at once.
+        request_cost_callback: Optional callback receiving the estimated cost
+            of each completed API request, including retries.
     Returns:
         A dictionary where the keys are the indices of the fragments and the values are the translated text.
     """
     if not model:
-        model = "gpt-5-nano"
-    is_gpt5_model = model.startswith("gpt-5")
+        model = DEFAULT_TRANSLATION_MODEL
+    is_gpt5_model = model.startswith(("gpt-5", "gpt-6"))
     applied_reasoning_effort = reasoning_effort or "low"
     try:
         language_in_english = language_name(source_language)
@@ -179,7 +266,6 @@ def translate_fragments_gpt(
 
     You only translate natural-language text.  
     Preserve all whitespace exactly.  
-    Reply *only* with the translated text—no extra commentary.
     """
     if interview_context is not None:
         system_prompt += f"""When translating, keep in mind the purpose of this interview: ```{ interview_context }```
@@ -194,45 +280,214 @@ def translate_fragments_gpt(
     ```
     """
 
-    #           row number: text to translate
-    results: Dict[Union[int, str], str] = {}
+    # One request carries one fragment as plain text, or several as JSON. The
+    # instructions differ enough that mixing them makes the model reply in the
+    # wrong shape, so the shared prompt gets one of two endings.
+    single_prompt = system_prompt + """
+    Reply *only* with the translated text—no extra commentary.
+    """
+    batch_prompt = system_prompt + """
+    The user message is a JSON object: `{"segments": [{"id": ..., "text": ...}, ...]}`.
 
-    for row_number, text_to_translate in fragments:
+    Reply *only* with a JSON object of the same shape, carrying the translation of
+    each segment: `{"segments": [{"id": ..., "translation": ...}, ...]}`.
+
+    Return **every** segment you were given, once each, in the same order, and copy
+    each `id` across exactly as you received it. Translate each segment on its own:
+    they are unrelated pieces of text, so never merge, split, reorder or drop one,
+    and never let the text of one segment appear in the translation of another.
+    """
+
+    def call_model(user_message: str, json_mode: bool):
+        """One request. Explicit arguments, because the two model families differ."""
+        system_message = batch_prompt if json_mode else single_prompt
+        if is_gpt5_model:
+            response = chat_completion(
+                system_message=system_message,
+                user_message=user_message,
+                model=model,
+                json_mode=json_mode,
+                max_output_tokens=max_output_tokens,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
+                openai_api=openai_api,
+                reasoning_effort=applied_reasoning_effort,
+            )
+        else:
+            response = chat_completion(
+                system_message=system_message,
+                user_message=user_message,
+                model=model,
+                json_mode=json_mode,
+                max_output_tokens=max_output_tokens,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
+                openai_api=openai_api,
+                temperature=0.0,
+            )
+        if request_cost_callback is not None:
+            output_text = (
+                response
+                if isinstance(response, str)
+                else json.dumps(response, ensure_ascii=False, default=str)
+            )
+            request_cost_callback(
+                estimate_cost(
+                    estimate_tokens(system_message + user_message, model),
+                    estimate_tokens(output_text, model),
+                    model=model,
+                )
+            )
+        return response
+
+    def translate_one(row_number: int, text_to_translate: str) -> Dict[int, str]:
+        """Translate a single fragment as plain text.
+
+        Nothing can be misaligned when the request holds one fragment and the
+        reply is the translation itself, so this is where a batch that fails
+        verification ends up.
+        """
+        response = call_model(text_to_translate, json_mode=False)
+        if not isinstance(response, str):
+            log(f"Unexpected response type from chat completion: {type(response)}")
+            return {}
+        # Some models add trailing whitespace.
+        return {row_number: response.rstrip()}
+
+    def translate_batch(batch: List[Tuple[int, str]]) -> Dict[int, str]:
+        """Translate several fragments in one request, keyed by row number."""
+        if len(batch) == 1:
+            return translate_one(batch[0][0], batch[0][1])
+        request = {
+            "segments": [
+                {"id": str(row_number), "text": text} for row_number, text in batch
+            ]
+        }
+        response = call_model(json.dumps(request, ensure_ascii=False), json_mode=True)
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except ValueError:
+                log("Translation response was not JSON")
+                return {}
+        if not isinstance(response, dict):
+            log(f"Unexpected response type from chat completion: {type(response)}")
+            return {}
+        segments = response.get("segments")
+        if not isinstance(segments, list):
+            log("Translation response had no 'segments' list")
+            return {}
+        expected_ids = [str(row_number) for row_number, _text in batch]
+        returned_ids = [
+            str(segment.get("id", ""))
+            for segment in segments
+            if isinstance(segment, dict)
+        ]
+        if returned_ids != expected_ids:
+            log("Translation response segment IDs were missing, duplicated, or reordered")
+            return {}
+        wanted = set(expected_ids)
+        translated: Dict[int, str] = {}
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            segment_id = str(segment.get("id", ""))
+            if segment_id not in wanted:
+                continue
+            value = segment.get("translation")
+            if isinstance(value, str):
+                translated[int(segment_id)] = value.rstrip()
+        return translated
+
+    def translate_verified(
+        batch: List[Tuple[int, str]], depth: int = 0
+    ) -> Dict[int, str]:
+        """Translate a batch, and retry whatever comes back wrong.
+
+        Bulk translation was abandoned once because rows came back mixed up.
+        The answer is not to avoid batches but to stop trusting them: anything
+        `alignment_problems` flags is translated again in a smaller batch, and
+        a single flagged fragment goes back as its own plain-text request.
+        """
         try:
-            # Build an explicit call to chat_completion instead of using **kwargs
-            if is_gpt5_model:
-                response = chat_completion(
-                    system_message=system_prompt,
-                    user_message=text_to_translate,
-                    model=model,
-                    max_output_tokens=max_output_tokens,
-                    openai_base_url=openai_base_url,
-                    max_input_tokens=max_input_tokens,
-                    openai_api=openai_api,
-                    reasoning_effort=applied_reasoning_effort,
-                )
-            else:
-                response = chat_completion(
-                    system_message=system_prompt,
-                    user_message=text_to_translate,
-                    model=model,
-                    max_output_tokens=max_output_tokens,
-                    openai_base_url=openai_base_url,
-                    max_input_tokens=max_input_tokens,
-                    openai_api=openai_api,
-                    temperature=0.0,
-                )
-            if isinstance(response, str):
-                results[row_number] = (
-                    response.rstrip()
-                )  # Remove any trailing whitespace some LLM models might add
-            else:
-                log(f"Unexpected response type from chat completion: {type(response)}")
-        # Get the exception and log it
-        except Exception as e:
-            log(f"Exception when calling chatcompletion: { e }")
-            response = str(e)
-    return results
+            translated = translate_batch(batch)
+        except Exception as err:
+            log(f"Exception when calling chatcompletion: {err}")
+            translated = {}
+
+        problems = alignment_problems(batch, translated)
+        if not problems:
+            return translated
+
+        good = {
+            row_number: text
+            for row_number, text in translated.items()
+            if row_number not in problems
+        }
+        retry = [
+            (row_number, text) for row_number, text in batch if row_number in problems
+        ]
+        if len(retry) == 1:
+            row_number, text = retry[0]
+            log(f"Re-translating row {row_number} on its own: {problems[row_number]}")
+            try:
+                singleton = translate_one(row_number, text)
+                if not alignment_problems(retry, singleton):
+                    good.update(singleton)
+                else:
+                    log(f"Plain-text retry for row {row_number} failed verification")
+            except Exception as err:
+                log(f"Exception when calling chatcompletion: {err}")
+            return good
+
+        if depth >= MAX_BATCH_SPLIT_DEPTH:
+            log(
+                f"Re-translating {len(retry)} fragment(s) separately after "
+                f"{depth} batch retries: {sorted(problems.values())[:3]}"
+            )
+            for row_number, text in retry:
+                try:
+                    singleton_batch = [(row_number, text)]
+                    singleton = translate_one(row_number, text)
+                    if not alignment_problems(singleton_batch, singleton):
+                        good.update(singleton)
+                    else:
+                        log(f"Plain-text retry for row {row_number} failed verification")
+                except Exception as err:
+                    log(f"Exception when calling chatcompletion: {err}")
+            return good
+
+        middle = len(retry) // 2
+        for half in (retry[:middle], retry[middle:]):
+            if half:
+                good.update(translate_verified(half, depth + 1))
+        return good
+
+    batches = plan_batches(
+        fragments,
+        model=model,
+        overhead_tokens=estimate_tokens(batch_prompt, model),
+        max_fragments_per_batch=max_fragments_per_batch,
+        max_input_tokens=max_input_tokens,
+        max_output_tokens=max_output_tokens,
+    )
+
+    #           row number: text to translate
+    results: Dict[int, str] = {}
+    if not batches:
+        return cast(Dict[Union[int, str], str], results)
+
+    workers = max(1, min(max_parallel_requests, len(batches)))
+    if workers == 1:
+        for batch in batches:
+            results.update(translate_verified(batch))
+    else:
+        # Batches are independent and each result is keyed by its own row
+        # number, so running them together only changes how long a draft takes.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for translated in pool.map(translate_verified, batches):
+                results.update(translated)
+    return cast(Dict[Union[int, str], str], results)
 
 
 class Translation(NamedTuple):
@@ -242,6 +497,13 @@ class Translation(NamedTuple):
     )
     untranslated_segments: int  # Number of rows in the output that have untranslated text - one for each question, subquestion, field, etc.
     total_rows: int
+    preserved_values: int = (
+        0  # Number of rows holding a machine-facing choice value, pre-filled with the original text
+    )
+    undrafted_segments: int = (
+        0  # Rows AI translation was asked for but could not produce; left blank for a human
+    )
+    estimated_cost_usd: float = 0.0  # Rough API cost of the AI drafts, if any
 
 
 def translation_file(
@@ -304,11 +566,18 @@ def translation_file(
     # is supported by both layouts.
     interview = docassemble.base.parse.Interview(source=interview_source)
     if not model:
-        model = "gpt-5-nano"
+        model = DEFAULT_TRANSLATION_MODEL
     if reasoning_effort is None:
         reasoning_effort = "low"
     if validate_mako in ("", None):
         validate_mako = True
+
+    # A choice value, and an action button's action name and arguments, are
+    # machine-facing in a way their labels are not: the interview stores or
+    # dispatches them and its code compares against them. Pin them to the
+    # original text so no translator (human or AI) can change what the interview
+    # ends up working with. See issue #287.
+    values_to_preserve: Dict[str, StableValue] = stable_values_to_preserve(interview)
 
     # Load the existing translation files and build a cache
     tr_cache: Dict = {}
@@ -626,6 +895,14 @@ def translation_file(
         draft_fixedcell.set_text_wrap()
         draft_fixedcell.set_bg_color("yellow")
 
+        # Machine-facing values arrive pre-filled with the original text; grey
+        # them so a translator can see at a glance not to touch them.
+        preserved_value_format = workbook.add_format()
+        preserved_value_format.set_bg_color("#D9D9D9")
+        preserved_value_format.set_font_color("black")
+        preserved_value_format.set_align("top")
+        preserved_value_format.set_text_wrap()
+
         # Default number format
         numb = workbook.add_format()
         numb.set_align("top")
@@ -636,8 +913,17 @@ def translation_file(
         untranslated_segments = 0
         untranslated_text = ""
         total_rows = 0
+        preserved_values = 0
 
         hold_for_draft_translation = []
+        undrafted_segments = 0
+        estimated_cost_usd = 0.0
+        request_costs: List[float] = []
+        request_cost_lock = Lock()
+
+        def record_request_cost(cost: float) -> None:
+            with request_cost_lock:
+                request_costs.append(cost)
         for question in interview.all_questions:
             if not hasattr(question, "translations"):
                 continue
@@ -657,8 +943,15 @@ def translation_file(
                 if item in seen:
                     continue
                 total_rows += 1
+                # A machine-facing value keeps the original text no matter what
+                # an earlier translation file said, so the interview works with
+                # the same value in every language.
+                is_preserved_value = item in values_to_preserve
+                if is_preserved_value:
+                    tr_text = item
+                    preserved_values += 1
                 # The segment has already been translated and the translation is still valid
-                if (
+                elif (
                     item in tr_cache
                     and language in tr_cache[item]
                     and tr_lang in tr_cache[item][language]
@@ -717,6 +1010,16 @@ def translation_file(
                     worksheet.write_rich_string(*parts)
 
                 #
+
+                if is_preserved_value:
+                    worksheet.write_string(row, 7, tr_text, preserved_value_format)
+                    num_lines = item.count("\n")
+                    if num_lines > 0:
+                        worksheet.set_row(row, 15 * (num_lines + 1))
+                    indexno += 1
+                    row += 1
+                    seen.append(item)
+                    continue
 
                 mako = mako_parts(tr_text)
                 if len(mako) == 0:
@@ -777,6 +1080,7 @@ def translation_file(
                     max_input_tokens=max_input_tokens,
                     max_output_tokens=max_output_tokens,
                     reasoning_effort=reasoning_effort,
+                    request_cost_callback=record_request_cost,
                 )
                 for row_key, translated_text in response.items():
                     try:
@@ -787,6 +1091,7 @@ def translation_file(
                         )
 
             final_translations: Dict[int, str] = {}
+            ai_drafted_rows = set()
             if validate_mako:
 
                 def translate_with_retries(
@@ -799,14 +1104,9 @@ def translation_file(
                     attempts = 0
                     # Ensure candidate is str before passing to is_valid_mako_block
                     valid, error_message = is_valid_mako_block(candidate or "")
-                    fallback_chain = [
-                        "gpt-5-nano",
-                        "gpt-5-mini",
-                        "gpt-5",
-                        "gpt-4.1-nano",
-                        "gpt-4.1-mini",
-                        "gpt-4.1",
-                    ]
+                    # Older generations, not dearer ones. See the chain's own
+                    # comment for why.
+                    fallback_chain = list(TRANSLATION_MODEL_FALLBACK_CHAIN)
                     models_to_try: List[Optional[str]] = []
                     if model not in (None, ""):
                         models_to_try.append(model)
@@ -819,12 +1119,18 @@ def translation_file(
                     for fallback_model in fallback_chain[start_index:]:
                         if fallback_model not in models_to_try:
                             models_to_try.append(fallback_model)
-                    if "gpt-5" not in models_to_try:
-                        models_to_try.append("gpt-5")
-                    if "gpt-4.1" not in models_to_try:
-                        models_to_try.append("gpt-4.1")
+                    # Last resort, and the only entry that is not a guess about
+                    # what this server can reach: ALToolbox works out the small
+                    # model from the configuration, the configured model sets and
+                    # then the endpoint's own model list, so it lands somewhere
+                    # sensible on a provider that has never heard of GPT.
+                    small_model = small_model_for_fallback()
+                    if small_model and small_model not in models_to_try:
+                        models_to_try.append(small_model)
 
-                    while attempts < MAX_MAKO_RETRIES and (not candidate or not valid):
+                    # Give every candidate one attempt, within the retry budget.
+                    retry_budget = min(MAX_MAKO_RETRIES, len(models_to_try))
+                    while attempts < retry_budget and (not candidate or not valid):
                         if error_message:
                             log(
                                 f"Regenerating draft translation for row {row_number} due to Mako error: {error_message}"
@@ -857,6 +1163,7 @@ def translation_file(
                             max_input_tokens=max_input_tokens,
                             max_output_tokens=max_output_tokens,
                             reasoning_effort=reasoning_effort,
+                            request_cost_callback=record_request_cost,
                         )
                         # Attempt to get an int key; if present, use it. Otherwise try the str key.
                         candidate = retry_response.get(row_number)
@@ -877,6 +1184,7 @@ def translation_file(
                             f"Unable to create valid Mako translation for row {row_number}; leaving draft empty."
                         )
                         return ""
+                    ai_drafted_rows.add(row_number)
                     return candidate or ""
 
                 for (
@@ -899,33 +1207,60 @@ def translation_file(
                     translation_text = translated_fragments.get(row_number)
                     if translation_text is None:
                         translation_text = ""
+                    if translation_text:
+                        ai_drafted_rows.add(row_number)
                     final_translations[row_number] = translation_text
+
+            # A fragment with no draft is not an error -- the row is simply left
+            # for a human -- but silence about it is, because an undeployed
+            # model or an exhausted quota looks exactly like a clean run.
+            undrafted_segments = sum(
+                1
+                for row_number, _original_text, _source_language in hold_for_draft_translation
+                if row_number not in ai_drafted_rows
+            )
+            if undrafted_segments:
+                log(
+                    f"AI translation produced no draft for {undrafted_segments} of "
+                    f"{len(hold_for_draft_translation)} segments using model {model}"
+                )
+            # Each callback represents one completed API request. Summing these
+            # estimates applies large-context pricing per request and includes
+            # prompt overhead, batch-split calls, and Mako fallback attempts.
+            estimated_cost_usd = sum(request_costs)
 
             for (
                 row_number,
                 _original_text,
                 _source_language,
             ) in hold_for_draft_translation:
-                item = final_translations.get(row_number, "") or ""
-                row = row_number
-                mako = mako_parts(item)
+                draft_text = final_translations.get(row_number, "") or ""
+                mako = mako_parts(draft_text)
                 if len(mako) == 0:
-                    worksheet.write_string(row, 7, item, whole_draft_translation_format)
+                    worksheet.write_string(
+                        row_number, 7, draft_text, whole_draft_translation_format
+                    )
                 elif len(mako) == 1:
                     if mako[0][1] == 0:
                         worksheet.write_string(
-                            row, 7, item, whole_draft_translation_format
+                            row_number, 7, draft_text, whole_draft_translation_format
                         )
                     elif mako[0][1] == 1:
                         worksheet.write_string(
-                            row, 7, item, whole_draft_translation_format_one
+                            row_number,
+                            7,
+                            draft_text,
+                            whole_draft_translation_format_one,
                         )
                     elif mako[0][1] == 2:
                         worksheet.write_string(
-                            row, 7, item, whole_draft_translation_format_two
+                            row_number,
+                            7,
+                            draft_text,
+                            whole_draft_translation_format_two,
                         )
                 else:
-                    parts = [row, 7]
+                    parts = [row_number, 7]
                     for part in mako:
                         if part[1] == 0:
                             parts.extend([whole_draft_translation_format, part[0]])
@@ -937,8 +1272,11 @@ def translation_file(
                     worksheet.write_rich_string(*parts)
 
         for item, cache_item in tr_cache.items():
+            # A machine-facing value carried over from an older file is rewritten
+            # below with the original text, whatever that older file says now.
             if (
                 item in seen
+                or item in values_to_preserve
                 or language not in cache_item
                 or tr_lang not in cache_item[language]
             ):
@@ -1030,10 +1368,47 @@ def translation_file(
             if num_lines > 0:
                 worksheet.set_row(row, 15 * (num_lines + 1))
             row += 1
+            seen.append(item)
+
+        # Finally, pin the values that docassemble did not offer for translation
+        # at all. Writing them out with the original text in both columns keeps
+        # them stable even if this file is later regenerated or extended by a
+        # tool other than this one. See issue #287.
+        pinned_indexno = 0
+        for value_text, stable_value in values_to_preserve.items():
+            if value_text in seen or stable_value.language == tr_lang:
+                continue
+            worksheet.write_string(row, 0, stable_value.interview_name, text_format)
+            worksheet.write_string(row, 1, stable_value.question_id, text_format)
+            worksheet.write_number(row, 2, 2000 + pinned_indexno, numb)
+            worksheet.write_string(
+                row,
+                3,
+                hashlib.md5(
+                    value_text.encode("utf-8"), usedforsecurity=False
+                ).hexdigest(),
+                text_format,
+            )
+            worksheet.write_string(row, 4, stable_value.language, text_format)
+            worksheet.write_string(row, 5, tr_lang, text_format)
+            worksheet.write_string(row, 6, value_text, wholefixed)
+            worksheet.write_string(row, 7, value_text, preserved_value_format)
+            pinned_indexno += 1
+            preserved_values += 1
+            total_rows += 1
+            row += 1
+            seen.append(value_text)
+
         workbook.close()
         untranslated_words = len(re.findall(r"\w+", untranslated_text))
         return Translation(
-            output_file, untranslated_words, untranslated_segments, total_rows
+            output_file,
+            untranslated_words,
+            untranslated_segments,
+            total_rows,
+            preserved_values,
+            undrafted_segments,
+            estimated_cost_usd,
         )
 
     raise ValueError("That's not a valid filetype for a translation file")

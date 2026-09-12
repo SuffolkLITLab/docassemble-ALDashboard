@@ -63,10 +63,24 @@ class TestFallbackChain(unittest.TestCase):
             self.assertGreater(_blended_price(model), 0.0, model)
 
     def test_chain_is_reachable_within_the_retry_budget(self):
-        """Entries past MAX_MAKO_RETRIES would never be tried."""
+        """Entries past MAX_MAKO_RETRIES would never be tried.
+
+        models_to_try is the configured model, then the chain entries after it,
+        then the provider's own small model -- so the whole chain plus one.
+        """
         max_retries = _module_constant("MAX_MAKO_RETRIES")
-        # models_to_try is the configured model followed by the chain after it.
-        self.assertLessEqual(len(self.chain) - 1, max_retries)
+        self.assertLessEqual(len(self.chain) + 1, max_retries + 1)
+
+    def test_the_last_resort_is_the_providers_own_small_model(self):
+        """The named chain is all OpenAI; something has to work elsewhere."""
+        source = (PACKAGE_ROOT / "translation.py").read_text(encoding="utf-8")
+        self.assertIn("def small_model_for_fallback()", source)
+        # Appended after the named chain, so it is the final entry tried.
+        chain_loop = source.index("for fallback_model in fallback_chain[start_index:]")
+        appended = source.index("small_model = small_model_for_fallback()")
+        retry_loop = source.index("while attempts < retry_budget")
+        self.assertLess(chain_loop, appended)
+        self.assertLess(appended, retry_loop)
 
 
 if __name__ == "__main__":

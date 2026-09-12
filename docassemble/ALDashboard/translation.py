@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from typing import Any, List, Optional, Tuple, Union, Literal, cast
 import xml.etree.ElementTree as ET
 import zipfile
@@ -59,7 +60,7 @@ except ModuleNotFoundError as err:
     # docassemble < 1.10 keeps this helper in the monolithic server module.
     from docassemble.webapp.server import mako_parts
 from typing import NamedTuple, Dict
-from docassemble.ALToolbox.llms import chat_completion
+from docassemble.ALToolbox.llms import chat_completion, get_default_model
 
 from docassemble.ALDashboard.translation_stable_values import (
     StableValue,
@@ -79,7 +80,12 @@ from mako.lexer import Lexer
 
 mako.runtime.UNDEFINED = DAEmpty()
 
-MAX_MAKO_RETRIES = 3
+# Attempts allowed at one fragment whose draft will not parse as Mako, each one
+# on the next model in the fallback list. Four, so that the list -- the
+# configured model, the two older models after it in the chain, and the
+# provider's own small model -- is reachable to its end. Only fragments that
+# keep coming back broken cost this much, and only one call each.
+MAX_MAKO_RETRIES = 4
 
 # How many times a batch may be halved before its remaining fragments are given
 # up on. Three halvings take a 25-fragment batch down to 3, and a fragment on
@@ -106,7 +112,9 @@ DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
 # ($1.45) and gpt-4.1 ($10.00) are older but dearer, so they are left out.
 # `test_translation_fallback_chain` holds this to it.
 #
-# Only the first MAX_MAKO_RETRIES entries after the configured model are reached.
+# These names are all OpenAI's. Whatever the server actually talks to gets the
+# last word: `small_model_for_fallback` is appended after this chain, and it is
+# the entry that still means something on another provider.
 TRANSLATION_MODEL_FALLBACK_CHAIN = (
     "gpt-5.6-luna",
     "gpt-4.1-nano",
@@ -131,6 +139,27 @@ def is_valid_mako_block(text: str) -> Tuple[bool, Optional[str]]:
         return True, None
     except Exception as err:  # pragma: no cover - logging only
         return False, str(err) or err.__class__.__name__
+
+
+@lru_cache(maxsize=1)
+def small_model_for_fallback() -> Optional[str]:
+    """The small model this server's provider offers, or None if it cannot say.
+
+    The named fallback chain is a list of OpenAI models, which is no use to a
+    server pointed at some other endpoint. ALToolbox resolves a "small" model
+    from the docassemble configuration, then the configured model sets, then the
+    endpoint's own model list, so it is the one fallback that does not assume
+    who the provider is.
+
+    Cached: resolving it can call the models endpoint, and this is consulted
+    once per fragment that needs a retry. A server changing providers mid-process
+    is not a case worth re-querying for.
+    """
+    try:
+        return get_default_model(model_type="small")
+    except Exception as err:
+        log(f"Could not work out a small model to fall back to: {err}")
+        return None
 
 
 DEFAULT_LANGUAGE = "en"
@@ -1042,8 +1071,18 @@ def translation_file(
                     for fallback_model in fallback_chain[start_index:]:
                         if fallback_model not in models_to_try:
                             models_to_try.append(fallback_model)
+                    # Last resort, and the only entry that is not a guess about
+                    # what this server can reach: ALToolbox works out the small
+                    # model from the configuration, the configured model sets and
+                    # then the endpoint's own model list, so it lands somewhere
+                    # sensible on a provider that has never heard of GPT.
+                    small_model = small_model_for_fallback()
+                    if small_model and small_model not in models_to_try:
+                        models_to_try.append(small_model)
 
-                    while attempts < MAX_MAKO_RETRIES and (not candidate or not valid):
+                    # Give every candidate one attempt, within the retry budget.
+                    retry_budget = min(MAX_MAKO_RETRIES, len(models_to_try))
+                    while attempts < retry_budget and (not candidate or not valid):
                         if error_message:
                             log(
                                 f"Regenerating draft translation for row {row_number} due to Mako error: {error_message}"

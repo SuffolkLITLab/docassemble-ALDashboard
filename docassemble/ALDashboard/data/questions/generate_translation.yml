@@ -126,6 +126,10 @@ subquestion: |
   Number of untranslated rows: ${ translations[index].untranslated_segments }
 
   Percentage of rows that are not translated: %${ translations[index].untranslated_segments/translations[index].total_rows * 100 }
+
+  % if translations[index].preserved_values:
+  Number of rows holding a choice value that is kept in the original language (shaded grey, already filled in): ${ translations[index].preserved_values }
+  % endif
   % endfor
 ---
 event: bg_fail

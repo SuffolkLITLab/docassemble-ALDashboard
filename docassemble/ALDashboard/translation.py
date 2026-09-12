@@ -59,6 +59,11 @@ except ModuleNotFoundError as err:
 from typing import NamedTuple, Dict
 from docassemble.ALToolbox.llms import chat_completion
 
+from docassemble.ALDashboard.translation_stable_values import (
+    StableValue,
+    stable_values_to_preserve,
+)
+
 import tiktoken
 import mako.template
 import mako.runtime
@@ -242,6 +247,9 @@ class Translation(NamedTuple):
     )
     untranslated_segments: int  # Number of rows in the output that have untranslated text - one for each question, subquestion, field, etc.
     total_rows: int
+    preserved_values: int = (
+        0  # Number of rows holding a machine-facing choice value, pre-filled with the original text
+    )
 
 
 def translation_file(
@@ -309,6 +317,13 @@ def translation_file(
         reasoning_effort = "low"
     if validate_mako in ("", None):
         validate_mako = True
+
+    # A choice value, and an action button's action name and arguments, are
+    # machine-facing in a way their labels are not: the interview stores or
+    # dispatches them and its code compares against them. Pin them to the
+    # original text so no translator (human or AI) can change what the interview
+    # ends up working with. See issue #287.
+    values_to_preserve: Dict[str, StableValue] = stable_values_to_preserve(interview)
 
     # Load the existing translation files and build a cache
     tr_cache: Dict = {}
@@ -626,6 +641,14 @@ def translation_file(
         draft_fixedcell.set_text_wrap()
         draft_fixedcell.set_bg_color("yellow")
 
+        # Machine-facing values arrive pre-filled with the original text; grey
+        # them so a translator can see at a glance not to touch them.
+        preserved_value_format = workbook.add_format()
+        preserved_value_format.set_bg_color("#D9D9D9")
+        preserved_value_format.set_font_color("black")
+        preserved_value_format.set_align("top")
+        preserved_value_format.set_text_wrap()
+
         # Default number format
         numb = workbook.add_format()
         numb.set_align("top")
@@ -636,6 +659,7 @@ def translation_file(
         untranslated_segments = 0
         untranslated_text = ""
         total_rows = 0
+        preserved_values = 0
 
         hold_for_draft_translation = []
         for question in interview.all_questions:
@@ -657,8 +681,15 @@ def translation_file(
                 if item in seen:
                     continue
                 total_rows += 1
+                # A machine-facing value keeps the original text no matter what
+                # an earlier translation file said, so the interview works with
+                # the same value in every language.
+                is_preserved_value = item in values_to_preserve
+                if is_preserved_value:
+                    tr_text = item
+                    preserved_values += 1
                 # The segment has already been translated and the translation is still valid
-                if (
+                elif (
                     item in tr_cache
                     and language in tr_cache[item]
                     and tr_lang in tr_cache[item][language]
@@ -717,6 +748,16 @@ def translation_file(
                     worksheet.write_rich_string(*parts)
 
                 #
+
+                if is_preserved_value:
+                    worksheet.write_string(row, 7, tr_text, preserved_value_format)
+                    num_lines = item.count("\n")
+                    if num_lines > 0:
+                        worksheet.set_row(row, 15 * (num_lines + 1))
+                    indexno += 1
+                    row += 1
+                    seen.append(item)
+                    continue
 
                 mako = mako_parts(tr_text)
                 if len(mako) == 0:
@@ -906,26 +947,33 @@ def translation_file(
                 _original_text,
                 _source_language,
             ) in hold_for_draft_translation:
-                item = final_translations.get(row_number, "") or ""
-                row = row_number
-                mako = mako_parts(item)
+                draft_text = final_translations.get(row_number, "") or ""
+                mako = mako_parts(draft_text)
                 if len(mako) == 0:
-                    worksheet.write_string(row, 7, item, whole_draft_translation_format)
+                    worksheet.write_string(
+                        row_number, 7, draft_text, whole_draft_translation_format
+                    )
                 elif len(mako) == 1:
                     if mako[0][1] == 0:
                         worksheet.write_string(
-                            row, 7, item, whole_draft_translation_format
+                            row_number, 7, draft_text, whole_draft_translation_format
                         )
                     elif mako[0][1] == 1:
                         worksheet.write_string(
-                            row, 7, item, whole_draft_translation_format_one
+                            row_number,
+                            7,
+                            draft_text,
+                            whole_draft_translation_format_one,
                         )
                     elif mako[0][1] == 2:
                         worksheet.write_string(
-                            row, 7, item, whole_draft_translation_format_two
+                            row_number,
+                            7,
+                            draft_text,
+                            whole_draft_translation_format_two,
                         )
                 else:
-                    parts = [row, 7]
+                    parts = [row_number, 7]
                     for part in mako:
                         if part[1] == 0:
                             parts.extend([whole_draft_translation_format, part[0]])
@@ -937,8 +985,11 @@ def translation_file(
                     worksheet.write_rich_string(*parts)
 
         for item, cache_item in tr_cache.items():
+            # A machine-facing value carried over from an older file is rewritten
+            # below with the original text, whatever that older file says now.
             if (
                 item in seen
+                or item in values_to_preserve
                 or language not in cache_item
                 or tr_lang not in cache_item[language]
             ):
@@ -1030,10 +1081,45 @@ def translation_file(
             if num_lines > 0:
                 worksheet.set_row(row, 15 * (num_lines + 1))
             row += 1
+            seen.append(item)
+
+        # Finally, pin the values that docassemble did not offer for translation
+        # at all. Writing them out with the original text in both columns keeps
+        # them stable even if this file is later regenerated or extended by a
+        # tool other than this one. See issue #287.
+        pinned_indexno = 0
+        for value_text, stable_value in values_to_preserve.items():
+            if value_text in seen or stable_value.language == tr_lang:
+                continue
+            worksheet.write_string(row, 0, stable_value.interview_name, text_format)
+            worksheet.write_string(row, 1, stable_value.question_id, text_format)
+            worksheet.write_number(row, 2, 2000 + pinned_indexno, numb)
+            worksheet.write_string(
+                row,
+                3,
+                hashlib.md5(
+                    value_text.encode("utf-8"), usedforsecurity=False
+                ).hexdigest(),
+                text_format,
+            )
+            worksheet.write_string(row, 4, stable_value.language, text_format)
+            worksheet.write_string(row, 5, tr_lang, text_format)
+            worksheet.write_string(row, 6, value_text, wholefixed)
+            worksheet.write_string(row, 7, value_text, preserved_value_format)
+            pinned_indexno += 1
+            preserved_values += 1
+            total_rows += 1
+            row += 1
+            seen.append(value_text)
+
         workbook.close()
         untranslated_words = len(re.findall(r"\w+", untranslated_text))
         return Translation(
-            output_file, untranslated_words, untranslated_segments, total_rows
+            output_file,
+            untranslated_words,
+            untranslated_segments,
+            total_rows,
+            preserved_values,
         )
 
     raise ValueError("That's not a valid filetype for a translation file")

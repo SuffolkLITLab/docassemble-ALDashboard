@@ -130,6 +130,12 @@ subquestion: |
   % if translations[index].preserved_values:
   Number of rows holding a choice value that is kept in the original language (shaded grey, already filled in): ${ translations[index].preserved_values }
   % endif
+  % if translations[index].undrafted_segments:
+  **Rows the AI could not draft (left blank for a human): ${ translations[index].undrafted_segments }**
+  % endif
+  % if translations[index].estimated_cost_usd:
+  Estimated AI cost: $${ "%.4f" % translations[index].estimated_cost_usd }
+  % endif
   % endfor
 ---
 event: bg_fail

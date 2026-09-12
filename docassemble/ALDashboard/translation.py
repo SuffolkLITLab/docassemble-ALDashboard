@@ -1,9 +1,11 @@
 import hashlib
+import json
 import math
 import os
 import re
 import tempfile
-from typing import Any, List, Optional, Tuple, Union, Literal
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, List, Optional, Tuple, Union, Literal, cast
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -63,28 +65,63 @@ from docassemble.ALDashboard.translation_stable_values import (
     StableValue,
     stable_values_to_preserve,
 )
+from docassemble.ALDashboard.translation_batching import (
+    DEFAULT_MAX_FRAGMENTS_PER_BATCH,
+    alignment_problems,
+    estimate_cost,
+    estimate_tokens,
+    plan_batches,
+)
 
 import tiktoken
-import mako.template
 import mako.runtime
+from mako.lexer import Lexer
 
 mako.runtime.UNDEFINED = DAEmpty()
 
 MAX_MAKO_RETRIES = 3
 
+# How many times a batch may be halved before its remaining fragments are given
+# up on. Three halvings take a 25-fragment batch down to 3, and a fragment on
+# its own is retried as plain text rather than split again.
+MAX_BATCH_SPLIT_DEPTH = 3
+
+# Requests in flight at once. Batches are independent, so this is purely about
+# not annoying the API; it is the second big lever on how long a draft takes.
+DEFAULT_MAX_PARALLEL_REQUESTS = 4
+
+# The cheapest current tier. Translation is not a reasoning-heavy job, and the
+# batch planner is tuned against this family's limits. A server that has not
+# deployed it can pass any other model through the `model` argument.
+DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
+
+# Tried in order when a model keeps returning Mako that will not parse, cheapest
+# first. gpt-5 is appended separately as a last resort for servers that have not
+# deployed the 5.6 family.
+TRANSLATION_MODEL_FALLBACK_CHAIN = (
+    "gpt-5.6-luna",
+    "gpt-5.6-terra",
+    "gpt-5.6-sol",
+)
+
 
 def is_valid_mako_block(text: str) -> Tuple[bool, Optional[str]]:
     """
-    Return True if the provided text can be rendered as Mako without raising an error.
+    Return True if the provided text parses as Mako without raising an error.
     Empty strings are treated as valid.
+
+    This lexes the template rather than rendering it. Rendering runs whatever
+    Python the draft translation happens to contain, and it runs once per
+    drafted fragment, so lexing is both the safe choice and much the faster one.
+    `translation_validation` checks translation files the same way.
     """
     if not text:
         return True, None
     try:
-        mako.template.Template(text).render()
+        Lexer(text).parse()
         return True, None
     except Exception as err:  # pragma: no cover - logging only
-        return False, str(err)
+        return False, str(err) or err.__class__.__name__
 
 
 DEFAULT_LANGUAGE = "en"
@@ -126,12 +163,14 @@ def translate_fragments_gpt(
     tr_lang: str,
     interview_context: Optional[str] = None,
     special_words: Optional[Dict[int, str]] = None,
-    model: Optional[str] = "gpt-5-nano",
+    model: Optional[str] = DEFAULT_TRANSLATION_MODEL,
     openai_base_url: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     max_input_tokens: Optional[int] = None,
     openai_api: Optional[str] = None,
     reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = "low",
+    max_fragments_per_batch: int = DEFAULT_MAX_FRAGMENTS_PER_BATCH,
+    max_parallel_requests: int = DEFAULT_MAX_PARALLEL_REQUESTS,
 ) -> Dict[Union[int, str], str]:
     """Use an AI model to translate a list of fragments (strings) from one language to another and provide a dictionary
     with the original text and the translated text.
@@ -143,17 +182,20 @@ def translate_fragments_gpt(
         source_language: The language of the original text.
         tr_lang: The language to translate the text into.
         special_words: A dictionary of special words that should be translated in a specific way.
-        model: The GPT model to use. The default is "gpt-5-nano"
+        model: The GPT model to use. Defaults to DEFAULT_TRANSLATION_MODEL.
         openai_base_url: The base URL for the OpenAI API. If not provided, the default OpenAI URL will be used.
         max_output_tokens: The maximum number of tokens to generate in the output.
         max_input_tokens: The maximum number of tokens in the input. If not provided, it will be set to 4000.
         openai_api: The OpenAI API key. If not provided, it will use the key from the configuration.
         reasoning_effort: Controls the reasoning effort for thinking models like GPT-5. Defaults to "low".
+        max_fragments_per_batch: How many fragments to translate per request. One request
+            per fragment is slow; a whole interview in one request comes back misaligned.
+        max_parallel_requests: How many requests to keep in flight at once.
     Returns:
         A dictionary where the keys are the indices of the fragments and the values are the translated text.
     """
     if not model:
-        model = "gpt-5-nano"
+        model = DEFAULT_TRANSLATION_MODEL
     is_gpt5_model = model.startswith("gpt-5")
     applied_reasoning_effort = reasoning_effort or "low"
     try:
@@ -184,7 +226,6 @@ def translate_fragments_gpt(
 
     You only translate natural-language text.  
     Preserve all whitespace exactly.  
-    Reply *only* with the translated text—no extra commentary.
     """
     if interview_context is not None:
         system_prompt += f"""When translating, keep in mind the purpose of this interview: ```{ interview_context }```
@@ -199,45 +240,176 @@ def translate_fragments_gpt(
     ```
     """
 
-    #           row number: text to translate
-    results: Dict[Union[int, str], str] = {}
+    # One request carries one fragment as plain text, or several as JSON. The
+    # instructions differ enough that mixing them makes the model reply in the
+    # wrong shape, so the shared prompt gets one of two endings.
+    single_prompt = system_prompt + """
+    Reply *only* with the translated text—no extra commentary.
+    """
+    batch_prompt = system_prompt + """
+    The user message is a JSON object: `{"segments": [{"id": ..., "text": ...}, ...]}`.
 
-    for row_number, text_to_translate in fragments:
+    Reply *only* with a JSON object of the same shape, carrying the translation of
+    each segment: `{"segments": [{"id": ..., "translation": ...}, ...]}`.
+
+    Return **every** segment you were given, once each, in the same order, and copy
+    each `id` across exactly as you received it. Translate each segment on its own:
+    they are unrelated pieces of text, so never merge, split, reorder or drop one,
+    and never let the text of one segment appear in the translation of another.
+    """
+
+    def call_model(user_message: str, json_mode: bool):
+        """One request. Explicit arguments, because the two model families differ."""
+        system_message = batch_prompt if json_mode else single_prompt
+        if is_gpt5_model:
+            return chat_completion(
+                system_message=system_message,
+                user_message=user_message,
+                model=model,
+                json_mode=json_mode,
+                max_output_tokens=max_output_tokens,
+                openai_base_url=openai_base_url,
+                max_input_tokens=max_input_tokens,
+                openai_api=openai_api,
+                reasoning_effort=applied_reasoning_effort,
+            )
+        return chat_completion(
+            system_message=system_message,
+            user_message=user_message,
+            model=model,
+            json_mode=json_mode,
+            max_output_tokens=max_output_tokens,
+            openai_base_url=openai_base_url,
+            max_input_tokens=max_input_tokens,
+            openai_api=openai_api,
+            temperature=0.0,
+        )
+
+    def translate_one(row_number: int, text_to_translate: str) -> Dict[int, str]:
+        """Translate a single fragment as plain text.
+
+        Nothing can be misaligned when the request holds one fragment and the
+        reply is the translation itself, so this is where a batch that fails
+        verification ends up.
+        """
+        response = call_model(text_to_translate, json_mode=False)
+        if not isinstance(response, str):
+            log(f"Unexpected response type from chat completion: {type(response)}")
+            return {}
+        # Some models add trailing whitespace.
+        return {row_number: response.rstrip()}
+
+    def translate_batch(batch: List[Tuple[int, str]]) -> Dict[int, str]:
+        """Translate several fragments in one request, keyed by row number."""
+        if len(batch) == 1:
+            return translate_one(batch[0][0], batch[0][1])
+        request = {
+            "segments": [
+                {"id": str(row_number), "text": text} for row_number, text in batch
+            ]
+        }
+        response = call_model(json.dumps(request, ensure_ascii=False), json_mode=True)
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except ValueError:
+                log("Translation response was not JSON")
+                return {}
+        if not isinstance(response, dict):
+            log(f"Unexpected response type from chat completion: {type(response)}")
+            return {}
+        segments = response.get("segments")
+        if not isinstance(segments, list):
+            log("Translation response had no 'segments' list")
+            return {}
+        wanted = {str(row_number) for row_number, _text in batch}
+        translated: Dict[int, str] = {}
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            segment_id = str(segment.get("id", ""))
+            if segment_id not in wanted:
+                continue
+            value = segment.get("translation")
+            if isinstance(value, str):
+                translated[int(segment_id)] = value.rstrip()
+        return translated
+
+    def translate_verified(
+        batch: List[Tuple[int, str]], depth: int = 0
+    ) -> Dict[int, str]:
+        """Translate a batch, and retry whatever comes back wrong.
+
+        Bulk translation was abandoned once because rows came back mixed up.
+        The answer is not to avoid batches but to stop trusting them: anything
+        `alignment_problems` flags is translated again in a smaller batch, and
+        a single flagged fragment goes back as its own plain-text request.
+        """
         try:
-            # Build an explicit call to chat_completion instead of using **kwargs
-            if is_gpt5_model:
-                response = chat_completion(
-                    system_message=system_prompt,
-                    user_message=text_to_translate,
-                    model=model,
-                    max_output_tokens=max_output_tokens,
-                    openai_base_url=openai_base_url,
-                    max_input_tokens=max_input_tokens,
-                    openai_api=openai_api,
-                    reasoning_effort=applied_reasoning_effort,
-                )
-            else:
-                response = chat_completion(
-                    system_message=system_prompt,
-                    user_message=text_to_translate,
-                    model=model,
-                    max_output_tokens=max_output_tokens,
-                    openai_base_url=openai_base_url,
-                    max_input_tokens=max_input_tokens,
-                    openai_api=openai_api,
-                    temperature=0.0,
-                )
-            if isinstance(response, str):
-                results[row_number] = (
-                    response.rstrip()
-                )  # Remove any trailing whitespace some LLM models might add
-            else:
-                log(f"Unexpected response type from chat completion: {type(response)}")
-        # Get the exception and log it
-        except Exception as e:
-            log(f"Exception when calling chatcompletion: { e }")
-            response = str(e)
-    return results
+            translated = translate_batch(batch)
+        except Exception as err:
+            log(f"Exception when calling chatcompletion: {err}")
+            translated = {}
+
+        problems = alignment_problems(batch, translated)
+        if not problems:
+            return translated
+
+        good = {
+            row_number: text
+            for row_number, text in translated.items()
+            if row_number not in problems
+        }
+        retry = [
+            (row_number, text) for row_number, text in batch if row_number in problems
+        ]
+        if depth >= MAX_BATCH_SPLIT_DEPTH:
+            log(
+                f"Giving up on {len(retry)} fragment(s) after {depth} retries: "
+                f"{sorted(problems.values())[:3]}"
+            )
+            return good
+
+        if len(retry) == 1:
+            row_number, text = retry[0]
+            log(f"Re-translating row {row_number} on its own: {problems[row_number]}")
+            try:
+                good.update(translate_one(row_number, text))
+            except Exception as err:
+                log(f"Exception when calling chatcompletion: {err}")
+            return good
+
+        middle = len(retry) // 2
+        for half in (retry[:middle], retry[middle:]):
+            if half:
+                good.update(translate_verified(half, depth + 1))
+        return good
+
+    batches = plan_batches(
+        fragments,
+        model=model,
+        overhead_tokens=estimate_tokens(batch_prompt, model),
+        max_fragments_per_batch=max_fragments_per_batch,
+        max_input_tokens=max_input_tokens,
+        max_output_tokens=max_output_tokens,
+    )
+
+    #           row number: text to translate
+    results: Dict[int, str] = {}
+    if not batches:
+        return cast(Dict[Union[int, str], str], results)
+
+    workers = max(1, min(max_parallel_requests, len(batches)))
+    if workers == 1:
+        for batch in batches:
+            results.update(translate_verified(batch))
+    else:
+        # Batches are independent and each result is keyed by its own row
+        # number, so running them together only changes how long a draft takes.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for translated in pool.map(translate_verified, batches):
+                results.update(translated)
+    return cast(Dict[Union[int, str], str], results)
 
 
 class Translation(NamedTuple):
@@ -250,6 +422,10 @@ class Translation(NamedTuple):
     preserved_values: int = (
         0  # Number of rows holding a machine-facing choice value, pre-filled with the original text
     )
+    undrafted_segments: int = (
+        0  # Rows AI translation was asked for but could not produce; left blank for a human
+    )
+    estimated_cost_usd: float = 0.0  # Rough API cost of the AI drafts, if any
 
 
 def translation_file(
@@ -312,7 +488,7 @@ def translation_file(
     # is supported by both layouts.
     interview = docassemble.base.parse.Interview(source=interview_source)
     if not model:
-        model = "gpt-5-nano"
+        model = DEFAULT_TRANSLATION_MODEL
     if reasoning_effort is None:
         reasoning_effort = "low"
     if validate_mako in ("", None):
@@ -662,6 +838,8 @@ def translation_file(
         preserved_values = 0
 
         hold_for_draft_translation = []
+        undrafted_segments = 0
+        estimated_cost_usd = 0.0
         for question in interview.all_questions:
             if not hasattr(question, "translations"):
                 continue
@@ -840,14 +1018,10 @@ def translation_file(
                     attempts = 0
                     # Ensure candidate is str before passing to is_valid_mako_block
                     valid, error_message = is_valid_mako_block(candidate or "")
-                    fallback_chain = [
-                        "gpt-5-nano",
-                        "gpt-5-mini",
-                        "gpt-5",
-                        "gpt-4.1-nano",
-                        "gpt-4.1-mini",
-                        "gpt-4.1",
-                    ]
+                    # Cheapest first: a fragment only reaches here because the
+                    # model kept breaking Mako, and a stronger model is the
+                    # thing most likely to stop doing that.
+                    fallback_chain = list(TRANSLATION_MODEL_FALLBACK_CHAIN)
                     models_to_try: List[Optional[str]] = []
                     if model not in (None, ""):
                         models_to_try.append(model)
@@ -860,10 +1034,10 @@ def translation_file(
                     for fallback_model in fallback_chain[start_index:]:
                         if fallback_model not in models_to_try:
                             models_to_try.append(fallback_model)
+                    # gpt-5 is deployed almost everywhere, so it is the last
+                    # resort on a server without the newer families.
                     if "gpt-5" not in models_to_try:
                         models_to_try.append("gpt-5")
-                    if "gpt-4.1" not in models_to_try:
-                        models_to_try.append("gpt-4.1")
 
                     while attempts < MAX_MAKO_RETRIES and (not candidate or not valid):
                         if error_message:
@@ -941,6 +1115,30 @@ def translation_file(
                     if translation_text is None:
                         translation_text = ""
                     final_translations[row_number] = translation_text
+
+            # A fragment with no draft is not an error -- the row is simply left
+            # for a human -- but silence about it is, because an undeployed
+            # model or an exhausted quota looks exactly like a clean run.
+            undrafted_segments = sum(
+                1
+                for row_number, _original_text, _source_language in hold_for_draft_translation
+                if not final_translations.get(row_number)
+            )
+            if undrafted_segments:
+                log(
+                    f"AI translation produced no draft for {undrafted_segments} of "
+                    f"{len(hold_for_draft_translation)} segments using model {model}"
+                )
+            drafted_input_tokens = sum(
+                estimate_tokens(original_text, model)
+                for _row_number, original_text, _source_language in hold_for_draft_translation
+            )
+            drafted_output_tokens = sum(
+                estimate_tokens(text, model) for text in final_translations.values()
+            )
+            estimated_cost_usd = estimate_cost(
+                drafted_input_tokens, drafted_output_tokens, model=model
+            )
 
             for (
                 row_number,
@@ -1120,6 +1318,8 @@ def translation_file(
             untranslated_segments,
             total_rows,
             preserved_values,
+            undrafted_segments,
+            estimated_cost_usd,
         )
 
     raise ValueError("That's not a valid filetype for a translation file")

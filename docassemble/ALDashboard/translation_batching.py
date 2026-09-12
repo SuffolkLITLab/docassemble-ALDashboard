@@ -98,6 +98,14 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
     "gpt-5.6-terra": _large_context(2.00, 0.20, 12.00),
     "gpt-5.6-sol": _large_context(4.00, 0.40, 20.00),
     "gpt-6-astra": _large_context(10.00, 1.00, 50.00),
+    # The older models the fallback chain drops back to. None of these carry a
+    # context-size surcharge. The 4.1 pair matter for batch planning as much as
+    # for cost: they cap output at 32K rather than 128K, so a batch that is fine
+    # for luna has to be a quarter of the size for them.
+    "gpt-5.4-nano": ModelPricing(0.20, 0.02, 1.25, 272_000, 128_000),
+    "gpt-5-nano": ModelPricing(0.05, 0.005, 0.40, 272_000, 128_000),
+    "gpt-4.1-nano": ModelPricing(0.10, 0.025, 0.40, 1_014_808, 32_768),
+    "gpt-4.1": ModelPricing(2.00, 0.50, 8.00, 1_014_808, 32_768),
 }
 
 # Anything we have no figures for. The token limits are the conservative ones
@@ -123,9 +131,11 @@ def pricing_for_model(model: Optional[str]) -> ModelPricing:
     name = model.strip().lower()
     if name in MODEL_PRICING:
         return MODEL_PRICING[name]
-    for known, pricing in MODEL_PRICING.items():
+    # Longest first, so "gpt-4.1-nano-2025-04-14" matches gpt-4.1-nano and not
+    # the much pricier gpt-4.1 that it also starts with.
+    for known in sorted(MODEL_PRICING, key=len, reverse=True):
         if name.startswith(known):
-            return pricing
+            return MODEL_PRICING[known]
     return FALLBACK_PRICING
 
 

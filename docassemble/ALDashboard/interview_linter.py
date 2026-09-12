@@ -22,8 +22,10 @@ from spellchecker import SpellChecker
 try:
     from docassemble.webapp.screenreader import to_text as screenreader_to_text
 except Exception:
+
     def screenreader_to_text(html_text: str) -> str:
         return html_text
+
 
 try:
     from flask_login import current_user
@@ -636,7 +638,6 @@ def _run_dayamlchecker(content: str) -> List[str]:
     return _dayamlchecker_yaml_errors(_collect_dayamlchecker_findings(content))
 
 
-
 RULE_IDS_BY_MODE: Dict[str, List[str]] = {
     "full": [],
     "wcag-basic": [],
@@ -671,7 +672,6 @@ def normalize_lint_mode(
             f"`{lint_mode}`. Valid options: {', '.join(list_lint_modes())}."
         )
     return DEFAULT_LINT_MODE
-
 
 
 def _finding_confidence(rule_id: str, source: str = "deterministic") -> str:

@@ -35,6 +35,28 @@ class TestPricing(unittest.TestCase):
             pricing_for_model("GPT-5.6-Luna"), pricing_for_model("gpt-5.6-luna")
         )
 
+    def test_older_fallback_models_are_priced(self):
+        """The chain drops back to these, so their cost has to be known."""
+        for name, in_price, out_price in [
+            ("gpt-5.4-nano", 0.20, 1.25),
+            ("gpt-5-nano", 0.05, 0.40),
+            ("gpt-4.1-nano", 0.10, 0.40),
+            ("gpt-4.1", 2.00, 8.00),
+        ]:
+            pricing = pricing_for_model(name)
+            self.assertEqual(pricing.input_per_million, in_price, name)
+            self.assertEqual(pricing.output_per_million, out_price, name)
+            self.assertIsNone(pricing.surcharge_threshold_tokens, name)
+
+    def test_a_longer_model_name_wins_the_prefix_match(self):
+        """gpt-4.1-nano also starts with gpt-4.1, which costs 20x as much."""
+        self.assertEqual(
+            pricing_for_model("gpt-4.1-nano-2025-04-14").output_per_million, 0.40
+        )
+        self.assertEqual(
+            pricing_for_model("gpt-4.1-2025-04-14").output_per_million, 8.00
+        )
+
     def test_unknown_model_gets_a_conservative_envelope(self):
         pricing = pricing_for_model("some-other-model")
         self.assertEqual(pricing.max_input_tokens, 128_000)
@@ -55,9 +77,7 @@ class TestPricing(unittest.TestCase):
         over = estimate_cost(272_001, 100_000, model="gpt-5.6-luna")
         self.assertAlmostEqual(under, (272_000 * 0.20 + 100_000 * 1.20) / 1e6, places=9)
         # The multipliers differ, so the two halves scale differently.
-        self.assertAlmostEqual(
-            over, (272_001 * 0.40 + 100_000 * 1.80) / 1e6, places=9
-        )
+        self.assertAlmostEqual(over, (272_001 * 0.40 + 100_000 * 1.80) / 1e6, places=9)
         self.assertGreater(over, under)
 
     def test_cached_input_is_cheaper(self):
@@ -93,15 +113,26 @@ class TestBatchLimits(unittest.TestCase):
             with_overhead.content_budget_tokens, without.content_budget_tokens - 1_000
         )
 
+    def test_a_smaller_output_cap_means_smaller_batches(self):
+        """gpt-4.1 caps output at 32K, a quarter of what luna allows."""
+        luna = batch_limits(model="gpt-5.6-luna", max_fragments_per_batch=10_000)
+        older = batch_limits(model="gpt-4.1", max_fragments_per_batch=10_000)
+        self.assertLess(older.content_budget_tokens, luna.content_budget_tokens)
+        self.assertLessEqual(older.content_budget_tokens, 32_768)
+
     def test_absurd_limits_still_give_a_usable_budget(self):
-        limits = batch_limits(model="gpt-5.6-luna", max_input_tokens=1, overhead_tokens=9)
+        limits = batch_limits(
+            model="gpt-5.6-luna", max_input_tokens=1, overhead_tokens=9
+        )
         self.assertGreater(limits.content_budget_tokens, 0)
 
 
 class TestPlanBatches(unittest.TestCase):
     def test_every_fragment_appears_exactly_once_and_in_order(self):
         """The old implementation sliced a list by a token count and lost rows."""
-        fragments = [(row, f"Segment number {row} of the interview") for row in range(97)]
+        fragments = [
+            (row, f"Segment number {row} of the interview") for row in range(97)
+        ]
         batches = plan_batches(fragments, model="gpt-5.6-luna")
         flattened = [item for batch in batches for item in batch]
         self.assertEqual(flattened, fragments)
@@ -139,9 +170,7 @@ class TestPlanBatches(unittest.TestCase):
 
     def test_one_oversized_fragment_gets_its_own_batch(self):
         fragments = [(0, "short"), (1, "word " * 5_000), (2, "short")]
-        batches = plan_batches(
-            fragments, model="gpt-5.6-luna", max_input_tokens=1_000
-        )
+        batches = plan_batches(fragments, model="gpt-5.6-luna", max_input_tokens=1_000)
         oversized = [batch for batch in batches if any(row == 1 for row, _ in batch)]
         self.assertEqual(len(oversized), 1)
         self.assertEqual(len(oversized[0]), 1)

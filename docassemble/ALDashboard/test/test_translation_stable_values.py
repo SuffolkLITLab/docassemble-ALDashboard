@@ -175,8 +175,7 @@ fields:
 
     def test_action_button_action_and_arguments_are_pinned(self):
         """An action button dispatches its action name and arguments to code."""
-        interview = parse_interview(
-            """
+        interview = parse_interview("""
 question: What next?
 subquestion: Choose something
 action buttons:
@@ -185,8 +184,7 @@ action buttons:
     color: primary
     arguments:
       stage: review_stage
-"""
-        )
+""")
         segments = translatable_segments(interview)
         # docassemble really does offer both of these up for translation.
         self.assertIn("some_action", segments)
@@ -199,15 +197,13 @@ action buttons:
 
     def test_action_button_label_is_left_translatable(self):
         """A label that matches an action name elsewhere still gets translated."""
-        interview = parse_interview(
-            """
+        interview = parse_interview("""
 question: What next?
 subquestion: Choose something
 action buttons:
   - label: Review
     action: Review
-"""
-        )
+""")
         self.assertNotIn("Review", stable_values_to_preserve(interview))
 
     def test_value_that_is_also_a_label_is_left_translatable(self):

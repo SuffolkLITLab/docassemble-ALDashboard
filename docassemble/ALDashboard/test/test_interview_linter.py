@@ -155,9 +155,7 @@ question: Hello
             ["accessibility-future-rule"],
         )
         self.assertEqual(mock_collect.call_count, 1)
-        self.assertEqual(
-            mock_collect.call_args.kwargs["lint_mode"], "accessibility"
-        )
+        self.assertEqual(mock_collect.call_args.kwargs["lint_mode"], "accessibility")
 
     @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
     def test_lint_interview_content_keeps_current_report_shape(self, mock_collect):
@@ -180,7 +178,6 @@ question: Hello
         docs = load_interview(yaml_content)
         texts = get_all_text(docs)
         return run_deterministic_rules(docs, texts, yaml_content, lint_mode=lint_mode)
-
 
 
 class TestInterviewLinterStyleDelegation(unittest.TestCase):

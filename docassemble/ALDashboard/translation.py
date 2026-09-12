@@ -95,13 +95,22 @@ DEFAULT_MAX_PARALLEL_REQUESTS = 4
 # deployed it can pass any other model through the `model` argument.
 DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
 
-# Tried in order when a model keeps returning Mako that will not parse, cheapest
-# first. gpt-5 is appended separately as a last resort for servers that have not
-# deployed the 5.6 family.
+# Tried in order when a model keeps returning Mako that will not parse. What
+# breaks a repeated failure is a *different* model, not a dearer one, so this
+# drops back through older generations and never climbs: terra and sol cost 10x
+# and 17x what luna does, which is not a bill to run up on a retry.
+#
+# Cost is the constraint, so the entries are the older models that are actually
+# cheaper than the default, blended over a million tokens in and out:
+# gpt-4.1-nano $0.50 and gpt-5-nano $0.45 against luna's $1.40. gpt-5.4-nano
+# ($1.45) and gpt-4.1 ($10.00) are older but dearer, so they are left out.
+# `test_translation_fallback_chain` holds this to it.
+#
+# Only the first MAX_MAKO_RETRIES entries after the configured model are reached.
 TRANSLATION_MODEL_FALLBACK_CHAIN = (
     "gpt-5.6-luna",
-    "gpt-5.6-terra",
-    "gpt-5.6-sol",
+    "gpt-4.1-nano",
+    "gpt-5-nano",
 )
 
 
@@ -1018,9 +1027,8 @@ def translation_file(
                     attempts = 0
                     # Ensure candidate is str before passing to is_valid_mako_block
                     valid, error_message = is_valid_mako_block(candidate or "")
-                    # Cheapest first: a fragment only reaches here because the
-                    # model kept breaking Mako, and a stronger model is the
-                    # thing most likely to stop doing that.
+                    # Older generations, not dearer ones. See the chain's own
+                    # comment for why.
                     fallback_chain = list(TRANSLATION_MODEL_FALLBACK_CHAIN)
                     models_to_try: List[Optional[str]] = []
                     if model not in (None, ""):
@@ -1034,10 +1042,6 @@ def translation_file(
                     for fallback_model in fallback_chain[start_index:]:
                         if fallback_model not in models_to_try:
                             models_to_try.append(fallback_model)
-                    # gpt-5 is deployed almost everywhere, so it is the last
-                    # resort on a server without the newer families.
-                    if "gpt-5" not in models_to_try:
-                        models_to_try.append("gpt-5")
 
                     while attempts < MAX_MAKO_RETRIES and (not candidate or not valid):
                         if error_message:

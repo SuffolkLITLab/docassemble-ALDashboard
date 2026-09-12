@@ -1,6 +1,7 @@
 import html
 import os
 import re
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
@@ -94,6 +95,28 @@ DEFAULT_INDIVIDUAL_ATTRIBUTES: List[Tuple[str, str, str]] = [
     ("email", "email", "Email Address"),
     ("phone_number", "text", "Phone Number"),
 ]
+
+
+_VARIABLE_REPORT_TEMP_PREFIX = "variable_report_"
+_VARIABLE_REPORT_TEMP_FILENAME = "variable_report_draft.docx"
+
+
+def cleanup_generated_docx_report(path: Optional[str]) -> None:
+    if not path:
+        return
+    real_path = os.path.realpath(path)
+    temp_root = os.path.realpath(tempfile.gettempdir())
+    temp_dir = os.path.dirname(real_path)
+    if os.path.basename(real_path) != _VARIABLE_REPORT_TEMP_FILENAME:
+        return
+    if not os.path.basename(temp_dir).startswith(_VARIABLE_REPORT_TEMP_PREFIX):
+        return
+    try:
+        if os.path.commonpath([temp_root, temp_dir]) != temp_root:
+            return
+    except ValueError:
+        return
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @dataclass
@@ -857,7 +880,8 @@ def generate_docx_report(
     # No path asked for, so put the draft somewhere the operating system owns.
     # This used to be a "tmp" directory under the current working directory,
     # which on a server is wherever the process happens to have started.
-    out_file = os.path.join(tempfile.mkdtemp(), "variable_report_draft.docx")
+    temp_dir = tempfile.mkdtemp(prefix=_VARIABLE_REPORT_TEMP_PREFIX)
+    out_file = os.path.join(temp_dir, _VARIABLE_REPORT_TEMP_FILENAME)
     doc.save(out_file)
     return out_file
 

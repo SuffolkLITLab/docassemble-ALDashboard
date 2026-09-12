@@ -1966,7 +1966,10 @@ def variable_report_payload_from_request() -> Dict[str, Any]:
 def variable_report_payload_from_options(
     raw_options: Mapping[str, Any], *, upload: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    from .variable_report_generator import generate_variable_report
+    from .variable_report_generator import (
+        cleanup_generated_docx_report,
+        generate_variable_report,
+    )
 
     raw = merge_raw_options(raw_options)
     yaml_text = raw.get("yaml_text") or raw.get("yaml_content")
@@ -2039,9 +2042,14 @@ def variable_report_payload_from_options(
             payload[key] = res[key]
     if include_docx_base64:
         docx_path = res.get("docx_path")
-        if docx_path and os.path.isfile(docx_path):
-            with open(docx_path, "rb") as handle:
-                payload["docx_base64"] = base64.b64encode(handle.read()).decode("ascii")
+        try:
+            if docx_path and os.path.isfile(docx_path):
+                with open(docx_path, "rb") as handle:
+                    payload["docx_base64"] = base64.b64encode(handle.read()).decode(
+                        "ascii"
+                    )
+        finally:
+            cleanup_generated_docx_report(docx_path)
     return payload
 
 

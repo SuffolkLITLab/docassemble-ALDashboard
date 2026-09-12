@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from docassemble.ALDashboard.variable_report_generator import (
     extract_interview_metadata_info,
     extract_interview_questions_and_variables,
+    cleanup_generated_docx_report,
     generate_docx_report,
     generate_mako_markdown_report,
     generate_variable_report,
@@ -161,7 +162,11 @@ fields:
                 os.path.abspath(out_file).startswith(os.path.abspath(workdir)),
                 "draft landed under the working directory",
             )
-            os.remove(out_file)
+            out_path = os.fspath(out_file)
+            out_dir = os.path.dirname(out_path)
+            cleanup_generated_docx_report(out_file)
+            self.assertFalse(os.path.exists(out_path))
+            self.assertFalse(os.path.exists(out_dir))
 
     def test_api_payload_from_options(self):
         payload = variable_report_payload_from_options(

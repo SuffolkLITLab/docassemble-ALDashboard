@@ -241,6 +241,7 @@ code: |
   docx_download.initialize(filename=_docx_name)
   docx_download.copy_into(report_result["docx_path"])
   docx_download.commit()
+  cleanup_generated_docx_report(report_result["docx_path"])
 ---
 imports:
   - html

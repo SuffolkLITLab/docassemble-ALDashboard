@@ -1,6 +1,7 @@
 import html
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
@@ -853,12 +854,12 @@ def generate_docx_report(
     if output_path:
         doc.save(output_path)
         return output_path
-    else:
-        temp_dir = os.path.join(os.getcwd(), "tmp")
-        os.makedirs(temp_dir, exist_ok=True)
-        out_file = os.path.join(temp_dir, "variable_report_draft.docx")
-        doc.save(out_file)
-        return out_file
+    # No path asked for, so put the draft somewhere the operating system owns.
+    # This used to be a "tmp" directory under the current working directory,
+    # which on a server is wherever the process happens to have started.
+    out_file = os.path.join(tempfile.mkdtemp(), "variable_report_draft.docx")
+    doc.save(out_file)
+    return out_file
 
 
 def generate_variable_report(

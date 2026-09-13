@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from docassemble.ALDashboard.variable_report_generator import (
     extract_interview_metadata_info,
     extract_interview_questions_and_variables,
+    cleanup_generated_docx_report,
     generate_docx_report,
     generate_mako_markdown_report,
     generate_variable_report,
@@ -135,6 +136,37 @@ fields:
             )
             self.assertTrue(os.path.exists(res["docx_path"]))
             self.assertGreater(os.path.getsize(res["docx_path"]), 0)
+
+    def test_docx_report_without_a_path_stays_out_of_the_working_directory(self):
+        """It used to drop the draft in a "tmp" folder under os.getcwd()."""
+        groups, variables = extract_interview_questions_and_variables(["""
+---
+question: |
+  User Info
+fields:
+  - Case Number: case_number
+"""])
+        with tempfile.TemporaryDirectory() as workdir:
+            previous = os.getcwd()
+            os.chdir(workdir)
+            try:
+                out_file = generate_docx_report(groups, variables)
+            finally:
+                os.chdir(previous)
+            self.assertTrue(os.path.exists(out_file))
+            self.assertFalse(
+                os.path.exists(os.path.join(workdir, "tmp")),
+                "wrote into the working directory",
+            )
+            self.assertFalse(
+                os.path.abspath(out_file).startswith(os.path.abspath(workdir)),
+                "draft landed under the working directory",
+            )
+            out_path = os.fspath(out_file)
+            out_dir = os.path.dirname(out_path)
+            cleanup_generated_docx_report(out_file)
+            self.assertFalse(os.path.exists(out_path))
+            self.assertFalse(os.path.exists(out_dir))
 
     def test_api_payload_from_options(self):
         payload = variable_report_payload_from_options(

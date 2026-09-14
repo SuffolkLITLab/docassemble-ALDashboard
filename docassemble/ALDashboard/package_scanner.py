@@ -3,9 +3,11 @@ import json
 import math
 import requests
 from io import BytesIO
-from typing import List
 from importlib.metadata import distributions
 from docassemble.base.util import as_datetime
+import os
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 
 # -----------------------------------------------------
@@ -196,3 +198,107 @@ def compare_repo_version(server_repo_dict, github_repo_dict) -> dict:
                         }
 
     return version_table
+
+
+# -----------------------------------------------------
+# Added for the package commit report - it reads installed
+# package metadata (git commit, matching PyPI release, install date)
+# -----------------------------------------------------
+
+# Read commit info for a git-installed package from pip's direct_url.json
+def get_git_info(dist) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    try:
+        raw = dist.read_text("direct_url.json")
+        data = json.loads(raw) if raw else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None, None, None
+
+    vcs_info = data.get("vcs_info", {})
+    if vcs_info.get("vcs") != "git":
+        return None, None, None
+
+    url = data.get("url", "")
+    if url.endswith(".git"):
+        url = url[:-4]
+
+    return vcs_info.get("commit_id"), url, vcs_info.get("requested_revision")
+
+
+# Check PyPI directly to see if this exact version is actually published there
+def get_pypi_url(name: str, version: str) -> Optional[str]:
+    try:
+        r = requests.get(f"https://pypi.org/pypi/{name}/{version}/json", timeout=2)
+        if r.status_code == 200:
+            return f"https://pypi.org/project/{name}/{version}/"
+    except requests.RequestException:
+        pass
+    return None
+
+
+# Approximate install date from the dist-info folder's file timestamp
+def get_install_date(dist) -> Optional[datetime]:
+    try:
+        return datetime.fromtimestamp(os.path.getmtime(dist._path))
+    except (AttributeError, OSError):
+        return None
+
+
+# Like installed_pkg_list(), but also includes commit, PyPI link, and install date
+def installed_pkg_details(target_list: List[str]) -> dict:
+    key_pkgs, other_pkgs = {}, {}
+    targets = [t.lower() for t in target_list]
+
+    for dist in distributions():
+        if "docassemble" not in dist.name.lower():
+            continue
+
+        commit, repo_url, req_rev = get_git_info(dist)
+
+        info = {
+            "version": dist.version,
+            "commit": commit,
+            "repo_url": repo_url,
+            "requested_revision": req_rev,
+            "install_date": get_install_date(dist),
+            "pypi_url": get_pypi_url(dist.name, dist.version),
+        }
+
+        if dist.name.lower() in targets:
+            key_pkgs[dist.name] = info
+        else:
+            other_pkgs[dist.name] = info
+
+    return {
+        "key_pkgs": sort_dict(key_pkgs),
+        "non_key_pkgs": sort_dict(other_pkgs),
+    }
+
+
+# Commit col: linked short hash plus the branch/tag it was installed from
+def format_commit_link(detail: dict) -> str:
+    if not detail["commit"]:
+        return "-"
+
+    short_sha = detail["commit"][:7]
+    repo = detail["repo_url"]
+    rev_text = f" ({detail['requested_revision']})" if detail["requested_revision"] else ""
+
+    if repo:
+        return f"[{short_sha}]({repo}/tree/{detail['commit']}){rev_text}"
+    return f"{short_sha}{rev_text}"
+
+
+# Version col: linked to PyPI
+def format_version_link(detail: dict) -> str:
+    version = detail["version"]
+    if detail["pypi_url"]:
+        return f"[{version}]({detail['pypi_url']})"
+    return version
+
+
+# Installed col: plain date
+def format_install_date(detail: dict) -> str:
+    date = detail["install_date"]
+    if not date:
+        return "-"
+    return f'<span style="white-space:nowrap;">{date.strftime("%Y-%m-%d")}</span>'

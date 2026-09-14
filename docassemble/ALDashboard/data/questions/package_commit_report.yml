@@ -1,0 +1,78 @@
+---
+include:
+  - nav.yml
+  - docassemble.ALToolbox:collapse_template.yml
+---
+metadata:
+  title: Package commit report
+---
+modules:
+  - .package_scanner
+---
+features:
+  css:
+    - al_dashboard.css
+  question back button: True
+---
+id: package commit report results
+event: report_done
+question: |
+  Package commit report
+subquestion: |
+  Shows the git commit and install date for each installed docassemble package.
+
+  <div class="article_title">Report date: ${ today() }<br>
+  Server name: ${ server_name }</div>
+
+  ${ collapse_template(column_explanation) }
+
+  <div class="panel_sky" markdown="1">
+
+  #### Key packages
+  Package | Version | Commit | Installed
+  --------|---------|--------|----------
+  % for name, detail in pkg_details['key_pkgs'].items():
+  ${ name } | ${ format_version_link(detail) } | ${ format_commit_link(detail) } | ${ format_install_date(detail) }
+  % endfor
+
+  </div>
+
+  <div class="panel_green" markdown="1">
+
+  #### Other installed docassemble packages
+  Package | Version | Commit | Installed
+  --------|---------|--------|----------
+  % for name, detail in pkg_details['non_key_pkgs'].items():
+  ${ name } | ${ format_version_link(detail) } | ${ format_commit_link(detail) } | ${ format_install_date(detail) }
+  % endfor
+
+  </div>
+buttons:
+  - Exit: exit
+  - Regenerate: restart
+---
+template: column_explanation
+subject: |
+  What do these columns mean?
+content: |
+  **Version** links directly to that specific release on PyPI, where you can download the package files.
+
+  **Commit** links to the exact code on GitHub at that point in history.
+
+  **Installed** dates are approximate, based on file timestamps, and may reset if the server is ever rebuilt or restored.
+
+  Packages without a commit link were not installed from Git, and those without a version link are not published on PyPI.
+---
+mandatory: True
+code: |
+  key_pkg_names = [
+    "docassemble.ALWeaver",
+    "docassemble.AssemblyLine",
+    "docassemble.ALMassachusetts",
+    "docassemble.massaccess",
+    "docassemble.ALToolbox",
+    "docassemble.ALDashboard",
+  ]
+  server_name = get_server_name(interview_url())
+  pkg_details = installed_pkg_details(key_pkg_names)
+  report_done

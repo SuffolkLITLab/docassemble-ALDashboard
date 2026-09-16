@@ -218,6 +218,8 @@ const state = {
     activeIssueId: "",
     fontRemediation: null,
     glyphReview: null,
+    substituteOptions: null,
+    substituteChoices: {},
     glyphDecisions: {},
     glyphRendered: {},
     draftRemediations: {},
@@ -394,6 +396,18 @@ const a11yToggleMarkedBtn = optionalWorkshopElement(
 const a11yEmbedFontsBtn = optionalWorkshopElement("a11y-embed-fonts", "button");
 const a11yAddUnicodeMapsBtn = optionalWorkshopElement(
   "a11y-add-unicode-maps",
+  "button",
+);
+const a11ySubstituteSummary = optionalWorkshopElement(
+  "a11y-substitute-summary",
+);
+const a11ySubstituteList = optionalWorkshopElement("a11y-substitute-list");
+const a11yLoadSubstitutesBtn = optionalWorkshopElement(
+  "a11y-load-substitutes",
+  "button",
+);
+const a11yApplySubstitutesBtn = optionalWorkshopElement(
+  "a11y-apply-substitutes",
   "button",
 );
 const a11yGlyphReviewSummary = optionalWorkshopElement(
@@ -1930,6 +1944,7 @@ function renderAccessibilityReport() {
       .join("");
   }
   renderFontRemediationResult();
+  renderSubstituteOptions();
   renderGlyphReview();
 }
 
@@ -2020,6 +2035,194 @@ function renderFontStatus(report) {
   a11yAddUnicodeMapsBtn.textContent = missingUnicode.length
     ? "Add safe maps for " + String(missingUnicode.length) + " fonts"
     : "No Unicode maps missing";
+}
+
+function substituteChoiceFor(font) {
+  return state.accessibility.substituteChoices[font.resource] || "";
+}
+
+function renderSubstituteCandidate(font, candidate, index) {
+  const name = "a11y-subst-" + escapeHtml(font.resource);
+  const id = name + "-" + String(index);
+  const chosen = substituteChoiceFor(font) === candidate.path;
+  const exact = Math.abs(Number(candidate.width_delta)) < 0.001;
+  return (
+    '<div class="form-check"><input class="form-check-input" type="radio" name="' +
+    name +
+    '" id="' +
+    id +
+    '" value="' +
+    escapeHtml(candidate.path) +
+    '" data-subst-resource="' +
+    escapeHtml(font.resource) +
+    '"' +
+    (chosen ? " checked" : "") +
+    ' /><label class="form-check-label small" for="' +
+    id +
+    '"><span class="fw-semibold">' +
+    escapeHtml(candidate.postscript_name || candidate.path) +
+    "</span> " +
+    (exact
+      ? '<span class="badge text-bg-success">widths identical</span>'
+      : '<span class="badge text-bg-light">width delta ' +
+        escapeHtml(String(candidate.width_delta)) +
+        "</span>") +
+    (candidate.style_matches
+      ? ""
+      : ' <span class="badge text-bg-warning">' +
+        escapeHtml(
+          [candidate.bold ? "bold" : "", candidate.italic ? "italic" : ""]
+            .filter(Boolean)
+            .join(" ") || "different style",
+        ) +
+        "</span>") +
+    '<div class="text-muted">' +
+    escapeHtml(String(candidate.format || "")) +
+    " · " +
+    escapeHtml(String(candidate.path)) +
+    "</div></label></div>"
+  );
+}
+
+function renderSubstituteFontCard(font) {
+  const candidates = Array.isArray(font.candidates) ? font.candidates : [];
+  const formFieldCount = Number(font.formFieldCount || 0);
+  return (
+    '<div class="border rounded p-3" data-subst-font="' +
+    escapeHtml(font.resource) +
+    '"><div class="d-flex flex-wrap justify-content-between gap-2"><div><span class="fw-semibold">' +
+    escapeHtml(font.font || font.resource) +
+    '</span><div class="small text-muted">' +
+    escapeHtml(String(font.subtype || "unknown type")) +
+    " · " +
+    escapeHtml(String(font.resource)) +
+    '</div></div><div class="small text-end">' +
+    (font.standard14
+      ? '<span class="badge text-bg-info">standard 14</span> '
+      : "") +
+    (formFieldCount
+      ? '<span class="badge text-bg-light">' +
+        String(formFieldCount) +
+        " form fields</span>"
+      : "") +
+    "</div></div>" +
+    (font.exactMatch
+      ? '<div class="alert alert-success small py-2 mt-2 mb-0">The exact font is installed as ' +
+        escapeHtml(font.exactMatch.postscript_name || font.exactMatch.path) +
+        ". Embed it from step 1 instead of substituting.</div>"
+      : "") +
+    (candidates.length
+      ? '<fieldset class="mt-2"><legend class="form-label small mb-1">Replace with</legend>' +
+        candidates
+          .map(function (candidate, index) {
+            return renderSubstituteCandidate(font, candidate, index);
+          })
+          .join("") +
+        '<div class="form-check"><input class="form-check-input" type="radio" name="a11y-subst-' +
+        escapeHtml(font.resource) +
+        '" id="a11y-subst-' +
+        escapeHtml(font.resource) +
+        '-none" value="" data-subst-resource="' +
+        escapeHtml(font.resource) +
+        '"' +
+        (substituteChoiceFor(font) ? "" : " checked") +
+        ' /><label class="form-check-label small" for="a11y-subst-' +
+        escapeHtml(font.resource) +
+        '-none"><span class="fw-semibold">Leave alone</span> — keep this font unembedded.</label></div></fieldset>'
+      : '<div class="alert alert-warning small py-2 mt-2 mb-0">No installed font reproduces this font’s widths, so any replacement would move the text. Install the exact font instead.</div>')
+  );
+}
+
+function renderSubstituteOptions() {
+  if (!a11ySubstituteList || !a11ySubstituteSummary) return;
+  const review = state.accessibility.substituteOptions;
+  if (!review) {
+    a11ySubstituteSummary.className = "alert small py-2 alert-secondary";
+    a11ySubstituteSummary.textContent =
+      "Run the search to see which installed fonts could stand in.";
+    a11ySubstituteList.innerHTML = "";
+    if (a11yApplySubstitutesBtn) a11yApplySubstitutesBtn.disabled = true;
+    return;
+  }
+  const fonts = Array.isArray(review.fonts) ? review.fonts : [];
+  const withOptions = fonts.filter(function (font) {
+    return (font.candidates || []).length;
+  }).length;
+  a11ySubstituteSummary.className =
+    "alert small py-2 " + (fonts.length ? "alert-warning" : "alert-success");
+  a11ySubstituteSummary.textContent = fonts.length
+    ? String(fonts.length) +
+      (fonts.length === 1 ? " font has" : " fonts have") +
+      " no embedded program; " +
+      String(withOptions) +
+      " can be matched by an installed face."
+    : "Every font already carries its own program. Nothing to substitute.";
+  a11ySubstituteList.innerHTML = fonts.map(renderSubstituteFontCard).join("");
+  if (a11yApplySubstitutesBtn) {
+    a11yApplySubstitutesBtn.disabled = !Object.keys(
+      state.accessibility.substituteChoices,
+    ).some(function (key) {
+      return state.accessibility.substituteChoices[key];
+    });
+  }
+}
+
+async function loadSubstituteOptions() {
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  showLoading("Comparing installed font metrics…");
+  try {
+    const response = await fetch(
+      apiUrl("/pdf-labeler/api/accessibility-font-substitutes"),
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      },
+    );
+    const payload = await parseApiResponse(response);
+    if (!payload.success || !payload.data) {
+      throw new Error(
+        (payload.error && payload.error.message) ||
+          "The substitution search failed.",
+      );
+    }
+    state.accessibility.substituteOptions = payload.data;
+    state.accessibility.substituteChoices = {};
+    renderSubstituteOptions();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function applySubstitutions() {
+  const choices = state.accessibility.substituteChoices || {};
+  const decisions = Object.keys(choices)
+    .filter(function (resource) {
+      return choices[resource];
+    })
+    .map(function (resource) {
+      return { resource: resource, path: choices[resource] };
+    });
+  if (!decisions.length) {
+    showError("Choose a replacement font first.");
+    return;
+  }
+  if (
+    !window.confirm(
+      "Replace " +
+        String(decisions.length) +
+        (decisions.length === 1 ? " font" : " fonts") +
+        " with a different typeface? Widths match, so text keeps its position, but letterforms will change.",
+    )
+  )
+    return;
+  await runAccessibilityRemediation("substitute_fonts", {
+    decisions: decisions,
+  });
+  state.accessibility.substituteOptions = null;
+  state.accessibility.substituteChoices = {};
+  renderSubstituteOptions();
 }
 
 const GLYPH_REVIEW_PAGE_SIZE = 50;
@@ -8691,6 +8894,29 @@ a11yAddUnicodeMapsBtn.addEventListener("click", function () {
   }).catch(function (error) {
     showError(error.message || String(error));
   });
+});
+a11yLoadSubstitutesBtn.addEventListener("click", function () {
+  loadSubstituteOptions().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yApplySubstitutesBtn.addEventListener("click", function () {
+  applySubstitutions().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11ySubstituteList.addEventListener("change", function (event) {
+  const target = event.target;
+  const resource = target.getAttribute("data-subst-resource");
+  if (!resource || target.type !== "radio") return;
+  state.accessibility.substituteChoices[resource] = target.value;
+  if (a11yApplySubstitutesBtn) {
+    a11yApplySubstitutesBtn.disabled = !Object.keys(
+      state.accessibility.substituteChoices,
+    ).some(function (key) {
+      return state.accessibility.substituteChoices[key];
+    });
+  }
 });
 a11yLoadGlyphReviewBtn.addEventListener("click", function () {
   loadGlyphReview().catch(function (error) {

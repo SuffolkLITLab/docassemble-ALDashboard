@@ -13,6 +13,10 @@ from docassemble.ALDashboard.standard_font_metrics import standard_14_widths
 from docassemble.ALDashboard.pdf_accessibility import (
     PDFAccessibilityError,
     _expected_font_widths,
+    _font_width_match_score,
+    _system_embeddable_fonts,
+    find_metric_compatible_fonts,
+    substitute_fonts,
     apply_pdf_accessibility_settings,
     apply_manual_structure_repairs,
     apply_unicode_map_decisions,
@@ -1144,7 +1148,11 @@ class TestSymbolicFontGlyphReview(unittest.TestCase):
                     "/Subtype": pikepdf.Name("/CIDFontType2"),
                     "/BaseFont": pikepdf.Name("/ABCDEF+Webdings"),
                     "/CIDSystemInfo": pikepdf.Dictionary(
-                        {"/Registry": "Adobe", "/Ordering": "Identity", "/Supplement": 0}
+                        {
+                            "/Registry": "Adobe",
+                            "/Ordering": "Identity",
+                            "/Supplement": 0,
+                        }
                     ),
                     "/CIDToGIDMap": pikepdf.Name("/Identity"),
                     "/FontDescriptor": descriptor,
@@ -1594,6 +1602,176 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
                     source_path, output_path, add_unicode_maps=False
                 )
             self.assertIn("license flags forbid", result["unresolved"][0]["reason"])
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+
+class TestFontSubstitution(unittest.TestCase):
+    """Substitution swaps the typeface but must never move the text."""
+
+    URW_SANS = "/usr/share/fonts/opentype/urw-base35/NimbusSans-Regular.otf"
+    URW_SANS_BOLD = "/usr/share/fonts/opentype/urw-base35/NimbusSans-Bold.otf"
+
+    def _helvetica_font(self):
+        import pikepdf
+
+        return pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/Helvetica"),
+            }
+        )
+
+    def _standard_14_pdf(self, path):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        helv = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/Type1"),
+                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                    "/Name": pikepdf.Name("/Helv"),
+                }
+            )
+        )
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {"/Font": pikepdf.Dictionary({"/Helv": helv})}
+        )
+        page.obj["/Contents"] = pdf.make_stream(b"BT /Helv 12 Tf 72 700 Td (Hi) Tj ET")
+        pdf.save(path)
+        pdf.close()
+
+    def test_bold_is_not_treated_as_metric_compatible_with_regular(self):
+        """Bold and regular share most widths and differ only on letters."""
+        if not os.path.exists(self.URW_SANS_BOLD):
+            self.skipTest("URW base35 fonts are not installed.")
+        font = self._helvetica_font()
+        regular = _font_width_match_score(font, self.URW_SANS)
+        bold = _font_width_match_score(font, self.URW_SANS_BOLD)
+        self.assertIsNotNone(regular)
+        self.assertIsNotNone(bold)
+        self.assertLessEqual(regular, 2.0)
+        # A median would report zero here, because more than half of the
+        # glyphs agree; the letters that differ are the minority.
+        self.assertGreater(bold, 2.0)
+
+    def test_candidates_prefer_a_matching_style(self):
+        if not os.path.exists(self.URW_SANS):
+            self.skipTest("URW base35 fonts are not installed.")
+        font = self._helvetica_font()
+        candidates = find_metric_compatible_fonts(
+            font, _system_embeddable_fonts(), limit=10
+        )
+        self.assertTrue(candidates)
+        # Upright regular faces must come before oblique ones.
+        self.assertTrue(candidates[0]["style_matches"])
+        self.assertFalse(candidates[0]["italic"])
+        styles = [c["style_matches"] for c in candidates]
+        self.assertEqual(styles, sorted(styles, reverse=True))
+
+    def test_substitution_embeds_cff_as_fontfile3(self):
+        if not os.path.exists(self.URW_SANS):
+            self.skipTest("URW base35 fonts are not installed.")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            result = substitute_fonts(
+                source_path,
+                output_path,
+                [{"resource": "p1/Helv", "path": self.URW_SANS}],
+            )
+            self.assertEqual(len(result["fonts_substituted"]), 1)
+            self.assertEqual(
+                result["fonts_substituted"][0]["substitute"], "NimbusSans-Regular"
+            )
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                fonts = pdf.pages[0]["/Resources"]["/Font"]
+                # The resource name must survive so /DA strings keep resolving.
+                self.assertIn("/Helv", fonts)
+                font = fonts["/Helv"]
+                self.assertEqual(str(font["/BaseFont"]), "/NimbusSans-Regular")
+                descriptor = font["/FontDescriptor"]
+                self.assertIn("/FontFile3", descriptor)
+                self.assertEqual(str(descriptor["/FontFile3"]["/Subtype"]), "/Type1C")
+                first = int(font["/FirstChar"])
+                self.assertEqual(int(font["/Widths"][ord("A") - first]), 667)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_substitution_embeds_truetype_as_fontfile2(self):
+        candidate = _metric_compatible_sans_path()
+        if candidate is None:
+            self.skipTest("No Helvetica-metric TrueType font is installed.")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            substitute_fonts(
+                source_path,
+                output_path,
+                [{"resource": "p1/Helv", "path": candidate}],
+            )
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                font = pdf.pages[0]["/Resources"]["/Font"]["/Helv"]
+                descriptor = font["/FontDescriptor"]
+                self.assertIn("/FontFile2", descriptor)
+                self.assertEqual(str(font["/Subtype"]), "/TrueType")
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_substitute_with_wrong_metrics_is_refused(self):
+        """Even an explicit request must not be allowed to reflow the text."""
+        wrong = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        if not os.path.exists(wrong):
+            self.skipTest("DejaVu Sans is not installed.")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            with self.assertRaises(PDFAccessibilityError) as caught:
+                substitute_fonts(
+                    source_path,
+                    output_path,
+                    [{"resource": "p1/Helv", "path": wrong}],
+                )
+            self.assertIn("widths do not match", str(caught.exception))
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_substitute_from_outside_the_inventory_is_refused(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            with self.assertRaises(PDFAccessibilityError):
+                substitute_fonts(
+                    source_path,
+                    output_path,
+                    [{"resource": "p1/Helv", "path": "/etc/passwd"}],
+                )
         finally:
             os.remove(source_path)
             os.remove(output_path)

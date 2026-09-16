@@ -3394,6 +3394,66 @@ def pdf_labeler_accessibility_font_review() -> Response:
         )
 
 
+@app.route("/pdf-labeler/api/accessibility-font-substitutes", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-font-substitutes",
+    methods=["POST"],
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_font_substitutes() -> Response:
+    """List metric-compatible replacements for fonts with no embedded program.
+
+    Returns:
+        Response: A JSON response listing each unembedded font with any exact
+            match and the installed faces whose widths match its metrics.
+    """
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: accessibility-font-substitutes request {request_id}", "info")
+
+    try:
+        from .pdf_accessibility import collect_font_substitution_options
+
+        _filename, content, _post_data = _read_pdf_labeler_file_request()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+
+        try:
+            payload = collect_font_substitution_options(input_path)
+            return jsonify({"success": True, "request_id": request_id, "data": payload})
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+    except PDFAccessibilityError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": str(exc)},
+            },
+            400,
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
 @app.route("/pdf-labeler/api/accessibility-remediate", methods=["POST"])
 @app.route(
     f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-remediate", methods=["POST"]
@@ -3412,6 +3472,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
             apply_unicode_map_decisions,
             create_draft_structure_tree,
             embed_fonts_and_rebuild_unicode,
+            substitute_fonts,
         )
 
         filename, content, post_data = _read_pdf_labeler_file_request()
@@ -3423,9 +3484,10 @@ def pdf_labeler_accessibility_remediate() -> Response:
             "fonts",
             "structure",
             "unicode_map",
+            "substitute_fonts",
         }:
             raise DashboardAPIValidationError(
-                "action must be metadata, catalog_flags, draft_structure, fonts, structure, or unicode_map."
+                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, or substitute_fonts."
             )
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
@@ -3522,6 +3584,14 @@ def pdf_labeler_accessibility_remediate() -> Response:
             if not isinstance(decisions, list):
                 raise DashboardAPIValidationError("decisions must be a JSON list.")
             result = apply_unicode_map_decisions(input_path, output_path, decisions)
+        elif action == "substitute_fonts":
+            choices_raw = post_data.get("decisions")
+            choices = (
+                json.loads(choices_raw) if isinstance(choices_raw, str) else choices_raw
+            )
+            if not isinstance(choices, list):
+                raise DashboardAPIValidationError("decisions must be a JSON list.")
+            result = substitute_fonts(input_path, output_path, choices)
         else:
             result = embed_fonts_and_rebuild_unicode(
                 input_path,

@@ -778,8 +778,27 @@ def _canonical_font_name(value: Any) -> str:
     return canonical
 
 
-def _system_truetype_fonts() -> List[Dict[str, Any]]:
-    """Inventory embeddable TrueType files known to fontconfig."""
+def _font_program_format(font: Any) -> str:
+    """Classify an opened font by the kind of program it carries."""
+    if "glyf" in font:
+        return "truetype"
+    if "CFF " in font:
+        try:
+            top = font["CFF "].cff.topDictIndex[0]
+        except Exception:
+            return ""
+        # A CID-keyed CFF needs a composite font dictionary, which this tool
+        # does not build, so only plain CFF is offered for embedding.
+        return "" if hasattr(top, "ROS") else "cff"
+    return ""
+
+
+def _system_embeddable_fonts() -> List[Dict[str, Any]]:
+    """Inventory embeddable font files known to fontconfig.
+
+    Covers TrueType and plain CFF/OpenType, recording which kind each one is
+    so the caller can pick the right /FontFile entry for it.
+    """
     executable = shutil.which("fc-list")
     if not executable:
         return []
@@ -797,30 +816,48 @@ def _system_truetype_fonts() -> List[Dict[str, Any]]:
     seen: set[str] = set()
     for raw_path in result.stdout.splitlines():
         path = raw_path.strip()
-        if not path or path in seen or Path(path).suffix.casefold() != ".ttf":
+        if not path or path in seen:
+            continue
+        if Path(path).suffix.casefold() not in {".ttf", ".otf"}:
             continue
         seen.add(path)
         try:
             from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
 
             font = TTFont(path, lazy=True)
-            if "fvar" in font:
-                font.close()
-                continue
-            names: set[str] = set()
-            for record in font["name"].names:
-                if record.nameID in {1, 2, 4, 6, 16, 17}:
+            try:
+                if "fvar" in font:
+                    continue
+                program_format = _font_program_format(font)
+                if not program_format:
+                    continue
+                names: set[str] = set()
+                postscript_name = ""
+                for record in font["name"].names:
+                    if record.nameID not in {1, 2, 4, 6, 16, 17}:
+                        continue
                     try:
-                        names.add(record.toUnicode())
+                        value = record.toUnicode()
                     except Exception:
                         continue
-            fs_type = int(font["OS/2"].fsType) if "OS/2" in font else 0
-            font.close()
+                    names.add(value)
+                    if record.nameID == 6 and not postscript_name:
+                        postscript_name = value
+                fs_type = int(font["OS/2"].fsType) if "OS/2" in font else 0
+                os2 = font["OS/2"] if "OS/2" in font else None
+                weight = int(getattr(os2, "usWeightClass", 400) or 400)
+                italic_angle = float(getattr(font["post"], "italicAngle", 0.0))
+            finally:
+                font.close()
             records.append(
                 {
                     "path": path,
                     "names": sorted(names),
+                    "postscript_name": postscript_name or Path(path).stem,
                     "canonical_names": {_canonical_font_name(name) for name in names},
+                    "format": program_format,
+                    "bold": weight >= 600,
+                    "italic": abs(italic_angle) > 0.5,
                     "embeddable": not bool(fs_type & 0x0002 or fs_type & 0x0200),
                     "fsType": fs_type,
                 }
@@ -828,6 +865,15 @@ def _system_truetype_fonts() -> List[Dict[str, Any]]:
         except Exception:
             continue
     return records
+
+
+def _system_truetype_fonts() -> List[Dict[str, Any]]:
+    """Inventory only the fonts that can fill a /FontFile2 entry."""
+    return [
+        record
+        for record in _system_embeddable_fonts()
+        if record.get("format") == "truetype"
+    ]
 
 
 def _expected_font_widths(pdf_font: Any) -> Tuple[Dict[int, float], str]:
@@ -882,7 +928,12 @@ def _font_width_match_score(pdf_font: Any, font_path: str) -> Optional[float]:
         if len(differences) < 10:
             return None
         differences.sort()
-        return differences[len(differences) // 2]
+        # A median would report a perfect match for a bold face, because bold
+        # and regular share widths for digits, punctuation and accents and
+        # differ only on letters -- enough glyphs to agree that the middle
+        # value stays at zero. The 90th percentile catches that minority.
+        index = min(int(len(differences) * 0.9), len(differences) - 1)
+        return differences[index]
     except Exception:
         return None
 
@@ -951,7 +1002,12 @@ def _simple_font_code_points(pdf_font: Any) -> Dict[int, int]:
 
 
 def _descriptor_for_program(
-    pdf: Any, font_name: str, font_path: str, symbolic: bool
+    pdf: Any,
+    font_name: str,
+    font_path: str,
+    symbolic: bool,
+    file_key: str = "/FontFile2",
+    file_subtype: str = "",
 ) -> Any:
     """Build the /FontDescriptor a standard 14 font never carried.
 
@@ -1000,10 +1056,19 @@ def _descriptor_for_program(
         )
     finally:
         font.close()
-    program = Path(font_path).read_bytes()
+    program, resolved_key, resolved_subtype = _embeddable_program(font_path)
+    if program is None:
+        raise PDFAccessibilityError(f"{font_name} could not be read for embedding.")
+    file_key = resolved_key or file_key
+    file_subtype = resolved_subtype or file_subtype
     stream = pdf.make_stream(program)
-    stream["/Length1"] = len(program)
-    descriptor["/FontFile2"] = stream
+    if file_key == "/FontFile2":
+        # /Length1 is the uncompressed TrueType program length; a CFF stream
+        # carries its subtype instead.
+        stream["/Length1"] = len(program)
+    elif file_subtype:
+        stream["/Subtype"] = pikepdf.Name(file_subtype)
+    descriptor[file_key] = stream
     return pdf.make_indirect(descriptor)
 
 
@@ -1526,7 +1591,9 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
             for resource, font in _iter_pdf_fonts(pdf):
                 if "/ToUnicode" in font:
                     continue
-                font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip("/")
+                font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip(
+                    "/"
+                )
                 identity = _pdf_object_identity(font, resource)
                 record = usage.get(identity) or {}
                 counts: Dict[int, int] = record.get("counts") or {}
@@ -1655,9 +1722,7 @@ def _mark_font_runs_as_artifact(pdf: Any, targets: Mapping[str, str]) -> Dict[st
             if not names:
                 continue
             identities = {
-                name: _pdf_object_identity(
-                    font, f"{prefix}/{name.lstrip('/')}"
-                )
+                name: _pdf_object_identity(font, f"{prefix}/{name.lstrip('/')}")
                 for name, font in names.items()
             }
             if not any(identity in targets for identity in identities.values()):
@@ -1856,6 +1921,292 @@ def _unicode_unresolved_reason(pdf_font: Any, font_name: str) -> str:
         f"{font_name} uses the {encoding or 'built-in'} encoding, which this "
         "deterministic tool cannot map without guessing."
     )
+
+
+SUBSTITUTION_WIDTH_TOLERANCE = 2.0
+
+
+def _embeddable_program(font_path: str) -> Tuple[Optional[bytes], str, str]:
+    """Read a font file as the program bytes a PDF font dictionary can hold.
+
+    TrueType programs go into /FontFile2 whole. A plain CFF is carried as the
+    bare CFF table in /FontFile3 with subtype /Type1C, which is understood far
+    more widely than wrapping the entire OpenType file.
+    """
+    try:
+        from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+        font = TTFont(font_path, lazy=True)
+        try:
+            program_format = _font_program_format(font)
+        finally:
+            font.close()
+        if program_format == "truetype":
+            return Path(font_path).read_bytes(), "/FontFile2", ""
+        if program_format == "cff":
+            import io
+
+            from fontTools.ttLib.sfnt import SFNTReader  # type: ignore[import-untyped]
+
+            data = Path(font_path).read_bytes()
+            reader = SFNTReader(io.BytesIO(data))
+            entry = reader.tables["CFF "]
+            return (
+                data[entry.offset : entry.offset + entry.length],
+                "/FontFile3",
+                "/Type1C",
+            )
+    except Exception:
+        return None, "", ""
+    return None, "", ""
+
+
+def _font_style_flags(pdf_font: Any) -> Tuple[bool, bool]:
+    """Infer whether a PDF font is meant to be bold and/or italic."""
+    name = _safe_pdf_string(pdf_font.get("/BaseFont", "")).lstrip("/").casefold()
+    descriptor = _font_descriptor(pdf_font)
+    flags = int(descriptor.get("/Flags", 0)) if descriptor is not None else 0
+    angle = float(descriptor.get("/ItalicAngle", 0)) if descriptor is not None else 0.0
+    bold = "bold" in name or bool(flags & (1 << 18))
+    italic = (
+        "italic" in name
+        or "oblique" in name
+        or bool(flags & (1 << 6))
+        or abs(angle) > 0.5
+    )
+    return bold, italic
+
+
+def find_metric_compatible_fonts(
+    pdf_font: Any, inventory: List[Dict[str, Any]], limit: int = 5
+) -> List[Dict[str, Any]]:
+    """Rank installed fonts that reproduce the widths this font expects.
+
+    Unlike :func:`find_exact_system_font` this deliberately ignores the font
+    name: the point of a substitution is to use a different face whose metrics
+    line up, so that text keeps its exact position and line breaks. The caller
+    still has to choose one.
+    """
+    expected, source = _expected_font_widths(pdf_font)
+    if not expected:
+        return []
+    # An oblique face has the same widths as its upright, so metric matching
+    # alone cannot tell them apart. Compare the intended style separately.
+    wanted = _font_style_flags(pdf_font)
+    scored: List[Dict[str, Any]] = []
+    for record in inventory:
+        if not record.get("embeddable"):
+            continue
+        score = _font_width_match_score(pdf_font, record["path"])
+        if score is None or score > SUBSTITUTION_WIDTH_TOLERANCE:
+            continue
+        style = (bool(record.get("bold")), bool(record.get("italic")))
+        scored.append(
+            {
+                "path": record["path"],
+                "postscript_name": record.get("postscript_name") or "",
+                "family": (record.get("names") or [""])[0],
+                "format": record.get("format") or "",
+                "bold": style[0],
+                "italic": style[1],
+                "style_matches": style == wanted,
+                "width_delta": round(float(score), 3),
+                "reference": source,
+            }
+        )
+    scored.sort(
+        key=lambda item: (
+            not item["style_matches"],
+            item["width_delta"],
+            item["postscript_name"],
+        )
+    )
+    return scored[:limit]
+
+
+def _substitute_font_program(
+    pdf: Any, pdf_font: Any, font_name: str, candidate: Mapping[str, Any]
+) -> bool:
+    """Point a font dictionary at a different, metric-compatible program.
+
+    The resource name is left alone so every /DA string and content stream
+    that names this font keeps working. /BaseFont becomes the substitute's
+    real PostScript name, because claiming to be a font that is not embedded
+    here is what caused the original problem.
+    """
+    import pikepdf
+
+    program, file_key, file_subtype = _embeddable_program(str(candidate["path"]))
+    if not program:
+        return False
+    canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
+    published = standard_14_widths(canonical)
+    if "/Widths" not in pdf_font and published is not None:
+        code_points = _simple_font_code_points(pdf_font)
+        codes = sorted(code_points)
+        if codes:
+            first_char, last_char = codes[0], codes[-1]
+            pdf_font["/FirstChar"] = first_char
+            pdf_font["/LastChar"] = last_char
+            pdf_font["/Widths"] = pikepdf.Array(
+                [
+                    published.get(code_points.get(code, -1), 0)
+                    for code in range(first_char, last_char + 1)
+                ]
+            )
+    postscript_name = str(candidate.get("postscript_name") or "").strip() or font_name
+    symbolic = canonical in {"symbol", "zapfdingbats"}
+    descriptor = _descriptor_for_program(
+        pdf, postscript_name, str(candidate["path"]), symbolic, file_key, file_subtype
+    )
+    pdf_font["/FontDescriptor"] = descriptor
+    pdf_font["/BaseFont"] = pikepdf.Name(f"/{postscript_name}")
+    if file_key == "/FontFile2":
+        pdf_font["/Subtype"] = pikepdf.Name("/TrueType")
+    encoding = pdf_font.get("/Encoding")
+    if isinstance(encoding, pikepdf.Dictionary) and "/BaseEncoding" not in encoding:
+        encoding["/BaseEncoding"] = pikepdf.Name("/WinAnsiEncoding")
+    elif encoding is None:
+        pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
+    return True
+
+
+def collect_font_substitution_options(input_pdf_path: str) -> Dict[str, Any]:
+    """List metric-compatible replacements for each font lacking a program.
+
+    Nothing is changed. Substitution swaps in a different typeface, so the
+    choice belongs to a person who can look at the result.
+    """
+    try:
+        import pikepdf
+
+        with pikepdf.open(input_pdf_path) as pdf:
+            inventory = _system_embeddable_fonts()
+            form_fonts = _acroform_appearance_fonts(pdf)
+            fonts: List[Dict[str, Any]] = []
+            for resource, font in _iter_pdf_fonts(pdf):
+                descriptor = _font_descriptor(font)
+                if descriptor is not None and any(
+                    key in descriptor
+                    for key in ("/FontFile", "/FontFile2", "/FontFile3")
+                ):
+                    continue
+                font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip(
+                    "/"
+                )
+                canonical = _canonical_font_name(font_name)
+                exact = find_exact_system_font(font, inventory)
+                candidates = find_metric_compatible_fonts(font, inventory)
+                _expected, reference = _expected_font_widths(font)
+                fonts.append(
+                    {
+                        "resource": resource,
+                        "font": font_name,
+                        "subtype": _safe_pdf_string(font.get("/Subtype", "")).lstrip(
+                            "/"
+                        ),
+                        "standard14": is_standard_14(canonical),
+                        "widthReference": reference,
+                        "formFieldCount": form_fonts.get(
+                            _pdf_object_identity(font, resource), 0
+                        ),
+                        "exactMatch": (
+                            {
+                                "path": exact["path"],
+                                "postscript_name": exact.get("postscript_name") or "",
+                            }
+                            if exact
+                            else None
+                        ),
+                        "candidates": candidates,
+                    }
+                )
+        return {
+            "action": "substitution_options",
+            "fonts": fonts,
+            "review_required": bool(fonts),
+        }
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Substitution lookup failed: {exc}") from exc
+
+
+def substitute_fonts(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    decisions: Iterable[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Replace chosen fonts with metric-compatible embedded substitutes."""
+    if input_pdf_path != output_pdf_path:
+        shutil.copyfile(input_pdf_path, output_pdf_path)
+    decision_list = list(decisions)
+    if not decision_list or len(decision_list) > 100:
+        raise PDFAccessibilityError("Provide between 1 and 100 font decisions.")
+    try:
+        import pikepdf
+
+        substituted: List[Dict[str, Any]] = []
+        with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
+            inventory = {
+                record["path"]: record for record in _system_embeddable_fonts()
+            }
+            fonts_by_resource = {
+                resource: font for resource, font in _iter_pdf_fonts(pdf)
+            }
+            for decision in decision_list:
+                resource = str(decision.get("resource") or "")
+                path = str(decision.get("path") or "")
+                font = fonts_by_resource.get(resource)
+                if font is None:
+                    raise PDFAccessibilityError(
+                        f"Font resource {resource or '(missing)'} is not in this PDF."
+                    )
+                record = inventory.get(path)
+                if record is None:
+                    raise PDFAccessibilityError(
+                        "Choose a substitute from the offered list."
+                    )
+                if not record.get("embeddable"):
+                    raise PDFAccessibilityError(
+                        f"{record.get('postscript_name') or path} may not be embedded."
+                    )
+                score = _font_width_match_score(font, path)
+                if score is None or score > SUBSTITUTION_WIDTH_TOLERANCE:
+                    raise PDFAccessibilityError(
+                        "That substitute's widths do not match this font's metrics."
+                    )
+                font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip(
+                    "/"
+                )
+                if not _substitute_font_program(pdf, font, font_name, record):
+                    raise PDFAccessibilityError(
+                        f"{record.get('postscript_name') or path} could not be embedded."
+                    )
+                substituted.append(
+                    {
+                        "resource": resource,
+                        "replaced": font_name,
+                        "substitute": record.get("postscript_name") or path,
+                        "source": path,
+                        "width_delta": round(float(score), 3),
+                    }
+                )
+            pdf.save(output_pdf_path)
+        return {
+            "action": "substitute_fonts",
+            "fonts_substituted": substituted,
+            "review_required": bool(substituted),
+            "warning": (
+                "A different typeface is now embedded. Widths match, so text keeps "
+                "its position and line breaks, but letterforms differ. Compare the "
+                "result visually and validate with veraPDF."
+            ),
+        }
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Font substitution failed: {exc}") from exc
 
 
 def _extract_annotation_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[int]]:

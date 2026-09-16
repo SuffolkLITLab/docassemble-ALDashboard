@@ -1812,13 +1812,15 @@ function renderAccessibilityReport() {
         '<div class="d-flex justify-content-between gap-2"><span class="small fw-semibold">' +
         escapeHtml(String(issue.title || issue.id || "Finding")) +
         '</span><span class="badge ' +
-        (draft && !blocked
-          ? "text-bg-info"
-          : issue.status === "pass"
-            ? "text-bg-success"
-            : issue.severity === "warning"
-              ? "text-bg-warning"
-              : "text-bg-danger") +
+        (blocked
+          ? "text-bg-secondary"
+          : draft
+            ? "text-bg-info"
+            : issue.status === "pass"
+              ? "text-bg-success"
+              : issue.severity === "warning"
+                ? "text-bg-warning"
+                : "text-bg-danger") +
         '">' +
         escapeHtml(badge) +
         "</span></div>" +
@@ -1846,7 +1848,7 @@ function renderAccessibilityReport() {
               : "No editable target was returned") +
             "</div>"
           : "") +
-        (draft
+        (draft && !blocked
           ? '<div class="small mt-1">Provisional: ' +
             escapeHtml(draft.detail) +
             "</div>"

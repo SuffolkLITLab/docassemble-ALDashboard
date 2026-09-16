@@ -92,6 +92,7 @@ from .pdf_export_utils import (
     build_pdf_export_fields_per_page,
     deduplicate_fields_data_with_renames,
 )
+from .pdf_accessibility import PDFAccessibilityError
 
 __all__ = []
 
@@ -3270,7 +3271,7 @@ def pdf_labeler_accessibility_inspect() -> Response:
     log(f"ALDashboard: accessibility-inspect request {request_id}", "info")
 
     try:
-        from .pdf_accessibility import PDFAccessibilityError, inspect_pdf_accessibility
+        from .pdf_accessibility import inspect_pdf_accessibility
 
         _filename, content, _post_data = _read_pdf_labeler_file_request()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
@@ -3340,12 +3341,10 @@ def pdf_labeler_accessibility_remediate() -> Response:
     output_path = ""
     try:
         from .pdf_accessibility import (
-            PDFAccessibilityError,
             apply_pdf_accessibility_settings,
             apply_manual_structure_repairs,
             create_draft_structure_tree,
             embed_fonts_and_rebuild_unicode,
-            inspect_pdf_accessibility,
         )
 
         filename, content, post_data = _read_pdf_labeler_file_request()
@@ -3432,7 +3431,6 @@ def pdf_labeler_accessibility_remediate() -> Response:
 
         with open(output_path, "rb") as output_file:
             output_bytes = output_file.read()
-        inspection = inspect_pdf_accessibility(output_path)
         return jsonify(
             {
                 "success": True,
@@ -3441,7 +3439,6 @@ def pdf_labeler_accessibility_remediate() -> Response:
                     "filename": filename.replace(".pdf", f"-{action}.pdf"),
                     "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
                     "remediation_result": result,
-                    "inspection": inspection,
                 },
             }
         )

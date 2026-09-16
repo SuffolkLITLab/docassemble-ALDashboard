@@ -46,6 +46,9 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertIn("not an instruction", system_prompt)
         self.assertIn("Do not begin with Enter", system_prompt)
         self.assertIn("sentence fragment", system_prompt)
+        self.assertGreaterEqual(
+            completion.call_args.kwargs["max_output_tokens"], 8192
+        )
 
     def test_direct_font_objects_use_resource_fallback_identity(self):
         import pikepdf
@@ -190,6 +193,137 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             os.remove(source_path)
             os.remove(output_path)
 
+    def test_draft_structure_matches_multiline_heading_in_one_text_block(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/F1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/Type1"),
+                                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT /F1 18 Tf 72 700 Td (Multi) Tj T* "
+                b"(line heading) Tj /F1 12 Tf T* (Body text) Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+
+            candidates = [
+                {
+                    "candidateId": "multiline",
+                    "pageIndex": 0,
+                    "text": "Multi line heading",
+                    "suggestedTag": "H2",
+                }
+            ]
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility.suggest_heading_candidates",
+                return_value=candidates,
+            ):
+                result = create_draft_structure_tree(
+                    source_path,
+                    output_path,
+                    heading_decisions=[
+                        {
+                            "candidateId": "multiline",
+                            "status": "approved",
+                            "tag": "H2",
+                        }
+                    ],
+                )
+
+            self.assertEqual(result["headings_drafted"], 1)
+            with pikepdf.open(output_path) as tagged:
+                part = tagged.Root.StructTreeRoot.K.K[0]
+                self.assertEqual([str(child.S) for child in part.K], ["/H2", "/P"])
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_draft_structure_keeps_artifact_text_out_of_tag_tree(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/F1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/Type1"),
+                                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"/Artifact BMC BT /F1 10 Tf 72 750 Td (Repeated header) Tj ET EMC "
+                b"BT /F1 12 Tf 72 700 Td (Body text) Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+
+            candidates = [
+                {
+                    "candidateId": "header",
+                    "pageIndex": 0,
+                    "text": "Repeated header",
+                    "suggestedTag": "H1",
+                }
+            ]
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility.suggest_heading_candidates",
+                return_value=candidates,
+            ):
+                result = create_draft_structure_tree(
+                    source_path,
+                    output_path,
+                    heading_decisions=[
+                        {
+                            "candidateId": "header",
+                            "status": "approved",
+                            "tag": "H1",
+                        }
+                    ],
+                )
+
+            self.assertEqual(result["headings_drafted"], 0)
+            self.assertEqual(result["text_blocks_tagged"], 1)
+            with pikepdf.open(output_path) as tagged:
+                part = tagged.Root.StructTreeRoot.K.K[0]
+                self.assertEqual([str(child.S) for child in part.K], ["/P"])
+                content = bytes(tagged.pages[0].Contents.read_bytes())
+                self.assertIn(b"/Artifact BMC", content)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
     def test_field_order_updates_acroform_annotations_and_form_tags(self):
         import pikepdf
 
@@ -216,7 +350,16 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     )
                 )
                 fields.append(field)
-            page.obj["/Annots"] = pikepdf.Array(fields)
+            link = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Link"),
+                        "/Rect": pikepdf.Array([110, 0, 150, 20]),
+                    }
+                )
+            )
+            page.obj["/Annots"] = pikepdf.Array([fields[0], link, fields[1]])
             pdf.Root["/AcroForm"] = pikepdf.Dictionary(
                 {"/Fields": pikepdf.Array(fields)}
             )
@@ -233,14 +376,22 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             )
 
             self.assertEqual(result["structure_order_updates"], 2)
+            self.assertEqual(result["tab_order_updates"], 0)
             with pikepdf.open(tagged_path) as reordered:
                 self.assertEqual(
                     [str(field["/T"]) for field in reordered.Root.AcroForm.Fields],
                     ["second", "first"],
                 )
                 self.assertEqual(
-                    [str(field["/T"]) for field in reordered.pages[0].Annots],
-                    ["second", "first"],
+                    [
+                        (
+                            str(annotation["/T"])
+                            if "/T" in annotation
+                            else str(annotation["/Subtype"])
+                        )
+                        for annotation in reordered.pages[0].Annots
+                    ],
+                    ["second", "/Link", "first"],
                 )
                 part = reordered.Root.StructTreeRoot.K.K[0]
                 form_names = [

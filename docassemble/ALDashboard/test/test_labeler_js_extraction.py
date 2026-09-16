@@ -119,6 +119,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def setUp(self):
         self.html = _read_package_file("data", "templates", "pdf_labeler.html")
         self.js = _read_package_file("data", "static", "pdf_labeler.js")
+        self.api = _read_package_file("api_labelers.py")
 
     # -- HTML template checks ------------------------------------------------
 
@@ -316,6 +317,22 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("The table cell control is no longer available", self.js)
         self.assertIn("The table header control is no longer available", self.js)
         self.assertIn("const statusRank", self.js)
+
+    def test_accessibility_tooltips_keep_neighbor_label_text(self):
+        self.assertIn("allowNeighborFieldText", self.js)
+        self.assertIn("{ allowNeighborFieldText: true }", self.js)
+
+    def test_accessibility_remediation_avoids_duplicate_inspection(self):
+        self.assertIn(
+            "from .pdf_accessibility import PDFAccessibilityError", self.api
+        )
+        remediation = self.api[
+            self.api.index("def pdf_labeler_accessibility_remediate") : self.api.index(
+                'f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-tooltips"'
+            )
+        ]
+        self.assertNotIn("inspect_pdf_accessibility", remediation)
+        self.assertNotIn('"inspection": inspection', remediation)
 
     def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
         self.assertIn("data.data.menu_items", self.js)

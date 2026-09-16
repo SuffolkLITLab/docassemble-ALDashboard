@@ -123,7 +123,7 @@ def draft_field_tooltips_with_ai(
         ],
         json_mode=True,
         temperature=0,
-        max_output_tokens=min(4000, max(600, len(records) * 60)),
+        max_output_tokens=min(32768, max(8192, len(records) * 96)),
     )
     if isinstance(response, str):
         response = json.loads(response)
@@ -1781,8 +1781,14 @@ def apply_pdf_accessibility_settings(
                         if not annots:
                             continue
                         refs = list(cast(Iterable[Any], annots))
+                        widget_slots = [
+                            index
+                            for index, ref in enumerate(refs)
+                            if _safe_pdf_string(ref.get("/Subtype", "")) == "/Widget"
+                        ]
+                        widgets = [refs[index] for index in widget_slots]
                         original_positions = {
-                            id(ref): index for index, ref in enumerate(refs)
+                            id(ref): index for index, ref in enumerate(widgets)
                         }
 
                         def annotation_sort_key(ref: Any) -> Tuple[int, int]:
@@ -1797,15 +1803,21 @@ def apply_pdf_accessibility_settings(
                                 original_positions[id(ref)],
                             )
 
-                        page["/Annots"] = pikepdf.Array(
-                            sorted(refs, key=annotation_sort_key)
-                        )
+                        sorted_widgets = sorted(widgets, key=annotation_sort_key)
+                        for slot, widget in zip(widget_slots, sorted_widgets):
+                            refs[slot] = widget
+                        if any(
+                            before is not after
+                            for before, after in zip(widgets, sorted_widgets)
+                        ):
+                            page["/Annots"] = pikepdf.Array(refs)
                         if (
                             set_structure_tab_order
                             and pdf.Root.get("/StructTreeRoot") is not None
+                            and _safe_pdf_string(page.get("/Tabs", "")) != "/S"
                         ):
                             page["/Tabs"] = pikepdf.Name("/S")
-                        tab_order_updates += 1
+                            tab_order_updates += 1
                     if ordered:
                         structure_order_updates = _reorder_structure_form_elements(
                             pdf.Root, ordered
@@ -1948,10 +1960,39 @@ def create_draft_structure_tree(
                 rewritten: List[Any] = []
                 text_block: List[Any] = []
                 inside_text = False
+                text_block_is_artifact = False
+                artifact_stack: List[bool] = []
+
+                def starts_artifact(instruction: Any) -> bool:
+                    if str(instruction.operator) not in {"BMC", "BDC"}:
+                        return False
+                    operands = list(instruction.operands)
+                    return bool(
+                        operands
+                        and _safe_pdf_string(operands[0]).lstrip("/") == "Artifact"
+                    )
+
+                def shown_text(instruction: Any) -> str:
+                    operator = str(instruction.operator)
+                    operands = list(instruction.operands)
+                    if operator in {"Tj", "'", '"'} and operands:
+                        return str(operands[-1])
+                    if operator == "TJ" and operands:
+                        try:
+                            return "".join(
+                                str(item)
+                                for item in operands[0]
+                                if isinstance(item, pikepdf.String)
+                            )
+                        except (TypeError, ValueError):
+                            return ""
+                    return ""
+
                 for instruction in instructions:
                     operator = str(instruction.operator)
                     if operator == "BT" and not inside_text:
                         inside_text = True
+                        text_block_is_artifact = any(artifact_stack)
                         text_block = [instruction]
                         continue
                     if inside_text:
@@ -1959,67 +2000,134 @@ def create_draft_structure_tree(
                         if operator != "ET":
                             continue
 
-                        block_text_parts: List[str] = []
+                        if text_block_is_artifact or any(
+                            starts_artifact(item) for item in text_block
+                        ):
+                            rewritten.extend(text_block)
+                        else:
+                            raw_groups: List[List[int]] = []
+                            current_group: List[int] = []
+                            for block_index, block_instruction in enumerate(
+                                text_block[1:-1], start=1
+                            ):
+                                block_operator = str(block_instruction.operator)
+                                if block_operator in {"Td", "TD", "Tm", "T*"}:
+                                    if current_group:
+                                        raw_groups.append(current_group)
+                                        current_group = []
+                                if block_operator in {"'", '"'} and current_group:
+                                    raw_groups.append(current_group)
+                                    current_group = []
+                                if block_operator in {"Tj", "TJ", "'", '"'}:
+                                    if shown_text(block_instruction).strip():
+                                        current_group.append(block_index)
+                            if current_group:
+                                raw_groups.append(current_group)
+
+                            groups: List[Tuple[List[int], str]] = []
+                            group_index = 0
+                            page_headings = headings_by_page.get(page_index, {})
+                            while group_index < len(raw_groups):
+                                matched: Optional[Tuple[List[int], str]] = None
+                                max_span = min(4, len(raw_groups) - group_index)
+                                for span in range(max_span, 0, -1):
+                                    selected = raw_groups[
+                                        group_index : group_index + span
+                                    ]
+                                    spaced_text = " ".join(
+                                        " ".join(
+                                            shown_text(text_block[index])
+                                            for index in group
+                                        )
+                                        for group in selected
+                                    )
+                                    compact_text = " ".join(
+                                        "".join(
+                                            shown_text(text_block[index])
+                                            for index in group
+                                        )
+                                        for group in selected
+                                    )
+                                    tag_name = page_headings.get(
+                                        _normalized_running_text(spaced_text)
+                                    ) or page_headings.get(
+                                        _normalized_running_text(compact_text)
+                                    )
+                                    if tag_name:
+                                        matched = (
+                                            [
+                                                index
+                                                for group in selected
+                                                for index in group
+                                            ],
+                                            tag_name,
+                                        )
+                                        group_index += span
+                                        break
+                                if matched is None:
+                                    matched = (raw_groups[group_index], "P")
+                                    group_index += 1
+                                groups.append(matched)
+
+                            starts: Dict[int, Tuple[int, str]] = {}
+                            ends: Dict[int, int] = {}
+                            for group, tag_name in groups:
+                                mcid = len(mcid_elements)
+                                starts[group[0]] = (mcid, tag_name)
+                                ends[group[-1]] = mcid
+                                element = pdf.make_indirect(
+                                    pikepdf.Dictionary(
+                                        {
+                                            "/Type": pikepdf.Name("/StructElem"),
+                                            "/S": pikepdf.Name(f"/{tag_name}"),
+                                            "/P": page_part,
+                                            "/Pg": page.obj,
+                                            "/K": mcid,
+                                        }
+                                    )
+                                )
+                                page_children.append(element)
+                                mcid_elements.append(element)
+                                text_block_count += 1
+                                if tag_name.startswith("H"):
+                                    heading_count += 1
+
+                            for block_index, block_instruction in enumerate(text_block):
+                                if block_index in starts:
+                                    mcid, tag_name = starts[block_index]
+                                    rewritten.append(
+                                        pikepdf.ContentStreamInstruction(
+                                            [
+                                                pikepdf.Name(f"/{tag_name}"),
+                                                pikepdf.Dictionary({"/MCID": mcid}),
+                                            ],
+                                            pikepdf.Operator("BDC"),
+                                        )
+                                    )
+                                rewritten.append(block_instruction)
+                                if block_index in ends:
+                                    rewritten.append(
+                                        pikepdf.ContentStreamInstruction(
+                                            [], pikepdf.Operator("EMC")
+                                        )
+                                    )
                         for block_instruction in text_block:
                             block_operator = str(block_instruction.operator)
-                            operands = list(block_instruction.operands)
-                            if block_operator in {"Tj", "'", '"'} and operands:
-                                block_text_parts.append(str(operands[-1]))
-                            elif block_operator == "TJ" and operands:
-                                try:
-                                    block_text_parts.extend(
-                                        str(item)
-                                        for item in operands[0]
-                                        if isinstance(item, pikepdf.String)
-                                    )
-                                except (TypeError, ValueError):
-                                    pass
-                        block_text = re.sub(
-                            r"\s+", " ", "".join(block_text_parts)
-                        ).strip()
-                        if block_text:
-                            mcid = len(mcid_elements)
-                            normalized = _normalized_running_text(block_text)
-                            tag_name = headings_by_page.get(page_index, {}).get(
-                                normalized, "P"
-                            )
-                            rewritten.append(
-                                pikepdf.ContentStreamInstruction(
-                                    [
-                                        pikepdf.Name(f"/{tag_name}"),
-                                        pikepdf.Dictionary({"/MCID": mcid}),
-                                    ],
-                                    pikepdf.Operator("BDC"),
+                            if block_operator in {"BMC", "BDC"}:
+                                artifact_stack.append(
+                                    starts_artifact(block_instruction)
                                 )
-                            )
-                            rewritten.extend(text_block)
-                            rewritten.append(
-                                pikepdf.ContentStreamInstruction(
-                                    [], pikepdf.Operator("EMC")
-                                )
-                            )
-                            element = pdf.make_indirect(
-                                pikepdf.Dictionary(
-                                    {
-                                        "/Type": pikepdf.Name("/StructElem"),
-                                        "/S": pikepdf.Name(f"/{tag_name}"),
-                                        "/P": page_part,
-                                        "/Pg": page.obj,
-                                        "/K": mcid,
-                                    }
-                                )
-                            )
-                            page_children.append(element)
-                            mcid_elements.append(element)
-                            text_block_count += 1
-                            if tag_name.startswith("H"):
-                                heading_count += 1
-                        else:
-                            rewritten.extend(text_block)
+                            elif block_operator == "EMC" and artifact_stack:
+                                artifact_stack.pop()
                         inside_text = False
+                        text_block_is_artifact = False
                         text_block = []
                         continue
                     rewritten.append(instruction)
+                    if operator in {"BMC", "BDC"}:
+                        artifact_stack.append(starts_artifact(instruction))
+                    elif operator == "EMC" and artifact_stack:
+                        artifact_stack.pop()
                 if text_block:
                     rewritten.extend(text_block)
                 if rewritten:

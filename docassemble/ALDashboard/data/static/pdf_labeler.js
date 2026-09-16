@@ -849,7 +849,14 @@ function getNearbyFieldNameBases(pageIndex, rect, excludeFieldId) {
 // Contract: return up to 3 normalized field-name suggestions for a candidate
 // rect on a page, ordered by likely usefulness and already filtered against
 // immediate neighboring field names.
-function buildFieldNameSuggestions(pageIndex, rect, type, excludeFieldId) {
+function buildFieldNameSuggestions(
+  pageIndex,
+  rect,
+  type,
+  excludeFieldId,
+  options,
+) {
+  const settings = options || {};
   const textBoxes = Array.isArray(state.pageTextBoxes[pageIndex])
     ? state.pageTextBoxes[pageIndex]
     : [];
@@ -952,7 +959,7 @@ function buildFieldNameSuggestions(pageIndex, rect, type, excludeFieldId) {
     if (
       !normalized ||
       seenNames.has(normalized) ||
-      nearbyNames.has(normalized)
+      (!settings.allowNeighborFieldText && nearbyNames.has(normalized))
     ) {
       return;
     }
@@ -7708,7 +7715,13 @@ repairPromptCancelBtn.addEventListener("click", function () {
 });
 
 function nearbyTextForField(field) {
-  return buildFieldNameSuggestions(field.pageIndex, field, field.type, field.id)
+  return buildFieldNameSuggestions(
+    field.pageIndex,
+    field,
+    field.type,
+    field.id,
+    { allowNeighborFieldText: true },
+  )
     .map(function (suggestion) {
       return String(suggestion.text || "").trim();
     })

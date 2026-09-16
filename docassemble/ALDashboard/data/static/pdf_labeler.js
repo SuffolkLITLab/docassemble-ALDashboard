@@ -206,9 +206,26 @@ const state = {
       author: "",
       subject: "",
     },
+    readingDirection: "ltr",
     images: [],
     imageMode: false,
     tagStructure: null,
+    structureEditor: { tables: [], figures: [], annotations: [] },
+    report: null,
+    headingCandidates: [],
+    headingDecisions: {},
+    headingReviewSavedSignature: "",
+    headingReviewDirty: true,
+    activeIssueId: "",
+    fontRemediation: null,
+    glyphReview: null,
+    substituteOptions: null,
+    substituteChoices: {},
+    glyphDecisions: {},
+    glyphRendered: {},
+    draftRemediations: {},
+    aiReview: { findings: [], lastSignature: "", running: false },
+    marked: false,
     inspected: false,
   },
 };
@@ -264,6 +281,7 @@ let fieldsListProgrammaticScroll = false;
 let pageManagerState = null;
 let pageManagerDragPageId = null;
 let a11yDragFieldId = null;
+let structurePreviewGeneration = 0;
 
 const fileInput = document.getElementById("file-input");
 const pdfContainer = document.getElementById("pdf-container");
@@ -336,14 +354,124 @@ const a11yEnableInput = document.getElementById("a11y-enable");
 const a11yAutofillTooltipsBtn = document.getElementById(
   "a11y-autofill-tooltips",
 );
+// A docassemble package update can briefly serve a new static module beside an
+// older cached template. Workshop controls added after the original dialog are
+// therefore optional at module-load time. Detached stand-ins keep the existing
+// editor usable until the page is refreshed, without pretending the missing UI
+// is visible or actionable.
+function optionalWorkshopElement(id, tagName) {
+  return (
+    document.getElementById(id) || document.createElement(tagName || "div")
+  );
+}
 const a11yFieldList = document.getElementById("a11y-field-list");
+const a11yOrderList = optionalWorkshopElement("a11y-order-list");
 const a11yMetaLanguage = document.getElementById("a11y-meta-language");
 const a11yMetaTitle = document.getElementById("a11y-meta-title");
 const a11yMetaAuthor = document.getElementById("a11y-meta-author");
 const a11yMetaSubject = document.getElementById("a11y-meta-subject");
 const a11yImageModeInput = document.getElementById("a11y-image-mode");
 const a11yImageList = document.getElementById("a11y-image-list");
+const a11yFigureTagList = optionalWorkshopElement("a11y-figure-tag-list");
+const a11yFigureFocus = optionalWorkshopElement("a11y-figure-focus");
 const a11yTagStructure = document.getElementById("a11y-tag-structure");
+const a11ySummary = optionalWorkshopElement("a11y-summary", "span");
+const a11yIssueList = optionalWorkshopElement("a11y-issue-list");
+const a11yRefreshReportBtn = optionalWorkshopElement(
+  "a11y-refresh-report",
+  "button",
+);
+const a11yAutoFixBtn = optionalWorkshopElement("a11y-auto-fix", "button");
+const a11yAutoFixStatus = optionalWorkshopElement("a11y-auto-fix-status");
+const a11yAiReviewBtn = optionalWorkshopElement("a11y-ai-review", "button");
+const a11yAiReviewApplyAllBtn = optionalWorkshopElement(
+  "a11y-ai-review-apply-all",
+  "button",
+);
+const a11yAiReviewStatus = optionalWorkshopElement("a11y-ai-review-status");
+const a11yAiReviewFindings = optionalWorkshopElement("a11y-ai-review-findings");
+const a11yExportBtn = optionalWorkshopElement("a11y-export", "button");
+const a11yCertifyAccessibleInput = optionalWorkshopElement(
+  "a11y-certify-accessible",
+  "input",
+);
+const a11yCertifyStatus = optionalWorkshopElement("a11y-certify-status");
+const a11yStatusLegend = optionalWorkshopElement("a11y-status-legend");
+const a11yApplyMetadataBtn = optionalWorkshopElement(
+  "a11y-apply-metadata",
+  "button",
+);
+const a11yDraftStructureBtn = optionalWorkshopElement(
+  "a11y-draft-structure",
+  "button",
+);
+const a11yToggleMarkedBtn = optionalWorkshopElement(
+  "a11y-toggle-marked",
+  "button",
+);
+const a11yEmbedFontsBtn = optionalWorkshopElement("a11y-embed-fonts", "button");
+const a11yAddUnicodeMapsBtn = optionalWorkshopElement(
+  "a11y-add-unicode-maps",
+  "button",
+);
+const a11ySubstituteSummary = optionalWorkshopElement(
+  "a11y-substitute-summary",
+);
+const a11ySubstituteList = optionalWorkshopElement("a11y-substitute-list");
+const a11yLoadSubstitutesBtn = optionalWorkshopElement(
+  "a11y-load-substitutes",
+  "button",
+);
+const a11yApplySubstitutesBtn = optionalWorkshopElement(
+  "a11y-apply-substitutes",
+  "button",
+);
+const a11yGlyphReviewSummary = optionalWorkshopElement(
+  "a11y-glyph-review-summary",
+);
+const a11yGlyphReviewList = optionalWorkshopElement("a11y-glyph-review-list");
+const a11yLoadGlyphReviewBtn = optionalWorkshopElement(
+  "a11y-load-glyph-review",
+  "button",
+);
+const a11yApplyGlyphReviewBtn = optionalWorkshopElement(
+  "a11y-apply-glyph-review",
+  "button",
+);
+const a11yFontEmbeddingSummary = optionalWorkshopElement(
+  "a11y-font-embedding-summary",
+);
+const a11yFontEmbeddingList = optionalWorkshopElement(
+  "a11y-font-embedding-list",
+);
+const a11yFontUnicodeSummary = optionalWorkshopElement(
+  "a11y-font-unicode-summary",
+);
+const a11yFontUnicodeList = optionalWorkshopElement("a11y-font-unicode-list");
+const a11yFontResult = optionalWorkshopElement("a11y-font-result");
+const a11yAiTooltipsBtn = optionalWorkshopElement("a11y-ai-tooltips", "button");
+const a11yAiHeadingsBtn = optionalWorkshopElement("a11y-ai-headings", "button");
+const a11yHeadingsApproveAllBtn = optionalWorkshopElement(
+  "a11y-headings-approve-all",
+  "button",
+);
+const a11yHeadingsRejectAllBtn = optionalWorkshopElement(
+  "a11y-headings-reject-all",
+  "button",
+);
+const a11ySaveHeadingReviewBtn = optionalWorkshopElement(
+  "a11y-save-heading-review",
+  "button",
+);
+const a11yHeadingReviewStatus = optionalWorkshopElement(
+  "a11y-heading-review-status",
+  "span",
+);
+const a11yHeadingList = optionalWorkshopElement("a11y-heading-list");
+const a11yStructurePreview = optionalWorkshopElement("a11y-structure-preview");
+const a11yAnnotationList = optionalWorkshopElement("a11y-annotation-list");
+const a11yTableList = optionalWorkshopElement("a11y-table-list");
+const a11yStructureFocus = optionalWorkshopElement("a11y-structure-focus");
 const utilitiesModal = document.getElementById("utilities-modal");
 const utilitiesCloseBtn = document.getElementById("utilities-close");
 const fieldRenameSummaryModal = document.getElementById(
@@ -768,7 +896,14 @@ function getNearbyFieldNameBases(pageIndex, rect, excludeFieldId) {
 // Contract: return up to 3 normalized field-name suggestions for a candidate
 // rect on a page, ordered by likely usefulness and already filtered against
 // immediate neighboring field names.
-function buildFieldNameSuggestions(pageIndex, rect, type, excludeFieldId) {
+function buildFieldNameSuggestions(
+  pageIndex,
+  rect,
+  type,
+  excludeFieldId,
+  options,
+) {
+  const settings = options || {};
   const textBoxes = Array.isArray(state.pageTextBoxes[pageIndex])
     ? state.pageTextBoxes[pageIndex]
     : [];
@@ -871,7 +1006,7 @@ function buildFieldNameSuggestions(pageIndex, rect, type, excludeFieldId) {
     if (
       !normalized ||
       seenNames.has(normalized) ||
-      nearbyNames.has(normalized)
+      (!settings.allowNeighborFieldText && nearbyNames.has(normalized))
     ) {
       return;
     }
@@ -1274,7 +1409,34 @@ function ensureFieldAccessibilityDefaults(field) {
   if (!field) return;
   if (!String(field.tooltip || "").trim()) {
     field.tooltip = defaultTooltipFromFieldName(field.name);
+    field.tooltipSource = "field-name";
+  } else if (!field.tooltipSource) {
+    field.tooltipSource = "unknown";
   }
+}
+
+function tooltipSourceLabel(source) {
+  const labels = {
+    pdf: "Existing PDF /TU",
+    "nearby-text": "Nearby text draft",
+    "field-name": "Field-name fallback",
+    ai: "Optional AI draft",
+    manual: "Manual edit",
+    unknown: "Imported value",
+  };
+  return labels[String(source || "unknown")] || labels.unknown;
+}
+
+function markAccessibilityDraft(remediation, detail) {
+  state.accessibility.draftRemediations[remediation] = {
+    detail: String(detail || "Review required"),
+  };
+  renderAccessibilityReport();
+}
+
+function clearAccessibilityDraft(remediation) {
+  delete state.accessibility.draftRemediations[remediation];
+  renderAccessibilityReport();
 }
 
 function refreshAccessibilityFromFields() {
@@ -1291,34 +1453,13 @@ function renderAccessibilityFieldList() {
     return;
   }
   const fragment = document.createDocumentFragment();
-  state.accessibility.fieldOrder.forEach(function (fieldId, index) {
-    const field = state.fields.find(function (candidate) {
-      return candidate.id === fieldId;
-    });
-    if (!field) return;
+  state.fields.forEach(function (field) {
     const row = document.createElement("div");
     row.className = "a11y-field-row border rounded p-2";
     row.dataset.fieldId = field.id;
     row.innerHTML =
-      '<div class="d-flex align-items-center justify-content-between gap-2 mb-2">' +
-      '<div class="d-flex align-items-center gap-1">' +
-      '<span class="a11y-drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span>' +
-      '<div class="small fw-semibold">' +
+      '<div class="small fw-semibold mb-2">' +
       escapeHtml(field.name) +
-      "</div>" +
-      "</div>" +
-      '<div class="btn-group btn-group-sm">' +
-      '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' +
-      escapeHtml(field.id) +
-      '"' +
-      (index === 0 ? " disabled" : "") +
-      ">Up</button>" +
-      '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' +
-      escapeHtml(field.id) +
-      '"' +
-      (index === state.accessibility.fieldOrder.length - 1 ? " disabled" : "") +
-      ">Down</button>" +
-      "</div>" +
       "</div>" +
       '<label class="form-label small text-muted mb-1" for="a11y-tooltip-' +
       escapeHtml(field.id) +
@@ -1329,10 +1470,50 @@ function renderAccessibilityFieldList() {
       escapeHtml(field.id) +
       '" value="' +
       escapeHtml(String(field.tooltip || "")) +
-      '">';
+      '"><div class="small text-muted mt-1">Source: ' +
+      escapeHtml(tooltipSourceLabel(field.tooltipSource)) +
+      "</div>";
     fragment.appendChild(row);
   });
   a11yFieldList.appendChild(fragment);
+}
+
+function renderAccessibilityOrderList() {
+  if (!a11yOrderList) return;
+  a11yOrderList.innerHTML = "";
+  if (!state.accessibility.fieldOrder.length) {
+    a11yOrderList.innerHTML =
+      '<div class="small text-muted">No form fields are available to order.</div>';
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  state.accessibility.fieldOrder.forEach(function (fieldId, index) {
+    const field = state.fields.find(function (candidate) {
+      return candidate.id === fieldId;
+    });
+    if (!field) return;
+    const row = document.createElement("div");
+    row.className = "a11y-field-row border rounded p-2";
+    row.dataset.fieldId = field.id;
+    row.innerHTML =
+      '<div class="d-flex align-items-center justify-content-between gap-2"><div class="d-flex align-items-center gap-2"><span class="badge text-bg-secondary">' +
+      String(index + 1) +
+      '</span><span class="a11y-drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span><span class="small fw-semibold">' +
+      escapeHtml(field.name) +
+      '</span><span class="small text-muted">Page ' +
+      String(Number(field.pageIndex || 0) + 1) +
+      '</span></div><div class="btn-group btn-group-sm"><button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' +
+      escapeHtml(field.id) +
+      '"' +
+      (index === 0 ? " disabled" : "") +
+      '>Up</button><button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' +
+      escapeHtml(field.id) +
+      '"' +
+      (index === state.accessibility.fieldOrder.length - 1 ? " disabled" : "") +
+      ">Down</button></div></div>";
+    fragment.appendChild(row);
+  });
+  a11yOrderList.appendChild(fragment);
 }
 
 function renderAccessibilityImages() {
@@ -1369,6 +1550,240 @@ function renderAccessibilityImages() {
   a11yImageList.appendChild(fragment);
 }
 
+function structureIssueIds(record) {
+  return Array.isArray(record && record.issueIds)
+    ? record.issueIds.map(String)
+    : [];
+}
+
+function structureTargetAttributes(record) {
+  const issueIds = structureIssueIds(record);
+  const active = String(state.accessibility.activeIssueId || "");
+  return (
+    ' data-issue-ids="' +
+    escapeHtml(issueIds.join(" ")) +
+    '" class="border rounded p-2 a11y-structure-target' +
+    (active && issueIds.includes(active) ? " is-focused" : "") +
+    '"'
+  );
+}
+
+function renderStructureFocus(container, issueId, targetCount) {
+  if (!container) return;
+  if (!issueId) {
+    container.className = "hidden alert alert-info small py-2";
+    container.textContent = "";
+    return;
+  }
+  container.className =
+    "alert " + (targetCount ? "alert-info" : "alert-warning") + " small py-2";
+  container.textContent = targetCount
+    ? "Showing " +
+      String(targetCount) +
+      " editable target" +
+      (targetCount === 1 ? "" : "s") +
+      " for the selected finding. Highlighted cards contain the relevant controls."
+    : "The report did not return an editable target for this finding. Re-run the report; if it remains unresolved, this PDF needs manual structure-tree repair outside this draft editor.";
+}
+
+function renderStructureEditor() {
+  const editor = /** @type {any} */ (state.accessibility.structureEditor || {});
+  const figures = Array.isArray(editor.figures) ? editor.figures : [];
+  if (a11yFigureTagList) {
+    a11yFigureTagList.innerHTML = figures.length
+      ? figures
+          .map(function (figure, index) {
+            const pageLabel = Number.isInteger(figure.pageIndex)
+              ? " · Page " + String(figure.pageIndex + 1)
+              : "";
+            return (
+              "<div" +
+              structureTargetAttributes(figure) +
+              '><label class="form-label small fw-semibold" for="a11y-figure-alt-' +
+              index +
+              '">Figure ' +
+              (index + 1) +
+              pageLabel +
+              '</label><textarea id="a11y-figure-alt-' +
+              index +
+              '" class="form-control form-control-sm mb-2" rows="2" data-structure-value="figure-alt" data-path="' +
+              escapeHtml(figure.path) +
+              '">' +
+              escapeHtml(figure.altText || "") +
+              '</textarea><button type="button" class="btn btn-sm btn-outline-primary" data-structure-action="save-figure-alt" data-path="' +
+              escapeHtml(figure.path) +
+              '">Save Figure alternative text</button></div>'
+            );
+          })
+          .join("")
+      : '<div class="small text-muted">No Figure tags are present. Create or repair the tag tree before attaching alternative text semantically.</div>';
+  }
+
+  const tables = Array.isArray(editor.tables) ? editor.tables : [];
+  if (a11yTableList) {
+    a11yTableList.innerHTML = tables.length
+      ? tables
+          .map(function (table, tableIndex) {
+            const rows = Array.isArray(table.rows) ? table.rows : [];
+            const counts = rows.map(function (row) {
+              return Number(row.validCellCount || 0);
+            });
+            const rowMarkup = rows
+              .map(function (row, rowIndex) {
+                return (
+                  '<div class="border rounded p-2"><div class="small fw-semibold mb-2">Row ' +
+                  (rowIndex + 1) +
+                  " · " +
+                  row.validCellCount +
+                  " header/data cells</div>" +
+                  (row.cells || [])
+                    .map(function (cell, cellIndex) {
+                      const invalid = cell.role !== "TH" && cell.role !== "TD";
+                      return (
+                        '<div class="d-flex flex-wrap align-items-end gap-2 mb-2"><div><label class="form-label small mb-1" for="a11y-cell-role-' +
+                        escapeHtml(cell.path) +
+                        '">Child ' +
+                        (cellIndex + 1) +
+                        (invalid
+                          ? " (currently " + escapeHtml(cell.role) + ")"
+                          : "") +
+                        '</label><select class="form-select form-select-sm" id="a11y-cell-role-' +
+                        escapeHtml(cell.path) +
+                        '" data-structure-value="cell-role" data-path="' +
+                        escapeHtml(cell.path) +
+                        '"><option value="TH"' +
+                        (cell.role === "TH" ? " selected" : "") +
+                        '>Header cell (TH)</option><option value="TD"' +
+                        (cell.role === "TD" ? " selected" : "") +
+                        ">Data cell (TD)</option></select></div>" +
+                        '<button type="button" class="btn btn-sm btn-outline-primary" data-structure-action="save-cell-role" data-path="' +
+                        escapeHtml(cell.path) +
+                        '">Apply role</button>' +
+                        (cell.role === "TH"
+                          ? '<div><label class="form-label small mb-1" for="a11y-cell-scope-' +
+                            escapeHtml(cell.path) +
+                            '">Scope</label><select class="form-select form-select-sm" id="a11y-cell-scope-' +
+                            escapeHtml(cell.path) +
+                            '" data-structure-value="header-scope" data-path="' +
+                            escapeHtml(cell.path) +
+                            '"><option value="Column"' +
+                            (cell.scope === "Column" ? " selected" : "") +
+                            '>Column</option><option value="Row"' +
+                            (cell.scope === "Row" ? " selected" : "") +
+                            '>Row</option><option value="Both"' +
+                            (cell.scope === "Both" ? " selected" : "") +
+                            '>Both</option></select></div><button type="button" class="btn btn-sm btn-outline-primary" data-structure-action="save-header-scope" data-path="' +
+                            escapeHtml(cell.path) +
+                            '">Apply scope</button>'
+                          : "") +
+                        "</div>"
+                      );
+                    })
+                    .join("") +
+                  "</div>"
+                );
+              })
+              .join("");
+            const inconsistent = new Set(counts).size > 1;
+            return (
+              "<div" +
+              structureTargetAttributes(table) +
+              '><div class="small fw-semibold">Table ' +
+              (tableIndex + 1) +
+              "</div>" +
+              (inconsistent
+                ? '<div class="alert alert-warning small py-2 my-2">Row counts: ' +
+                  escapeHtml(counts.join(", ")) +
+                  '. <button type="button" class="btn btn-sm btn-outline-dark ms-1" data-structure-action="pad-table" data-path="' +
+                  escapeHtml(table.path) +
+                  '">Add empty TD cells to shorter rows</button></div>'
+                : '<div class="small text-success my-2">Column counts are consistent.</div>') +
+              '<div class="vstack gap-2">' +
+              rowMarkup +
+              "</div></div>"
+            );
+          })
+          .join("")
+      : '<div class="small text-muted">No Table tags are present.</div>';
+  }
+
+  const annotations = Array.isArray(editor.annotations)
+    ? editor.annotations
+    : [];
+  if (a11yAnnotationList) {
+    a11yAnnotationList.innerHTML = annotations.length
+      ? annotations
+          .map(function (annotation) {
+            const pageIndex = Number(annotation.pageIndex || 0);
+            const annotationIndex = Number(annotation.index || 0);
+            const key = pageIndex + "-" + annotationIndex;
+            return (
+              "<div" +
+              structureTargetAttributes(annotation) +
+              '><div class="fw-semibold">Page ' +
+              (pageIndex + 1) +
+              " · " +
+              escapeHtml(annotation.subtype || "Annotation") +
+              " · " +
+              (annotation.tagged
+                ? '<span class="text-success">tagged</span>'
+                : '<span class="text-danger">not represented in tag tree</span>') +
+              '</div><label class="form-label small mt-2 mb-1" for="a11y-annotation-' +
+              key +
+              '">Accessible description</label><input id="a11y-annotation-' +
+              key +
+              '" class="form-control form-control-sm" data-structure-value="annotation-contents" data-page-index="' +
+              pageIndex +
+              '" data-annotation-index="' +
+              annotationIndex +
+              '" value="' +
+              escapeHtml(annotation.contents || "") +
+              '"><div class="d-flex gap-2 mt-2"><button type="button" class="btn btn-sm btn-outline-primary" data-structure-action="save-annotation-description" data-page-index="' +
+              pageIndex +
+              '" data-annotation-index="' +
+              annotationIndex +
+              '">Save description</button>' +
+              (annotation.tagged
+                ? ""
+                : '<button type="button" class="btn btn-sm btn-outline-primary" data-structure-action="tag-annotation" data-role="' +
+                  escapeHtml(annotation.suggestedRole || "Annot") +
+                  '" data-page-index="' +
+                  pageIndex +
+                  '" data-annotation-index="' +
+                  annotationIndex +
+                  '">Add ' +
+                  escapeHtml(annotation.suggestedRole || "Annot") +
+                  " tag</button>") +
+              "</div></div>"
+            );
+          })
+          .join("")
+      : '<div class="small text-muted">No non-widget annotations were found.</div>';
+  }
+
+  const activeIssueId = String(state.accessibility.activeIssueId || "");
+  const figureTargetCount = figures.filter(function (record) {
+    return structureIssueIds(record).includes(activeIssueId);
+  }).length;
+  const structureTargetCount = tables
+    .concat(annotations)
+    .filter(function (record) {
+      return structureIssueIds(record).includes(activeIssueId);
+    }).length;
+  renderStructureFocus(
+    a11yFigureFocus,
+    activeIssueId === "figure-structure-alt" ? activeIssueId : "",
+    figureTargetCount,
+  );
+  renderStructureFocus(
+    a11yStructureFocus,
+    activeIssueId && activeIssueId !== "figure-structure-alt"
+      ? activeIssueId
+      : "",
+    structureTargetCount,
+  );
+}
+
 function renderAccessibilityTagStructure() {
   if (!a11yTagStructure) return;
   const summary = state.accessibility.tagStructure;
@@ -1394,6 +1809,1120 @@ function renderAccessibilityTagStructure() {
   a11yTagStructure.textContent = lines.join("\n");
 }
 
+function renderAccessibilityReport() {
+  const report = state.accessibility.report || {};
+  const summary = report.summary || {};
+  const issues = Array.isArray(report.issues) ? report.issues : [];
+  const draftCount = Object.keys(
+    state.accessibility.draftRemediations || {},
+  ).length;
+  if (a11ySummary) {
+    a11ySummary.textContent = issues.length
+      ? String(summary.failed_checks || 0) +
+        " checks need attention" +
+        (draftCount
+          ? " · " +
+            String(draftCount) +
+            " draft section" +
+            (draftCount === 1 ? "" : "s")
+          : "")
+      : "Report unavailable";
+  }
+  const isDraftPass = function (issue) {
+    return !!(
+      state.accessibility.draftRemediations[issue.id || ""] ||
+      state.accessibility.draftRemediations[issue.remediation || ""]
+    );
+  };
+  const categories = [
+    [
+      "danger",
+      "Needs attention",
+      issues.some(function (issue) {
+        return (
+          issue.status !== "pass" &&
+          issue.status !== "blocked" &&
+          issue.severity !== "warning"
+        );
+      }),
+    ],
+    [
+      "warning",
+      "Review",
+      issues.some(function (issue) {
+        return (
+          issue.status !== "pass" &&
+          issue.status !== "blocked" &&
+          issue.severity === "warning"
+        );
+      }),
+    ],
+    [
+      "secondary",
+      "Blocked",
+      issues.some(function (issue) {
+        return issue.status === "blocked";
+      }),
+    ],
+    [
+      "info",
+      "Draft passed preflight",
+      issues.some(function (issue) {
+        return issue.status === "pass" && isDraftPass(issue);
+      }),
+    ],
+    [
+      "success",
+      "Preflight pass",
+      issues.some(function (issue) {
+        return issue.status === "pass" && !isDraftPass(issue);
+      }),
+    ],
+  ].filter(function (category) {
+    return category[2];
+  });
+  a11yStatusLegend.innerHTML = categories
+    .map(function (category) {
+      return (
+        '<span class="badge text-bg-' +
+        category[0] +
+        '">' +
+        category[1] +
+        "</span>"
+      );
+    })
+    .join("");
+  a11yStatusLegend.classList.toggle("hidden", !categories.length);
+  if (!a11yIssueList) {
+    renderFontStatus(report);
+    return;
+  }
+  a11yIssueList.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  issues
+    .slice()
+    .sort(function (left, right) {
+      const statusRank = { fail: 0, review: 1, blocked: 2, pass: 3 };
+      const severityRank = { fail: 0, warning: 1 };
+      const statusDifference =
+        (statusRank[left.status] ?? 4) - (statusRank[right.status] ?? 4);
+      if (statusDifference) return statusDifference;
+      const severityDifference =
+        (severityRank[left.severity] ?? 2) -
+        (severityRank[right.severity] ?? 2);
+      if (severityDifference) return severityDifference;
+      return Number(right.count || 0) - Number(left.count || 0);
+    })
+    .forEach(function (issue) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "a11y-issue";
+      const draft =
+        state.accessibility.draftRemediations[issue.id || ""] ||
+        state.accessibility.draftRemediations[issue.remediation || ""];
+      const blocked = issue.status === "blocked";
+      const draftPassed = !!draft && issue.status === "pass";
+      button.dataset.status = blocked
+        ? "blocked"
+        : draftPassed
+          ? "draft"
+          : issue.status || "fail";
+      button.dataset.panel = issue.remediation || "structure";
+      button.dataset.issueId = String(issue.id || "");
+      const hasEditorTargets = Number.isInteger(issue.editorTargetCount);
+      const editorTargetCount = hasEditorTargets
+        ? Number(issue.editorTargetCount)
+        : 0;
+      button.dataset.hasEditorTargets = String(hasEditorTargets);
+      const badge = blocked
+        ? "Blocked"
+        : draftPassed
+          ? "Draft · preflight pass"
+          : issue.status === "pass"
+            ? "Preflight pass"
+            : String(issue.count || 1) + " to review";
+      button.innerHTML =
+        '<div class="d-flex justify-content-between gap-2"><span class="small fw-semibold">' +
+        escapeHtml(String(issue.title || issue.id || "Finding")) +
+        '</span><span class="badge ' +
+        (blocked
+          ? "text-bg-secondary"
+          : draftPassed
+            ? "text-bg-info"
+            : issue.status === "pass"
+              ? "text-bg-success"
+              : issue.severity === "warning"
+                ? "text-bg-warning"
+                : "text-bg-danger") +
+        '">' +
+        escapeHtml(badge) +
+        "</span></div>" +
+        '<div class="a11y-issue-rule text-muted mt-1">PDF/UA ' +
+        escapeHtml(String(issue.rule || "review")) +
+        " · " +
+        escapeHtml(String(issue.remediation || "manual")) +
+        "</div>" +
+        (issue.description
+          ? '<div class="small text-muted mt-1">' +
+            escapeHtml(String(issue.description)) +
+            "</div>"
+          : "") +
+        (hasEditorTargets &&
+        issue.status !== "pass" &&
+        issue.status !== "blocked"
+          ? '<div class="small mt-1 ' +
+            (editorTargetCount ? "text-primary" : "text-danger") +
+            '">' +
+            (editorTargetCount
+              ? "Open " +
+                String(editorTargetCount) +
+                " editable target" +
+                (editorTargetCount === 1 ? "" : "s")
+              : "No editable target was returned") +
+            "</div>"
+          : "") +
+        (draft && !blocked
+          ? '<div class="small mt-1">' +
+            (draftPassed ? "Provisional: " : "Attempted: ") +
+            escapeHtml(draft.detail) +
+            "</div>"
+          : "");
+      fragment.appendChild(button);
+    });
+  a11yIssueList.appendChild(fragment);
+
+  renderFontStatus(report);
+  const fontResult = state.accessibility.fontRemediation || {};
+  const unresolved = Array.isArray(fontResult.unresolved)
+    ? fontResult.unresolved
+    : [];
+  if (unresolved.length) {
+    a11yFontEmbeddingList.innerHTML += unresolved
+      .map(function (item) {
+        const suggestion = item.suggested_alternative || {};
+        return (
+          '<div class="alert alert-warning small mb-2"><span class="fw-semibold">' +
+          escapeHtml(String(item.font || "Font")) +
+          "</span>: " +
+          escapeHtml(String(item.reason || "No exact installed match.")) +
+          (suggestion.family
+            ? '<div class="mt-1">Possible manual replacement: ' +
+              escapeHtml(String(suggestion.family)) +
+              " " +
+              escapeHtml(String(suggestion.style || "")) +
+              ".</div>"
+            : "") +
+          '<div class="mt-1">' +
+          escapeHtml(
+            String(
+              item.next_step ||
+                "Ask an administrator to install the exact font using the Dashboard font manager.",
+            ),
+          ) +
+          "</div></div>"
+        );
+      })
+      .join("");
+  }
+  renderFontRemediationResult();
+  renderSubstituteOptions();
+  renderGlyphReview();
+}
+
+function displayPdfFontName(font) {
+  return String(font.name || font.resource || "Font").replace(
+    /^[A-Z]{6}\+/,
+    "",
+  );
+}
+
+function renderFontStatus(report) {
+  if (
+    !a11yFontEmbeddingSummary ||
+    !a11yFontEmbeddingList ||
+    !a11yFontUnicodeSummary ||
+    !a11yFontUnicodeList ||
+    !a11yEmbedFontsBtn ||
+    !a11yAddUnicodeMapsBtn
+  )
+    return;
+  const fonts = Array.isArray(report.fonts) ? report.fonts : [];
+  const missingEmbedding = fonts.filter(function (font) {
+    return !font.embedded;
+  });
+  const missingUnicode = fonts.filter(function (font) {
+    return !font.unicodeCoverageComplete;
+  });
+  a11yFontEmbeddingSummary.className =
+    "alert small py-2 " +
+    (missingEmbedding.length ? "alert-warning" : "alert-success");
+  a11yFontEmbeddingSummary.textContent = fonts.length
+    ? missingEmbedding.length
+      ? String(missingEmbedding.length) +
+        " of " +
+        String(fonts.length) +
+        " fonts are missing their font program."
+      : "All " + String(fonts.length) + " fonts are embedded. Nothing to do."
+    : "No page fonts were found.";
+  a11yFontEmbeddingList.innerHTML = missingEmbedding.length
+    ? missingEmbedding
+        .map(function (font) {
+          return (
+            '<div class="border rounded p-2 small"><span class="fw-semibold">' +
+            escapeHtml(displayPdfFontName(font)) +
+            '</span><div class="text-muted">Missing font program · ' +
+            escapeHtml(String(font.subtype || "unknown type")) +
+            " · " +
+            escapeHtml(String(font.resource || "unknown resource")) +
+            "</div></div>"
+          );
+        })
+        .join("")
+    : '<div class="small text-muted mb-2">No fonts need embedding.</div>';
+  a11yEmbedFontsBtn.disabled = missingEmbedding.length === 0;
+  a11yEmbedFontsBtn.textContent = missingEmbedding.length
+    ? "Try exact embedding for " + String(missingEmbedding.length) + " fonts"
+    : "No missing fonts";
+
+  a11yFontUnicodeSummary.className =
+    "alert small py-2 " +
+    (missingUnicode.length ? "alert-warning" : "alert-success");
+  a11yFontUnicodeSummary.textContent = fonts.length
+    ? missingUnicode.length
+      ? String(missingUnicode.length) +
+        " of " +
+        String(fonts.length) +
+        " fonts lack Unicode mappings for every used character."
+      : "All " +
+        String(fonts.length) +
+        " fonts map every used character to Unicode. Nothing to do."
+    : "No page fonts were found.";
+  a11yFontUnicodeList.innerHTML = missingUnicode.length
+    ? missingUnicode
+        .map(function (font) {
+          return (
+            '<div class="border rounded p-2 small"><span class="fw-semibold">' +
+            escapeHtml(displayPdfFontName(font)) +
+            '</span><div class="text-muted">' +
+            (font.hasToUnicode
+              ? "Unicode map is incomplete for used codes" +
+                (Array.isArray(font.missingUnicodeCodes) &&
+                font.missingUnicodeCodes.length
+                  ? " " + font.missingUnicodeCodes.join(", ")
+                  : "")
+              : "Unicode map missing") +
+            " · " +
+            escapeHtml(String(font.subtype || "unknown type")) +
+            " · " +
+            escapeHtml(String(font.resource || "unknown resource")) +
+            "</div></div>"
+          );
+        })
+        .join("")
+    : '<div class="small text-muted mb-2">All used characters have Unicode mappings.</div>';
+  a11yAddUnicodeMapsBtn.disabled = missingUnicode.length === 0;
+  a11yAddUnicodeMapsBtn.textContent = missingUnicode.length
+    ? "Add or complete safe maps for " +
+      String(missingUnicode.length) +
+      " fonts"
+    : "Unicode mappings complete";
+}
+
+function substituteChoiceFor(font) {
+  return state.accessibility.substituteChoices[font.resource] || "";
+}
+
+function renderSubstituteCandidate(font, candidate, index) {
+  const name = "a11y-subst-" + escapeHtml(font.resource);
+  const id = name + "-" + String(index);
+  const chosen = substituteChoiceFor(font) === candidate.path;
+  const exact = Math.abs(Number(candidate.width_delta)) < 0.001;
+  return (
+    '<div class="form-check"><input class="form-check-input" type="radio" name="' +
+    name +
+    '" id="' +
+    id +
+    '" value="' +
+    escapeHtml(candidate.path) +
+    '" data-subst-resource="' +
+    escapeHtml(font.resource) +
+    '"' +
+    (chosen ? " checked" : "") +
+    ' /><label class="form-check-label small" for="' +
+    id +
+    '"><span class="fw-semibold">' +
+    escapeHtml(candidate.postscript_name || candidate.path) +
+    "</span> " +
+    (exact
+      ? '<span class="badge text-bg-success">widths identical</span>'
+      : '<span class="badge text-bg-light">width delta ' +
+        escapeHtml(String(candidate.width_delta)) +
+        "</span>") +
+    (candidate.style_matches
+      ? ""
+      : ' <span class="badge text-bg-warning">' +
+        escapeHtml(
+          [candidate.bold ? "bold" : "", candidate.italic ? "italic" : ""]
+            .filter(Boolean)
+            .join(" ") || "different style",
+        ) +
+        "</span>") +
+    '<div class="text-muted">' +
+    escapeHtml(String(candidate.format || "")) +
+    " · " +
+    escapeHtml(String(candidate.path)) +
+    "</div></label></div>"
+  );
+}
+
+function renderSubstituteFontCard(font) {
+  const candidates = Array.isArray(font.candidates) ? font.candidates : [];
+  const formFieldCount = Number(font.formFieldCount || 0);
+  return (
+    '<div class="border rounded p-3" data-subst-font="' +
+    escapeHtml(font.resource) +
+    '"><div class="d-flex flex-wrap justify-content-between gap-2"><div><span class="fw-semibold">' +
+    escapeHtml(font.font || font.resource) +
+    '</span><div class="small text-muted">' +
+    escapeHtml(String(font.subtype || "unknown type")) +
+    " · " +
+    escapeHtml(String(font.resource)) +
+    '</div></div><div class="small text-end">' +
+    (font.standard14
+      ? '<span class="badge text-bg-info">standard 14</span> '
+      : "") +
+    (formFieldCount
+      ? '<span class="badge text-bg-light">' +
+        String(formFieldCount) +
+        " form fields</span>"
+      : "") +
+    "</div></div>" +
+    (font.exactMatch
+      ? '<div class="alert alert-success small py-2 mt-2 mb-0">The exact font is installed as ' +
+        escapeHtml(font.exactMatch.postscript_name || font.exactMatch.path) +
+        ". Embed it from step 1 instead of substituting.</div>"
+      : "") +
+    (candidates.length
+      ? '<fieldset class="mt-2"><legend class="form-label small mb-1">Replace with</legend>' +
+        candidates
+          .map(function (candidate, index) {
+            return renderSubstituteCandidate(font, candidate, index);
+          })
+          .join("") +
+        '<div class="form-check"><input class="form-check-input" type="radio" name="a11y-subst-' +
+        escapeHtml(font.resource) +
+        '" id="a11y-subst-' +
+        escapeHtml(font.resource) +
+        '-none" value="" data-subst-resource="' +
+        escapeHtml(font.resource) +
+        '"' +
+        (substituteChoiceFor(font) ? "" : " checked") +
+        ' /><label class="form-check-label small" for="a11y-subst-' +
+        escapeHtml(font.resource) +
+        '-none"><span class="fw-semibold">Leave alone</span> — keep this font unembedded.</label></div></fieldset>'
+      : '<div class="alert alert-warning small py-2 mt-2 mb-0">No installed font reproduces this font’s widths, so any replacement would move the text. Install the exact font instead.</div>')
+  );
+}
+
+function renderSubstituteOptions() {
+  if (!a11ySubstituteList || !a11ySubstituteSummary) return;
+  const review = state.accessibility.substituteOptions;
+  if (!review) {
+    a11ySubstituteSummary.className = "alert small py-2 alert-secondary";
+    a11ySubstituteSummary.textContent =
+      "Run the search to see which installed fonts could stand in.";
+    a11ySubstituteList.innerHTML = "";
+    if (a11yApplySubstitutesBtn) a11yApplySubstitutesBtn.disabled = true;
+    return;
+  }
+  const fonts = Array.isArray(review.fonts) ? review.fonts : [];
+  const withOptions = fonts.filter(function (font) {
+    return (font.candidates || []).length;
+  }).length;
+  a11ySubstituteSummary.className =
+    "alert small py-2 " + (fonts.length ? "alert-warning" : "alert-success");
+  a11ySubstituteSummary.textContent = fonts.length
+    ? String(fonts.length) +
+      (fonts.length === 1 ? " font has" : " fonts have") +
+      " no embedded program; " +
+      String(withOptions) +
+      " can be matched by an installed face."
+    : "Every font already carries its own program. Nothing to substitute.";
+  a11ySubstituteList.innerHTML = fonts.map(renderSubstituteFontCard).join("");
+  if (a11yApplySubstitutesBtn) {
+    a11yApplySubstitutesBtn.disabled = !Object.keys(
+      state.accessibility.substituteChoices,
+    ).some(function (key) {
+      return state.accessibility.substituteChoices[key];
+    });
+  }
+}
+
+async function loadSubstituteOptions() {
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  showLoading("Comparing installed font metrics…");
+  try {
+    const response = await fetch(
+      apiUrl("/pdf-labeler/api/accessibility-font-substitutes"),
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      },
+    );
+    const payload = await parseApiResponse(response);
+    if (!payload.success || !payload.data) {
+      throw new Error(
+        (payload.error && payload.error.message) ||
+          "The substitution search failed.",
+      );
+    }
+    state.accessibility.substituteOptions = payload.data;
+    state.accessibility.substituteChoices = {};
+    renderSubstituteOptions();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function applySubstitutions() {
+  const choices = state.accessibility.substituteChoices || {};
+  const decisions = Object.keys(choices)
+    .filter(function (resource) {
+      return choices[resource];
+    })
+    .map(function (resource) {
+      return { resource: resource, path: choices[resource] };
+    });
+  if (!decisions.length) {
+    showError("Choose a replacement font first.");
+    return;
+  }
+  if (
+    !window.confirm(
+      "Replace " +
+        String(decisions.length) +
+        (decisions.length === 1 ? " font" : " fonts") +
+        " with a different typeface? Widths match, so text keeps its position, but letterforms will change.",
+    )
+  )
+    return;
+  await runAccessibilityRemediation("substitute_fonts", {
+    decisions: decisions,
+  });
+  state.accessibility.substituteOptions = null;
+  state.accessibility.substituteChoices = {};
+  renderSubstituteOptions();
+}
+
+const GLYPH_REVIEW_PAGE_SIZE = 50;
+
+function glyphDecisionFor(font) {
+  const existing = state.accessibility.glyphDecisions[font.resource];
+  if (existing) return existing;
+  // Default to the safest outcome: change nothing until a person chooses.
+  const created = { action: "skip", mappings: {} };
+  (font.glyphs || []).forEach(function (glyph) {
+    if (glyph.proposal && glyph.proposal.character) {
+      created.mappings[String(glyph.code)] = glyph.proposal.character;
+    }
+  });
+  state.accessibility.glyphDecisions[font.resource] = created;
+  return created;
+}
+
+function glyphOutlineSvg(outline, label) {
+  if (!outline || !outline.path) {
+    return (
+      '<div class="a11y-glyph-missing small text-muted" role="img" aria-label="' +
+      escapeHtml("No outline available for " + label) +
+      '">no outline</div>'
+    );
+  }
+  const box = Array.isArray(outline.bbox) ? outline.bbox : null;
+  const upem = Number(outline.unitsPerEm) || 1000;
+  // Font outlines are y-up with the baseline at zero; SVG is y-down, so the
+  // path is flipped and framed on the glyph's own bounds with a small margin.
+  const minX = box ? box[0] : 0;
+  const maxX = box ? box[2] : upem;
+  const minY = box ? box[1] : 0;
+  const maxY = box ? box[3] : upem;
+  const pad = upem * 0.06;
+  const width = Math.max(maxX - minX, 1) + pad * 2;
+  const height = Math.max(maxY - minY, 1) + pad * 2;
+  const viewBox =
+    String(minX - pad) +
+    " " +
+    String(-maxY - pad) +
+    " " +
+    String(width) +
+    " " +
+    String(height);
+  return (
+    '<svg class="a11y-glyph-outline" viewBox="' +
+    escapeHtml(viewBox) +
+    '" role="img" aria-label="' +
+    escapeHtml("Glyph drawn for " + label) +
+    '" focusable="false"><g transform="scale(1,-1)"><path d="' +
+    escapeHtml(String(outline.path)) +
+    '" /></g></svg>'
+  );
+}
+
+function glyphProvenanceBadge(glyph) {
+  if (glyph.charCodeSource === "embedded-cmap") {
+    return '<span class="badge text-bg-success" title="Read from the character map inside the PDF’s own embedded font.">from embedded font</span>';
+  }
+  if (glyph.charCodeSource === "installed-font") {
+    return '<span class="badge text-bg-warning" title="Matched by lining the subset up against an installed copy of this font. Confirm it looks right.">from installed font</span>';
+  }
+  return '<span class="badge text-bg-secondary" title="Nothing in the PDF or on this server records what this glyph means.">unknown code</span>';
+}
+
+function renderGlyphRow(font, glyph) {
+  const decision = glyphDecisionFor(font);
+  const label = "code " + String(glyph.code);
+  const value = decision.mappings[String(glyph.code)] || "";
+  const inputId =
+    "a11y-glyph-char-" + escapeHtml(font.resource) + "-" + glyph.code;
+  const proposal = glyph.proposal;
+  return (
+    '<div class="a11y-glyph-row d-flex align-items-center gap-2 border rounded p-2">' +
+    glyphOutlineSvg(glyph.outline, label) +
+    '<div class="flex-grow-1 small"><div class="fw-semibold">' +
+    escapeHtml(glyph.codeLabel || label) +
+    (glyph.charCodeHex
+      ? " · char " + escapeHtml(String(glyph.charCodeHex))
+      : "") +
+    '</div><div class="text-muted">drawn ' +
+    String(glyph.count) +
+    (glyph.count === 1 ? " time" : " times") +
+    " · " +
+    glyphProvenanceBadge(glyph) +
+    (proposal
+      ? ' <span class="badge text-bg-light" title="' +
+        escapeHtml(
+          proposal.evidence === "rendered"
+            ? "Proposed by comparing this glyph outline to the character."
+            : "Proposed from a published encoding standard.",
+        ) +
+        '">' +
+        escapeHtml(proposal.codepoint + " " + proposal.unicodeName) +
+        "</span>"
+      : "") +
+    '</div></div><div><label class="form-label small mb-1" for="' +
+    inputId +
+    '">Character</label><input type="text" class="form-control form-control-sm a11y-glyph-input" id="' +
+    inputId +
+    '" maxlength="16" size="4" value="' +
+    escapeHtml(value) +
+    '" data-glyph-resource="' +
+    escapeHtml(font.resource) +
+    '" data-glyph-code="' +
+    String(glyph.code) +
+    '" /></div></div>'
+  );
+}
+
+function renderGlyphFontCard(font) {
+  const decision = glyphDecisionFor(font);
+  const rendered = Math.min(
+    state.accessibility.glyphRendered[font.resource] || GLYPH_REVIEW_PAGE_SIZE,
+    (font.glyphs || []).length,
+  );
+  const drawsNothing = font.runs > 0 && font.glyphCount === 0;
+  const formFieldCount = Number(font.formFieldCount || 0);
+  const options = [
+    [
+      "map",
+      "Confirm characters",
+      "Write a Unicode map from the characters you confirm below.",
+    ],
+    [
+      "artifact",
+      "Mark all as decorative",
+      "Wrap every run in this font as an artifact so assistive technology skips it.",
+    ],
+    ["skip", "Leave alone", "Change nothing for this font."],
+  ];
+  const name = "a11y-glyph-action-" + escapeHtml(font.resource);
+  return (
+    '<div class="border rounded p-3" data-glyph-font="' +
+    escapeHtml(font.resource) +
+    '"><div class="d-flex flex-wrap justify-content-between gap-2"><div><span class="fw-semibold">' +
+    escapeHtml(font.font || font.resource) +
+    '</span><div class="small text-muted">' +
+    escapeHtml(String(font.subtype || "unknown type")) +
+    " · " +
+    escapeHtml(String(font.encoding || "no encoding")) +
+    " · " +
+    escapeHtml(String(font.resource)) +
+    '</div></div><div class="small text-end">' +
+    (font.symbolic
+      ? '<span class="badge text-bg-info">symbol font</span> '
+      : "") +
+    (font.embedded
+      ? '<span class="badge text-bg-light">embedded</span> '
+      : '<span class="badge text-bg-warning">not embedded</span> ') +
+    '<div class="text-muted mt-1">' +
+    String(font.glyphCount) +
+    (font.glyphCount === 1 ? " glyph" : " glyphs") +
+    " · " +
+    String(font.runs) +
+    (font.runs === 1 ? " run" : " runs") +
+    (font.pages && font.pages.length
+      ? " · page " +
+        escapeHtml(
+          font.pages
+            .map(function (index) {
+              return String(index + 1);
+            })
+            .join(", "),
+        )
+      : "") +
+    "</div></div></div>" +
+    (formFieldCount
+      ? '<div class="alert alert-warning small py-2 mt-2 mb-0">This is the appearance font for ' +
+        String(formFieldCount) +
+        (formFieldCount === 1 ? " form field" : " form fields") +
+        ". It draws nothing while those fields are empty, but the viewer uses it as soon as someone types, so do not remove it. It still needs embedding for PDF/UA.</div>"
+      : drawsNothing
+        ? '<div class="alert alert-secondary small py-2 mt-2 mb-0">This font is selected but draws no characters, so it needs no Unicode map.</div>'
+        : "") +
+    '<fieldset class="mt-2"><legend class="form-label small mb-1">What should happen to this font?</legend>' +
+    options
+      .map(function (option) {
+        const id = name + "-" + option[0];
+        return (
+          '<div class="form-check"><input class="form-check-input" type="radio" name="' +
+          name +
+          '" id="' +
+          id +
+          '" value="' +
+          option[0] +
+          '" data-glyph-resource="' +
+          escapeHtml(font.resource) +
+          '"' +
+          (decision.action === option[0] ? " checked" : "") +
+          ' /><label class="form-check-label small" for="' +
+          id +
+          '"><span class="fw-semibold">' +
+          escapeHtml(option[1]) +
+          "</span> — " +
+          escapeHtml(option[2]) +
+          "</label></div>"
+        );
+      })
+      .join("") +
+    "</fieldset>" +
+    (decision.action === "map"
+      ? '<div class="vstack gap-2 mt-2">' +
+        (font.glyphs || [])
+          .slice(0, rendered)
+          .map(function (glyph) {
+            return renderGlyphRow(font, glyph);
+          })
+          .join("") +
+        (rendered < (font.glyphs || []).length
+          ? '<div class="a11y-glyph-more text-center small text-muted" data-glyph-more="' +
+            escapeHtml(font.resource) +
+            '">Showing ' +
+            String(rendered) +
+            " of " +
+            String(font.glyphs.length) +
+            ' — <button type="button" class="btn btn-link btn-sm p-0 align-baseline" data-a11y-action="glyph-show-more" data-glyph-resource="' +
+            escapeHtml(font.resource) +
+            '">show more</button></div>'
+          : "") +
+        (font.truncated
+          ? '<div class="small text-muted">Only the first ' +
+            String(font.glyphs.length) +
+            " codes are listed; the rest are rare enough to handle by hand.</div>"
+          : "") +
+        "</div>"
+      : "") +
+    "</div>"
+  );
+}
+
+function renderGlyphReview() {
+  if (!a11yGlyphReviewList || !a11yGlyphReviewSummary) return;
+  const review = state.accessibility.glyphReview;
+  if (!review) {
+    a11yGlyphReviewSummary.className = "alert small py-2 alert-secondary";
+    a11yGlyphReviewSummary.textContent =
+      "Run the review to see the glyphs that have no Unicode map.";
+    a11yGlyphReviewList.innerHTML = "";
+    if (a11yApplyGlyphReviewBtn) a11yApplyGlyphReviewBtn.disabled = true;
+    return;
+  }
+  const fonts = Array.isArray(review.fonts) ? review.fonts : [];
+  const proposed = fonts.reduce(function (total, font) {
+    return total + Number(font.proposedCount || 0);
+  }, 0);
+  a11yGlyphReviewSummary.className =
+    "alert small py-2 " + (fonts.length ? "alert-warning" : "alert-success");
+  a11yGlyphReviewSummary.textContent = fonts.length
+    ? String(fonts.length) +
+      (fonts.length === 1 ? " font has" : " fonts have") +
+      " no Unicode map. " +
+      String(proposed) +
+      " glyph" +
+      (proposed === 1 ? " has" : "s have") +
+      " a suggested character; confirm every one against the outline shown."
+    : "Every font already has a Unicode map. Nothing to review.";
+  a11yGlyphReviewList.innerHTML = fonts.map(renderGlyphFontCard).join("");
+  const decided = fonts.some(function (font) {
+    const decision = state.accessibility.glyphDecisions[font.resource];
+    return decision && decision.action !== "skip";
+  });
+  if (a11yApplyGlyphReviewBtn) a11yApplyGlyphReviewBtn.disabled = !decided;
+}
+
+async function loadGlyphReview() {
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  showLoading("Reading glyph outlines…");
+  try {
+    const response = await fetch(
+      apiUrl("/pdf-labeler/api/accessibility-font-review"),
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      },
+    );
+    const payload = await parseApiResponse(response);
+    if (!payload.success || !payload.data) {
+      throw new Error(
+        (payload.error && payload.error.message) ||
+          "The glyph review could not be loaded.",
+      );
+    }
+    state.accessibility.glyphReview = payload.data;
+    state.accessibility.glyphDecisions = {};
+    state.accessibility.glyphRendered = {};
+    renderGlyphReview();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function applyGlyphDecisions() {
+  const review = state.accessibility.glyphReview;
+  const fonts = review && Array.isArray(review.fonts) ? review.fonts : [];
+  const decisions = [];
+  fonts.forEach(function (font) {
+    const decision = state.accessibility.glyphDecisions[font.resource];
+    if (!decision || decision.action === "skip") return;
+    if (decision.action === "artifact") {
+      decisions.push({ resource: font.resource, action: "artifact" });
+      return;
+    }
+    const mappings = {};
+    Object.keys(decision.mappings || {}).forEach(function (code) {
+      const value = decision.mappings[code];
+      if (value) mappings[code] = value;
+    });
+    if (Object.keys(mappings).length) {
+      decisions.push({
+        resource: font.resource,
+        action: "map",
+        mappings: mappings,
+      });
+    }
+  });
+  if (!decisions.length) {
+    showError("Confirm at least one character, or choose a different action.");
+    return;
+  }
+  await runAccessibilityRemediation("unicode_map", { decisions: decisions });
+  state.accessibility.glyphReview = null;
+  state.accessibility.glyphDecisions = {};
+  renderGlyphReview();
+}
+
+function renderFontRemediationResult() {
+  if (!a11yFontResult) return;
+  const result = state.accessibility.fontRemediation;
+  if (!result) {
+    a11yFontResult.className = "hidden alert small mt-3 mb-0";
+    a11yFontResult.innerHTML = "";
+    return;
+  }
+  const embedded = Array.isArray(result.fonts_embedded)
+    ? result.fonts_embedded
+    : [];
+  const unicodeMaps = Array.isArray(result.unicode_maps_added)
+    ? result.unicode_maps_added
+    : [];
+  const unicodeUnresolved = Array.isArray(result.unicode_unresolved)
+    ? result.unicode_unresolved
+    : [];
+  const unresolved = Array.isArray(result.unresolved) ? result.unresolved : [];
+  const requested = result.requested || {};
+  const changed = embedded.length + unicodeMaps.length;
+  const statusClass = changed ? "alert-success" : "alert-warning";
+  const heading = requested.embed_exact_fonts
+    ? "Font embedding check finished."
+    : "Unicode mapping check finished.";
+  const detail = requested.embed_exact_fonts
+    ? String(embedded.length) +
+      " missing font" +
+      (embedded.length === 1 ? " was" : "s were") +
+      " embedded; " +
+      String(unresolved.length) +
+      " still need an exact installed match."
+    : String(unicodeMaps.length) +
+      " Unicode map" +
+      (unicodeMaps.length === 1 ? " was" : "s were") +
+      " added; " +
+      String(unicodeUnresolved.length) +
+      " could not be generated safely.";
+  a11yFontResult.className = "alert " + statusClass + " small mt-3 mb-0";
+  a11yFontResult.innerHTML =
+    '<div class="fw-semibold">' +
+    escapeHtml(heading) +
+    '</div><div class="mt-1">' +
+    escapeHtml(detail) +
+    "</div>" +
+    (unresolved.length
+      ? '<div class="mt-2">No installed exact match was available for the items shown above. Install the exact font through the Dashboard font manager, then run this check again. Suggested replacements are manual alternatives only.</div><button type="button" class="btn btn-sm btn-outline-dark mt-2" data-a11y-action="copy-font-admin-request">Copy request for administrator</button>'
+      : "") +
+    (unicodeUnresolved.length
+      ? '<div class="mt-2">The remaining fonts use encodings that cannot be mapped safely by this deterministic tool. Review their extracted text and repair them manually.</div>'
+      : "");
+}
+
+async function copyFontAdministratorRequest() {
+  const result = state.accessibility.fontRemediation || {};
+  const unresolved = Array.isArray(result.unresolved) ? result.unresolved : [];
+  const unique = new Map();
+  unresolved.forEach(function (item) {
+    const name = String(item.font || item.resource || "Unknown font");
+    if (!unique.has(name)) unique.set(name, String(item.reason || ""));
+  });
+  const lines = [
+    "Please install these exact fonts using the Dashboard font manager, then let me rerun PDF accessibility font remediation:",
+    "",
+  ];
+  unique.forEach(function (reason, name) {
+    lines.push("- " + name + (reason ? ": " + reason : ""));
+  });
+  const requestText = lines.join("\n");
+  if (!unique.size) {
+    showError("There are no unresolved fonts to send to an administrator.");
+    return;
+  }
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    window.prompt("Copy this administrator request:", requestText);
+    return;
+  }
+  await navigator.clipboard.writeText(requestText);
+  showSuccess("Administrator font request copied.");
+}
+
+function headingDecision(candidate) {
+  const candidateId = String(candidate.candidateId || "");
+  if (!state.accessibility.headingDecisions[candidateId]) {
+    state.accessibility.headingDecisions[candidateId] = {
+      status: "pending",
+      tag: String(candidate.suggestedTag || "H2"),
+      source: "heuristic",
+    };
+  }
+  return state.accessibility.headingDecisions[candidateId];
+}
+
+function headingReviewSignature() {
+  return JSON.stringify(
+    Object.keys(state.accessibility.headingDecisions)
+      .sort()
+      .map(function (candidateId) {
+        const decision = state.accessibility.headingDecisions[candidateId];
+        return [candidateId, decision.status, decision.tag];
+      }),
+  );
+}
+
+function updateHeadingReviewDirty() {
+  state.accessibility.headingReviewDirty =
+    headingReviewSignature() !==
+    String(state.accessibility.headingReviewSavedSignature || "");
+}
+
+function renderHeadingReviewStatus() {
+  updateHeadingReviewDirty();
+  const dirty = state.accessibility.headingReviewDirty;
+  a11yHeadingReviewStatus.className =
+    "badge " + (dirty ? "text-bg-warning" : "text-bg-success");
+  a11yHeadingReviewStatus.textContent = dirty
+    ? "Unsaved changes"
+    : "Heading review saved";
+  a11ySaveHeadingReviewBtn.disabled = !dirty;
+  const hasTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hasTagTree) a11yDraftStructureBtn.disabled = dirty;
+}
+
+function headingLevelOptions(selected) {
+  return [1, 2, 3, 4, 5, 6]
+    .map(function (level) {
+      const tag = "H" + level;
+      return (
+        '<option value="' +
+        tag +
+        '"' +
+        (tag === selected ? " selected" : "") +
+        ">" +
+        tag +
+        "</option>"
+      );
+    })
+    .join("");
+}
+
+function renderHeadingCandidates() {
+  if (!a11yHeadingList) return;
+  const candidates = state.accessibility.headingCandidates || [];
+  a11yHeadingList.innerHTML = candidates.length
+    ? candidates
+        .map(function (candidate) {
+          const candidateId = String(candidate.candidateId || "");
+          const decision = headingDecision(candidate);
+          return (
+            '<div id="a11y-heading-' +
+            escapeHtml(candidateId) +
+            '" class="a11y-heading-candidate border rounded p-2 small" data-heading-id="' +
+            escapeHtml(candidateId) +
+            '" data-decision="' +
+            escapeHtml(decision.status) +
+            '"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">' +
+            escapeHtml(String(candidate.text || "")) +
+            '</span><span class="badge text-bg-light">' +
+            escapeHtml(decision.source === "ai" ? "AI draft" : "Heuristic") +
+            '</span></div><div class="text-muted mt-1">Page ' +
+            String(Number(candidate.pageIndex || 0) + 1) +
+            " · " +
+            escapeHtml(String(candidate.fontSize || "?")) +
+            " pt · " +
+            escapeHtml(String(candidate.confidence || "review")) +
+            " confidence" +
+            (candidate.reason
+              ? " · " + escapeHtml(String(candidate.reason))
+              : "") +
+            '</div><div class="d-flex flex-wrap align-items-end gap-2 mt-2"><div><label class="form-label small mb-1" for="a11y-heading-level-' +
+            escapeHtml(candidateId) +
+            '">Heading level</label><select class="form-select form-select-sm" id="a11y-heading-level-' +
+            escapeHtml(candidateId) +
+            '" data-heading-action="level" data-heading-id="' +
+            escapeHtml(candidateId) +
+            '">' +
+            headingLevelOptions(decision.tag) +
+            '</select></div><button type="button" class="btn btn-sm ' +
+            (decision.status === "approved"
+              ? "btn-success"
+              : "btn-outline-success") +
+            '" aria-pressed="' +
+            String(decision.status === "approved") +
+            '" data-heading-action="approve" data-heading-id="' +
+            escapeHtml(candidateId) +
+            '">' +
+            (decision.status === "approved" ? "Approved ✓" : "Approve") +
+            '</button><button type="button" class="btn btn-sm ' +
+            (decision.status === "rejected"
+              ? "btn-secondary"
+              : "btn-outline-secondary") +
+            '" aria-pressed="' +
+            String(decision.status === "rejected") +
+            '" data-heading-action="reject" data-heading-id="' +
+            escapeHtml(candidateId) +
+            '">' +
+            (decision.status === "rejected" ? "Rejected ✓" : "Reject") +
+            '</button><span class="badge ' +
+            (decision.status === "approved"
+              ? "text-bg-success"
+              : decision.status === "rejected"
+                ? "text-bg-secondary"
+                : "text-bg-warning") +
+            '">' +
+            escapeHtml(decision.status) +
+            "</span></div>" +
+            (decision.reason
+              ? '<div class="small text-muted mt-1">AI: ' +
+                escapeHtml(decision.reason) +
+                "</div>"
+              : "") +
+            "</div>"
+          );
+        })
+        .join("")
+    : '<div class="small text-muted">No heading candidates were found.</div>';
+  renderHeadingReviewStatus();
+}
+
+async function renderStructurePreview() {
+  structurePreviewGeneration += 1;
+  const generation = structurePreviewGeneration;
+  if (!a11yStructurePreview || !state.pdfDoc) return;
+  a11yStructurePreview.innerHTML = "";
+  const candidates = state.accessibility.headingCandidates || [];
+  for (let pageIndex = 0; pageIndex < state.pageCount; pageIndex += 1) {
+    const page = await state.pdfDoc.getPage(pageIndex + 1);
+    if (generation !== structurePreviewGeneration) return;
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = Math.min(1, 520 / baseViewport.width);
+    const viewport = page.getViewport({ scale: scale });
+    const shell = document.createElement("div");
+    shell.className = "a11y-structure-page";
+    shell.style.width = viewport.width + "px";
+    shell.style.height = viewport.height + "px";
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    shell.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport })
+      .promise;
+    if (generation !== structurePreviewGeneration) return;
+
+    (state.pageTextBoxes[pageIndex] || []).forEach(function (box) {
+      const outline = document.createElement("div");
+      outline.className = "a11y-structure-box";
+      outline.textContent = "P";
+      outline.style.left = String(box.x * 100) + "%";
+      outline.style.top = String(box.y * 100) + "%";
+      outline.style.width = String(Math.max(box.width * 100, 1)) + "%";
+      outline.style.height = String(Math.max(box.height * 100, 1)) + "%";
+      shell.appendChild(outline);
+    });
+    candidates
+      .filter(function (candidate) {
+        return Number(candidate.pageIndex) === pageIndex && candidate.box;
+      })
+      .forEach(function (candidate) {
+        const decision = headingDecision(candidate);
+        const box = candidate.box;
+        const outline = document.createElement("button");
+        outline.type = "button";
+        outline.className =
+          "a11y-structure-box is-heading is-" + decision.status;
+        outline.dataset.headingId = String(candidate.candidateId || "");
+        outline.textContent = decision.tag;
+        outline.title = String(candidate.text || "");
+        outline.style.left = String(Number(box.x || 0) * 100) + "%";
+        outline.style.top = String(Number(box.y || 0) * 100) + "%";
+        outline.style.width =
+          String(Math.max(Number(box.width || 0) * 100, 1)) + "%";
+        outline.style.height =
+          String(Math.max(Number(box.height || 0) * 100, 1)) + "%";
+        shell.appendChild(outline);
+      });
+    a11yStructurePreview.appendChild(shell);
+  }
+}
+
 function renderAccessibilityModal() {
   refreshAccessibilityFromFields();
   a11yEnableInput.checked = !!state.accessibility.enabled;
@@ -1402,9 +2931,35 @@ function renderAccessibilityModal() {
   a11yMetaTitle.value = String(state.accessibility.metadata.title || "");
   a11yMetaAuthor.value = String(state.accessibility.metadata.author || "");
   a11yMetaSubject.value = String(state.accessibility.metadata.subject || "");
+  const hasTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (a11yDraftStructureBtn) {
+    a11yDraftStructureBtn.disabled = hasTagTree;
+    a11yDraftStructureBtn.textContent = hasTagTree
+      ? "Tag tree already present"
+      : "Create tags from approved draft";
+  }
+  if (a11yToggleMarkedBtn) {
+    a11yToggleMarkedBtn.textContent = state.accessibility.marked
+      ? "Remove PDF/UA declaration"
+      : "Declare tagged PDF/UA-1 (after review)";
+  }
+  a11yCertifyAccessibleInput.checked = !!state.accessibility.marked;
+  a11yCertifyStatus.innerHTML = state.accessibility.marked
+    ? "Certification recorded: <code>MarkInfo.Marked=true</code> and PDF/UA-1 declared."
+    : "This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.";
+  renderAiAccessibilityReview();
   renderAccessibilityFieldList();
+  renderAccessibilityOrderList();
   renderAccessibilityImages();
+  renderStructureEditor();
   renderAccessibilityTagStructure();
+  renderAccessibilityReport();
+  renderHeadingCandidates();
+  renderStructurePreview().catch(function (error) {
+    console.warn("Could not render structure preview", error);
+  });
 }
 
 function updateAccessibilityMetadataFromInputs() {
@@ -1430,7 +2985,12 @@ async function inspectAccessibilityData(forceRefresh) {
     },
   );
   const payload = await parseApiResponse(response);
-  if (!payload.success || !payload.data) return;
+  if (!payload.success || !payload.data) {
+    throw new Error(
+      (payload.error && payload.error.message) ||
+        "Accessibility inspection failed.",
+    );
+  }
 
   const metadata = payload.data.metadata || {};
   if (!state.accessibility.metadata.language)
@@ -1457,6 +3017,9 @@ async function inspectAccessibilityData(forceRefresh) {
       matched.tooltip = String(
         serverField.tooltip || defaultTooltipFromFieldName(matched.name),
       );
+      matched.tooltipSource = serverField.has_custom_tooltip
+        ? "pdf"
+        : "field-name";
     }
   });
 
@@ -1493,6 +3056,38 @@ async function inspectAccessibilityData(forceRefresh) {
       })
     : [];
   state.accessibility.tagStructure = payload.data.tag_structure || null;
+  state.accessibility.structureEditor = payload.data.structure_editor || {
+    tables: [],
+    figures: [],
+    annotations: [],
+  };
+  state.accessibility.report = payload.data.report || null;
+  state.accessibility.headingCandidates = Array.isArray(
+    payload.data.heading_candidates,
+  )
+    ? payload.data.heading_candidates
+    : [];
+  const currentHeadingIds = new Set(
+    state.accessibility.headingCandidates.map(function (candidate) {
+      return String(candidate.candidateId || "");
+    }),
+  );
+  Object.keys(state.accessibility.headingDecisions).forEach(
+    function (candidateId) {
+      if (!currentHeadingIds.has(candidateId)) {
+        delete state.accessibility.headingDecisions[candidateId];
+      }
+    },
+  );
+  state.accessibility.headingCandidates.forEach(headingDecision);
+  const markIssue =
+    state.accessibility.report &&
+    Array.isArray(state.accessibility.report.issues)
+      ? state.accessibility.report.issues.find(function (item) {
+          return item.id === "mark-info";
+        })
+      : null;
+  state.accessibility.marked = !!(markIssue && markIssue.status === "pass");
   state.accessibility.inspected = true;
   refreshAccessibilityFromFields();
 }
@@ -1535,6 +3130,7 @@ function buildAccessibilityPayload(exportNameMap) {
     field_order: orderedNames,
     image_alt_text: imageAltText,
     metadata: Object.assign({}, state.accessibility.metadata),
+    marked: !!state.accessibility.marked,
   };
 }
 
@@ -2129,6 +3725,9 @@ function updateAiUiState() {
     sidebarRelabelBtn.disabled =
       !state.pdfBytes || state.fields.length === 0 || !aiEnabled;
   }
+  if (a11yAiTooltipsBtn) a11yAiTooltipsBtn.disabled = !aiEnabled;
+  if (a11yAiHeadingsBtn) a11yAiHeadingsBtn.disabled = !aiEnabled;
+  if (a11yAutoFixBtn) a11yAutoFixBtn.disabled = !aiEnabled;
   if (!aiEnabled) {
     aiAuthNotice.classList.remove("hidden");
     aiAuthNotice.innerHTML =
@@ -3002,7 +4601,8 @@ function updateRequestPdfFile(pdfBytes, fileName, originalFile) {
   state.requestPdfFile = null;
 }
 
-function syncPdfState(pdfBytes, fileName, originalFile) {
+function syncPdfState(pdfBytes, fileName, originalFile, options) {
+  const settings = options || {};
   state.pdfBytes = clonePdfBytes(pdfBytes);
   if (fileName) {
     state.fileName = fileName;
@@ -3010,6 +4610,32 @@ function syncPdfState(pdfBytes, fileName, originalFile) {
   state.accessibility.inspected = false;
   state.accessibility.images = [];
   state.accessibility.tagStructure = null;
+  state.accessibility.structureEditor = {
+    tables: [],
+    figures: [],
+    annotations: [],
+  };
+  state.accessibility.report = null;
+  state.accessibility.headingCandidates = [];
+  state.accessibility.glyphReview = null;
+  state.accessibility.glyphDecisions = {};
+  state.accessibility.glyphRendered = {};
+  state.accessibility.substituteOptions = null;
+  state.accessibility.substituteChoices = {};
+  if (!settings.preserveAccessibilityDrafts) {
+    state.accessibility.fontRemediation = null;
+    a11yAutoFixStatus.classList.add("hidden");
+    state.accessibility.draftRemediations = {};
+    state.accessibility.headingDecisions = {};
+    state.accessibility.headingReviewSavedSignature = "";
+    state.accessibility.headingReviewDirty = true;
+    state.accessibility.activeIssueId = "";
+    state.accessibility.aiReview = {
+      findings: [],
+      lastSignature: "",
+      running: false,
+    };
+  }
   updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
 }
 
@@ -4467,6 +6093,7 @@ function replaceFields(fields, options) {
       backgroundColor: field.backgroundColor || undefined,
       options: Array.isArray(field.options) ? field.options.slice() : undefined,
       tooltip: String(field.tooltip || "").trim(),
+      tooltipSource: field.tooltipSource || "",
     };
   });
   refreshAccessibilityFromFields();
@@ -5389,8 +7016,8 @@ async function relabelFields() {
 }
 
 async function exportPdf() {
-  if (!state.pdfBytes || state.fields.length === 0) {
-    showError("There are no fields to export.");
+  if (!state.pdfBytes) {
+    showError("Open a PDF before exporting.");
     return;
   }
 
@@ -5466,7 +7093,22 @@ async function exportPdf() {
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
 
-    syncPdfState(outputBytes, filename);
+    const workshopOpen = !accessibilityModal.classList.contains("hidden");
+    syncPdfState(outputBytes, filename, undefined, {
+      preserveAccessibilityDrafts: workshopOpen,
+    });
+    if (workshopOpen) {
+      try {
+        await refreshPdfDocumentFromState();
+        await inspectAccessibilityData(true);
+        renderAccessibilityModal();
+      } catch (refreshError) {
+        console.warn(
+          "The exported PDF downloaded, but the workshop could not refresh it.",
+          refreshError,
+        );
+      }
+    }
     updateDocumentName();
     setDirty(false);
     showPdfWorkspace();
@@ -6760,6 +8402,284 @@ repairPromptCancelBtn.addEventListener("click", function () {
   state._pendingRepairFile = null;
   pdfEmpty.classList.remove("hidden");
 });
+
+function nearbyTextForField(field) {
+  return buildFieldNameSuggestions(
+    field.pageIndex,
+    field,
+    field.type,
+    field.id,
+    { allowNeighborFieldText: true },
+  )
+    .map(function (suggestion) {
+      return String(suggestion.text || "").trim();
+    })
+    .filter(Boolean);
+}
+
+function draftTooltipsFromNearbyText(options) {
+  const settings = options || {};
+  let changed = 0;
+  state.fields.forEach(function (field) {
+    const nearby = nearbyTextForField(field);
+    const fallback = defaultTooltipFromFieldName(field.name);
+    const current = String(field.tooltip || "").trim();
+    if (!current || current === fallback) {
+      const nextTooltip = nearby[0] || fallback;
+      const nextSource = nearby[0] ? "nearby-text" : "field-name";
+      if (
+        nextTooltip !== current ||
+        String(field.tooltipSource || "") !== nextSource
+      ) {
+        field.tooltip = nextTooltip;
+        field.tooltipSource = nextSource;
+        changed += 1;
+      }
+    }
+  });
+  renderAccessibilityFieldList();
+  if (changed) {
+    setDirty(true);
+    markAccessibilityDraft(
+      "field_tooltips",
+      String(changed) + " field names drafted; review each value",
+    );
+  }
+  if (!settings.quiet) {
+    showSuccess(
+      changed
+        ? "Drafted " +
+            String(changed) +
+            " accessible field names. Review each one."
+        : "No field names changed. Existing PDF tooltips and reviewed values were preserved.",
+      6500,
+    );
+  }
+  return changed;
+}
+
+function applyDeterministicFieldOrder(direction, options) {
+  const settings = options || {};
+  state.accessibility.readingDirection = direction;
+  const factor = direction === "rtl" ? -1 : 1;
+  state.accessibility.fieldOrder = state.fields
+    .slice()
+    .sort(function (left, right) {
+      if (left.pageIndex !== right.pageIndex)
+        return left.pageIndex - right.pageIndex;
+      if (direction === "ttb") {
+        if (Math.abs(left.x - right.x) > 0.002)
+          return (left.x - right.x) * factor;
+        return left.y - right.y;
+      }
+      if (Math.abs(left.y - right.y) > 0.002) return left.y - right.y;
+      return (left.x - right.x) * factor;
+    })
+    .map(function (field) {
+      return field.id;
+    });
+  renderAccessibilityOrderList();
+  setDirty(true);
+  const labels = {
+    ltr: "row order, left to right",
+    rtl: "row order, right to left",
+    ttb: "column order, top to bottom",
+  };
+  markAccessibilityDraft(
+    "reading_order",
+    String(state.accessibility.fieldOrder.length) +
+      " fields ordered by " +
+      labels[direction],
+  );
+  if (!settings.quiet) {
+    showSuccess(
+      "Drafted " +
+        labels[direction] +
+        " for " +
+        String(state.accessibility.fieldOrder.length) +
+        " fields. Review the order below.",
+      6000,
+    );
+  }
+}
+
+function accessibilityRemediationFeedback(action, result, options) {
+  if (action === "metadata") {
+    return (
+      "Metadata operation finished: " +
+      String(result.metadata_updates || 0) +
+      " values or viewer preferences updated. The report was refreshed."
+    );
+  }
+  if (action === "catalog_flags") {
+    return options.marked
+      ? "Set MarkInfo.Marked=true and the PDF/UA-1 XMP identifier. This declaration is not proof of conformance."
+      : "Removed the tagged and PDF/UA-1 declarations.";
+  }
+  if (action === "draft_structure") {
+    return (
+      "Draft structure created: " +
+      String(result.text_blocks_tagged || 0) +
+      " text blocks, " +
+      String(result.headings_drafted || 0) +
+      " headings, " +
+      String(result.widgets_tagged || 0) +
+      " form controls, and " +
+      String(result.content_artifact_runs || 0) +
+      " unclassified layout runs marked as artifacts across " +
+      String(result.pages_tagged || 0) +
+      " pages. Human review is required."
+    );
+  }
+  if (action === "structure") {
+    const changed =
+      Number(result.roles_changed || 0) +
+      Number(result.scopes_changed || 0) +
+      Number(result.figure_alts_changed || 0) +
+      Number(result.cells_added || 0) +
+      Number(result.annotations_tagged || 0) +
+      Number(result.annotation_descriptions_changed || 0);
+    return (
+      "Applied " +
+      String(changed) +
+      " manual structure change" +
+      (changed === 1 ? "" : "s") +
+      ". The report and editor were refreshed; review the result."
+    );
+  }
+  return "Accessibility remediation finished and the report was refreshed.";
+}
+
+async function runAccessibilityRemediation(action, options, clientOptions) {
+  const clientSettings = clientOptions || {};
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  formData.append("action", action);
+  Object.keys(options || {}).forEach(function (key) {
+    const value = options[key];
+    formData.append(
+      key,
+      typeof value === "object" ? JSON.stringify(value) : String(value),
+    );
+  });
+  showLoading("Applying accessibility remediation…");
+  try {
+    const response = await fetch(
+      apiUrl("/pdf-labeler/api/accessibility-remediate"),
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      },
+    );
+    const payload = await parseApiResponse(response);
+    if (!payload.success || !payload.data || !payload.data.pdf_base64) {
+      throw new Error(
+        (payload.error && payload.error.message) ||
+          "No remediated PDF was returned.",
+      );
+    }
+    const bytes = base64ToUint8Array(payload.data.pdf_base64);
+    syncPdfState(bytes, payload.data.filename || state.fileName, undefined, {
+      preserveAccessibilityDrafts: true,
+    });
+    await refreshPdfDocumentFromState();
+    await inspectAccessibilityData(true);
+    renderAccessibilityModal();
+    setDirty(true);
+    const result = payload.data.remediation_result || {};
+    if (action === "fonts") {
+      state.accessibility.fontRemediation = result;
+      const fontChanges =
+        (Array.isArray(result.fonts_embedded)
+          ? result.fonts_embedded.length
+          : 0) +
+        (Array.isArray(result.unicode_maps_added)
+          ? result.unicode_maps_added.length
+          : 0);
+      if (fontChanges) {
+        if (
+          Array.isArray(result.fonts_embedded) &&
+          result.fonts_embedded.length
+        ) {
+          markAccessibilityDraft(
+            "font-embedding",
+            String(result.fonts_embedded.length) + " exact fonts embedded",
+          );
+        }
+        if (
+          Array.isArray(result.unicode_maps_added) &&
+          result.unicode_maps_added.length
+        ) {
+          markAccessibilityDraft(
+            "unicode-maps",
+            String(result.unicode_maps_added.length) + " Unicode maps added",
+          );
+        }
+      }
+    } else if (action === "metadata") {
+      markAccessibilityDraft(
+        "metadata",
+        String(result.metadata_updates || 0) + " metadata changes applied",
+      );
+    } else if (action === "draft_structure") {
+      markAccessibilityDraft(
+        "draft_structure",
+        String(result.text_blocks_tagged || 0) +
+          " text blocks and " +
+          String(result.widgets_tagged || 0) +
+          " controls tagged",
+      );
+    } else if (action === "catalog_flags") {
+      if (options.marked) {
+        markAccessibilityDraft(
+          "catalog_flags",
+          "Marked flag set; tag-tree review still required",
+        );
+      } else {
+        clearAccessibilityDraft("catalog_flags");
+      }
+    } else if (action === "structure") {
+      const operations = Array.isArray(options.operations)
+        ? options.operations
+        : [];
+      const issueByOperation = {
+        set_role: "table-row-children",
+        set_scope: "table-header-scope",
+        pad_table: "table-columns",
+        set_figure_alt: "figure-structure-alt",
+        set_annotation_contents: "annotation-description",
+      };
+      operations.forEach(function (operation) {
+        const issueId =
+          operation.action === "tag_annotation"
+            ? operation.role === "Link"
+              ? "link-tags"
+              : "annotation-tags"
+            : issueByOperation[operation.action];
+        if (issueId) {
+          markAccessibilityDraft(issueId, "Explicit semantic edit applied");
+        }
+      });
+    }
+    renderAccessibilityReport();
+    if (clientSettings.quiet) {
+      hideToasts();
+    } else if (action === "fonts" && a11yFontResult) {
+      a11yFontResult.focus();
+    } else {
+      showSuccess(
+        accessibilityRemediationFeedback(action, result, options || {}),
+        8000,
+      );
+    }
+    return result;
+  } finally {
+    hideLoading();
+    showPdfWorkspace();
+  }
+}
+
 accessibilityBtn.addEventListener("click", async function () {
   if (!state.pdfBytes) return;
   await inspectAccessibilityData(false).catch(function () {
@@ -6768,9 +8688,52 @@ accessibilityBtn.addEventListener("click", async function () {
   renderAccessibilityModal();
   accessibilityModal.classList.remove("hidden");
 });
-closeAccessibilityBtn.addEventListener("click", function () {
+
+function closeAccessibilityWorkshop() {
   updateAccessibilityMetadataFromInputs();
   accessibilityModal.classList.add("hidden");
+  showPdfWorkspace();
+  requestAnimationFrame(function () {
+    renderFieldsOnPages();
+  });
+}
+
+closeAccessibilityBtn.addEventListener("click", closeAccessibilityWorkshop);
+a11yExportBtn.addEventListener("click", function () {
+  updateAccessibilityMetadataFromInputs();
+  void exportPdf();
+});
+a11yAiReviewBtn.addEventListener("click", async function () {
+  updateAccessibilityMetadataFromInputs();
+  try {
+    await runAiAccessibilityReview({ applyDrafts: false });
+    showSuccess(
+      "AI final check finished. Review each finding; this does not certify the PDF.",
+      7000,
+    );
+  } catch (error) {
+    showError(error.message || String(error));
+  }
+});
+a11yAiReviewApplyAllBtn.addEventListener("click", function () {
+  state.accessibility.aiReview.findings.forEach(applyAiAccessibilityFinding);
+  renderAiAccessibilityReview();
+});
+a11yAiReviewFindings.addEventListener("click", function (event) {
+  const button = event.target.closest("[data-ai-review-action]");
+  const card = event.target.closest("[data-ai-review-index]");
+  if (!button || !card) return;
+  const finding =
+    state.accessibility.aiReview.findings[Number(card.dataset.aiReviewIndex)];
+  if (!finding) return;
+  if (button.dataset.aiReviewAction === "apply") {
+    applyAiAccessibilityFinding(finding);
+  } else if (button.dataset.aiReviewAction === "ignore") {
+    ignoreAiAccessibilityFinding(finding);
+  } else if (button.dataset.aiReviewAction === "review") {
+    finding.status = "reviewed";
+  }
+  renderAiAccessibilityReview();
 });
 a11yEnableInput.addEventListener("change", function () {
   state.accessibility.enabled = !!a11yEnableInput.checked;
@@ -6780,18 +8743,1070 @@ a11yImageModeInput.addEventListener("change", function () {
   renderAccessibilityImages();
 });
 a11yAutofillTooltipsBtn.addEventListener("click", function () {
+  draftTooltipsFromNearbyText();
+});
+a11yIssueList.addEventListener("click", function (event) {
+  const issue = event.target.closest("[data-panel]");
+  if (!issue) return;
+  state.accessibility.activeIssueId =
+    issue.dataset.hasEditorTargets === "true"
+      ? String(issue.dataset.issueId || "")
+      : "";
+  renderStructureEditor();
+  let panelName = issue.dataset.panel || "structure";
+  if (panelName === "catalog_flags") panelName = "draft_structure";
+  const panel = document.getElementById("a11y-panel-" + panelName);
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(function () {
+    const activeIssueId = String(state.accessibility.activeIssueId || "");
+    if (!activeIssueId) return;
+    const target = Array.from(
+      document.querySelectorAll("[data-issue-ids]"),
+    ).find(function (candidate) {
+      return String(candidate.dataset.issueIds || "")
+        .split(/\s+/)
+        .includes(activeIssueId);
+    });
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 250);
+});
+a11yRefreshReportBtn.addEventListener("click", async function () {
+  showLoading("Re-running accessibility report…");
+  try {
+    await inspectAccessibilityData(true);
+    renderAccessibilityModal();
+    const summary = (state.accessibility.report || {}).summary || {};
+    showSuccess(
+      "Report refreshed: " +
+        String(summary.failed_checks || 0) +
+        " checks need attention and " +
+        String(summary.passed_checks || 0) +
+        " passed this preflight.",
+      7000,
+    );
+  } catch (error) {
+    showError(error.message || "Could not refresh the accessibility report.");
+  } finally {
+    hideLoading();
+  }
+});
+document.querySelectorAll(".a11y-order-btn").forEach(function (button) {
+  button.addEventListener("click", function () {
+    applyDeterministicFieldOrder(button.dataset.direction || "ltr");
+  });
+});
+a11yApplyMetadataBtn.addEventListener("click", function () {
+  updateAccessibilityMetadataFromInputs();
+  runAccessibilityRemediation("metadata", {
+    metadata: state.accessibility.metadata,
+    display_doc_title: true,
+  }).catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+
+function refreshHeadingDecisionDisplay() {
+  renderHeadingCandidates();
+  a11yStructurePreview
+    .querySelectorAll("[data-heading-id]")
+    .forEach(function (outline) {
+      const decision =
+        state.accessibility.headingDecisions[
+          String(outline.dataset.headingId || "")
+        ];
+      if (!decision) return;
+      outline.classList.remove("is-pending", "is-approved", "is-rejected");
+      outline.classList.add("is-" + decision.status);
+      outline.textContent = decision.tag;
+    });
+}
+
+function setHeadingDecision(candidateId, updates, deferStatus) {
+  const candidate = state.accessibility.headingCandidates.find(function (item) {
+    return String(item.candidateId || "") === candidateId;
+  });
+  if (!candidate) return;
+  const decision = headingDecision(candidate);
+  Object.assign(decision, updates || {});
+  if (!deferStatus) {
+    markAccessibilityDraft(
+      "draft_structure",
+      "Heading candidates reviewed; approved choices will be used when tags are created",
+    );
+  }
+  setDirty(true);
+}
+
+a11yHeadingList.addEventListener("click", function (event) {
+  const target = event.target.closest("[data-heading-action]");
+  if (!target) return;
+  const candidateId = String(target.dataset.headingId || "");
+  if (target.dataset.headingAction === "approve") {
+    setHeadingDecision(candidateId, { status: "approved" });
+  } else if (target.dataset.headingAction === "reject") {
+    setHeadingDecision(candidateId, { status: "rejected" });
+  }
+  refreshHeadingDecisionDisplay();
+});
+a11yHeadingList.addEventListener("change", function (event) {
+  const target = event.target;
+  if (!target || target.dataset.headingAction !== "level") return;
+  setHeadingDecision(String(target.dataset.headingId || ""), {
+    tag: String(target.value || "H2"),
+  });
+  refreshHeadingDecisionDisplay();
+});
+a11yStructurePreview.addEventListener("click", function (event) {
+  const target = event.target.closest("[data-heading-id]");
+  if (!target) return;
+  const candidateId = String(target.dataset.headingId || "");
+  const card = Array.from(
+    a11yHeadingList.querySelectorAll("[data-heading-id]"),
+  ).find(function (item) {
+    return String(item.dataset.headingId || "") === candidateId;
+  });
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    const select = card.querySelector("select");
+    if (select) select.focus();
+  }
+});
+a11yHeadingsApproveAllBtn.addEventListener("click", function () {
+  state.accessibility.headingCandidates.forEach(function (candidate) {
+    setHeadingDecision(
+      String(candidate.candidateId || ""),
+      {
+        status: "approved",
+      },
+      true,
+    );
+  });
+  markAccessibilityDraft(
+    "draft_structure",
+    "All heading candidates provisionally approved; review false matches and levels",
+  );
+  refreshHeadingDecisionDisplay();
+  showSuccess(
+    "Approved " +
+      String(state.accessibility.headingCandidates.length) +
+      " heading candidates. Review levels and reject false matches, then save the heading review.",
+    7000,
+  );
+});
+a11yHeadingsRejectAllBtn.addEventListener("click", function () {
+  state.accessibility.headingCandidates.forEach(function (candidate) {
+    setHeadingDecision(
+      String(candidate.candidateId || ""),
+      {
+        status: "rejected",
+      },
+      true,
+    );
+  });
+  markAccessibilityDraft(
+    "draft_structure",
+    "All heading candidates rejected; approve any real headings individually",
+  );
+  refreshHeadingDecisionDisplay();
+  showSuccess(
+    "Rejected all heading candidates. You can approve any individually, then save the heading review.",
+  );
+});
+async function applyAiHeadingDraft() {
+  if (!state.auth.aiEnabled) {
+    throw new Error("Log in before choosing the optional AI heading draft.");
+  }
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-ai-headings"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        candidates: state.accessibility.headingCandidates,
+        model: state.model,
+      }),
+    },
+  );
+  const payload = await parseApiResponse(response);
+  if (!payload.success) {
+    throw new Error(
+      (payload.error && payload.error.message) ||
+        "AI heading classification failed.",
+    );
+  }
+  const decisions = (payload.data && payload.data.decisions) || [];
+  decisions.forEach(function (decision) {
+    setHeadingDecision(
+      String(decision.candidateId || ""),
+      {
+        status: decision.isHeading ? "approved" : "rejected",
+        tag: String(decision.suggestedTag || "H2"),
+        source: "ai",
+        reason: String(decision.reason || ""),
+      },
+      true,
+    );
+  });
+  markAccessibilityDraft(
+    "draft_structure",
+    "Optional AI heading decisions drafted; human review required",
+  );
+  refreshHeadingDecisionDisplay();
+  return decisions.length;
+}
+
+a11yAiHeadingsBtn.addEventListener("click", async function () {
+  showLoading("Drafting heading decisions with AI…");
+  try {
+    const decisionCount = await applyAiHeadingDraft();
+    showSuccess(
+      "AI drafted " +
+        String(decisionCount) +
+        " heading decisions. Review every approval, rejection, and level, then save the heading review.",
+      8000,
+    );
+  } catch (error) {
+    showError(error.message || String(error));
+  } finally {
+    hideLoading();
+  }
+});
+a11ySaveHeadingReviewBtn.addEventListener("click", function () {
+  state.accessibility.headingReviewSavedSignature = headingReviewSignature();
+  updateHeadingReviewDirty();
+  renderHeadingReviewStatus();
+  setDirty(true);
+  const approvedCount = Object.values(
+    state.accessibility.headingDecisions,
+  ).filter(function (decision) {
+    return decision.status === "approved";
+  }).length;
+  const rejectedCount = Object.values(
+    state.accessibility.headingDecisions,
+  ).filter(function (decision) {
+    return decision.status === "rejected";
+  }).length;
+  showSuccess(
+    "Heading review saved: " +
+      String(approvedCount) +
+      " approved and " +
+      String(rejectedCount) +
+      " rejected. You can now create tags from this review.",
+    7000,
+  );
+});
+a11yDraftStructureBtn.addEventListener("click", function () {
+  updateHeadingReviewDirty();
+  if (state.accessibility.headingReviewDirty) {
+    showError(
+      "Save the heading review before creating tags. Your AI and manual decisions have not been lost.",
+    );
+    renderHeadingReviewStatus();
+    return;
+  }
+  const decisions = accessibilityHeadingDecisionPayload();
+  const approvedCount = decisions.filter(function (decision) {
+    return decision.status === "approved";
+  }).length;
+  if (
+    !window.confirm(
+      "Create content-block tags with " +
+        String(approvedCount) +
+        " approved headings? Pending and rejected candidates will remain paragraphs.",
+    )
+  )
+    return;
+  runAccessibilityRemediation("draft_structure", {
+    heading_decisions: decisions,
+    mark_as_tagged: false,
+  }).catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+function setAccessibilityDeclaration(marked) {
+  a11yToggleMarkedBtn.disabled = true;
+  a11yCertifyAccessibleInput.disabled = true;
+  return runAccessibilityRemediation("catalog_flags", {
+    marked: marked,
+    display_doc_title: false,
+  })
+    .catch(function (error) {
+      a11yCertifyAccessibleInput.checked = !!state.accessibility.marked;
+      showError(error.message || String(error));
+    })
+    .finally(function () {
+      a11yToggleMarkedBtn.disabled = false;
+      a11yCertifyAccessibleInput.disabled = false;
+    });
+}
+
+a11yToggleMarkedBtn.addEventListener("click", function () {
+  const nextMarked = !state.accessibility.marked;
+  if (
+    nextMarked &&
+    !window.confirm(
+      "Only declare PDF/UA-1 after reviewing every draft change and completing external validation. This sets MarkInfo.Marked and the PDF/UA-1 XMP identifier, but does not prove conformance. Set it now?",
+    )
+  )
+    return;
+  void setAccessibilityDeclaration(nextMarked);
+});
+a11yCertifyAccessibleInput.addEventListener("change", function () {
+  void setAccessibilityDeclaration(a11yCertifyAccessibleInput.checked);
+});
+a11yEmbedFontsBtn.addEventListener("click", function () {
+  if (
+    !window.confirm(
+      "Try to embed exact installed matches for the missing fonts? Fonts are never substituted.",
+    )
+  )
+    return;
+  runAccessibilityRemediation("fonts", {
+    embed_exact_fonts: true,
+    add_unicode_maps: false,
+  }).catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yAddUnicodeMapsBtn.addEventListener("click", function () {
+  runAccessibilityRemediation("fonts", {
+    embed_exact_fonts: false,
+    add_unicode_maps: true,
+  }).catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yLoadSubstitutesBtn.addEventListener("click", function () {
+  loadSubstituteOptions().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yApplySubstitutesBtn.addEventListener("click", function () {
+  applySubstitutions().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11ySubstituteList.addEventListener("change", function (event) {
+  const target = event.target;
+  const resource = target.getAttribute("data-subst-resource");
+  if (!resource || target.type !== "radio") return;
+  state.accessibility.substituteChoices[resource] = target.value;
+  if (a11yApplySubstitutesBtn) {
+    a11yApplySubstitutesBtn.disabled = !Object.keys(
+      state.accessibility.substituteChoices,
+    ).some(function (key) {
+      return state.accessibility.substituteChoices[key];
+    });
+  }
+});
+a11yLoadGlyphReviewBtn.addEventListener("click", function () {
+  loadGlyphReview().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yApplyGlyphReviewBtn.addEventListener("click", function () {
+  applyGlyphDecisions().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yGlyphReviewList.addEventListener("change", function (event) {
+  const target = event.target;
+  const resource = target.getAttribute("data-glyph-resource");
+  if (!resource) return;
+  if (target.type === "radio") {
+    const decision = state.accessibility.glyphDecisions[resource];
+    if (decision) decision.action = target.value;
+    renderGlyphReview();
+    return;
+  }
+  const code = target.getAttribute("data-glyph-code");
+  if (code === null) return;
+  const decision = state.accessibility.glyphDecisions[resource];
+  if (!decision) return;
+  decision.mappings[code] = target.value;
+  if (a11yApplyGlyphReviewBtn) a11yApplyGlyphReviewBtn.disabled = false;
+});
+a11yGlyphReviewList.addEventListener("click", function (event) {
+  const button = event.target.closest('[data-a11y-action="glyph-show-more"]');
+  if (!button) return;
+  const resource = button.getAttribute("data-glyph-resource");
+  if (!resource) return;
+  const shown =
+    state.accessibility.glyphRendered[resource] || GLYPH_REVIEW_PAGE_SIZE;
+  state.accessibility.glyphRendered[resource] = shown + GLYPH_REVIEW_PAGE_SIZE;
+  renderGlyphReview();
+});
+a11yFontResult.addEventListener("click", function (event) {
+  const button = event.target.closest(
+    '[data-a11y-action="copy-font-admin-request"]',
+  );
+  if (!button) return;
+  copyFontAdministratorRequest().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+async function applyAiTooltipDraft() {
+  if (!state.auth.aiEnabled) {
+    throw new Error("Log in before choosing the optional AI draft.");
+  }
+  const fields = state.fields.map(function (field) {
+    return {
+      name: String(field.name || ""),
+      type: String(field.type || "text"),
+      tooltip: String(field.tooltip || ""),
+      nearby_text: nearbyTextForField(field),
+    };
+  });
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-ai-tooltips"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fields: fields, model: state.model }),
+    },
+  );
+  const payload = await parseApiResponse(response);
+  if (!payload.success)
+    throw new Error(
+      (payload.error && payload.error.message) || "AI drafting failed.",
+    );
+  const suggestions = (payload.data && payload.data.tooltips) || {};
+  let changed = 0;
   state.fields.forEach(function (field) {
-    if (!String(field.tooltip || "").trim()) {
-      field.tooltip = defaultTooltipFromFieldName(field.name);
+    if (suggestions[field.name]) {
+      const nextTooltip = String(suggestions[field.name]);
+      if (nextTooltip !== field.tooltip || field.tooltipSource !== "ai") {
+        field.tooltip = nextTooltip;
+        field.tooltipSource = "ai";
+        changed += 1;
+      }
     }
   });
   renderAccessibilityFieldList();
-  setDirty(true);
+  if (changed) {
+    setDirty(true);
+    markAccessibilityDraft(
+      "field_tooltips",
+      String(changed) + " optional AI suggestions drafted; review each value",
+    );
+  }
+  return changed;
+}
+
+a11yAiTooltipsBtn.addEventListener("click", async function () {
+  showLoading("Drafting accessible field names with AI…");
+  try {
+    const changed = await applyAiTooltipDraft();
+    showSuccess(
+      changed
+        ? "AI drafted " +
+            String(changed) +
+            " field names. Review every suggestion."
+        : "The AI draft returned no changes.",
+      6500,
+    );
+  } catch (error) {
+    showError(error.message || String(error));
+  } finally {
+    hideLoading();
+  }
 });
+
+function accessibilityTooltipPayload() {
+  const tooltips = {};
+  state.fields.forEach(function (field) {
+    const name = String(field.name || "");
+    if (!name) return;
+    tooltips[name] = String(field.tooltip || "").trim();
+  });
+  return tooltips;
+}
+
+function accessibilityFieldOrderPayload() {
+  return state.accessibility.fieldOrder
+    .map(function (fieldId) {
+      const field = state.fields.find(function (candidate) {
+        return candidate.id === fieldId;
+      });
+      return field ? String(field.name || "") : "";
+    })
+    .filter(Boolean);
+}
+
+function accessibilityHeadingDecisionPayload() {
+  return Object.keys(state.accessibility.headingDecisions).map(
+    function (candidateId) {
+      const decision = state.accessibility.headingDecisions[candidateId];
+      return {
+        candidateId: candidateId,
+        status: decision.status,
+        tag: decision.tag,
+      };
+    },
+  );
+}
+
+function accessibilityAiReviewContext() {
+  const report = state.accessibility.report || {};
+  const textSample = state.pageTextBoxes
+    .slice(0, 8)
+    .flatMap(function (page) {
+      return (page || []).map(function (box) {
+        return String(box.text || "").trim();
+      });
+    })
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 16000);
+  return {
+    filename: state.fileName || "",
+    metadata: Object.assign({}, state.accessibility.metadata),
+    textSample: textSample,
+    fields: state.fields.slice(0, 500).map(function (field) {
+      return {
+        fieldId: field.id,
+        name: String(field.name || ""),
+        type: String(field.type || "text"),
+        page: Number(field.pageIndex || 0) + 1,
+        tooltip: String(field.tooltip || ""),
+        tooltipSource: String(field.tooltipSource || ""),
+        nearbyText: nearbyTextForField(field).slice(0, 5),
+      };
+    }),
+    headings: state.accessibility.headingCandidates.map(function (candidate) {
+      const decision = headingDecision(candidate);
+      return {
+        candidateId: String(candidate.candidateId || ""),
+        page: Number(candidate.pageIndex || 0) + 1,
+        text: String(candidate.text || ""),
+        heuristicTag: String(candidate.suggestedTag || "H2"),
+        status: decision.status,
+        tag: decision.tag,
+        source: String(decision.source || "heuristic"),
+      };
+    }),
+    images: state.accessibility.images.map(function (item) {
+      return {
+        assetId: String(item.assetId || ""),
+        page: Number(item.pageIndex || 0) + 1,
+        name: String(item.name || ""),
+        width: Number(item.width || 0),
+        height: Number(item.height || 0),
+        altText: String(item.altText || ""),
+      };
+    }),
+    readingDirection: state.accessibility.readingDirection || "ltr",
+    reportIssues: (Array.isArray(report.issues) ? report.issues : []).map(
+      function (issue) {
+        return {
+          id: String(issue.id || ""),
+          title: String(issue.title || ""),
+          status: String(issue.status || ""),
+          count: Number(issue.count || 0),
+        };
+      },
+    ),
+    structureSummary: {
+      tagTreePresent: !!(
+        state.accessibility.tagStructure &&
+        state.accessibility.tagStructure.present
+      ),
+      tables: (state.accessibility.structureEditor.tables || []).length,
+      figures: (state.accessibility.structureEditor.figures || []).length,
+      annotations: (state.accessibility.structureEditor.annotations || [])
+        .length,
+    },
+  };
+}
+
+function accessibilityAiReviewSignature() {
+  return JSON.stringify(accessibilityAiReviewContext());
+}
+
+function aiReviewChangeLabel(change) {
+  if (!change) return "Manual review required";
+  const labels = {
+    metadata: "Update metadata",
+    field_tooltip: "Update field label",
+    image_alt_text: "Update image-alt draft",
+    reading_direction: "Update reading direction",
+  };
+  const value =
+    typeof change.value === "object"
+      ? JSON.stringify(change.value)
+      : String(change.value || "");
+  return (labels[change.kind] || "Proposed change") + ": " + value;
+}
+
+function renderAiAccessibilityReview() {
+  const review = state.accessibility.aiReview;
+  const findings = Array.isArray(review.findings) ? review.findings : [];
+  const pendingChanges = findings.filter(function (finding) {
+    return finding.status === "pending" && finding.change;
+  });
+  a11yAiReviewBtn.disabled = !state.auth.aiEnabled || review.running;
+  a11yAiReviewBtn.textContent = review.running
+    ? "AI check running…"
+    : "AI final check";
+  a11yAiReviewApplyAllBtn.classList.toggle("hidden", !pendingChanges.length);
+  const current =
+    !!review.lastSignature &&
+    review.lastSignature === accessibilityAiReviewSignature();
+  if (review.running) {
+    a11yAiReviewStatus.textContent =
+      "Reviewing the current accessibility draft…";
+  } else if (!review.lastSignature) {
+    a11yAiReviewStatus.textContent =
+      "No AI reasonableness check has been run for this draft.";
+  } else if (!current) {
+    a11yAiReviewStatus.textContent =
+      "The document changed after this review. Run the AI final check again before export.";
+  } else if (!findings.length) {
+    a11yAiReviewStatus.textContent =
+      "AI found no additional reasonableness concerns. This is not a conformance claim.";
+  } else {
+    a11yAiReviewStatus.textContent =
+      String(findings.length) +
+      " reasonableness finding" +
+      (findings.length === 1 ? "" : "s") +
+      ". Review each item before export.";
+  }
+  a11yAiReviewFindings.innerHTML = findings
+    .map(function (finding, index) {
+      const status = String(finding.status || "pending");
+      const resolved = status === "ignored" || status === "reviewed";
+      const statusLabel =
+        status === "accepted"
+          ? "Accepted suggestion"
+          : status === "ignored"
+            ? "Ignored — kept current setting"
+            : status === "reviewed"
+              ? "Reviewed"
+              : finding.change
+                ? "Decision needed"
+                : "Information — manual review";
+      const badgeClass =
+        status === "accepted"
+          ? "text-bg-success"
+          : status === "ignored" || status === "reviewed"
+            ? "text-bg-secondary"
+            : finding.severity === "info"
+              ? "text-bg-info"
+              : "text-bg-warning";
+      return (
+        '<article class="a11y-ai-review-finding border rounded p-2' +
+        (resolved ? " is-resolved" : "") +
+        '" data-ai-review-index="' +
+        String(index) +
+        '"><div class="d-flex flex-wrap gap-2 align-items-center mb-1"><span class="badge ' +
+        badgeClass +
+        '">' +
+        escapeHtml(statusLabel) +
+        '</span><span class="small text-muted">' +
+        escapeHtml(String(finding.category || "general")) +
+        '</span></div><div class="fw-semibold small">' +
+        escapeHtml(String(finding.title || "AI review finding")) +
+        '</div><div class="small text-muted">' +
+        escapeHtml(String(finding.explanation || "")) +
+        '</div><div class="small mt-1 fw-medium">' +
+        escapeHtml(
+          finding.change
+            ? aiReviewChangeLabel(finding.change)
+            : "No automatic change is proposed. Use the workshop controls below if this needs correction.",
+        ) +
+        "</div>" +
+        '<div class="d-flex flex-wrap gap-2 mt-2">' +
+        (finding.change
+          ? status === "accepted"
+            ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Reject suggestion &amp; restore previous</button>'
+            : status === "ignored"
+              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Accept suggestion</button>'
+              : '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Accept suggestion</button><button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Ignore — keep current setting</button>'
+          : status === "reviewed"
+            ? ""
+            : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Mark reviewed</button>') +
+        "</div>" +
+        "</article>"
+      );
+    })
+    .join("");
+}
+
+function applyAiAccessibilityFinding(finding) {
+  const change = finding && finding.change;
+  if (!change || !["pending", "ignored"].includes(finding.status)) return false;
+  const hasPreviousValue = Object.prototype.hasOwnProperty.call(
+    finding,
+    "previousValue",
+  );
+  if (change.kind === "metadata") {
+    if (!hasPreviousValue) {
+      finding.previousValue = state.accessibility.metadata[change.target] || "";
+    }
+    state.accessibility.metadata[change.target] = String(change.value || "");
+    a11yMetaLanguage.value = state.accessibility.metadata.language || "";
+    a11yMetaTitle.value = state.accessibility.metadata.title || "";
+    a11yMetaAuthor.value = state.accessibility.metadata.author || "";
+    a11yMetaSubject.value = state.accessibility.metadata.subject || "";
+    markAccessibilityDraft("metadata", "AI reasonableness proposal applied");
+  } else if (change.kind === "field_tooltip") {
+    const field = state.fields.find(function (item) {
+      return String(item.id || "") === String(change.target || "");
+    });
+    if (!field) return false;
+    if (!hasPreviousValue) {
+      finding.previousValue = {
+        tooltip: String(field.tooltip || ""),
+        tooltipSource: String(field.tooltipSource || ""),
+      };
+    }
+    field.tooltip = String(change.value || "");
+    field.tooltipSource = "ai";
+    markAccessibilityDraft("field_tooltips", "AI field-label proposal applied");
+    renderAccessibilityFieldList();
+  } else if (change.kind === "image_alt_text") {
+    const image = state.accessibility.images.find(function (item) {
+      return String(item.assetId || "") === String(change.target || "");
+    });
+    if (!image) return false;
+    if (!hasPreviousValue) finding.previousValue = String(image.altText || "");
+    image.altText = String(change.value || "");
+    markAccessibilityDraft("figures", "AI image-alt proposal applied");
+    renderAccessibilityImages();
+  } else if (change.kind === "reading_direction") {
+    if (!hasPreviousValue) {
+      finding.previousValue = {
+        direction: state.accessibility.readingDirection || "ltr",
+        fieldOrder: state.accessibility.fieldOrder.slice(),
+      };
+    }
+    applyDeterministicFieldOrder(String(change.value || "ltr"), {
+      quiet: true,
+    });
+  } else {
+    return false;
+  }
+  finding.status = "accepted";
+  setDirty(true);
+  return true;
+}
+
+function ignoreAiAccessibilityFinding(finding) {
+  if (!finding || !finding.change) return false;
+  const change = finding.change;
+  if (finding.status === "accepted") {
+    const previous = finding.previousValue;
+    if (change.kind === "metadata") {
+      state.accessibility.metadata[change.target] = String(previous || "");
+      a11yMetaLanguage.value = state.accessibility.metadata.language || "";
+      a11yMetaTitle.value = state.accessibility.metadata.title || "";
+      a11yMetaAuthor.value = state.accessibility.metadata.author || "";
+      a11yMetaSubject.value = state.accessibility.metadata.subject || "";
+    } else if (change.kind === "field_tooltip") {
+      const field = state.fields.find(function (item) {
+        return String(item.id || "") === String(change.target || "");
+      });
+      if (!field || !previous) return false;
+      field.tooltip = String(previous.tooltip || "");
+      field.tooltipSource = String(previous.tooltipSource || "");
+      renderAccessibilityFieldList();
+    } else if (change.kind === "image_alt_text") {
+      const image = state.accessibility.images.find(function (item) {
+        return String(item.assetId || "") === String(change.target || "");
+      });
+      if (!image) return false;
+      image.altText = String(previous || "");
+      renderAccessibilityImages();
+    } else if (change.kind === "reading_direction") {
+      if (!previous) return false;
+      state.accessibility.readingDirection = previous.direction || "ltr";
+      state.accessibility.fieldOrder = previous.fieldOrder.slice();
+      renderAccessibilityOrderList();
+    }
+    setDirty(true);
+  }
+  finding.status = "ignored";
+  return true;
+}
+
+async function requestAiAccessibilityReview() {
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-ai-review"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        context: accessibilityAiReviewContext(),
+        model: state.model,
+      }),
+    },
+  );
+  const payload = await parseApiResponse(response);
+  if (!payload.success) {
+    throw new Error(
+      (payload.error && payload.error.message) ||
+        "AI accessibility review failed.",
+    );
+  }
+  return ((payload.data && payload.data.findings) || []).map(
+    function (finding) {
+      return Object.assign({}, finding, { status: "pending" });
+    },
+  );
+}
+
+async function runAiAccessibilityReview(options) {
+  if (!state.auth.aiEnabled) {
+    throw new Error("Log in before choosing the optional AI final check.");
+  }
+  const settings = options || {};
+  const applyDrafts = !!settings.applyDrafts;
+  const passes = applyDrafts ? 2 : 1;
+  const history = settings.preserveHistory
+    ? state.accessibility.aiReview.findings.slice()
+    : [];
+  state.accessibility.aiReview.running = true;
+  renderAiAccessibilityReview();
+  try {
+    for (let pass = 0; pass < passes; pass += 1) {
+      const findings = await requestAiAccessibilityReview();
+      let applied = 0;
+      findings.forEach(function (finding) {
+        if (applyDrafts && applyAiAccessibilityFinding(finding)) applied += 1;
+        history.push(finding);
+      });
+      if (!applyDrafts || !applied) break;
+    }
+    state.accessibility.aiReview.findings = history;
+    state.accessibility.aiReview.lastSignature =
+      accessibilityAiReviewSignature();
+    return history;
+  } finally {
+    state.accessibility.aiReview.running = false;
+    renderAiAccessibilityReview();
+  }
+}
+
+function showAccessibilityAutoFixStatus(message, isError) {
+  if (!a11yAutoFixStatus) return;
+  a11yAutoFixStatus.className =
+    "alert m-3 mb-0 " + (isError ? "alert-danger" : "alert-warning");
+  a11yAutoFixStatus.textContent = String(message || "");
+  a11yAutoFixStatus.focus();
+}
+
+function draftMissingDocumentLanguage() {
+  if (state.accessibility.metadata.language) return "";
+  const language = String(document.documentElement.lang || "en").trim();
+  state.accessibility.metadata.language = language;
+  a11yMetaLanguage.value = language;
+  markAccessibilityDraft(
+    "document-language",
+    "Document language drafted as " + language + " from the editor language",
+  );
+  return language;
+}
+
+function remainingAccessibilityIssues() {
+  const report = state.accessibility.report || {};
+  return (Array.isArray(report.issues) ? report.issues : []).filter(
+    function (issue) {
+      return issue.status !== "pass" && issue.status !== "blocked";
+    },
+  );
+}
+
+async function runAccessibilityAutoFix() {
+  if (!state.pdfBytes) throw new Error("Open a PDF before running auto-fix.");
+  if (!state.auth.aiEnabled) {
+    throw new Error(
+      "Log in before using Auto-fix draft. The individual deterministic and manual tools remain available without AI.",
+    );
+  }
+
+  updateAccessibilityMetadataFromInputs();
+  const originalLanguage = state.accessibility.metadata.language;
+  showLoading("Drafting accessibility fixes with AI…");
+  const summary = {
+    nearbyTooltips: draftTooltipsFromNearbyText({ quiet: true }),
+    aiTooltips: 0,
+    aiHeadings: 0,
+    structureCreated: false,
+    fontsEmbedded: 0,
+    unicodeMapsAdded: 0,
+    fontsUnresolved: 0,
+    unicodeMapsUnresolved: 0,
+    draftedLanguage: "",
+    aiReviewFindings: 0,
+  };
+  applyDeterministicFieldOrder("ltr", { quiet: true });
+  if (state.fields.length) {
+    summary.aiTooltips = await applyAiTooltipDraft();
+  }
+
+  const hadTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hadTagTree && state.accessibility.headingCandidates.length) {
+    summary.aiHeadings = await applyAiHeadingDraft();
+    state.accessibility.headingReviewSavedSignature = headingReviewSignature();
+    updateHeadingReviewDirty();
+    renderHeadingReviewStatus();
+  }
+
+  const aiReviewFindings = await runAiAccessibilityReview({
+    applyDrafts: true,
+  });
+  summary.aiReviewFindings = aiReviewFindings.length;
+  summary.draftedLanguage =
+    state.accessibility.metadata.language !== originalLanguage
+      ? state.accessibility.metadata.language
+      : draftMissingDocumentLanguage();
+
+  await runAccessibilityRemediation(
+    "metadata",
+    {
+      metadata: state.accessibility.metadata,
+      field_tooltips: accessibilityTooltipPayload(),
+      field_order: accessibilityFieldOrderPayload(),
+      display_doc_title: true,
+      set_structure_tab_order: false,
+      mark_untagged_as_artifacts: true,
+    },
+    { quiet: true },
+  );
+
+  const fontResult = await runAccessibilityRemediation(
+    "fonts",
+    {
+      embed_exact_fonts: true,
+      add_unicode_maps: true,
+    },
+    { quiet: true },
+  );
+  summary.fontsEmbedded = Array.isArray(fontResult.fonts_embedded)
+    ? fontResult.fonts_embedded.length
+    : 0;
+  summary.unicodeMapsAdded = Array.isArray(fontResult.unicode_maps_added)
+    ? fontResult.unicode_maps_added.length
+    : 0;
+  summary.fontsUnresolved = Array.isArray(fontResult.unresolved)
+    ? fontResult.unresolved.length
+    : 0;
+  summary.unicodeMapsUnresolved = Array.isArray(fontResult.unicode_unresolved)
+    ? fontResult.unicode_unresolved.length
+    : 0;
+
+  const hasTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hasTagTree) {
+    await runAccessibilityRemediation(
+      "draft_structure",
+      {
+        heading_decisions: accessibilityHeadingDecisionPayload(),
+        mark_as_tagged: false,
+      },
+      { quiet: true },
+    );
+    summary.structureCreated = true;
+  }
+
+  const finalAiFindings = await runAiAccessibilityReview({
+    applyDrafts: false,
+    preserveHistory: true,
+  });
+  summary.aiReviewFindings = finalAiFindings.length;
+
+  setDirty(true);
+  const details = [
+    String(summary.nearbyTooltips) + " nearby-text field-label drafts",
+    String(summary.aiTooltips) + " AI field-label drafts",
+    String(summary.aiHeadings) + " AI heading decisions",
+    String(summary.aiReviewFindings) + " AI reasonableness findings reviewed",
+    String(summary.fontsEmbedded) + " exact fonts embedded",
+    String(summary.fontsUnresolved) + " fonts still need manual resolution",
+    String(summary.unicodeMapsAdded) + " Unicode maps added",
+    String(summary.unicodeMapsUnresolved) +
+      " Unicode mappings still need glyph review",
+    summary.draftedLanguage
+      ? "document language drafted as " + summary.draftedLanguage
+      : "existing document language preserved",
+    summary.structureCreated
+      ? "a draft tag tree created"
+      : "the existing tag tree preserved for manual review",
+  ];
+  const remaining = remainingAccessibilityIssues();
+  const remainingText = remaining.length
+    ? " " +
+      String(remaining.length) +
+      " checks still need attention: " +
+      remaining
+        .map(function (issue) {
+          return (
+            String(issue.title || issue.id || "Finding") +
+            " (" +
+            String(issue.count || 1) +
+            ")"
+          );
+        })
+        .join("; ") +
+      "."
+    : " The workshop preflight has no remaining findings.";
+  hideToasts();
+  showAccessibilityAutoFixStatus(
+    "Auto-fix draft finished: " +
+      details.join("; ") +
+      "." +
+      remainingText +
+      " Auto-fix did not enable MarkInfo.Marked. Review every draft and run veraPDF and screen-reader tests. Only after checking all fixes should the reviewer select “I reviewed the fixes and certify that this PDF is accessible.”",
+    false,
+  );
+  renderAccessibilityModal();
+  return summary;
+}
+
+if (a11yAutoFixBtn) {
+  a11yAutoFixBtn.addEventListener("click", async function () {
+    a11yAutoFixBtn.disabled = true;
+    a11yAutoFixBtn.textContent = "Auto-fix running…";
+    showAccessibilityAutoFixStatus(
+      "Auto-fix is applying deterministic and optional AI drafts. It will not enable MarkInfo.Marked.",
+      false,
+    );
+    try {
+      await runAccessibilityAutoFix();
+    } catch (error) {
+      showAccessibilityAutoFixStatus(
+        "Auto-fix stopped before completing every step. Earlier draft changes may still have been applied and must be reviewed. MarkInfo.Marked was not enabled. " +
+          String(error.message || error),
+        true,
+      );
+      showError(error.message || String(error));
+    } finally {
+      a11yAutoFixBtn.textContent = "Auto-fix draft (uses AI)";
+      a11yAutoFixBtn.disabled = !state.auth.aiEnabled;
+      hideLoading();
+    }
+  });
+}
 [a11yMetaLanguage, a11yMetaTitle, a11yMetaAuthor, a11yMetaSubject].forEach(
   function (input) {
     input.addEventListener("input", function () {
       updateAccessibilityMetadataFromInputs();
+      markAccessibilityDraft(
+        "metadata",
+        "Metadata values edited; apply or export them",
+      );
       setDirty(true);
     });
   },
@@ -6806,9 +9821,11 @@ a11yFieldList.addEventListener("input", function (event) {
   });
   if (!field) return;
   field.tooltip = String(target.value || "");
+  field.tooltipSource = "manual";
+  markAccessibilityDraft("field_tooltips", "Field names manually edited");
   setDirty(true);
 });
-a11yFieldList.addEventListener("click", function (event) {
+a11yOrderList.addEventListener("click", function (event) {
   var actionTarget = event.target.closest("[data-a11y-action]");
   if (!actionTarget) return;
   var action = actionTarget.dataset.a11yAction;
@@ -6823,10 +9840,11 @@ a11yFieldList.addEventListener("click", function (event) {
   order[swapWith] = order[index];
   order[index] = temp;
   state.accessibility.fieldOrder = order;
-  renderAccessibilityFieldList();
+  renderAccessibilityOrderList();
+  markAccessibilityDraft("reading_order", "Field order manually adjusted");
   setDirty(true);
 });
-a11yFieldList.addEventListener("dragstart", function (event) {
+a11yOrderList.addEventListener("dragstart", function (event) {
   if (!event.target.closest(".a11y-drag-handle")) return;
   var row = event.target.closest("[data-field-id]");
   if (!row) return;
@@ -6836,26 +9854,26 @@ a11yFieldList.addEventListener("dragstart", function (event) {
     event.dataTransfer.effectAllowed = "move";
   }
 });
-a11yFieldList.addEventListener("dragend", function () {
+a11yOrderList.addEventListener("dragend", function () {
   a11yDragFieldId = null;
-  a11yFieldList
+  a11yOrderList
     .querySelectorAll(".a11y-dragging, .a11y-drag-over")
     .forEach(function (el) {
       el.classList.remove("a11y-dragging", "a11y-drag-over");
     });
 });
-a11yFieldList.addEventListener("dragover", function (event) {
+a11yOrderList.addEventListener("dragover", function (event) {
   if (!a11yDragFieldId) return;
   event.preventDefault();
   var row = event.target.closest("[data-field-id]");
-  a11yFieldList.querySelectorAll(".a11y-drag-over").forEach(function (el) {
+  a11yOrderList.querySelectorAll(".a11y-drag-over").forEach(function (el) {
     el.classList.remove("a11y-drag-over");
   });
   if (row && row.dataset.fieldId !== a11yDragFieldId) {
     row.classList.add("a11y-drag-over");
   }
 });
-a11yFieldList.addEventListener("drop", function (event) {
+a11yOrderList.addEventListener("drop", function (event) {
   if (!a11yDragFieldId) return;
   event.preventDefault();
   var targetRow = event.target.closest("[data-field-id]");
@@ -6876,7 +9894,8 @@ a11yFieldList.addEventListener("drop", function (event) {
   order.splice(adjustedIndex, 0, a11yDragFieldId);
   state.accessibility.fieldOrder = order;
   a11yDragFieldId = null;
-  renderAccessibilityFieldList();
+  renderAccessibilityOrderList();
+  markAccessibilityDraft("reading_order", "Field order manually adjusted");
   setDirty(true);
 });
 a11yImageList.addEventListener("input", function (event) {
@@ -6890,8 +9909,96 @@ a11yImageList.addEventListener("input", function (event) {
   });
   if (!imageAsset) return;
   imageAsset.altText = String(target.value || "");
+  markAccessibilityDraft(
+    "figure-alt",
+    "Raw image alternative-text drafts edited; link them to Figure tags",
+  );
   setDirty(true);
 });
+
+function structureValueInput(kind, actionTarget) {
+  const path = String(actionTarget.dataset.path || "");
+  const pageIndex = String(actionTarget.dataset.pageIndex || "");
+  const annotationIndex = String(actionTarget.dataset.annotationIndex || "");
+  return Array.from(
+    document.querySelectorAll('[data-structure-value="' + kind + '"]'),
+  ).find(function (input) {
+    if (path) return String(input.dataset.path || "") === path;
+    return (
+      String(input.dataset.pageIndex || "") === pageIndex &&
+      String(input.dataset.annotationIndex || "") === annotationIndex
+    );
+  });
+}
+
+function handleStructureEditorAction(event) {
+  const target = event.target.closest("[data-structure-action]");
+  if (!target) return;
+  const action = target.dataset.structureAction;
+  const path = String(target.dataset.path || "");
+  let operation = null;
+  if (action === "save-figure-alt") {
+    const input = structureValueInput("figure-alt", target);
+    operation = {
+      action: "set_figure_alt",
+      path: path,
+      altText: input ? input.value : "",
+    };
+  } else if (action === "save-cell-role") {
+    const input = structureValueInput("cell-role", target);
+    if (!input) {
+      showError(
+        "The table cell control is no longer available. Refresh and retry.",
+      );
+      return;
+    }
+    operation = { action: "set_role", path: path, role: input.value };
+  } else if (action === "save-header-scope") {
+    const input = structureValueInput("header-scope", target);
+    if (!input) {
+      showError(
+        "The table header control is no longer available. Refresh and retry.",
+      );
+      return;
+    }
+    operation = { action: "set_scope", path: path, scope: input.value };
+  } else if (action === "pad-table") {
+    if (
+      !window.confirm(
+        "Add empty TD structure cells to shorter rows? Use this only when the visual table really contains blank cells.",
+      )
+    )
+      return;
+    operation = { action: "pad_table", path: path };
+  } else if (action === "save-annotation-description") {
+    const input = structureValueInput("annotation-contents", target);
+    operation = {
+      action: "set_annotation_contents",
+      pageIndex: Number(target.dataset.pageIndex),
+      index: Number(target.dataset.annotationIndex),
+      contents: input ? input.value : "",
+    };
+  } else if (action === "tag-annotation") {
+    operation = {
+      action: "tag_annotation",
+      pageIndex: Number(target.dataset.pageIndex),
+      index: Number(target.dataset.annotationIndex),
+      role: String(target.dataset.role || "Annot"),
+    };
+  }
+  if (!operation) return;
+  runAccessibilityRemediation("structure", {
+    operations: [operation],
+  }).catch(function (error) {
+    showError(error.message || String(error));
+  });
+}
+
+[a11yFigureTagList, a11yTableList, a11yAnnotationList].forEach(
+  function (container) {
+    container.addEventListener("click", handleStructureEditorAction);
+  },
+);
 settingsBtn.addEventListener("click", function () {
   aiModelInput.value = state.model || state.defaultModel;
   renderModelSuggestions("");
@@ -7032,8 +10139,7 @@ document.addEventListener("mousedown", function (event) {
     !accessibilityModal.classList.contains("hidden") &&
     event.target === accessibilityModal
   ) {
-    updateAccessibilityMetadataFromInputs();
-    accessibilityModal.classList.add("hidden");
+    closeAccessibilityWorkshop();
   }
   if (
     !normalizationModal.classList.contains("hidden") &&
@@ -7348,7 +10454,9 @@ document.addEventListener("keydown", function (event) {
     selectField(null, { focusNameInput: false, scrollIntoView: false });
     aiModelSuggestions.classList.add("hidden");
     settingsModal.classList.add("hidden");
-    accessibilityModal.classList.add("hidden");
+    if (!accessibilityModal.classList.contains("hidden")) {
+      closeAccessibilityWorkshop();
+    }
     normalizationModal.classList.add("hidden");
     if (!pageManagerModal.classList.contains("hidden")) {
       closePageManager();

@@ -119,6 +119,8 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def setUp(self):
         self.html = _read_package_file("data", "templates", "pdf_labeler.html")
         self.js = _read_package_file("data", "static", "pdf_labeler.js")
+        self.css = _read_package_file("data", "static", "pdf_labeler.css")
+        self.api = _read_package_file("api_labelers.py")
 
     # -- HTML template checks ------------------------------------------------
 
@@ -226,6 +228,154 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def test_pdf_attachment_block_utility_is_wired_into_ui(self):
         self.assertIn("/pdf-labeler/api/attachment-block", self.js)
         self.assertIn("util-attachment-generate", self.html)
+
+    def test_accessibility_font_remediation_has_choices_and_persistent_result(self):
+        self.assertIn('id="a11y-font-embedding-summary"', self.html)
+        self.assertIn('id="a11y-font-unicode-summary"', self.html)
+        self.assertIn('id="a11y-embed-fonts"', self.html)
+        self.assertIn('id="a11y-add-unicode-maps"', self.html)
+        self.assertIn('id="a11y-font-result"', self.html)
+        self.assertIn("renderFontStatus", self.js)
+        self.assertIn("renderFontRemediationResult", self.js)
+        self.assertIn("copyFontAdministratorRequest", self.js)
+        self.assertIn("embed_exact_fonts: true", self.js)
+        self.assertIn("add_unicode_maps: true", self.js)
+
+    def test_new_accessibility_controls_tolerate_stale_template_markup(self):
+        """A package refresh must not crash a page holding the prior template."""
+        self.assertIn("function optionalWorkshopElement", self.js)
+        optional_ids = [
+            "a11y-order-list",
+            "a11y-issue-list",
+            "a11y-refresh-report",
+            "a11y-draft-structure",
+            "a11y-font-embedding-summary",
+            "a11y-font-unicode-summary",
+            "a11y-add-unicode-maps",
+            "a11y-heading-list",
+            "a11y-structure-preview",
+            "a11y-save-heading-review",
+            "a11y-heading-review-status",
+            "a11y-figure-focus",
+            "a11y-structure-focus",
+            "a11y-table-list",
+            "a11y-annotation-list",
+            "a11y-auto-fix",
+            "a11y-auto-fix-status",
+        ]
+        for element_id in optional_ids:
+            self.assertRegex(
+                self.js,
+                rf'optionalWorkshopElement\(\s*"{re.escape(element_id)}"',
+                f"New control {element_id} must be safe when older HTML is cached",
+            )
+
+    def test_heading_review_has_explicit_save_lifecycle(self):
+        self.assertIn('id="a11y-save-heading-review"', self.html)
+        self.assertIn('id="a11y-heading-review-status"', self.html)
+        self.assertIn("headingReviewSavedSignature", self.js)
+        self.assertIn("Unsaved changes", self.js)
+        self.assertIn("Save the heading review before creating tags", self.js)
+
+    def test_semantic_findings_focus_editable_targets(self):
+        self.assertIn('id="a11y-figure-focus"', self.html)
+        self.assertIn('id="a11y-structure-focus"', self.html)
+        self.assertIn("editorTargetCount", self.js)
+        self.assertIn("structureTargetAttributes", self.js)
+        self.assertIn("data-issue-ids", self.js)
+        self.assertIn('? "Blocked"', self.js)
+
+    def test_accessibility_workshop_exposes_draft_status_and_structure_edits(self):
+        self.assertIn("Draft passed preflight", self.js)
+        self.assertIn('id="a11y-figure-tag-list"', self.html)
+        self.assertIn('id="a11y-table-list"', self.html)
+        self.assertIn("renderStructureEditor", self.js)
+        self.assertIn("handleStructureEditorAction", self.js)
+        self.assertIn("set_figure_alt", self.js)
+        self.assertIn("set_scope", self.js)
+        self.assertIn("tag_annotation", self.js)
+        self.assertIn("tooltipSourceLabel", self.js)
+        self.assertIn("Existing PDF /TU", self.js)
+
+    def test_accessibility_reading_order_has_a_dedicated_editor(self):
+        self.assertIn('id="a11y-order-list"', self.html)
+        self.assertIn("renderAccessibilityOrderList", self.js)
+        self.assertIn('const factor = direction === "rtl" ? -1 : 1;', self.js)
+        self.assertIn('a11yOrderList.addEventListener("click"', self.js)
+        self.assertIn('a11yOrderList.addEventListener("drop"', self.js)
+
+    def test_accessibility_headings_have_visual_review_and_optional_ai(self):
+        self.assertIn('id="a11y-structure-preview"', self.html)
+        self.assertIn('id="a11y-headings-approve-all"', self.html)
+        self.assertIn('id="a11y-headings-reject-all"', self.html)
+        self.assertIn('id="a11y-ai-headings"', self.html)
+        self.assertIn("renderStructurePreview", self.js)
+        self.assertIn("structurePreviewGeneration", self.js)
+        self.assertIn("setHeadingDecision", self.js)
+        self.assertIn("/pdf-labeler/api/accessibility-ai-headings", self.js)
+        self.assertIn("heading_decisions: decisions", self.js)
+
+    def test_accessibility_review_guards_dynamic_structure_controls(self):
+        self.assertIn("if (!input)", self.js)
+        self.assertIn("The table cell control is no longer available", self.js)
+        self.assertIn("The table header control is no longer available", self.js)
+        self.assertIn("const statusRank", self.js)
+
+    def test_accessibility_tooltips_keep_neighbor_label_text(self):
+        self.assertIn("allowNeighborFieldText", self.js)
+        self.assertIn("{ allowNeighborFieldText: true }", self.js)
+
+    def test_accessibility_remediation_avoids_duplicate_inspection(self):
+        self.assertIn(
+            "from .pdf_accessibility import PDFAccessibilityError", self.api
+        )
+        remediation = self.api[
+            self.api.index("def pdf_labeler_accessibility_remediate") : self.api.index(
+                'f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-tooltips"'
+            )
+        ]
+        self.assertNotIn("inspect_pdf_accessibility", remediation)
+        self.assertNotIn('"inspection": inspection', remediation)
+
+    def test_accessibility_auto_fix_is_draft_only_and_explicitly_uses_ai(self):
+        self.assertIn('id="a11y-auto-fix"', self.html)
+        self.assertIn("Auto-fix draft (uses AI)", self.html)
+        self.assertIn("function runAccessibilityAutoFix", self.js)
+        self.assertIn("await applyAiTooltipDraft()", self.js)
+        self.assertIn("await applyAiHeadingDraft()", self.js)
+        self.assertIn("mark_as_tagged: false", self.js)
+        self.assertIn("Auto-fix never enables it", self.html)
+        self.assertIn("Only after checking all fixes", self.js)
+        self.assertIn("function draftMissingDocumentLanguage", self.js)
+        self.assertIn("document.documentElement.lang", self.js)
+        self.assertIn("function remainingAccessibilityIssues", self.js)
+        self.assertIn("checks still need attention", self.js)
+        self.assertIn("fonts still need manual resolution", self.js)
+        self.assertIn("Unicode mappings still need glyph review", self.js)
+        self.assertIn("clientSettings.quiet", self.js)
+        self.assertIn("Draft passed preflight", self.js)
+
+    def test_accessibility_workshop_exposes_completion_and_export_actions(self):
+        self.assertIn('id="a11y-certify-accessible"', self.html)
+        self.assertIn('id="a11y-export"', self.html)
+        self.assertIn("setAccessibilityDeclaration", self.js)
+        self.assertIn("a11yStatusLegend.innerHTML", self.js)
+        self.assertIn("closeAccessibilityWorkshop", self.js)
+        self.assertIn("showPdfWorkspace();", self.js)
+
+    def test_accessibility_workshop_has_reviewable_ai_final_check(self):
+        self.assertIn('id="a11y-ai-review"', self.html)
+        self.assertIn('id="a11y-ai-review-findings"', self.html)
+        self.assertIn("function runAiAccessibilityReview", self.js)
+        self.assertIn("applyDrafts: true", self.js)
+        self.assertIn("data-ai-review-action", self.js)
+        self.assertIn("Accept suggestion", self.js)
+        self.assertIn("Ignore — keep current setting", self.js)
+        self.assertIn("Reject suggestion &amp; restore previous", self.js)
+        self.assertIn("ignoreAiAccessibilityFinding", self.js)
+        self.assertIn("overflow-y: auto", self.css)
+        self.assertIn("/pdf-labeler/api/accessibility-ai-review", self.js)
+        self.assertIn("def pdf_labeler_accessibility_ai_review", self.api)
 
     def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
         self.assertIn("data.data.menu_items", self.js)

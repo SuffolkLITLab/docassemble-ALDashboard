@@ -405,31 +405,76 @@
             </div>
         </div>
 
-        <div id="accessibility-modal" role="dialog" aria-modal="true" aria-labelledby="accessibility-modal-title" class="hidden position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1070;">
-            <div class="bg-white border shadow p-3" style="width: 100%; max-width: 62rem; max-height: 92vh; overflow: auto;">
-                <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+        <div id="accessibility-modal" role="dialog" aria-modal="true" aria-labelledby="accessibility-modal-title" class="a11y-workshop hidden">
+            <div class="a11y-workshop-shell">
+                <div class="a11y-workshop-header">
                     <div>
-                        <h2 id="accessibility-modal-title" class="h5 fw-semibold mb-0">PDF Accessibility</h2>
-                        <p class="small text-muted mb-0 mt-1">Tooltips, field order, image alt text, metadata, and tag structure.</p>
+                        <h2 id="accessibility-modal-title" class="h5 fw-semibold mb-0">PDF Accessibility Workshop</h2>
+                        <p class="small text-muted mb-0 mt-1">Find barriers, use explainable draft fixes, and review every semantic decision.</p>
                     </div>
-                    <button id="close-accessibility" class="btn btn-sm btn-light">Close</button>
+                    <div class="d-flex flex-wrap justify-content-end align-items-center gap-2">
+                        <span id="a11y-summary" class="small" aria-live="polite">Inspecting document…</span>
+                        <button id="a11y-auto-fix" class="btn btn-sm btn-warning" title="Runs deterministic drafts, AI field and heading helpers, and a bounded AI reasonableness feedback loop">Auto-fix draft (uses AI)</button>
+                        <button id="a11y-ai-review" class="btn btn-sm btn-outline-warning" title="Uses the configured AI to review the current accessibility choices without certifying the PDF">AI final check</button>
+                        <button id="a11y-refresh-report" class="btn btn-sm btn-outline-secondary">Re-run report</button>
+                        <button id="a11y-export" class="btn btn-sm btn-primary">Export PDF</button>
+                        <button id="close-accessibility" class="btn btn-sm btn-dark">Return to field editor</button>
+                    </div>
                 </div>
-
-                <div class="form-check mb-3">
-                    <input id="a11y-enable" class="form-check-input" type="checkbox" checked>
-                    <label class="form-check-label fw-medium" for="a11y-enable">Enable accessibility enhancements on export</label>
+                <div id="a11y-auto-fix-status" class="hidden alert alert-warning m-3 mb-0" role="status" tabindex="-1"></div>
+                <div class="a11y-certification-bar mx-3 mt-3">
+                    <div class="form-check mb-0">
+                        <input id="a11y-certify-accessible" class="form-check-input" type="checkbox">
+                        <label class="form-check-label fw-semibold" for="a11y-certify-accessible">I reviewed the fixes and certify that this PDF is accessible</label>
+                        <div id="a11y-certify-status" class="small text-muted">This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.</div>
+                    </div>
                 </div>
-
-                <section class="border rounded p-3 mb-3">
-                    <h3 class="h6 fw-semibold mb-2">Field Tooltips and Order</h3>
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        <button id="a11y-autofill-tooltips" type="button" class="btn btn-outline-secondary btn-sm">Auto-fill Missing Tooltips</button>
-                        <span class="small text-muted">Default tooltip format replaces underscores with spaces.</span>
+                <section class="a11y-ai-review mx-3 mt-3" aria-labelledby="a11y-ai-review-title">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <div>
+                            <h3 id="a11y-ai-review-title" class="h6 mb-1">AI reasonableness review <span class="badge text-bg-warning">optional</span></h3>
+                            <p class="small text-muted mb-0">Sends a document-text sample and the current draft settings to the configured AI to check whether the title, language, labels, headings, order, and other choices make sense. It never certifies the PDF. Review every proposed change.</p>
+                        </div>
+                        <button id="a11y-ai-review-apply-all" class="btn btn-sm btn-outline-primary hidden">Accept all pending suggestions</button>
+                    </div>
+                    <div id="a11y-ai-review-status" class="small text-muted mt-2" role="status">No AI reasonableness check has been run for this draft.</div>
+                    <div id="a11y-ai-review-findings" class="vstack gap-2 mt-2" tabindex="0" aria-label="AI reasonableness findings"></div>
+                </section>
+                <div class="a11y-workshop-layout">
+                    <aside class="a11y-workshop-report" aria-label="Accessibility findings">
+                        <div class="form-check form-switch mb-3">
+                            <input id="a11y-enable" class="form-check-input" type="checkbox" checked>
+                            <label class="form-check-label fw-medium" for="a11y-enable">Apply reviewed changes on export</label>
+                        </div>
+                        <div class="small text-muted mb-2">Prioritized findings</div>
+                        <div id="a11y-status-legend" class="small mb-2 d-flex flex-wrap gap-1"></div>
+                        <div id="a11y-issue-list" class="vstack gap-2"></div>
+                        <p class="a11y-disclaimer mt-3 mb-0">This preflight is not a conformance claim. Finish with veraPDF and screen-reader testing.</p>
+                    </aside>
+                    <div class="a11y-workshop-content">
+                <section id="a11y-panel-field_tooltips" class="a11y-panel">
+                    <h3 class="h6 fw-semibold mb-1">Accessible form field names</h3>
+                    <p class="small text-muted">Each tooltip is announced by assistive technology. Drafts use nearby printed text first and the opaque PDF field name only as a fallback.</p>
+                    <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+                        <button id="a11y-autofill-tooltips" type="button" class="btn btn-primary btn-sm">Draft from nearby text</button>
+                        <button id="a11y-ai-tooltips" type="button" class="btn btn-outline-warning btn-sm">Draft with AI (optional)</button>
+                        <span class="small text-muted">Nothing is sent to an AI unless you choose the AI button.</span>
                     </div>
                     <div id="a11y-field-list" class="vstack gap-2"></div>
                 </section>
 
-                <section class="border rounded p-3 mb-3">
+                <section id="a11y-panel-reading_order" class="a11y-panel">
+                    <h3 class="h6 fw-semibold mb-1">Reading and tab order</h3>
+                    <p class="small text-muted">This is the field order that will be written to the AcroForm, page annotations, and existing Form structure elements on export. Choose a starting heuristic, then arrange the numbered list manually.</p>
+                    <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+                        <button class="btn btn-outline-secondary btn-sm a11y-order-btn" data-direction="ltr">Rows: left to right</button>
+                        <button class="btn btn-outline-secondary btn-sm a11y-order-btn" data-direction="rtl">Rows: right to left</button>
+                        <button class="btn btn-outline-secondary btn-sm a11y-order-btn" data-direction="ttb">Columns: top to bottom</button>
+                    </div>
+                    <div id="a11y-order-list" class="vstack gap-2" aria-label="Field reading order"></div>
+                </section>
+
+                <section id="a11y-panel-metadata" class="a11y-panel">
                     <h3 class="h6 fw-semibold mb-2">Document Metadata</h3>
                     <div class="row g-2">
                         <div class="col-md-3">
@@ -449,23 +494,110 @@
                             <input id="a11y-meta-subject" type="text" class="form-control form-control-sm">
                         </div>
                     </div>
+                    <button id="a11y-apply-metadata" class="btn btn-primary btn-sm mt-3">Apply metadata and display title now</button>
                 </section>
 
-                <section class="border rounded p-3 mb-3">
+                <section id="a11y-panel-figures" class="a11y-panel">
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h3 class="h6 fw-semibold mb-0">Image Alternative Text</h3>
                         <label class="form-check form-switch m-0">
                             <input id="a11y-image-mode" class="form-check-input" type="checkbox">
-                            <span class="form-check-label small">Image alt text mode</span>
+                            <span class="form-check-label small">Show raw image inventory</span>
                         </label>
                     </div>
+                    <p class="small text-muted">Classify meaningful figures and decorative images. Alternative text must live on the corresponding Figure structure element; raw image metadata is retained only as a draft until structure is linked.</p>
+                    <div id="a11y-figure-focus" class="hidden alert alert-info small py-2" role="status"></div>
+                    <h4 class="h6">Figure tags</h4>
+                    <div id="a11y-figure-tag-list" class="vstack gap-2 mb-3"></div>
+                    <h4 class="h6">Raw image objects</h4>
                     <div id="a11y-image-list" class="vstack gap-2"></div>
                 </section>
 
-                <section class="border rounded p-3">
-                    <h3 class="h6 fw-semibold mb-2">Document Tag Structure (Read-only)</h3>
+                <section id="a11y-panel-draft_structure" class="a11y-panel">
+                    <h3 class="h6 fw-semibold mb-2">Tags and semantic structure</h3>
+                    <div class="alert alert-warning small">A tag tree must describe the real document. The draft tags existing text objects as content blocks, promotes reviewed heading matches, includes form widgets, and provisionally marks leftover layout drawing and whitespace as artifacts. Review the visible document carefully: it does not infer tables, lists, or figures.</div>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button id="a11y-draft-structure" class="btn btn-outline-primary btn-sm">Create tags from approved draft</button>
+                        <button id="a11y-toggle-marked" class="btn btn-outline-secondary btn-sm">Declare tagged PDF/UA-1</button>
+                    </div>
+                    <div class="alert alert-secondary small py-2">Developer: setting <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier is a declaration, not an automated fix. Click it only after reviewing every draft change and completing external validation. Auto-fix never enables it.</div>
                     <pre id="a11y-tag-structure" class="small mb-0" style="max-height: 14rem; overflow: auto;"></pre>
+                    <h4 class="h6 mt-3">Visual structure draft</h4>
+                    <p class="small text-muted">The preview outlines extracted paragraph blocks and proposed headings. The heuristic intentionally favors recall: approve real headings, reject false matches, and choose the correct level before creating tags.</p>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button id="a11y-headings-approve-all" type="button" class="btn btn-sm btn-outline-primary">Approve all candidates</button>
+                        <button id="a11y-headings-reject-all" type="button" class="btn btn-sm btn-outline-secondary">Reject all</button>
+                        <button id="a11y-ai-headings" type="button" class="btn btn-sm btn-outline-warning">Draft heading decisions with AI (optional)</button>
+                        <span class="small text-muted align-self-center">AI is used only when you choose the AI button.</span>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3 border rounded p-2">
+                        <button id="a11y-save-heading-review" type="button" class="btn btn-sm btn-primary">Save heading review</button>
+                        <span id="a11y-heading-review-status" class="badge text-bg-warning">Unsaved changes</span>
+                        <span class="small text-muted">Saving keeps the current approvals, rejections, and levels. “Create tags” then writes that saved review into the PDF.</span>
+                    </div>
+                    <div class="a11y-structure-draft-layout">
+                        <div id="a11y-structure-preview" class="a11y-structure-preview" aria-label="Document structure preview"></div>
+                        <div id="a11y-heading-list" class="vstack gap-2"></div>
+                    </div>
                 </section>
+
+                <section id="a11y-panel-fonts" class="a11y-panel">
+                    <h3 class="h6 fw-semibold mb-2">Fonts and Unicode</h3>
+                    <p class="small text-muted">These are two independent checks. Embedding supplies the font program needed to draw text reliably. Unicode mapping tells assistive technology which characters that text represents.</p>
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100">
+                                <h4 class="h6">1. Font embedding</h4>
+                                <p class="small text-muted">A font needs action only when its program is missing. The server embeds only an installed TrueType font whose name, widths, and license match exactly; it never silently substitutes. A standard 14 font such as Helvetica stores no widths of its own, so it is checked against published metrics and its dictionary is completed when an exact match is installed.</p>
+                                <div id="a11y-font-embedding-summary" class="alert small py-2" role="status"></div>
+                                <div id="a11y-font-embedding-list" class="vstack gap-2 mb-2"></div>
+                                <button id="a11y-embed-fonts" class="btn btn-outline-primary btn-sm">Check and embed exact matches</button>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100">
+                                <h4 class="h6">2. Unicode mapping</h4>
+                                <p class="small text-muted">A map is needed when assistive technology cannot reliably translate stored character codes into text. Rules-based repair covers fonts whose encoding is WinAnsi or MacRoman, including those that override individual codes through /Differences. Symbol fonts have no such encoding; use the glyph review below instead.</p>
+                                <div id="a11y-font-unicode-summary" class="alert small py-2" role="status"></div>
+                                <div id="a11y-font-unicode-list" class="vstack gap-2 mb-2"></div>
+                                <button id="a11y-add-unicode-maps" class="btn btn-outline-primary btn-sm">Add safe Unicode maps</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="border rounded p-3 mt-3">
+                        <h4 class="h6">3. Substitute a font</h4>
+                        <p class="small text-muted">When the exact font is not installed and cannot be, a different typeface whose widths match can take its place. Text keeps its position and line breaks because the widths are identical; only the letterforms change. This swaps a typeface, so nothing happens until you pick a replacement and apply it.</p>
+                        <div id="a11y-substitute-summary" class="alert small py-2" role="status"></div>
+                        <div id="a11y-substitute-list" class="vstack gap-3 mb-2"></div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button id="a11y-load-substitutes" class="btn btn-outline-primary btn-sm">Find metric-compatible fonts</button>
+                            <button id="a11y-apply-substitutes" class="btn btn-primary btn-sm" disabled>Apply substitutions</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-3 mt-3">
+                        <h4 class="h6">4. Glyph review</h4>
+                        <p class="small text-muted">Symbol fonts such as Webdings and Wingdings store their glyphs in the private use area, so no map can be derived from the file. Review the glyph the PDF actually draws, then either confirm the character it stands for or mark the font as decorative. Nothing is written until you apply your decisions.</p>
+                        <div id="a11y-glyph-review-summary" class="alert small py-2" role="status"></div>
+                        <div id="a11y-glyph-review-list" class="vstack gap-3 mb-2"></div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button id="a11y-load-glyph-review" class="btn btn-outline-primary btn-sm">Review unmapped glyphs</button>
+                            <button id="a11y-apply-glyph-review" class="btn btn-primary btn-sm" disabled>Apply glyph decisions</button>
+                        </div>
+                    </div>
+                    <div id="a11y-font-result" class="hidden alert small mt-3 mb-0" role="status" tabindex="-1"></div>
+                </section>
+
+                <section id="a11y-panel-structure" class="a11y-panel">
+                    <h3 class="h6 fw-semibold mb-2">Tables, links, and annotations</h3>
+                    <p class="small text-muted">Make explicit semantic repairs below. Changing a table child role or padding a row is a human decision; no structure edit is applied until you choose its button.</p>
+                    <div id="a11y-structure-focus" class="hidden alert alert-info small py-2" role="status"></div>
+                    <h4 class="h6">Tables</h4>
+                    <div id="a11y-table-list" class="vstack gap-2 mb-3"></div>
+                    <h4 class="h6">Links and other annotations</h4>
+                    <div id="a11y-annotation-list" class="vstack gap-2"></div>
+                </section>
+                    </div>
+                </div>
             </div>
         </div>
 

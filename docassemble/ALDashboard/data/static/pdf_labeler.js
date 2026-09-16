@@ -217,6 +217,9 @@ const state = {
     headingReviewDirty: true,
     activeIssueId: "",
     fontRemediation: null,
+    glyphReview: null,
+    glyphDecisions: {},
+    glyphRendered: {},
     draftRemediations: {},
     marked: false,
     inspected: false,
@@ -391,6 +394,18 @@ const a11yToggleMarkedBtn = optionalWorkshopElement(
 const a11yEmbedFontsBtn = optionalWorkshopElement("a11y-embed-fonts", "button");
 const a11yAddUnicodeMapsBtn = optionalWorkshopElement(
   "a11y-add-unicode-maps",
+  "button",
+);
+const a11yGlyphReviewSummary = optionalWorkshopElement(
+  "a11y-glyph-review-summary",
+);
+const a11yGlyphReviewList = optionalWorkshopElement("a11y-glyph-review-list");
+const a11yLoadGlyphReviewBtn = optionalWorkshopElement(
+  "a11y-load-glyph-review",
+  "button",
+);
+const a11yApplyGlyphReviewBtn = optionalWorkshopElement(
+  "a11y-apply-glyph-review",
   "button",
 );
 const a11yFontEmbeddingSummary = optionalWorkshopElement(
@@ -1915,6 +1930,7 @@ function renderAccessibilityReport() {
       .join("");
   }
   renderFontRemediationResult();
+  renderGlyphReview();
 }
 
 function displayPdfFontName(font) {
@@ -2004,6 +2020,327 @@ function renderFontStatus(report) {
   a11yAddUnicodeMapsBtn.textContent = missingUnicode.length
     ? "Add safe maps for " + String(missingUnicode.length) + " fonts"
     : "No Unicode maps missing";
+}
+
+const GLYPH_REVIEW_PAGE_SIZE = 50;
+
+function glyphDecisionFor(font) {
+  const existing = state.accessibility.glyphDecisions[font.resource];
+  if (existing) return existing;
+  // Default to the safest outcome: change nothing until a person chooses.
+  const created = { action: "skip", mappings: {} };
+  (font.glyphs || []).forEach(function (glyph) {
+    if (glyph.proposal && glyph.proposal.character) {
+      created.mappings[String(glyph.code)] = glyph.proposal.character;
+    }
+  });
+  state.accessibility.glyphDecisions[font.resource] = created;
+  return created;
+}
+
+function glyphOutlineSvg(outline, label) {
+  if (!outline || !outline.path) {
+    return (
+      '<div class="a11y-glyph-missing small text-muted" role="img" aria-label="' +
+      escapeHtml("No outline available for " + label) +
+      '">no outline</div>'
+    );
+  }
+  const box = Array.isArray(outline.bbox) ? outline.bbox : null;
+  const upem = Number(outline.unitsPerEm) || 1000;
+  // Font outlines are y-up with the baseline at zero; SVG is y-down, so the
+  // path is flipped and framed on the glyph's own bounds with a small margin.
+  const minX = box ? box[0] : 0;
+  const maxX = box ? box[2] : upem;
+  const minY = box ? box[1] : 0;
+  const maxY = box ? box[3] : upem;
+  const pad = upem * 0.06;
+  const width = Math.max(maxX - minX, 1) + pad * 2;
+  const height = Math.max(maxY - minY, 1) + pad * 2;
+  const viewBox =
+    String(minX - pad) +
+    " " +
+    String(-maxY - pad) +
+    " " +
+    String(width) +
+    " " +
+    String(height);
+  return (
+    '<svg class="a11y-glyph-outline" viewBox="' +
+    escapeHtml(viewBox) +
+    '" role="img" aria-label="' +
+    escapeHtml("Glyph drawn for " + label) +
+    '" focusable="false"><g transform="scale(1,-1)"><path d="' +
+    escapeHtml(String(outline.path)) +
+    '" /></g></svg>'
+  );
+}
+
+function glyphProvenanceBadge(glyph) {
+  if (glyph.charCodeSource === "embedded-cmap") {
+    return '<span class="badge text-bg-success" title="Read from the character map inside the PDF’s own embedded font.">from embedded font</span>';
+  }
+  if (glyph.charCodeSource === "installed-font") {
+    return '<span class="badge text-bg-warning" title="Matched by lining the subset up against an installed copy of this font. Confirm it looks right.">from installed font</span>';
+  }
+  return '<span class="badge text-bg-secondary" title="Nothing in the PDF or on this server records what this glyph means.">unknown code</span>';
+}
+
+function renderGlyphRow(font, glyph) {
+  const decision = glyphDecisionFor(font);
+  const label = "code " + String(glyph.code);
+  const value = decision.mappings[String(glyph.code)] || "";
+  const inputId =
+    "a11y-glyph-char-" + escapeHtml(font.resource) + "-" + glyph.code;
+  const proposal = glyph.proposal;
+  return (
+    '<div class="a11y-glyph-row d-flex align-items-center gap-2 border rounded p-2">' +
+    glyphOutlineSvg(glyph.outline, label) +
+    '<div class="flex-grow-1 small"><div class="fw-semibold">' +
+    escapeHtml(glyph.codeLabel || label) +
+    (glyph.charCodeHex
+      ? " · char " + escapeHtml(String(glyph.charCodeHex))
+      : "") +
+    '</div><div class="text-muted">drawn ' +
+    String(glyph.count) +
+    (glyph.count === 1 ? " time" : " times") +
+    " · " +
+    glyphProvenanceBadge(glyph) +
+    (proposal
+      ? ' <span class="badge text-bg-light" title="' +
+        escapeHtml(
+          proposal.evidence === "rendered"
+            ? "Proposed by comparing this glyph outline to the character."
+            : "Proposed from a published encoding standard.",
+        ) +
+        '">' +
+        escapeHtml(proposal.codepoint + " " + proposal.unicodeName) +
+        "</span>"
+      : "") +
+    '</div></div><div><label class="form-label small mb-1" for="' +
+    inputId +
+    '">Character</label><input type="text" class="form-control form-control-sm a11y-glyph-input" id="' +
+    inputId +
+    '" maxlength="16" size="4" value="' +
+    escapeHtml(value) +
+    '" data-glyph-resource="' +
+    escapeHtml(font.resource) +
+    '" data-glyph-code="' +
+    String(glyph.code) +
+    '" /></div></div>'
+  );
+}
+
+function renderGlyphFontCard(font) {
+  const decision = glyphDecisionFor(font);
+  const rendered = Math.min(
+    state.accessibility.glyphRendered[font.resource] || GLYPH_REVIEW_PAGE_SIZE,
+    (font.glyphs || []).length,
+  );
+  const drawsNothing = font.runs > 0 && font.glyphCount === 0;
+  const options = [
+    [
+      "map",
+      "Confirm characters",
+      "Write a Unicode map from the characters you confirm below.",
+    ],
+    [
+      "artifact",
+      "Mark all as decorative",
+      "Wrap every run in this font as an artifact so assistive technology skips it.",
+    ],
+    ["skip", "Leave alone", "Change nothing for this font."],
+  ];
+  const name = "a11y-glyph-action-" + escapeHtml(font.resource);
+  return (
+    '<div class="border rounded p-3" data-glyph-font="' +
+    escapeHtml(font.resource) +
+    '"><div class="d-flex flex-wrap justify-content-between gap-2"><div><span class="fw-semibold">' +
+    escapeHtml(font.font || font.resource) +
+    '</span><div class="small text-muted">' +
+    escapeHtml(String(font.subtype || "unknown type")) +
+    " · " +
+    escapeHtml(String(font.encoding || "no encoding")) +
+    " · " +
+    escapeHtml(String(font.resource)) +
+    '</div></div><div class="small text-end">' +
+    (font.symbolic
+      ? '<span class="badge text-bg-info">symbol font</span> '
+      : "") +
+    (font.embedded
+      ? '<span class="badge text-bg-light">embedded</span> '
+      : '<span class="badge text-bg-warning">not embedded</span> ') +
+    '<div class="text-muted mt-1">' +
+    String(font.glyphCount) +
+    (font.glyphCount === 1 ? " glyph" : " glyphs") +
+    " · " +
+    String(font.runs) +
+    (font.runs === 1 ? " run" : " runs") +
+    (font.pages && font.pages.length
+      ? " · page " +
+        escapeHtml(
+          font.pages
+            .map(function (index) {
+              return String(index + 1);
+            })
+            .join(", "),
+        )
+      : "") +
+    "</div></div></div>" +
+    (drawsNothing
+      ? '<div class="alert alert-secondary small py-2 mt-2 mb-0">This font is selected but draws no characters, so it needs no Unicode map.</div>'
+      : "") +
+    '<fieldset class="mt-2"><legend class="form-label small mb-1">What should happen to this font?</legend>' +
+    options
+      .map(function (option) {
+        const id = name + "-" + option[0];
+        return (
+          '<div class="form-check"><input class="form-check-input" type="radio" name="' +
+          name +
+          '" id="' +
+          id +
+          '" value="' +
+          option[0] +
+          '" data-glyph-resource="' +
+          escapeHtml(font.resource) +
+          '"' +
+          (decision.action === option[0] ? " checked" : "") +
+          ' /><label class="form-check-label small" for="' +
+          id +
+          '"><span class="fw-semibold">' +
+          escapeHtml(option[1]) +
+          "</span> — " +
+          escapeHtml(option[2]) +
+          "</label></div>"
+        );
+      })
+      .join("") +
+    "</fieldset>" +
+    (decision.action === "map"
+      ? '<div class="vstack gap-2 mt-2">' +
+        (font.glyphs || [])
+          .slice(0, rendered)
+          .map(function (glyph) {
+            return renderGlyphRow(font, glyph);
+          })
+          .join("") +
+        (rendered < (font.glyphs || []).length
+          ? '<div class="a11y-glyph-more text-center small text-muted" data-glyph-more="' +
+            escapeHtml(font.resource) +
+            '">Showing ' +
+            String(rendered) +
+            " of " +
+            String(font.glyphs.length) +
+            ' — <button type="button" class="btn btn-link btn-sm p-0 align-baseline" data-a11y-action="glyph-show-more" data-glyph-resource="' +
+            escapeHtml(font.resource) +
+            '">show more</button></div>'
+          : "") +
+        (font.truncated
+          ? '<div class="small text-muted">Only the first ' +
+            String(font.glyphs.length) +
+            " codes are listed; the rest are rare enough to handle by hand.</div>"
+          : "") +
+        "</div>"
+      : "") +
+    "</div>"
+  );
+}
+
+function renderGlyphReview() {
+  if (!a11yGlyphReviewList || !a11yGlyphReviewSummary) return;
+  const review = state.accessibility.glyphReview;
+  if (!review) {
+    a11yGlyphReviewSummary.className = "alert small py-2 alert-secondary";
+    a11yGlyphReviewSummary.textContent =
+      "Run the review to see the glyphs that have no Unicode map.";
+    a11yGlyphReviewList.innerHTML = "";
+    if (a11yApplyGlyphReviewBtn) a11yApplyGlyphReviewBtn.disabled = true;
+    return;
+  }
+  const fonts = Array.isArray(review.fonts) ? review.fonts : [];
+  const proposed = fonts.reduce(function (total, font) {
+    return total + Number(font.proposedCount || 0);
+  }, 0);
+  a11yGlyphReviewSummary.className =
+    "alert small py-2 " + (fonts.length ? "alert-warning" : "alert-success");
+  a11yGlyphReviewSummary.textContent = fonts.length
+    ? String(fonts.length) +
+      (fonts.length === 1 ? " font has" : " fonts have") +
+      " no Unicode map. " +
+      String(proposed) +
+      " glyph" +
+      (proposed === 1 ? " has" : "s have") +
+      " a suggested character; confirm every one against the outline shown."
+    : "Every font already has a Unicode map. Nothing to review.";
+  a11yGlyphReviewList.innerHTML = fonts.map(renderGlyphFontCard).join("");
+  const decided = fonts.some(function (font) {
+    const decision = state.accessibility.glyphDecisions[font.resource];
+    return decision && decision.action !== "skip";
+  });
+  if (a11yApplyGlyphReviewBtn) a11yApplyGlyphReviewBtn.disabled = !decided;
+}
+
+async function loadGlyphReview() {
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  showLoading("Reading glyph outlines…");
+  try {
+    const response = await fetch(
+      apiUrl("/pdf-labeler/api/accessibility-font-review"),
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      },
+    );
+    const payload = await parseApiResponse(response);
+    if (!payload.success || !payload.data) {
+      throw new Error(
+        (payload.error && payload.error.message) ||
+          "The glyph review could not be loaded.",
+      );
+    }
+    state.accessibility.glyphReview = payload.data;
+    state.accessibility.glyphDecisions = {};
+    state.accessibility.glyphRendered = {};
+    renderGlyphReview();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function applyGlyphDecisions() {
+  const review = state.accessibility.glyphReview;
+  const fonts = review && Array.isArray(review.fonts) ? review.fonts : [];
+  const decisions = [];
+  fonts.forEach(function (font) {
+    const decision = state.accessibility.glyphDecisions[font.resource];
+    if (!decision || decision.action === "skip") return;
+    if (decision.action === "artifact") {
+      decisions.push({ resource: font.resource, action: "artifact" });
+      return;
+    }
+    const mappings = {};
+    Object.keys(decision.mappings || {}).forEach(function (code) {
+      const value = decision.mappings[code];
+      if (value) mappings[code] = value;
+    });
+    if (Object.keys(mappings).length) {
+      decisions.push({
+        resource: font.resource,
+        action: "map",
+        mappings: mappings,
+      });
+    }
+  });
+  if (!decisions.length) {
+    showError("Confirm at least one character, or choose a different action.");
+    return;
+  }
+  await runAccessibilityRemediation("unicode_map", { decisions: decisions });
+  state.accessibility.glyphReview = null;
+  state.accessibility.glyphDecisions = {};
+  renderGlyphReview();
 }
 
 function renderFontRemediationResult() {
@@ -8348,6 +8685,43 @@ a11yAddUnicodeMapsBtn.addEventListener("click", function () {
   }).catch(function (error) {
     showError(error.message || String(error));
   });
+});
+a11yLoadGlyphReviewBtn.addEventListener("click", function () {
+  loadGlyphReview().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yApplyGlyphReviewBtn.addEventListener("click", function () {
+  applyGlyphDecisions().catch(function (error) {
+    showError(error.message || String(error));
+  });
+});
+a11yGlyphReviewList.addEventListener("change", function (event) {
+  const target = event.target;
+  const resource = target.getAttribute("data-glyph-resource");
+  if (!resource) return;
+  if (target.type === "radio") {
+    const decision = state.accessibility.glyphDecisions[resource];
+    if (decision) decision.action = target.value;
+    renderGlyphReview();
+    return;
+  }
+  const code = target.getAttribute("data-glyph-code");
+  if (code === null) return;
+  const decision = state.accessibility.glyphDecisions[resource];
+  if (!decision) return;
+  decision.mappings[code] = target.value;
+  if (a11yApplyGlyphReviewBtn) a11yApplyGlyphReviewBtn.disabled = false;
+});
+a11yGlyphReviewList.addEventListener("click", function (event) {
+  const button = event.target.closest('[data-a11y-action="glyph-show-more"]');
+  if (!button) return;
+  const resource = button.getAttribute("data-glyph-resource");
+  if (!resource) return;
+  const shown =
+    state.accessibility.glyphRendered[resource] || GLYPH_REVIEW_PAGE_SIZE;
+  state.accessibility.glyphRendered[resource] = shown + GLYPH_REVIEW_PAGE_SIZE;
+  renderGlyphReview();
 });
 a11yFontResult.addEventListener("click", function (event) {
   const button = event.target.closest(

@@ -5,10 +5,17 @@ import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
+from docassemble.ALDashboard.symbol_fonts import (
+    is_symbolic_family,
+    propose_character,
+)
 from docassemble.ALDashboard.pdf_accessibility import (
+    PDFAccessibilityError,
     apply_pdf_accessibility_settings,
     apply_manual_structure_repairs,
+    apply_unicode_map_decisions,
     build_accessibility_report,
+    collect_symbolic_font_review,
     build_default_field_order,
     create_draft_structure_tree,
     default_pdf_field_tooltip,
@@ -20,6 +27,50 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _heading_candidates_from_xml,
     _winansi_to_unicode_cmap,
 )
+
+
+def _webdings_like_program():
+    """Build a minimal TrueType subset with outlines but no cmap.
+
+    Real subsetters routinely drop the cmap table, which is exactly why a
+    symbol font's codes cannot be resolved from the PDF alone. The square drawn
+    at glyph 1 stands in for a checkbox.
+    """
+    import io
+
+    from fontTools.fontBuilder import FontBuilder  # type: ignore[import-untyped]
+    from fontTools.pens.ttGlyphPen import TTGlyphPen  # type: ignore[import-untyped]
+
+    builder = FontBuilder(1000, isTTF=True)
+    order = [".notdef", "box"]
+    builder.setupGlyphOrder(order)
+    builder.setupCharacterMap({})
+    pen = TTGlyphPen(None)
+    pen.moveTo((100, 0))
+    pen.lineTo((100, 800))
+    pen.lineTo((900, 800))
+    pen.lineTo((900, 0))
+    pen.closePath()
+    empty = TTGlyphPen(None).glyph()
+    builder.setupGlyf({".notdef": empty, "box": pen.glyph()})
+    builder.setupHorizontalMetrics({name: (1000, 100) for name in order})
+    builder.setupHorizontalHeader(ascent=800, descent=-200)
+    builder.setupNameTable({"familyName": "Webdings", "styleName": "Regular"})
+    builder.setupOS2()
+    builder.setupPost()
+    buffer = io.BytesIO()
+    builder.save(buffer)
+    program = buffer.getvalue()
+
+    # Strip the cmap the builder inserts, mirroring a real subset font.
+    from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+    font = TTFont(io.BytesIO(program))
+    if "cmap" in font:
+        del font["cmap"]
+    stripped = io.BytesIO()
+    font.save(stripped)
+    return stripped.getvalue()
 
 
 class TestPDFAccessibilityHelpers(unittest.TestCase):
@@ -1029,3 +1080,265 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSymbolicFontGlyphReview(unittest.TestCase):
+    """Cover the reviewed-Unicode path for symbol fonts like Webdings."""
+
+    def _symbolic_pdf(self, path, *, tagged=False):
+        """Build a one-page PDF drawing one Identity-H symbol glyph twice."""
+        import pikepdf
+
+        program = _webdings_like_program()
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        descriptor = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/FontDescriptor"),
+                    "/FontName": pikepdf.Name("/ABCDEF+Webdings"),
+                    "/Flags": 4,
+                    "/FontBBox": [0, -200, 1000, 900],
+                    "/ItalicAngle": 0,
+                    "/Ascent": 900,
+                    "/Descent": -200,
+                    "/CapHeight": 700,
+                    "/StemV": 80,
+                }
+            )
+        )
+        stream = pdf.make_stream(program)
+        stream["/Length1"] = len(program)
+        descriptor["/FontFile2"] = stream
+        descendant = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/CIDFontType2"),
+                    "/BaseFont": pikepdf.Name("/ABCDEF+Webdings"),
+                    "/CIDSystemInfo": pikepdf.Dictionary(
+                        {"/Registry": "Adobe", "/Ordering": "Identity", "/Supplement": 0}
+                    ),
+                    "/CIDToGIDMap": pikepdf.Name("/Identity"),
+                    "/FontDescriptor": descriptor,
+                    "/DW": 1000,
+                }
+            )
+        )
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {
+                "/Font": pikepdf.Dictionary(
+                    {
+                        "/S1": pikepdf.Dictionary(
+                            {
+                                "/Type": pikepdf.Name("/Font"),
+                                "/Subtype": pikepdf.Name("/Type0"),
+                                "/BaseFont": pikepdf.Name("/ABCDEF+Webdings"),
+                                "/Encoding": pikepdf.Name("/Identity-H"),
+                                "/DescendantFonts": pikepdf.Array([descendant]),
+                            }
+                        )
+                    }
+                )
+            }
+        )
+        body = b"BT /S1 12 Tf 72 700 Td <0001> Tj 0 -20 Td <0001> Tj ET"
+        if tagged:
+            body = b"/P <</MCID 0>> BDC " + body + b" EMC"
+        page.obj["/Contents"] = pdf.make_stream(body)
+        pdf.save(path)
+        pdf.close()
+
+    def test_review_reports_used_codes_with_outlines(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        try:
+            self._symbolic_pdf(source_path)
+            review = collect_symbolic_font_review(source_path)
+            fonts = review["fonts"]
+            self.assertEqual(len(fonts), 1)
+            font = fonts[0]
+            self.assertTrue(font["symbolic"])
+            self.assertEqual(font["encoding"], "Identity-H")
+            self.assertEqual(font["runs"], 2)
+            # Only the code the page actually draws is offered for review.
+            self.assertEqual(font["glyphCount"], 1)
+            glyph = font["glyphs"][0]
+            self.assertEqual(glyph["code"], 1)
+            self.assertEqual(glyph["count"], 2)
+            self.assertIsNotNone(glyph["outline"])
+            self.assertTrue(glyph["outline"]["path"].startswith("M"))
+            self.assertEqual(len(glyph["outline"]["bbox"]), 4)
+        finally:
+            os.remove(source_path)
+
+    def test_review_offers_no_proposal_without_evidence(self):
+        """A subset with no cmap and no installed match must not guess."""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        try:
+            self._symbolic_pdf(source_path)
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                return_value=[],
+            ):
+                review = collect_symbolic_font_review(source_path)
+            glyph = review["fonts"][0]["glyphs"][0]
+            self.assertIsNone(glyph["proposal"])
+            self.assertIsNone(glyph["charCode"])
+            self.assertEqual(glyph["charCodeSource"], "")
+        finally:
+            os.remove(source_path)
+
+    def test_confirmed_mapping_writes_two_byte_tounicode(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._symbolic_pdf(source_path)
+            result = apply_unicode_map_decisions(
+                source_path,
+                output_path,
+                [{"resource": "p1/S1", "action": "map", "mappings": {"1": "☐"}}],
+            )
+            self.assertEqual(len(result["fonts_mapped"]), 1)
+            self.assertEqual(result["fonts_mapped"][0]["characters"], 1)
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                font = pdf.pages[0]["/Resources"]["/Font"]["/S1"]
+                cmap = bytes(font["/ToUnicode"].read_bytes()).decode("ascii")
+            # Identity-H codes are two bytes, so the codespace must be too.
+            self.assertIn("<0000> <FFFF>", cmap)
+            self.assertIn("<0001> <2610>", cmap)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_unconfirmed_codes_are_left_unmapped(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._symbolic_pdf(source_path)
+            result = apply_unicode_map_decisions(
+                source_path,
+                output_path,
+                [{"resource": "p1/S1", "action": "map", "mappings": {"1": ""}}],
+            )
+            self.assertEqual(result["fonts_mapped"], [])
+            self.assertEqual(len(result["fonts_skipped"]), 1)
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                font = pdf.pages[0]["/Resources"]["/Font"]["/S1"]
+                self.assertNotIn("/ToUnicode", font)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_artifact_marking_wraps_untagged_runs(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._symbolic_pdf(source_path)
+            result = apply_unicode_map_decisions(
+                source_path, output_path, [{"resource": "p1/S1", "action": "artifact"}]
+            )
+            self.assertEqual(result["fonts_artifacted"][0]["runs_marked"], 2)
+            self.assertEqual(result["fonts_artifacted"][0]["runs_left_tagged"], 0)
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                data = bytes(pdf.pages[0]["/Contents"].read_bytes())
+            self.assertEqual(data.count(b"/Artifact BMC"), 2)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_artifact_marking_preserves_existing_tagged_content(self):
+        """Retagging tagged runs would orphan structure-tree entries."""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._symbolic_pdf(source_path, tagged=True)
+            result = apply_unicode_map_decisions(
+                source_path, output_path, [{"resource": "p1/S1", "action": "artifact"}]
+            )
+            self.assertEqual(result["fonts_artifacted"][0]["runs_marked"], 0)
+            self.assertEqual(result["fonts_artifacted"][0]["runs_left_tagged"], 2)
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                data = bytes(pdf.pages[0]["/Contents"].read_bytes())
+            self.assertNotIn(b"/Artifact BMC", data)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_unknown_resource_is_rejected(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._symbolic_pdf(source_path)
+            with self.assertRaises(PDFAccessibilityError):
+                apply_unicode_map_decisions(
+                    source_path,
+                    output_path,
+                    [{"resource": "p9/Nope", "action": "map", "mappings": {"1": "x"}}],
+                )
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_unresolved_reason_names_the_real_obstacle(self):
+        """The old wording named the code path and sent people font hunting."""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._symbolic_pdf(source_path)
+            result = embed_fonts_and_rebuild_unicode(
+                source_path, output_path, embed_exact_fonts=False
+            )
+            unresolved = result["unicode_unresolved"]
+            self.assertEqual(len(unresolved), 1)
+            reason = unresolved[0]["reason"]
+            self.assertIn("symbol font", reason)
+            self.assertIn("private use area", reason)
+            self.assertNotIn("WinAnsi", reason)
+            self.assertTrue(unresolved[0]["reviewable"])
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+
+class TestSymbolFontProposals(unittest.TestCase):
+    def test_curated_proposals_cover_checkbox_glyphs(self):
+        self.assertEqual(propose_character("Wingdings", 0xFC).character, "✓")
+        self.assertEqual(propose_character("Wingdings", 0xFD).character, "☒")
+        self.assertEqual(propose_character("Wingdings", 0xFE).character, "☑")
+        self.assertEqual(propose_character("/ABCDEF+Webdings", 0x63).character, "☐")
+
+    def test_uncurated_codes_get_no_proposal(self):
+        self.assertIsNone(propose_character("Wingdings", 0x41))
+        self.assertIsNone(propose_character("Arial", 0x41))
+
+    def test_symbol_font_detection_ignores_subset_and_style(self):
+        self.assertTrue(is_symbolic_family("/CELEJJ+Webdings"))
+        self.assertTrue(is_symbolic_family("Wingdings,Bold"))
+        self.assertFalse(is_symbolic_family("ArialNarrow"))
+

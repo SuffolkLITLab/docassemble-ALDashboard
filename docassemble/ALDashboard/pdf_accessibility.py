@@ -11,6 +11,12 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 
+from .symbol_fonts import (
+    canonical_symbol_family,
+    is_symbolic_family,
+    propose_character,
+)
+
 ACCESSIBILITY_REMEDIATIONS: Dict[str, Dict[str, Any]] = {
     "metadata": {
         "label": "Document metadata",
@@ -949,6 +955,668 @@ def _winansi_to_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
         ["endcmap", "CMapName currentdict /CMap defineresource pop", "end", "end"]
     )
     return ("\n".join(lines) + "\n").encode("ascii")
+
+def _font_program_bytes(pdf_font: Any) -> Tuple[Optional[bytes], str]:
+    """Return the embedded font program and which FontFile key supplied it."""
+    descriptor = _font_descriptor(pdf_font)
+    if descriptor is None:
+        return None, ""
+    for key in ("/FontFile2", "/FontFile3", "/FontFile"):
+        stream = descriptor.get(key)
+        if stream is None:
+            continue
+        try:
+            return bytes(stream.read_bytes()), key.lstrip("/")
+        except Exception:
+            continue
+    return None, ""
+
+
+def _load_glyph_source(program: Optional[bytes]) -> Optional[Any]:
+    """Open an embedded font program with fontTools, or give up quietly."""
+    if not program:
+        return None
+    try:
+        import io
+
+        from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+        return TTFont(io.BytesIO(program), lazy=True, fontNumber=0)
+    except Exception:
+        return None
+
+
+def _glyph_outline(font_source: Any, glyph_id: int) -> Optional[Dict[str, Any]]:
+    """Extract one glyph outline as an SVG path so a human can look at it.
+
+    The outline is read from the program embedded in the PDF, so the reviewer
+    sees the glyph the document actually draws rather than a lookalike from an
+    installed font.
+    """
+    if font_source is None:
+        return None
+    try:
+        from fontTools.pens.svgPathPen import (  # type: ignore[import-untyped]
+            SVGPathPen,
+        )
+
+        order = font_source.getGlyphOrder()
+        if glyph_id < 0 or glyph_id >= len(order):
+            return None
+        glyph_set = font_source.getGlyphSet()
+        name = order[glyph_id]
+        pen = SVGPathPen(glyph_set)
+        glyph_set[name].draw(pen)
+        path = pen.getCommands()
+        if not path:
+            return None
+        from fontTools.pens.boundsPen import (  # type: ignore[import-untyped]
+            BoundsPen,
+        )
+
+        bounds_pen = BoundsPen(glyph_set)
+        glyph_set[name].draw(bounds_pen)
+        units_per_em = int(getattr(font_source["head"], "unitsPerEm", 1000) or 1000)
+        bounds = bounds_pen.bounds or (0, 0, units_per_em, units_per_em)
+        return {
+            "path": path,
+            "unitsPerEm": units_per_em,
+            "glyphName": str(name),
+            "bbox": [float(value) for value in bounds],
+        }
+    except Exception:
+        return None
+
+
+def _embedded_char_code(font_source: Any, glyph_id: int) -> Optional[int]:
+    """Recover a glyph's own character code from the embedded program's cmap.
+
+    This is the most trustworthy source available, because it needs nothing
+    outside the PDF. Subset programs frequently drop the cmap table, in which
+    case there is nothing to recover and the caller falls back to an installed
+    font.
+    """
+    if font_source is None:
+        return None
+    try:
+        if "cmap" not in font_source:
+            return None
+        order = font_source.getGlyphOrder()
+        if glyph_id < 0 or glyph_id >= len(order):
+            return None
+        name = order[glyph_id]
+        for table in font_source["cmap"].tables:
+            for code, glyph_name in table.cmap.items():
+                if glyph_name == name:
+                    return int(code) & 0xFF
+    except Exception:
+        return None
+    return None
+
+
+def _installed_symbol_codes(font_name: str, glyph_count: int) -> Dict[int, int]:
+    """Map glyph ids to character codes using a matching installed font.
+
+    Subsetters normally preserve glyph numbering, so a subset that dropped its
+    cmap can often be read against the shipping font. Agreement on glyph count
+    is the only evidence that the alignment holds, so this is recorded as a
+    weaker source than the embedded cmap, and the reviewer still confirms every
+    character. Returns an empty map when no installed font matches.
+    """
+    family = canonical_symbol_family(font_name)
+    if not family or glyph_count <= 0:
+        return {}
+    for candidate in _system_truetype_fonts():
+        if family not in set(candidate.get("canonical_names") or ()):
+            continue
+        try:
+            from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+            installed = TTFont(candidate["path"], lazy=True, fontNumber=0)
+            try:
+                if int(installed["maxp"].numGlyphs) != glyph_count:
+                    continue
+                order = installed.getGlyphOrder()
+                positions = {name: gid for gid, name in enumerate(order)}
+                codes: Dict[int, int] = {}
+                for table in installed["cmap"].tables:
+                    for code, glyph_name in table.cmap.items():
+                        gid = positions.get(glyph_name)
+                        if gid is not None:
+                            codes.setdefault(gid, int(code) & 0xFF)
+                if codes:
+                    return codes
+            finally:
+                installed.close()
+        except Exception:
+            continue
+    return {}
+
+
+def _resource_font_names(resources: Any) -> Dict[str, Any]:
+    """Map the /Font resource names visible in one resource dictionary."""
+    fonts = resources.get("/Font") if resources is not None else None
+    if not fonts:
+        return {}
+    return {str(name): font for name, font in fonts.items()}
+
+
+def _encoding_label(pdf_font: Any) -> str:
+    """Describe a font's /Encoding without dumping an inline dictionary."""
+    import pikepdf
+
+    encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
+    if encoding is None:
+        return ""
+    if isinstance(encoding, pikepdf.Name):
+        return _safe_pdf_string(encoding).lstrip("/")
+    base = encoding.get("/BaseEncoding") if hasattr(encoding, "get") else None
+    label = _safe_pdf_string(base).lstrip("/") if base is not None else "custom"
+    has_differences = hasattr(encoding, "get") and encoding.get("/Differences")
+    return f"{label} with /Differences" if has_differences else label
+
+
+def _is_two_byte_font(pdf_font: Any) -> bool:
+    """Report whether show-text strings for this font use two-byte codes."""
+    if not hasattr(pdf_font, "get"):
+        return False
+    if _safe_pdf_string(pdf_font.get("/Subtype", "")).lstrip("/") != "Type0":
+        return False
+    encoding = _safe_pdf_string(pdf_font.get("/Encoding", "")).lstrip("/")
+    # Identity-H/V and the standard CJK CMaps are all two-byte for our purposes;
+    # a mixed-width CMap would need its codespace ranges parsed, so treat an
+    # embedded CMap stream as unknown and leave it alone.
+    return encoding.endswith(("-H", "-V"))
+
+
+def _codes_from_operands(operands: Any, two_byte: bool) -> List[int]:
+    """Decode the character codes shown by one text-showing operator."""
+    import pikepdf
+
+    raw: List[bytes] = []
+    for operand in operands:
+        if isinstance(operand, pikepdf.String):
+            raw.append(bytes(operand))
+        elif isinstance(operand, pikepdf.Array):
+            raw.extend(
+                bytes(item) for item in operand if isinstance(item, pikepdf.String)
+            )
+    codes: List[int] = []
+    for chunk in raw:
+        if two_byte:
+            codes.extend(
+                int.from_bytes(chunk[index : index + 2], "big")
+                for index in range(0, len(chunk) - 1, 2)
+            )
+        else:
+            codes.extend(chunk)
+    return codes
+
+
+def _font_code_usage(pdf: Any) -> Dict[str, Dict[str, Any]]:
+    """Count the codes each page font actually shows, keyed by resource path.
+
+    Only codes that appear in page content matter for review: a subset font can
+    carry hundreds of glyphs while the document draws two of them.
+    """
+    import pikepdf
+
+    usage: Dict[str, Dict[str, Any]] = {}
+    for page_index, page in enumerate(pdf.pages):
+        resources = page.get("/Resources") if hasattr(page, "get") else None
+        containers: List[Tuple[str, Any, Any]] = [
+            (f"p{page_index + 1}", resources, page)
+        ]
+        for path, obj in _walk_resource_xobjects(resources):
+            if _safe_pdf_string(obj.get("/Subtype", "")) == "/Form":
+                containers.append(
+                    (f"p{page_index + 1}:{path}", obj.get("/Resources"), obj)
+                )
+        for annot_index, annot in enumerate(
+            cast(Iterable[Any], page.get("/Annots") or [])
+        ):
+            appearances = annot.get("/AP") if hasattr(annot, "get") else None
+            normal = appearances.get("/N") if appearances is not None else None
+            if normal is None:
+                continue
+            streams = (
+                [normal]
+                if hasattr(normal, "read_bytes")
+                else list(normal.values()) if hasattr(normal, "values") else []
+            )
+            for state_index, stream in enumerate(streams):
+                containers.append(
+                    (
+                        f"p{page_index + 1}:annot{annot_index}:ap{state_index}",
+                        stream.get("/Resources"),
+                        stream,
+                    )
+                )
+        for prefix, container_resources, container in containers:
+            names = _resource_font_names(container_resources)
+            if not names:
+                continue
+            try:
+                instructions = list(pikepdf.parse_content_stream(container))
+            except Exception:
+                continue
+            current = ""
+            for instruction in instructions:
+                operator = str(instruction.operator)
+                if operator == "Tf" and instruction.operands:
+                    current = str(instruction.operands[0])
+                    continue
+                if operator not in {"Tj", "TJ", "'", '"'} or current not in names:
+                    continue
+                font = names[current]
+                resource_path = f"{prefix}/{current.lstrip('/')}"
+                identity = _pdf_object_identity(font, resource_path)
+                record = usage.setdefault(
+                    identity,
+                    {
+                        "resource": resource_path,
+                        "counts": {},
+                        "pages": set(),
+                        "runs": 0,
+                    },
+                )
+                record["pages"].add(page_index)
+                record["runs"] += 1
+                for code in _codes_from_operands(
+                    instruction.operands, _is_two_byte_font(font)
+                ):
+                    record["counts"][code] = record["counts"].get(code, 0) + 1
+    return usage
+
+
+def _glyph_review_entry(
+    font_source: Any,
+    font_name: str,
+    code: int,
+    count: int,
+    installed_codes: Mapping[int, int],
+) -> Dict[str, Any]:
+    """Describe one unmapped code: what it draws and what we think it means."""
+    outline = _glyph_outline(font_source, code)
+    char_code = _embedded_char_code(font_source, code)
+    code_source = "embedded-cmap" if char_code is not None else ""
+    if char_code is None:
+        char_code = installed_codes.get(code)
+        code_source = "installed-font" if char_code is not None else ""
+    proposal = (
+        propose_character(font_name, char_code) if char_code is not None else None
+    )
+    return {
+        "code": code,
+        "codeLabel": f"{code} (0x{code:02X})",
+        "count": count,
+        "outline": outline,
+        "charCode": char_code,
+        "charCodeHex": f"0x{char_code:02X}" if char_code is not None else "",
+        "charCodeSource": code_source,
+        "proposal": (
+            {
+                "character": proposal.character,
+                "codepoint": proposal.codepoint_label,
+                "unicodeName": proposal.unicode_name,
+                "evidence": proposal.evidence,
+            }
+            if proposal is not None
+            else None
+        ),
+    }
+
+
+GLYPH_REVIEW_LIMIT = 512
+
+
+def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
+    """Describe every font lacking a Unicode map so a human can decide about it.
+
+    For each such font this reports the codes the document actually draws, the
+    outline of each one taken from the embedded program, and a curated
+    character proposal where one is established. Nothing here changes the file;
+    the caller reviews the result and sends decisions back to
+    :func:`apply_unicode_map_decisions`.
+    """
+    try:
+        import pikepdf
+
+        with pikepdf.open(input_pdf_path) as pdf:
+            usage = _font_code_usage(pdf)
+            fonts: List[Dict[str, Any]] = []
+            for resource, font in _iter_pdf_fonts(pdf):
+                if "/ToUnicode" in font:
+                    continue
+                font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip("/")
+                identity = _pdf_object_identity(font, resource)
+                record = usage.get(identity) or {}
+                counts: Dict[int, int] = record.get("counts") or {}
+                program, program_kind = _font_program_bytes(font)
+                font_source = _load_glyph_source(program)
+                glyph_count = 0
+                if font_source is not None:
+                    try:
+                        glyph_count = int(font_source["maxp"].numGlyphs)
+                    except Exception:
+                        glyph_count = 0
+                needs_installed = font_source is not None and "cmap" not in font_source
+                installed_codes = (
+                    _installed_symbol_codes(font_name, glyph_count)
+                    if needs_installed
+                    else {}
+                )
+                ordered = sorted(counts.items(), key=lambda item: item[0])
+                glyphs = [
+                    _glyph_review_entry(
+                        font_source, font_name, code, count, installed_codes
+                    )
+                    for code, count in ordered[:GLYPH_REVIEW_LIMIT]
+                ]
+                proposed = sum(1 for glyph in glyphs if glyph["proposal"] is not None)
+                fonts.append(
+                    {
+                        "resource": resource,
+                        "font": font_name,
+                        "family": canonical_symbol_family(font_name),
+                        "subtype": _safe_pdf_string(font.get("/Subtype", "")).lstrip(
+                            "/"
+                        ),
+                        "encoding": _encoding_label(font),
+                        "symbolic": is_symbolic_family(font_name),
+                        "embedded": bool(program),
+                        "programKind": program_kind,
+                        "hasOutlines": any(
+                            glyph["outline"] is not None for glyph in glyphs
+                        ),
+                        "pages": sorted(record.get("pages") or []),
+                        "runs": int(record.get("runs") or 0),
+                        "glyphCount": len(counts),
+                        "truncated": len(counts) > GLYPH_REVIEW_LIMIT,
+                        "proposedCount": proposed,
+                        "glyphs": glyphs,
+                        "winAnsiEligible": _winansi_to_unicode_cmap(font) is not None,
+                    }
+                )
+        return {
+            "action": "unicode_review",
+            "fonts": fonts,
+            "review_required": bool(fonts),
+        }
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Font review failed: {exc}") from exc
+
+
+def _confirmed_unicode_cmap(
+    mappings: Mapping[int, str], two_byte: bool
+) -> Optional[bytes]:
+    """Build a ToUnicode CMap from codes a human explicitly confirmed."""
+    pairs = sorted(
+        (code, text)
+        for code, text in mappings.items()
+        if text and 0 <= code <= (0xFFFF if two_byte else 0xFF)
+    )
+    if not pairs:
+        return None
+    width = 4 if two_byte else 2
+    low = "0" * width
+    high = "F" * width
+    lines = [
+        "/CIDInit /ProcSet findresource begin",
+        "12 dict begin",
+        "begincmap",
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+        "/CMapName /ALDashboard-Reviewed def",
+        "/CMapType 2 def",
+        "1 begincodespacerange",
+        f"<{low}> <{high}>",
+        "endcodespacerange",
+    ]
+    for start in range(0, len(pairs), 100):
+        batch = pairs[start : start + 100]
+        lines.append(f"{len(batch)} beginbfchar")
+        lines.extend(
+            f"<{code:0{width}X}> <{text.encode('utf-16-be').hex().upper()}>"
+            for code, text in batch
+        )
+        lines.append("endbfchar")
+    lines.extend(
+        ["endcmap", "CMapName currentdict /CMap defineresource pop", "end", "end"]
+    )
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def _mark_font_runs_as_artifact(pdf: Any, targets: Mapping[str, str]) -> Dict[str, Any]:
+    """Wrap every run drawn in a target font with /Artifact BMC ... EMC.
+
+    Decorative glyphs -- a checkbox drawn in a dingbat font, a rule, a bullet --
+    carry no text meaning, and an artifact is the accessibility-correct home for
+    them: assistive technology skips them entirely, so no Unicode map is needed.
+    Runs already inside a tagged /MCID sequence are left untouched and reported,
+    because retagging them as artifacts would orphan entries in an existing
+    structure tree.
+    """
+    import pikepdf
+
+    wrapped: Dict[str, int] = {}
+    skipped_tagged: Dict[str, int] = {}
+    for page_index, page in enumerate(pdf.pages):
+        resources = page.get("/Resources") if hasattr(page, "get") else None
+        page_prefix = f"p{page_index + 1}"
+        containers: List[Tuple[str, Any, Any]] = [(page_prefix, resources, page)]
+        containers.extend(
+            (f"{page_prefix}:{path}", obj.get("/Resources"), obj)
+            for path, obj in _walk_resource_xobjects(resources)
+            if _safe_pdf_string(obj.get("/Subtype", "")) == "/Form"
+        )
+        for prefix, container_resources, container in containers:
+            names = _resource_font_names(container_resources)
+            if not names:
+                continue
+            identities = {
+                name: _pdf_object_identity(
+                    font, f"{prefix}/{name.lstrip('/')}"
+                )
+                for name, font in names.items()
+            }
+            if not any(identity in targets for identity in identities.values()):
+                continue
+            try:
+                instructions = list(pikepdf.parse_content_stream(container))
+            except Exception:
+                continue
+            rewritten: List[Any] = []
+            current = ""
+            tagged_depth = 0
+            changed = False
+            for instruction in instructions:
+                operator = str(instruction.operator)
+                operands = list(instruction.operands)
+                if operator == "Tf" and operands:
+                    current = str(operands[0])
+                elif operator == "BDC":
+                    tagged_depth += 1
+                elif operator == "EMC" and tagged_depth:
+                    tagged_depth -= 1
+                identity = identities.get(current, "")
+                resource_key = targets.get(identity, "")
+                if operator in {"Tj", "TJ", "'", '"'} and resource_key:
+                    if tagged_depth:
+                        skipped_tagged[resource_key] = (
+                            skipped_tagged.get(resource_key, 0) + 1
+                        )
+                    else:
+                        rewritten.append(
+                            pikepdf.ContentStreamInstruction(
+                                [pikepdf.Name("/Artifact")], pikepdf.Operator("BMC")
+                            )
+                        )
+                        rewritten.append(instruction)
+                        rewritten.append(
+                            pikepdf.ContentStreamInstruction(
+                                [], pikepdf.Operator("EMC")
+                            )
+                        )
+                        wrapped[resource_key] = wrapped.get(resource_key, 0) + 1
+                        changed = True
+                        continue
+                rewritten.append(instruction)
+            if not changed:
+                continue
+            data = pikepdf.unparse_content_stream(rewritten)
+            if container is page:
+                page["/Contents"] = pdf.make_stream(data)
+            else:
+                container.write(data)
+    return {"wrapped": wrapped, "skipped_tagged": skipped_tagged}
+
+
+def apply_unicode_map_decisions(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    decisions: Iterable[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Apply reviewed Unicode mappings and artifact marks, font by font.
+
+    Every character written here was confirmed by a person against the glyph
+    outline taken from the PDF. Nothing is inferred at this stage: a code with
+    no confirmed character is left unmapped rather than guessed.
+    """
+    if input_pdf_path != output_pdf_path:
+        shutil.copyfile(input_pdf_path, output_pdf_path)
+    decision_list = list(decisions)
+    if not decision_list or len(decision_list) > 100:
+        raise PDFAccessibilityError("Provide between 1 and 100 font decisions.")
+    try:
+        import pikepdf
+
+        mapped: List[Dict[str, Any]] = []
+        artifacts: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
+            fonts_by_resource = {
+                resource: font for resource, font in _iter_pdf_fonts(pdf)
+            }
+            artifact_targets: Dict[str, str] = {}
+            for decision in decision_list:
+                resource = str(decision.get("resource") or "")
+                action = str(decision.get("action") or "")
+                font = fonts_by_resource.get(resource)
+                if font is None:
+                    raise PDFAccessibilityError(
+                        f"Font resource {resource or '(missing)'} is not in this PDF."
+                    )
+                if action == "artifact":
+                    artifact_targets[_pdf_object_identity(font, resource)] = resource
+                elif action == "map":
+                    raw = decision.get("mappings") or {}
+                    if not isinstance(raw, Mapping):
+                        raise PDFAccessibilityError(
+                            "Unicode mappings must be a code-to-character object."
+                        )
+                    mappings: Dict[int, str] = {}
+                    for code, text in raw.items():
+                        try:
+                            code_int = int(code)
+                        except (TypeError, ValueError) as exc:
+                            raise PDFAccessibilityError(
+                                f"Glyph code {code!r} is not a number."
+                            ) from exc
+                        value = str(text or "")
+                        if len(value) > 16:
+                            raise PDFAccessibilityError(
+                                "Each glyph maps to at most 16 characters."
+                            )
+                        if value:
+                            mappings[code_int] = value
+                    cmap = _confirmed_unicode_cmap(mappings, _is_two_byte_font(font))
+                    if cmap is None:
+                        skipped.append(
+                            {
+                                "resource": resource,
+                                "reason": "No characters were confirmed for this font.",
+                            }
+                        )
+                        continue
+                    font["/ToUnicode"] = pdf.make_stream(cmap)
+                    mapped.append(
+                        {
+                            "resource": resource,
+                            "font": _safe_pdf_string(
+                                font.get("/BaseFont", resource)
+                            ).lstrip("/"),
+                            "characters": len(mappings),
+                        }
+                    )
+                elif action == "skip":
+                    skipped.append(
+                        {"resource": resource, "reason": "Left unchanged by reviewer."}
+                    )
+                else:
+                    raise PDFAccessibilityError(
+                        "Font decision action must be map, artifact, or skip."
+                    )
+            artifact_result = (
+                _mark_font_runs_as_artifact(pdf, artifact_targets)
+                if artifact_targets
+                else {"wrapped": {}, "skipped_tagged": {}}
+            )
+            for resource in artifact_targets.values():
+                artifacts.append(
+                    {
+                        "resource": resource,
+                        "runs_marked": artifact_result["wrapped"].get(resource, 0),
+                        "runs_left_tagged": artifact_result["skipped_tagged"].get(
+                            resource, 0
+                        ),
+                    }
+                )
+            pdf.save(output_pdf_path)
+        return {
+            "action": "unicode_map",
+            "fonts_mapped": mapped,
+            "fonts_artifacted": artifacts,
+            "fonts_skipped": skipped,
+            "review_required": bool(mapped or artifacts),
+            "warning": (
+                "Only characters confirmed against the rendered glyph were written. "
+                "Validate the result with veraPDF and check extracted text."
+            ),
+        }
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Unicode map update failed: {exc}") from exc
+
+
+def _unicode_unresolved_reason(pdf_font: Any, font_name: str) -> str:
+    """Explain why a deterministic Unicode map is impossible for this font.
+
+    The old wording named the code path ("not a simple WinAnsi font") rather
+    than the obstacle, which sent people looking for a missing font install
+    when the real problem is that the glyphs have no Unicode meaning to find.
+    """
+    subtype = _safe_pdf_string(pdf_font.get("/Subtype", "")).lstrip("/")
+    encoding = _encoding_label(pdf_font)
+    if is_symbolic_family(font_name):
+        return (
+            f"{font_name} is a symbol font: its glyphs live in the private use "
+            "area and carry no Unicode meaning, so no map can be derived from "
+            "the font or the PDF. Confirm each glyph by sight, or mark the "
+            "font as decorative."
+        )
+    if subtype == "Type0":
+        return (
+            f"{font_name} is a composite ({encoding or 'CID'}) font, so its "
+            "codes are glyph ids rather than characters. Nothing in the file "
+            "records what they mean."
+        )
+    return (
+        f"{font_name} uses the {encoding or 'built-in'} encoding, which this "
+        "deterministic tool cannot map without guessing."
+    )
 
 
 def _extract_annotation_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[int]]:
@@ -2513,7 +3181,7 @@ def embed_fonts_and_rebuild_unicode(
         inventory = _system_truetype_fonts() if needs_embedding_lookup else []
         embedded: List[Dict[str, str]] = []
         unicode_maps: List[str] = []
-        unicode_unresolved: List[Dict[str, str]] = []
+        unicode_unresolved: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
             for resource, font in _iter_pdf_fonts(pdf):
@@ -2578,7 +3246,13 @@ def embed_fonts_and_rebuild_unicode(
                             {
                                 "resource": resource,
                                 "font": font_name,
-                                "reason": "The font is not a simple WinAnsi font, so a trustworthy map cannot be generated from encoding rules alone.",
+                                "reason": _unicode_unresolved_reason(font, font_name),
+                                "next_step": (
+                                    "Review the glyphs and confirm what they mean."
+                                    if is_symbolic_family(font_name)
+                                    else "Review this font's extracted text by hand."
+                                ),
+                                "reviewable": True,
                             }
                         )
             pdf.save(output_pdf_path)

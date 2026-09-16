@@ -3328,6 +3328,72 @@ def pdf_labeler_accessibility_inspect() -> Response:
         )
 
 
+@app.route("/pdf-labeler/api/accessibility-font-review", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-font-review", methods=["POST"]
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_font_review() -> Response:
+    """Describe unmapped font glyphs so a person can confirm what they mean.
+
+    Returns:
+        Response: A JSON response listing each font that lacks a Unicode map,
+            the codes it actually draws, an SVG outline for each glyph taken
+            from the embedded program, and any curated character proposal.
+    """
+    request_id = str(uuid.uuid4())
+    log(f"ALDashboard: accessibility-font-review request {request_id}", "info")
+
+    try:
+        from .pdf_accessibility import collect_symbolic_font_review
+
+        _filename, content, _post_data = _read_pdf_labeler_file_request()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+
+        try:
+            payload = collect_symbolic_font_review(input_path)
+            return jsonify(
+                {
+                    "success": True,
+                    "request_id": request_id,
+                    "data": payload,
+                }
+            )
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+    except PDFAccessibilityError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": str(exc)},
+            },
+            400,
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
 @app.route("/pdf-labeler/api/accessibility-remediate", methods=["POST"])
 @app.route(
     f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-remediate", methods=["POST"]
@@ -3343,6 +3409,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
         from .pdf_accessibility import (
             apply_pdf_accessibility_settings,
             apply_manual_structure_repairs,
+            apply_unicode_map_decisions,
             create_draft_structure_tree,
             embed_fonts_and_rebuild_unicode,
         )
@@ -3355,9 +3422,10 @@ def pdf_labeler_accessibility_remediate() -> Response:
             "draft_structure",
             "fonts",
             "structure",
+            "unicode_map",
         }:
             raise DashboardAPIValidationError(
-                "action must be metadata, catalog_flags, draft_structure, fonts, or structure."
+                "action must be metadata, catalog_flags, draft_structure, fonts, structure, or unicode_map."
             )
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
@@ -3444,6 +3512,16 @@ def pdf_labeler_accessibility_remediate() -> Response:
             if not isinstance(operations, list):
                 raise DashboardAPIValidationError("operations must be a JSON list.")
             result = apply_manual_structure_repairs(input_path, output_path, operations)
+        elif action == "unicode_map":
+            decisions_raw = post_data.get("decisions")
+            decisions = (
+                json.loads(decisions_raw)
+                if isinstance(decisions_raw, str)
+                else decisions_raw
+            )
+            if not isinstance(decisions, list):
+                raise DashboardAPIValidationError("decisions must be a JSON list.")
+            result = apply_unicode_map_decisions(input_path, output_path, decisions)
         else:
             result = embed_fonts_and_rebuild_unicode(
                 input_path,

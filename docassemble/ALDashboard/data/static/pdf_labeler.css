@@ -958,3 +958,9 @@
         display: none;
     }
 }
+
+/* Glyph review: show the outline the PDF actually draws, large enough to judge. */
+.a11y-glyph-outline { width: 2.75rem; height: 2.75rem; flex: 0 0 auto; fill: #17324d; background: #fff; border: 1px solid #ccd6e3; border-radius: 0.35rem; padding: 0.15rem; }
+.a11y-glyph-missing { width: 2.75rem; height: 2.75rem; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; text-align: center; border: 1px dashed #ccd6e3; border-radius: 0.35rem; background: #f8f9fa; font-size: 0.6rem; line-height: 1.05; }
+.a11y-glyph-input { font-size: 1rem; text-align: center; min-width: 3.5rem; }
+.a11y-glyph-row { background: #fff; }

@@ -544,6 +544,16 @@
                             </div>
                         </div>
                     </div>
+                    <div class="border rounded p-3 mt-3">
+                        <h4 class="h6">3. Glyph review</h4>
+                        <p class="small text-muted">Symbol fonts such as Webdings and Wingdings store their glyphs in the private use area, so no map can be derived from the file. Review the glyph the PDF actually draws, then either confirm the character it stands for or mark the font as decorative. Nothing is written until you apply your decisions.</p>
+                        <div id="a11y-glyph-review-summary" class="alert small py-2" role="status"></div>
+                        <div id="a11y-glyph-review-list" class="vstack gap-3 mb-2"></div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button id="a11y-load-glyph-review" class="btn btn-outline-primary btn-sm">Review unmapped glyphs</button>
+                            <button id="a11y-apply-glyph-review" class="btn btn-primary btn-sm" disabled>Apply glyph decisions</button>
+                        </div>
+                    </div>
                     <div id="a11y-font-result" class="hidden alert small mt-3 mb-0" role="status" tabindex="-1"></div>
                 </section>
 

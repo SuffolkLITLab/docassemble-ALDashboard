@@ -892,8 +892,6 @@ def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
 def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
     """Return stable tree paths and annotation coordinates for manual repairs."""
     struct_root = pdf.Root.get("/StructTreeRoot")
-    if struct_root is None:
-        return {"tables": [], "figures": [], "annotations": []}
     page_indexes = {
         str(getattr(page.obj, "objgen", "")): index
         for index, page in enumerate(pdf.pages)
@@ -1000,14 +998,28 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
         for index, child in enumerate(children):
             walk(child, path + [index])
 
-    for index, child in enumerate(_structure_children(struct_root)):
-        walk(child, [index])
+    if struct_root is not None:
+        for index, child in enumerate(_structure_children(struct_root)):
+            walk(child, [index])
 
     annotations = []
+    widgets = []
     for page_index, page in enumerate(pdf.pages):
         for index, annot in enumerate(cast(Iterable[Any], page.get("/Annots") or [])):
             subtype = _safe_pdf_string(annot.get("/Subtype", "")).lstrip("/")
             if subtype == "Widget":
+                parent = _named_parent(annot)
+                field = parent if parent is not None else annot
+                tooltip = _widget_tooltip(annot, parent)
+                widgets.append(
+                    {
+                        "pageIndex": page_index,
+                        "index": index,
+                        "name": _safe_pdf_string(field.get("/T", "")),
+                        "tooltip": tooltip,
+                        "issueIds": [] if tooltip.strip() else ["field_tooltips"],
+                    }
+                )
                 continue
             object_id = str(getattr(annot, "objgen", ""))
             expected_role = "Link" if subtype == "Link" else "Annot"
@@ -1029,7 +1041,12 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                     ),
                 }
             )
-    return {"tables": tables, "figures": figures, "annotations": annotations}
+    return {
+        "tables": tables,
+        "figures": figures,
+        "annotations": annotations,
+        "widgets": widgets,
+    }
 
 
 def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -3203,6 +3220,7 @@ def build_accessibility_report(
     editor_tables = list(editor.get("tables") or [])
     editor_figures = list(editor.get("figures") or [])
     editor_annotations = list(editor.get("annotations") or [])
+    editor_widgets = list(editor.get("widgets") or [])
 
     def editor_issue_count(issue_id: str, records: Iterable[Mapping[str, Any]]) -> int:
         return sum(
@@ -3218,6 +3236,7 @@ def build_accessibility_report(
         )
     }
     missing_tooltips = [field for field in fields if not field["has_custom_tooltip"]]
+    missing_widget_tooltips = editor_issue_count("field_tooltips", editor_widgets)
     missing_form_alts = _missing_structure_form_alt_count(root)
     invalid_form_objects = _invalid_structure_form_object_count(pdf)
     unembedded = [font for font in fonts if not font["embedded"]]
@@ -3361,7 +3380,7 @@ def build_accessibility_report(
             "field-names",
             "7.18.1.3",
             "Form fields have accessible names",
-            len(missing_tooltips),
+            max(len(missing_tooltips), missing_widget_tooltips),
             "field_tooltips",
         ),
         _issue(
@@ -4505,6 +4524,7 @@ def apply_manual_structure_repairs(
                 "cells_added": 0,
                 "annotations_tagged": 0,
                 "annotation_descriptions_changed": 0,
+                "widget_descriptions_changed": 0,
             }
             parent_tree = struct_root.get("/ParentTree")
             number_entries = (
@@ -4617,7 +4637,11 @@ def apply_manual_structure_repairs(
                             counts["cells_added"] += 1
                         if added_to_row:
                             counts["rows_padded"] += 1
-                elif action in {"tag_annotation", "set_annotation_contents"}:
+                elif action in {
+                    "tag_annotation",
+                    "set_annotation_contents",
+                    "set_widget_description",
+                }:
                     try:
                         page_index = int(operation.get("pageIndex", -1))
                         annot_index = int(operation.get("index", -1))
@@ -4628,7 +4652,32 @@ def apply_manual_structure_repairs(
                         raise PDFAccessibilityError(
                             "The annotation list changed; refresh and retry."
                         ) from exc
-                    if action == "set_annotation_contents":
+                    if action == "set_widget_description":
+                        if _safe_pdf_string(annot.get("/Subtype", "")) != "/Widget":
+                            raise PDFAccessibilityError(
+                                "The selected annotation is not a form control."
+                            )
+                        description = str(operation.get("description") or "").strip()
+                        if not description:
+                            raise PDFAccessibilityError(
+                                "A form-control description is required."
+                            )
+                        parent = _named_parent(annot)
+                        field = parent if parent is not None else annot
+                        field["/TU"] = pikepdf.String(description[:1000])
+                        annot["/TU"] = pikepdf.String(description[:1000])
+                        struct_parent = annot.get("/StructParent")
+                        try:
+                            form_element = number_entries.get(int(struct_parent))
+                        except (TypeError, ValueError):
+                            form_element = None
+                        if (
+                            form_element is not None
+                            and _safe_pdf_string(form_element.get("/S", "")) == "/Form"
+                        ):
+                            form_element["/Alt"] = pikepdf.String(description[:1000])
+                        counts["widget_descriptions_changed"] += 1
+                    elif action == "set_annotation_contents":
                         contents = str(operation.get("contents") or "").strip()
                         if contents:
                             annot["/Contents"] = pikepdf.String(contents[:1000])
@@ -4755,6 +4804,54 @@ def _repair_embedded_cidsets(pdf: Any) -> List[str]:
     return repaired
 
 
+def _repair_identity_cid_to_gid_maps(
+    pdf: Any, font_usage: Mapping[str, Mapping[str, Any]]
+) -> List[str]:
+    """Declare Identity mapping when every used CID is a valid embedded glyph id."""
+    import io
+
+    import pikepdf
+    from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+    repaired: List[str] = []
+    for resource, font in _iter_pdf_fonts(pdf):
+        if _safe_pdf_string(font.get("/Subtype", "")) != "/Type0":
+            continue
+        if _safe_pdf_string(font.get("/Encoding", "")) not in {
+            "/Identity-H",
+            "/Identity-V",
+        }:
+            continue
+        descendants = font.get("/DescendantFonts")
+        if not descendants:
+            continue
+        descendant = descendants[0]
+        if (
+            _safe_pdf_string(descendant.get("/Subtype", "")) != "/CIDFontType2"
+            or descendant.get("/CIDToGIDMap") is not None
+        ):
+            continue
+        descriptor = descendant.get("/FontDescriptor")
+        program = descriptor.get("/FontFile2") if descriptor is not None else None
+        if program is None:
+            continue
+        try:
+            ttfont = TTFont(io.BytesIO(program.read_bytes()), lazy=True)
+            try:
+                glyph_count = int(ttfont["maxp"].numGlyphs)
+            finally:
+                ttfont.close()
+        except Exception:
+            continue
+        identity = _pdf_object_identity(font, resource)
+        used_codes = set((font_usage.get(identity, {}).get("counts") or {}).keys())
+        if not used_codes or min(used_codes) < 0 or max(used_codes) >= glyph_count:
+            continue
+        descendant["/CIDToGIDMap"] = pikepdf.Name("/Identity")
+        repaired.append(resource)
+    return repaired
+
+
 def embed_fonts_and_rebuild_unicode(
     input_pdf_path: str,
     output_pdf_path: str,
@@ -4783,6 +4880,7 @@ def embed_fonts_and_rebuild_unicode(
         unicode_unresolved: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
         cidsets_repaired: List[str] = []
+        cid_maps_repaired: List[str] = []
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
             font_usage = _font_code_usage(pdf)
             for resource, font in _iter_pdf_fonts(pdf):
@@ -4938,6 +5036,7 @@ def embed_fonts_and_rebuild_unicode(
                             }
                         )
             cidsets_repaired = _repair_embedded_cidsets(pdf)
+            cid_maps_repaired = _repair_identity_cid_to_gid_maps(pdf, font_usage)
             pdf.save(output_pdf_path)
         with pikepdf.open(output_pdf_path) as repaired_pdf:
             after = _extract_font_records(repaired_pdf)
@@ -4949,6 +5048,7 @@ def embed_fonts_and_rebuild_unicode(
             "unicode_maps_added": unicode_maps,
             "unicode_unresolved": unicode_unresolved,
             "cidsets_repaired": cidsets_repaired,
+            "cid_maps_repaired": cid_maps_repaired,
             "unresolved": unresolved,
             "requested": {
                 "embed_exact_fonts": embed_exact_fonts,
@@ -4960,6 +5060,7 @@ def embed_fonts_and_rebuild_unicode(
                 or unicode_maps
                 or unicode_unresolved
                 or cidsets_repaired
+                or cid_maps_repaired
             ),
             "warning": (
                 "Only exact, license-permitted installed font matches were embedded; page content, fields, annotations, and tags were not rewritten. "

@@ -38,6 +38,8 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _iter_pdf_fonts,
     _heading_candidates_from_xml,
     _repair_embedded_cidsets,
+    _repair_identity_cid_to_gid_maps,
+    _font_code_usage,
     _simple_font_unicode_cmap,
     _to_unicode_mappings,
 )
@@ -874,7 +876,17 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     }
                 )
             )
-            page.obj["/Annots"] = pikepdf.Array([link, note])
+            widget = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Widget"),
+                        "/FT": pikepdf.Name("/Btn"),
+                        "/Rect": pikepdf.Array([90, 10, 110, 30]),
+                    }
+                )
+            )
+            page.obj["/Annots"] = pikepdf.Array([link, note, widget])
             struct_root = pdf.make_indirect(
                 pikepdf.Dictionary({"/Type": pikepdf.Name("/StructTreeRoot")})
             )
@@ -959,6 +971,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             )
             self.assertEqual(before["figures"][0]["issueIds"], ["figure-structure-alt"])
             self.assertFalse(before["annotations"][0]["tagged"])
+            self.assertEqual(before["widgets"][0]["issueIds"], ["field_tooltips"])
             before_report = {
                 issue["id"]: issue
                 for issue in inspect_pdf_accessibility(source_path)["report"]["issues"]
@@ -1015,12 +1028,19 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                         "index": 1,
                         "role": "Annot",
                     },
+                    {
+                        "action": "set_widget_description",
+                        "pageIndex": 0,
+                        "index": 2,
+                        "description": "Request a hearing",
+                    },
                 ],
             )
             self.assertEqual(result["roles_changed"], 1)
             self.assertEqual(result["scopes_changed"], 1)
             self.assertEqual(result["figure_alts_changed"], 1)
             self.assertEqual(result["annotations_tagged"], 2)
+            self.assertEqual(result["widget_descriptions_changed"], 1)
             after = inspect_pdf_accessibility(output_path)
             table_after = after["structure_editor"]["tables"][0]
             self.assertEqual(
@@ -1034,6 +1054,9 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     annotation["tagged"]
                     for annotation in after["structure_editor"]["annotations"]
                 )
+            )
+            self.assertEqual(
+                after["structure_editor"]["widgets"][0]["tooltip"], "Request a hearing"
             )
             issues = {issue["id"]: issue for issue in after["report"]["issues"]}
             for issue_id in (
@@ -1580,6 +1603,50 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
 
         self.assertEqual(repaired, ["p1/F1"])
         self.assertEqual(descriptor.CIDSet.read_bytes(), b"\xc0")
+        pdf.close()
+
+    def test_repair_identity_cid_to_gid_map_when_used_cids_are_valid(self):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page()
+        descriptor = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/FontDescriptor"),
+                "/FontName": pikepdf.Name("/ABCDEF+TestSubset"),
+                "/FontFile2": pdf.make_stream(_webdings_like_program()),
+            }
+        )
+        descendant = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/CIDFontType2"),
+                    "/BaseFont": pikepdf.Name("/ABCDEF+TestSubset"),
+                    "/FontDescriptor": descriptor,
+                }
+            )
+        )
+        type_zero = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/Type0"),
+                    "/BaseFont": pikepdf.Name("/ABCDEF+TestSubset"),
+                    "/Encoding": pikepdf.Name("/Identity-H"),
+                    "/DescendantFonts": pikepdf.Array([descendant]),
+                }
+            )
+        )
+        page["/Resources"] = pikepdf.Dictionary(
+            {"/Font": pikepdf.Dictionary({"/F1": type_zero})}
+        )
+        page["/Contents"] = pdf.make_stream(b"BT /F1 12 Tf <0001> Tj ET")
+
+        repaired = _repair_identity_cid_to_gid_maps(pdf, _font_code_usage(pdf))
+
+        self.assertEqual(repaired, ["p1/F1"])
+        self.assertEqual(str(descendant.CIDToGIDMap), "/Identity")
         pdf.close()
 
     def test_preflight_reports_catalog_metadata_and_structure(self):

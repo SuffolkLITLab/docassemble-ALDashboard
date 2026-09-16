@@ -210,7 +210,7 @@ const state = {
     images: [],
     imageMode: false,
     tagStructure: null,
-    structureEditor: { tables: [], figures: [], annotations: [] },
+    structureEditor: { tables: [], figures: [], annotations: [], widgets: [] },
     report: null,
     headingCandidates: [],
     headingDecisions: {},
@@ -475,6 +475,7 @@ const a11yHeadingReviewStatus = optionalWorkshopElement(
 const a11yHeadingList = optionalWorkshopElement("a11y-heading-list");
 const a11yStructurePreview = optionalWorkshopElement("a11y-structure-preview");
 const a11yAnnotationList = optionalWorkshopElement("a11y-annotation-list");
+const a11yWidgetList = optionalWorkshopElement("a11y-widget-list");
 const a11yTableList = optionalWorkshopElement("a11y-table-list");
 const a11yStructureFocus = optionalWorkshopElement("a11y-structure-focus");
 const utilitiesModal = document.getElementById("utilities-modal");
@@ -1593,6 +1594,45 @@ function renderStructureFocus(container, issueId, targetCount) {
 
 function renderStructureEditor() {
   const editor = /** @type {any} */ (state.accessibility.structureEditor || {});
+  const widgets = Array.isArray(editor.widgets) ? editor.widgets : [];
+  const missingWidgets = widgets.filter(function (widget) {
+    return structureIssueIds(widget).includes("field_tooltips");
+  });
+  if (a11yWidgetList) {
+    a11yWidgetList.innerHTML = missingWidgets.length
+      ? missingWidgets
+          .map(function (widget) {
+            const pageIndex = Number(widget.pageIndex || 0);
+            const annotationIndex = Number(widget.index || 0);
+            const key = pageIndex + "-" + annotationIndex;
+            return (
+              "<div" +
+              structureTargetAttributes(widget) +
+              '><label class="form-label small fw-semibold" for="a11y-widget-' +
+              key +
+              '">Page ' +
+              String(pageIndex + 1) +
+              (widget.name
+                ? " · " + escapeHtml(String(widget.name))
+                : " · unnamed form control") +
+              '</label><input id="a11y-widget-' +
+              key +
+              '" class="form-control form-control-sm" data-structure-value="widget-description" data-page-index="' +
+              pageIndex +
+              '" data-annotation-index="' +
+              annotationIndex +
+              '" value="' +
+              escapeHtml(widget.tooltip || "") +
+              '" placeholder="Accessible name"><button type="button" class="btn btn-sm btn-outline-primary mt-2" data-structure-action="save-widget-description" data-page-index="' +
+              pageIndex +
+              '" data-annotation-index="' +
+              annotationIndex +
+              '">Save accessible name</button></div>'
+            );
+          })
+          .join("")
+      : '<div class="small text-success">All form controls have accessible names.</div>';
+  }
   const figures = Array.isArray(editor.figures) ? editor.figures : [];
   if (a11yFigureTagList) {
     a11yFigureTagList.innerHTML = figures.length
@@ -1772,6 +1812,7 @@ function renderStructureEditor() {
   }).length;
   const structureTargetCount = tables
     .concat(annotations)
+    .concat(widgets)
     .filter(function (record) {
       return structureIssueIds(record).includes(activeIssueId);
     }).length;
@@ -2668,9 +2709,13 @@ function renderFontRemediationResult() {
   const cidsets = Array.isArray(result.cidsets_repaired)
     ? result.cidsets_repaired
     : [];
+  const cidMaps = Array.isArray(result.cid_maps_repaired)
+    ? result.cid_maps_repaired
+    : [];
   const unresolved = Array.isArray(result.unresolved) ? result.unresolved : [];
   const requested = result.requested || {};
-  const changed = embedded.length + unicodeMaps.length + cidsets.length;
+  const changed =
+    embedded.length + unicodeMaps.length + cidsets.length + cidMaps.length;
   const statusClass = changed ? "alert-success" : "alert-warning";
   const heading = requested.embed_exact_fonts
     ? "Font embedding check finished."
@@ -2685,6 +2730,10 @@ function renderFontRemediationResult() {
       String(cidsets.length) +
       " invalid CIDSet" +
       (cidsets.length === 1 ? " was" : "s were") +
+      " repaired; " +
+      String(cidMaps.length) +
+      " missing CID-to-glyph map" +
+      (cidMaps.length === 1 ? " was" : "s were") +
       " repaired."
     : String(unicodeMaps.length) +
       " Unicode map" +
@@ -3072,6 +3121,7 @@ async function inspectAccessibilityData(forceRefresh) {
     tables: [],
     figures: [],
     annotations: [],
+    widgets: [],
   };
   state.accessibility.report = payload.data.report || null;
   state.accessibility.headingCandidates = Array.isArray(
@@ -4626,6 +4676,7 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
     tables: [],
     figures: [],
     annotations: [],
+    widgets: [],
   };
   state.accessibility.report = null;
   state.accessibility.headingCandidates = [];
@@ -8552,7 +8603,8 @@ function accessibilityRemediationFeedback(action, result, options) {
       Number(result.figure_alts_changed || 0) +
       Number(result.cells_added || 0) +
       Number(result.annotations_tagged || 0) +
-      Number(result.annotation_descriptions_changed || 0);
+      Number(result.annotation_descriptions_changed || 0) +
+      Number(result.widget_descriptions_changed || 0);
     return (
       "Applied " +
       String(changed) +
@@ -8613,6 +8665,9 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
           : 0) +
         (Array.isArray(result.cidsets_repaired)
           ? result.cidsets_repaired.length
+          : 0) +
+        (Array.isArray(result.cid_maps_repaired)
+          ? result.cid_maps_repaired.length
           : 0);
       if (fontChanges) {
         if (
@@ -8622,6 +8677,16 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
           markAccessibilityDraft(
             "font-embedding",
             String(result.fonts_embedded.length) + " exact fonts embedded",
+          );
+        }
+        if (
+          Array.isArray(result.cid_maps_repaired) &&
+          result.cid_maps_repaired.length
+        ) {
+          markAccessibilityDraft(
+            "font-embedding",
+            String(result.cid_maps_repaired.length) +
+              " missing CID-to-glyph maps repaired",
           );
         }
         if (
@@ -8679,6 +8744,7 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
         pad_table: "table-columns",
         set_figure_alt: "figure-structure-alt",
         set_annotation_contents: "annotation-description",
+        set_widget_description: "field_tooltips",
       };
       operations.forEach(function (operation) {
         const issueId =
@@ -10097,6 +10163,14 @@ function handleStructureEditorAction(event) {
       index: Number(target.dataset.annotationIndex),
       contents: input ? input.value : "",
     };
+  } else if (action === "save-widget-description") {
+    const input = structureValueInput("widget-description", target);
+    operation = {
+      action: "set_widget_description",
+      pageIndex: Number(target.dataset.pageIndex),
+      index: Number(target.dataset.annotationIndex),
+      description: input ? input.value : "",
+    };
   } else if (action === "tag-annotation") {
     operation = {
       action: "tag_annotation",
@@ -10113,8 +10187,9 @@ function handleStructureEditorAction(event) {
   });
 }
 
-[a11yFigureTagList, a11yTableList, a11yAnnotationList].forEach(
+[a11yFigureTagList, a11yTableList, a11yAnnotationList, a11yWidgetList].forEach(
   function (container) {
+    if (!container) return;
     container.addEventListener("click", handleStructureEditorAction);
   },
 );

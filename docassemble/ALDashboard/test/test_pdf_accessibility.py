@@ -9,8 +9,10 @@ from docassemble.ALDashboard.symbol_fonts import (
     is_symbolic_family,
     propose_character,
 )
+from docassemble.ALDashboard.standard_font_metrics import standard_14_widths
 from docassemble.ALDashboard.pdf_accessibility import (
     PDFAccessibilityError,
+    _expected_font_widths,
     apply_pdf_accessibility_settings,
     apply_manual_structure_repairs,
     apply_unicode_map_decisions,
@@ -27,6 +29,31 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _heading_candidates_from_xml,
     _winansi_to_unicode_cmap,
 )
+
+
+def _metric_compatible_sans_path():
+    """Find an installed TrueType face with Helvetica metrics, if any."""
+    from docassemble.ALDashboard.pdf_accessibility import _font_width_match_score
+
+    import pikepdf
+
+    probe = pikepdf.Dictionary(
+        {
+            "/Type": pikepdf.Name("/Font"),
+            "/Subtype": pikepdf.Name("/Type1"),
+            "/BaseFont": pikepdf.Name("/Helvetica"),
+        }
+    )
+    for path in (
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ):
+        if not os.path.exists(path):
+            continue
+        score = _font_width_match_score(probe, path)
+        if score is not None and score <= 2.0:
+            return path
+    return None
 
 
 def _webdings_like_program():
@@ -1403,3 +1430,170 @@ class TestSymbolFontProposals(unittest.TestCase):
         self.assertTrue(is_symbolic_family("Wingdings,Bold"))
         self.assertFalse(is_symbolic_family("ArialNarrow"))
 
+
+class TestStandardFourteenEmbedding(unittest.TestCase):
+    """A standard 14 font names a face and stores no metrics of its own."""
+
+    def _standard_14_pdf(self, path):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        helv = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/Type1"),
+                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                    "/Name": pikepdf.Name("/Helv"),
+                }
+            )
+        )
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {"/Font": pikepdf.Dictionary({"/Helv": helv})}
+        )
+        page.obj["/Contents"] = pdf.make_stream(b"BT /Helv 12 Tf 72 700 Td (Hi) Tj ET")
+        pdf.save(path)
+        pdf.close()
+
+    def _inventory(self, path, canonical="helvetica", embeddable=True):
+        return [
+            {
+                "path": path,
+                "names": ["Helvetica"],
+                "canonical_names": {canonical},
+                "embeddable": embeddable,
+                "fsType": 0,
+            }
+        ]
+
+    def test_expected_widths_fall_back_to_published_metrics(self):
+        """Nothing in the file states the widths, so the table must supply them."""
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/Helvetica"),
+            }
+        )
+        self.assertNotIn("/Widths", font)
+        expected, source = _expected_font_widths(font)
+        self.assertEqual(source, "standard-14")
+        self.assertEqual(expected[ord("A")], 667)
+        self.assertEqual(expected[ord("i")], 222)
+        self.assertEqual(expected[ord(" ")], 278)
+
+    def test_published_metrics_match_a_real_helvetica(self):
+        """Guards the vendored table against drift."""
+        widths = standard_14_widths("helvetica")
+        self.assertIsNotNone(widths)
+        for glyph, expected in (("A", 667), ("m", 833), ("W", 944), ("i", 222)):
+            self.assertEqual(widths[ord(glyph)], expected)
+        courier = standard_14_widths("courier")
+        # Courier is monospaced, so every character shares one width.
+        self.assertEqual({courier[ord(c)] for c in "AiW "}, {600})
+
+    def test_metric_compatible_font_completes_the_dictionary(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            candidate = _metric_compatible_sans_path()
+            if candidate is None:
+                self.skipTest("No Helvetica-metric font is installed.")
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                return_value=self._inventory(candidate),
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path, output_path, add_unicode_maps=False
+                )
+            self.assertEqual(len(result["fonts_embedded"]), 1)
+            self.assertTrue(result["fonts_embedded"][0]["completed_standard_14"])
+
+            import pikepdf
+
+            with pikepdf.open(output_path) as pdf:
+                font = pdf.pages[0]["/Resources"]["/Font"]["/Helv"]
+                # The dictionary must now stand on its own.
+                self.assertEqual(str(font["/Subtype"]), "/TrueType")
+                self.assertIn("/FontFile2", font["/FontDescriptor"])
+                first = int(font["/FirstChar"])
+                widths = font["/Widths"]
+                self.assertEqual(int(widths[ord("A") - first]), 667)
+                self.assertEqual(int(widths[ord(" ") - first]), 278)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_font_with_wrong_metrics_is_still_refused(self):
+        """Sharing a name is not evidence of being the same face."""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            wrong = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            if not os.path.exists(wrong):
+                self.skipTest("DejaVu Sans is not installed.")
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                return_value=self._inventory(wrong),
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path, output_path, add_unicode_maps=False
+                )
+            self.assertEqual(result["fonts_embedded"], [])
+            self.assertEqual(len(result["unresolved"]), 1)
+            self.assertIn("widths do not match", result["unresolved"][0]["reason"])
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_missing_font_reason_differs_from_wrong_metrics_reason(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                return_value=[],
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path, output_path, add_unicode_maps=False
+                )
+            self.assertIn(
+                "No installed font is named", result["unresolved"][0]["reason"]
+            )
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_license_restricted_font_is_named_as_such(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            candidate = _metric_compatible_sans_path()
+            if candidate is None:
+                self.skipTest("No Helvetica-metric font is installed.")
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                return_value=self._inventory(candidate, embeddable=False),
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path, output_path, add_unicode_maps=False
+                )
+            self.assertIn("license flags forbid", result["unresolved"][0]["reason"])
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)

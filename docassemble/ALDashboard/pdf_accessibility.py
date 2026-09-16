@@ -11,6 +11,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 
+from .standard_font_metrics import is_standard_14, standard_14_widths
 from .symbol_fonts import (
     canonical_symbol_family,
     is_symbolic_family,
@@ -829,32 +830,55 @@ def _system_truetype_fonts() -> List[Dict[str, Any]]:
     return records
 
 
-def _font_width_match_score(pdf_font: Any, font_path: str) -> Optional[float]:
-    """Compare PDF WinAnsi widths to a candidate TrueType font in 1000-em units."""
-    widths = pdf_font.get("/Widths") if hasattr(pdf_font, "get") else None
-    if not widths:
-        return None
-    try:
-        first_char = int(pdf_font.get("/FirstChar", 0))
-        from fontTools.ttLib import TTFont
+def _expected_font_widths(pdf_font: Any) -> Tuple[Dict[int, float], str]:
+    """Collect the widths a replacement font must reproduce, by code point.
 
-        font = TTFont(font_path, lazy=True)
-        cmap = font.getBestCmap() or {}
-        metrics = font["hmtx"].metrics
-        units_per_em = float(font["head"].unitsPerEm)
-        differences: List[float] = []
+    Most fonts state their own widths. A standard 14 font never does, because
+    conforming viewers already know its metrics, so fall back to the published
+    table for the face it names. Without one of those two references there is
+    nothing to verify against and no font may be embedded.
+    """
+    expected: Dict[int, float] = {}
+    widths = pdf_font.get("/Widths") if hasattr(pdf_font, "get") else None
+    if widths:
+        first_char = int(pdf_font.get("/FirstChar", 0))
         for offset, pdf_width in enumerate(widths):
             code = first_char + offset
             try:
                 character = bytes([code]).decode("cp1252")
             except (UnicodeDecodeError, ValueError):
                 continue
-            glyph = cmap.get(ord(character))
-            if not glyph or glyph not in metrics:
-                continue
-            candidate_width = metrics[glyph][0] * 1000.0 / units_per_em
-            differences.append(abs(float(pdf_width) - candidate_width))
-        font.close()
+            expected[ord(character)] = float(pdf_width)
+        return expected, "pdf-widths"
+    canonical = _canonical_font_name(pdf_font.get("/BaseFont", ""))
+    published = standard_14_widths(canonical)
+    if published:
+        return {code: float(width) for code, width in published.items()}, "standard-14"
+    return {}, ""
+
+
+def _font_width_match_score(pdf_font: Any, font_path: str) -> Optional[float]:
+    """Compare the widths a font must reproduce against a candidate file."""
+    expected, _source = _expected_font_widths(pdf_font)
+    if not expected:
+        return None
+    try:
+        from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+        font = TTFont(font_path, lazy=True)
+        try:
+            cmap = font.getBestCmap() or {}
+            metrics = font["hmtx"].metrics
+            units_per_em = float(font["head"].unitsPerEm)
+            differences: List[float] = []
+            for code_point, expected_width in expected.items():
+                glyph = cmap.get(code_point)
+                if not glyph or glyph not in metrics:
+                    continue
+                candidate_width = metrics[glyph][0] * 1000.0 / units_per_em
+                differences.append(abs(expected_width - candidate_width))
+        finally:
+            font.close()
         if len(differences) < 10:
             return None
         differences.sort()
@@ -891,6 +915,142 @@ def find_exact_system_font(
     return min(scored, key=lambda item: item[0])[1] if scored else None
 
 
+def _simple_font_code_points(pdf_font: Any) -> Dict[int, int]:
+    """Map each single-byte character code to the code point it draws.
+
+    Starts from WinAnsi, which is what a form field's text is encoded as, then
+    applies any /Differences the font declares. Codes that resolve to nothing
+    are simply absent, and the caller gives them a missing width.
+    """
+    from fontTools.agl import toUnicode  # type: ignore[import-untyped]
+
+    mapping: Dict[int, int] = {}
+    for code in range(0x20, 0x100):
+        try:
+            mapping[code] = ord(bytes([code]).decode("cp1252"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+    encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
+    differences = (
+        encoding.get("/Differences")
+        if encoding is not None and hasattr(encoding, "get")
+        else None
+    ) or []
+    current = 0
+    for item in differences:
+        if isinstance(item, (int, float)):
+            current = int(item)
+            continue
+        text = toUnicode(_safe_pdf_string(item).lstrip("/"))
+        if text:
+            mapping[current] = ord(text[0])
+        else:
+            mapping.pop(current, None)
+        current += 1
+    return mapping
+
+
+def _descriptor_for_program(
+    pdf: Any, font_name: str, font_path: str, symbolic: bool
+) -> Any:
+    """Build the /FontDescriptor a standard 14 font never carried.
+
+    Every value is read from the font program being embedded rather than
+    guessed, apart from /StemV, which no TrueType table records and which
+    viewers use only as a hint.
+    """
+    import pikepdf
+    from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+    font = TTFont(font_path, lazy=True)
+    try:
+        units = float(font["head"].unitsPerEm) or 1000.0
+        scale = 1000.0 / units
+
+        def scaled(value: Any) -> int:
+            return int(round(float(value) * scale))
+
+        head = font["head"]
+        os2 = font["OS/2"] if "OS/2" in font else None
+        hhea = font["hhea"]
+        ascent = scaled(getattr(os2, "sTypoAscender", None) or hhea.ascent)
+        descent = scaled(getattr(os2, "sTypoDescender", None) or hhea.descent)
+        cap_height = scaled(getattr(os2, "sCapHeight", None) or ascent / scale)
+        weight = int(getattr(os2, "usWeightClass", 400) or 400)
+        italic_angle = float(getattr(font["post"], "italicAngle", 0.0))
+        descriptor = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/FontDescriptor"),
+                "/FontName": pikepdf.Name(f"/{font_name}"),
+                "/Flags": 4 if symbolic else 32,
+                "/FontBBox": [
+                    scaled(head.xMin),
+                    scaled(head.yMin),
+                    scaled(head.xMax),
+                    scaled(head.yMax),
+                ],
+                "/ItalicAngle": italic_angle,
+                "/Ascent": ascent,
+                "/Descent": descent,
+                "/CapHeight": cap_height,
+                # No TrueType table records stem width; viewers treat it as a
+                # hint, so derive a conventional value from the weight class.
+                "/StemV": 160 if weight >= 600 else 80,
+            }
+        )
+    finally:
+        font.close()
+    program = Path(font_path).read_bytes()
+    stream = pdf.make_stream(program)
+    stream["/Length1"] = len(program)
+    descriptor["/FontFile2"] = stream
+    return pdf.make_indirect(descriptor)
+
+
+def _embed_into_standard_14_font(
+    pdf: Any, pdf_font: Any, font_name: str, font_path: str
+) -> bool:
+    """Give a standard 14 font dictionary a real, self-contained font program.
+
+    A standard 14 entry names a face and stops there, trusting the viewer to
+    own a copy. PDF/UA does not allow that, and there is no /FontDescriptor to
+    attach a program to, so the dictionary has to be completed: published
+    widths are written out, a descriptor is built from the program, and the
+    subtype becomes /TrueType to match what is now embedded. Widths come from
+    the same table the viewer was already using, so nothing reflows.
+    """
+    import pikepdf
+
+    canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
+    published = standard_14_widths(canonical)
+    if published is None:
+        return False
+    code_points = _simple_font_code_points(pdf_font)
+    codes = sorted(code_points)
+    if not codes:
+        return False
+    first_char, last_char = codes[0], codes[-1]
+    widths = [
+        published.get(code_points.get(code, -1), 0)
+        for code in range(first_char, last_char + 1)
+    ]
+    symbolic = canonical in {"symbol", "zapfdingbats"}
+    descriptor = _descriptor_for_program(pdf, font_name, font_path, symbolic)
+    pdf_font["/FontDescriptor"] = descriptor
+    pdf_font["/Subtype"] = pikepdf.Name("/TrueType")
+    pdf_font["/FirstChar"] = first_char
+    pdf_font["/LastChar"] = last_char
+    pdf_font["/Widths"] = pikepdf.Array(widths)
+    encoding = pdf_font.get("/Encoding")
+    if isinstance(encoding, pikepdf.Dictionary) and "/BaseEncoding" not in encoding:
+        # The widths just written are WinAnsi-based, so say so explicitly
+        # rather than leaving the base to the viewer's built-in guess.
+        encoding["/BaseEncoding"] = pikepdf.Name("/WinAnsiEncoding")
+    elif encoding is None:
+        pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
+    return True
+
+
 def suggest_system_font(font_name: str) -> Optional[Dict[str, str]]:
     """Return fontconfig's closest installed alternative without applying it."""
     executable = shutil.which("fc-match")
@@ -920,6 +1080,38 @@ def suggest_system_font(font_name: str) -> Optional[Dict[str, str]]:
         }
     except (OSError, subprocess.SubprocessError, IndexError, ValueError):
         return None
+
+
+def _embedding_unresolved_reason(
+    font_name: str, canonical: str, inventory: List[Dict[str, Any]]
+) -> str:
+    """Say which gate an installed font failed, not just that it failed.
+
+    "No match" covers four very different situations, and the reviewer can only
+    act on the right one: install the font, replace a restricted copy, convert
+    an OpenType file, or accept that the installed copy is a different face.
+    """
+    named = [
+        record
+        for record in inventory
+        if canonical in set(record.get("canonical_names") or ())
+    ]
+    if not named:
+        return (
+            f"No installed font is named {font_name}. Install the exact font "
+            "with the Dashboard font manager, then run this check again."
+        )
+    blocked = [record for record in named if not record.get("embeddable")]
+    if len(blocked) == len(named):
+        return (
+            f"{font_name} is installed, but its license flags forbid "
+            "embedding. Install a copy that permits embedding."
+        )
+    return (
+        f"{font_name} is installed and embeddable, but its widths do not match "
+        "the metrics this PDF expects, so embedding it would reflow the text. "
+        "The installed copy is a different face with the same name."
+    )
 
 
 def _winansi_to_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
@@ -3226,7 +3418,7 @@ def embed_fonts_and_rebuild_unicode(
             not bool(record.get("embedded")) for record in before
         )
         inventory = _system_truetype_fonts() if needs_embedding_lookup else []
-        embedded: List[Dict[str, str]] = []
+        embedded: List[Dict[str, Any]] = []
         unicode_maps: List[str] = []
         unicode_unresolved: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
@@ -3244,15 +3436,20 @@ def embed_fonts_and_rebuild_unicode(
                     )
                 )
                 if not is_embedded and embed_exact_fonts:
-                    if (
-                        _safe_pdf_string(font.get("/Subtype", "")) != "/TrueType"
-                        or descriptor is None
+                    subtype = _safe_pdf_string(font.get("/Subtype", "")).lstrip("/")
+                    canonical = _canonical_font_name(font.get("/BaseFont", font_name))
+                    # A standard 14 font has no descriptor to hold a program and
+                    # no widths to verify against, but its metrics are published,
+                    # so it can still be completed into a self-contained font.
+                    completable = descriptor is None and is_standard_14(canonical)
+                    if subtype not in {"TrueType", "Type1"} or (
+                        descriptor is None and not completable
                     ):
                         unresolved.append(
                             {
                                 "resource": resource,
                                 "font": font_name,
-                                "reason": "Only exact TrueType matches can be embedded safely.",
+                                "reason": f"A {subtype or 'unknown'} font without a descriptor cannot be completed safely.",
                                 "suggested_alternative": suggest_system_font(font_name),
                                 "next_step": "Ask an administrator to install the exact font using the Dashboard font manager.",
                             }
@@ -3264,14 +3461,38 @@ def embed_fonts_and_rebuild_unicode(
                                 {
                                     "resource": resource,
                                     "font": font_name,
-                                    "reason": "No embeddable installed font matched both the font name and widths.",
+                                    "reason": _embedding_unresolved_reason(
+                                        font_name, canonical, inventory
+                                    ),
                                     "suggested_alternative": suggest_system_font(
                                         font_name
                                     ),
                                     "next_step": "Ask an administrator to install the exact font using the Dashboard font manager.",
                                 }
                             )
-                        else:
+                        elif completable:
+                            if _embed_into_standard_14_font(
+                                pdf, font, font_name, match["path"]
+                            ):
+                                embedded.append(
+                                    {
+                                        "resource": resource,
+                                        "font": font_name,
+                                        "source": match["path"],
+                                        "completed_standard_14": True,
+                                    }
+                                )
+                            else:
+                                unresolved.append(
+                                    {
+                                        "resource": resource,
+                                        "font": font_name,
+                                        "reason": "The standard 14 font dictionary could not be completed.",
+                                        "suggested_alternative": None,
+                                        "next_step": "Report this PDF; the font dictionary is unusual.",
+                                    }
+                                )
+                        elif descriptor is not None:
                             font_bytes = Path(match["path"]).read_bytes()
                             stream = pdf.make_stream(font_bytes)
                             stream["/Length1"] = len(font_bytes)

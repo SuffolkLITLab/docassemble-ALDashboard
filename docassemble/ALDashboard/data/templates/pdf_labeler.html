@@ -528,7 +528,7 @@
                         <div class="col-lg-6">
                             <div class="border rounded p-3 h-100">
                                 <h4 class="h6">1. Font embedding</h4>
-                                <p class="small text-muted">A font needs action only when its program is missing. The server embeds only an installed TrueType font whose name, widths, and license match exactly; it never silently substitutes.</p>
+                                <p class="small text-muted">A font needs action only when its program is missing. The server embeds only an installed TrueType font whose name, widths, and license match exactly; it never silently substitutes. A standard 14 font such as Helvetica stores no widths of its own, so it is checked against published metrics and its dictionary is completed when an exact match is installed.</p>
                                 <div id="a11y-font-embedding-summary" class="alert small py-2" role="status"></div>
                                 <div id="a11y-font-embedding-list" class="vstack gap-2 mb-2"></div>
                                 <button id="a11y-embed-fonts" class="btn btn-outline-primary btn-sm">Check and embed exact matches</button>

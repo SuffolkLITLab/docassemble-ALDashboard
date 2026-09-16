@@ -1270,6 +1270,51 @@ def _glyph_review_entry(
 GLYPH_REVIEW_LIMIT = 512
 
 
+def _acroform_appearance_fonts(pdf: Any) -> Dict[str, int]:
+    """Identify fonts that form fields will draw with once they are filled.
+
+    A widget's appearance stream for an empty field shows an empty string, so
+    the font looks unused while the form is blank. It is not: the viewer
+    regenerates that stream from the field's /DA the moment someone types, and
+    a missing font resource breaks filling. Returns each such font's object
+    identity mapped to the number of fields that name it.
+    """
+    counts: Dict[str, int] = {}
+    root = pdf.Root.get("/AcroForm") if hasattr(pdf.Root, "get") else None
+    if root is None:
+        return counts
+    resources = root.get("/DR") if hasattr(root, "get") else None
+    fonts = resources.get("/Font") if resources is not None else None
+    if not fonts:
+        return counts
+    identities = {
+        str(name).lstrip("/"): _pdf_object_identity(font, f"AcroForm/DR/{name}")
+        for name, font in fonts.items()
+    }
+
+    def default_appearance_name(source: Any) -> str:
+        appearance = source.get("/DA") if hasattr(source, "get") else None
+        if appearance is None:
+            return ""
+        match = re.search(rb"/([^\s/]+)\s+[\d.]+\s+Tf", bytes(appearance))
+        return match.group(1).decode("latin-1") if match else ""
+
+    named = [default_appearance_name(root)]
+    for page in pdf.pages:
+        for annot in cast(Iterable[Any], page.get("/Annots") or []):
+            if not hasattr(annot, "get"):
+                continue
+            named.append(default_appearance_name(annot))
+            parent = annot.get("/Parent")
+            if parent is not None:
+                named.append(default_appearance_name(parent))
+    for name in named:
+        identity = identities.get(name)
+        if identity:
+            counts[identity] = counts.get(identity, 0) + 1
+    return counts
+
+
 def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
     """Describe every font lacking a Unicode map so a human can decide about it.
 
@@ -1284,6 +1329,7 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
 
         with pikepdf.open(input_pdf_path) as pdf:
             usage = _font_code_usage(pdf)
+            form_fonts = _acroform_appearance_fonts(pdf)
             fonts: List[Dict[str, Any]] = []
             for resource, font in _iter_pdf_fonts(pdf):
                 if "/ToUnicode" in font:
@@ -1331,6 +1377,7 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
                         ),
                         "pages": sorted(record.get("pages") or []),
                         "runs": int(record.get("runs") or 0),
+                        "formFieldCount": form_fonts.get(identity, 0),
                         "glyphCount": len(counts),
                         "truncated": len(counts) > GLYPH_REVIEW_LIMIT,
                         "proposedCount": proposed,

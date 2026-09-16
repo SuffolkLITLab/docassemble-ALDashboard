@@ -2138,6 +2138,7 @@ function renderGlyphFontCard(font) {
     (font.glyphs || []).length,
   );
   const drawsNothing = font.runs > 0 && font.glyphCount === 0;
+  const formFieldCount = Number(font.formFieldCount || 0);
   const options = [
     [
       "map",
@@ -2187,9 +2188,14 @@ function renderGlyphFontCard(font) {
         )
       : "") +
     "</div></div></div>" +
-    (drawsNothing
-      ? '<div class="alert alert-secondary small py-2 mt-2 mb-0">This font is selected but draws no characters, so it needs no Unicode map.</div>'
-      : "") +
+    (formFieldCount
+      ? '<div class="alert alert-warning small py-2 mt-2 mb-0">This is the appearance font for ' +
+        String(formFieldCount) +
+        (formFieldCount === 1 ? " form field" : " form fields") +
+        ". It draws nothing while those fields are empty, but the viewer uses it as soon as someone types, so do not remove it. It still needs embedding for PDF/UA.</div>"
+      : drawsNothing
+        ? '<div class="alert alert-secondary small py-2 mt-2 mb-0">This font is selected but draws no characters, so it needs no Unicode map.</div>'
+        : "") +
     '<fieldset class="mt-2"><legend class="form-label small mb-1">What should happen to this font?</legend>' +
     options
       .map(function (option) {

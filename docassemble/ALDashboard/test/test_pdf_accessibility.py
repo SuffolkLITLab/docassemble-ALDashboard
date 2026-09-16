@@ -1325,6 +1325,67 @@ class TestSymbolicFontGlyphReview(unittest.TestCase):
             os.remove(source_path)
             os.remove(output_path)
 
+    def test_form_appearance_font_is_not_reported_as_unused(self):
+        """An empty field's appearance font looks unused but must not be removed."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            helv = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Font"),
+                        "/Subtype": pikepdf.Name("/Type1"),
+                        "/BaseFont": pikepdf.Name("/Helvetica"),
+                        "/Name": pikepdf.Name("/Helv"),
+                    }
+                )
+            )
+            appearance = pdf.make_stream(
+                b"/Tx BMC q BT /Helv 9 Tf 1 3 Td () Tj ET Q EMC"
+            )
+            appearance["/Resources"] = pikepdf.Dictionary(
+                {"/Font": pikepdf.Dictionary({"/Helv": helv})}
+            )
+            widget = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Widget"),
+                        "/FT": pikepdf.Name("/Tx"),
+                        "/T": "Your name",
+                        "/DA": "/Helv 9 Tf 0 g",
+                        "/Rect": [10, 10, 200, 30],
+                        "/AP": pikepdf.Dictionary({"/N": appearance}),
+                    }
+                )
+            )
+            page.obj["/Annots"] = pikepdf.Array([widget])
+            pdf.Root["/AcroForm"] = pikepdf.Dictionary(
+                {
+                    "/Fields": pikepdf.Array([widget]),
+                    "/DA": "/Helv 0 Tf 0 g",
+                    "/DR": pikepdf.Dictionary(
+                        {"/Font": pikepdf.Dictionary({"/Helv": helv})}
+                    ),
+                }
+            )
+            pdf.save(source_path)
+            pdf.close()
+
+            review = collect_symbolic_font_review(source_path)
+            font = next(f for f in review["fonts"] if f["font"] == "Helvetica")
+            # The empty field draws no glyphs, so this looks unused...
+            self.assertEqual(font["glyphCount"], 0)
+            self.assertGreater(font["runs"], 0)
+            # ...but it is the appearance font the viewer needs once filled.
+            self.assertGreaterEqual(font["formFieldCount"], 1)
+        finally:
+            os.remove(source_path)
+
 
 class TestSymbolFontProposals(unittest.TestCase):
     def test_curated_proposals_cover_checkbox_glyphs(self):

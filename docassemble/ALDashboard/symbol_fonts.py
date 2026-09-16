@@ -18,6 +18,7 @@ and biased toward the symbols that actually appear on court forms.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Dict, NamedTuple, Optional
 
@@ -131,6 +132,17 @@ _TABLES: Dict[str, Dict[int, SymbolProposal]] = {
     "symbol": _SYMBOL,
 }
 
+# Subset Type0 fonts often discard the original character code and retain only
+# a glyph id. In that case the rendered outline is the stable evidence. These
+# fingerprints are added only after comparing the embedded outline to the
+# source document visually.
+_OUTLINE_PROPOSALS: Dict[tuple[str, str], SymbolProposal] = {
+    (
+        "webdings",
+        "f21c561349f7a9f3f7ea1b5d08ec02ccff60acd1c71823c77cb9035ed8a863d1",
+    ): SymbolProposal("☐", "BALLOT BOX", "rendered-outline"),
+}
+
 # Families whose glyphs are decorative or symbolic rather than textual. Used to
 # decide whether to offer the "mark as artifact" path at all.
 SYMBOLIC_FAMILIES = frozenset(
@@ -165,6 +177,14 @@ def propose_character(font_name: str, code: int) -> Optional[SymbolProposal]:
     if table is None:
         return None
     return table.get(code)
+
+
+def propose_outline_character(
+    font_name: str, outline_path: str
+) -> Optional[SymbolProposal]:
+    """Return a reviewed proposal for an exact embedded glyph outline."""
+    digest = hashlib.sha256(str(outline_path or "").encode("utf-8")).hexdigest()
+    return _OUTLINE_PROPOSALS.get((canonical_symbol_family(font_name), digest))
 
 
 def curated_code_count(font_name: str) -> int:

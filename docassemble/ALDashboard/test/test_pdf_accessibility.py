@@ -8,12 +8,14 @@ from unittest.mock import patch
 from docassemble.ALDashboard.symbol_fonts import (
     is_symbolic_family,
     propose_character,
+    propose_outline_character,
 )
 from docassemble.ALDashboard.standard_font_metrics import standard_14_widths
 from docassemble.ALDashboard.pdf_accessibility import (
     PDFAccessibilityError,
     _expected_font_widths,
     _font_width_match_score,
+    _curated_symbol_unicode_cmap,
     _system_embeddable_fonts,
     find_metric_compatible_fonts,
     substitute_fonts,
@@ -1403,6 +1405,49 @@ class TestSymbolicFontGlyphReview(unittest.TestCase):
             self.assertEqual(len(glyph["outline"]["bbox"]), 4)
         finally:
             os.remove(source_path)
+
+    def test_reviewed_alabama_webdings_outline_is_a_ballot_box(self):
+        outline = "M2048 -410H0V1638H2048ZM1920 -282V1510H128V-282Z"
+        proposal = propose_outline_character("CELEJJ+Webdings", outline)
+        self.assertIsNotNone(proposal)
+        self.assertEqual(proposal.character, "☐")
+        self.assertEqual(proposal.evidence, "rendered-outline")
+
+    def test_reviewed_outline_builds_identity_font_unicode_map(self):
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Subtype": pikepdf.Name("/Type0"),
+                "/Encoding": pikepdf.Name("/Identity-H"),
+            }
+        )
+        source = {"maxp": type("Maxp", (), {"numGlyphs": 100})()}
+        outline = {"path": "M2048 -410H0V1638H2048ZM1920 -282V1510H128V-282Z"}
+        with (
+            patch(
+                "docassemble.ALDashboard.pdf_accessibility._font_program_bytes",
+                return_value=(b"font", "FontFile2"),
+            ),
+            patch(
+                "docassemble.ALDashboard.pdf_accessibility._load_glyph_source",
+                return_value=source,
+            ),
+            patch(
+                "docassemble.ALDashboard.pdf_accessibility._installed_symbol_codes",
+                return_value={},
+            ),
+            patch(
+                "docassemble.ALDashboard.pdf_accessibility._embedded_char_code",
+                return_value=None,
+            ),
+            patch(
+                "docassemble.ALDashboard.pdf_accessibility._glyph_outline",
+                return_value=outline,
+            ),
+        ):
+            cmap = _curated_symbol_unicode_cmap(font, "Webdings", [70])
+        self.assertIn(b"<0046> <2610>", cmap)
 
     def test_review_offers_no_proposal_without_evidence(self):
         """A subset with no cmap and no installed match must not guess."""

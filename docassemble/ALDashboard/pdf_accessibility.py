@@ -16,6 +16,7 @@ from .symbol_fonts import (
     canonical_symbol_family,
     is_symbolic_family,
     propose_character,
+    propose_outline_character,
 )
 
 ACCESSIBILITY_REMEDIATIONS: Dict[str, Dict[str, Any]] = {
@@ -1544,6 +1545,8 @@ def _glyph_review_entry(
     proposal = (
         propose_character(font_name, char_code) if char_code is not None else None
     )
+    if proposal is None and outline is not None:
+        proposal = propose_outline_character(font_name, str(outline.get("path") or ""))
     return {
         "code": code,
         "codeLabel": f"{code} (0x{code:02X})",
@@ -1566,6 +1569,41 @@ def _glyph_review_entry(
 
 
 GLYPH_REVIEW_LIMIT = 512
+
+
+def _curated_symbol_unicode_cmap(
+    pdf_font: Any,
+    font_name: str,
+    used_codes: Iterable[int],
+) -> Optional[bytes]:
+    """Map a symbol font only when every used glyph has reviewed evidence."""
+    program, _program_kind = _font_program_bytes(pdf_font)
+    font_source = _load_glyph_source(program)
+    if font_source is None:
+        return None
+    try:
+        glyph_count = int(font_source["maxp"].numGlyphs)
+    except Exception:
+        glyph_count = 0
+    installed_codes = _installed_symbol_codes(font_name, glyph_count)
+    mappings: Dict[int, str] = {}
+    for code in sorted(set(used_codes)):
+        char_code = _embedded_char_code(font_source, code)
+        if char_code is None:
+            char_code = installed_codes.get(code)
+        proposal = (
+            propose_character(font_name, char_code) if char_code is not None else None
+        )
+        if proposal is None:
+            outline = _glyph_outline(font_source, code)
+            proposal = propose_outline_character(
+                font_name,
+                str((outline or {}).get("path") or ""),
+            )
+        if proposal is None:
+            return None
+        mappings[code] = proposal.character
+    return _confirmed_unicode_cmap(mappings, _is_two_byte_font(pdf_font))
 
 
 def _acroform_appearance_fonts(pdf: Any) -> Dict[str, int]:
@@ -3800,6 +3838,7 @@ def embed_fonts_and_rebuild_unicode(
         unicode_unresolved: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
+            font_usage = _font_code_usage(pdf)
             for resource, font in _iter_pdf_fonts(pdf):
                 font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip(
                     "/"
@@ -3884,6 +3923,14 @@ def embed_fonts_and_rebuild_unicode(
                             )
                 if add_unicode_maps and "/ToUnicode" not in font:
                     cmap = _simple_font_unicode_cmap(font)
+                    if cmap is None and is_symbolic_family(font_name):
+                        identity = _pdf_object_identity(font, resource)
+                        usage_record = font_usage.get(identity) or {}
+                        cmap = _curated_symbol_unicode_cmap(
+                            font,
+                            font_name,
+                            (usage_record.get("counts") or {}).keys(),
+                        )
                     if cmap is not None:
                         font["/ToUnicode"] = pdf.make_stream(cmap)
                         unicode_maps.append(resource)

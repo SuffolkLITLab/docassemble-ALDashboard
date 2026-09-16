@@ -827,10 +827,49 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertTrue(cmap.endswith(b"end\n"))
 
     def test_unicode_map_refuses_unknown_encoding(self):
+        """StandardEncoding is not reproduced by any codec, so it is refused."""
+        import pikepdf
+
+        font = pikepdf.Dictionary({"/Encoding": pikepdf.Name("/StandardEncoding")})
+        self.assertIsNone(_simple_font_unicode_cmap(font))
+
+    def test_unicode_map_supports_macroman(self):
         import pikepdf
 
         font = pikepdf.Dictionary({"/Encoding": pikepdf.Name("/MacRomanEncoding")})
-        self.assertIsNone(_simple_font_unicode_cmap(font))
+        cmap = _simple_font_unicode_cmap(font)
+        self.assertIsNotNone(cmap)
+        # Byte 128 is A-diaeresis on the Mac and the euro sign on Windows.
+        self.assertIn(b"<80> <00C4>", cmap)
+        self.assertIn(b"<D4> <2018>", cmap)
+
+    def test_macroman_follows_the_pdf_spec_not_the_python_codec(self):
+        """Python's mac_roman is Mac OS 8.5+, which moved 0xDB to the euro."""
+        import pikepdf
+
+        self.assertEqual(bytes([0xDB]).decode("mac_roman"), "\u20ac")
+        font = pikepdf.Dictionary({"/Encoding": pikepdf.Name("/MacRomanEncoding")})
+        cmap = _simple_font_unicode_cmap(font)
+        # PDF's MacRomanEncoding keeps the currency sign at that code.
+        self.assertIn(b"<DB> <00A4>", cmap)
+        self.assertNotIn(b"<DB> <20AC>", cmap)
+
+    def test_differences_still_win_over_a_macroman_base(self):
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Encoding": pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Encoding"),
+                        "/BaseEncoding": pikepdf.Name("/MacRomanEncoding"),
+                        "/Differences": pikepdf.Array([0xDB, pikepdf.Name("/Euro")]),
+                    }
+                )
+            }
+        )
+        cmap = _simple_font_unicode_cmap(font)
+        self.assertIn(b"<DB> <20AC>", cmap)
 
     def test_unicode_map_accepts_winansi_declared_as_a_base(self):
         """A dictionary naming WinAnsi as its base is still a WinAnsi font."""

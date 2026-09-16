@@ -966,6 +966,23 @@ def find_exact_system_font(
     return min(scored, key=lambda item: item[0])[1] if scored else None
 
 
+# The base encodings this tool can map deterministically, and the Python codec
+# that reproduces each one.
+SIMPLE_FONT_CODECS: Dict[str, str] = {
+    "WinAnsiEncoding": "cp1252",
+    "MacRomanEncoding": "mac_roman",
+}
+
+# Where a codec and the PDF specification genuinely disagree, the
+# specification wins. Python's mac_roman follows Mac OS 8.5 and later, which
+# reassigned 0xDB to the euro sign; PDF's MacRomanEncoding keeps the original
+# currency sign there. A font that really means euro says so in /Differences,
+# which is applied afterwards and takes precedence.
+ENCODING_SPEC_OVERRIDES: Dict[str, Dict[int, int]] = {
+    "MacRomanEncoding": {0xDB: 0x00A4},
+}
+
+
 def _encoding_base_name(pdf_font: Any) -> str:
     """Return the base encoding a simple font declares, if it names one.
 
@@ -996,13 +1013,17 @@ def _simple_font_code_points(pdf_font: Any, default_base: str = "") -> Dict[int,
     from fontTools.agl import toUnicode  # type: ignore[import-untyped]
 
     base = _encoding_base_name(pdf_font) or default_base
+    codec = SIMPLE_FONT_CODECS.get(base, "")
     mapping: Dict[int, int] = {}
-    limit = 0x100 if base == "WinAnsiEncoding" else 0x7F
+    # Without a declared base the font program's built-in encoding applies,
+    # which is not one of these; only ASCII, where every base agrees, is safe.
+    limit = 0x100 if codec else 0x7F
     for code in range(0x20, limit):
         try:
-            mapping[code] = ord(bytes([code]).decode("cp1252"))
+            mapping[code] = ord(bytes([code]).decode(codec or "ascii"))
         except (UnicodeDecodeError, ValueError):
             continue
+    mapping.update(ENCODING_SPEC_OVERRIDES.get(base, {}))
     encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
     differences = (
         encoding.get("/Differences")
@@ -1213,11 +1234,13 @@ def _simple_font_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
     base = _encoding_base_name(pdf_font)
     encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
     has_differences = bool(
-        hasattr(encoding, "get") and encoding is not None and encoding.get("/Differences")
+        hasattr(encoding, "get")
+        and encoding is not None
+        and encoding.get("/Differences")
     )
-    if base != "WinAnsiEncoding" and not has_differences:
+    if base and base not in SIMPLE_FONT_CODECS:
         return None
-    if base and base != "WinAnsiEncoding":
+    if not base and not has_differences:
         return None
     code_points = _simple_font_code_points(pdf_font)
     pairs: List[Tuple[int, str]] = []
@@ -1232,7 +1255,7 @@ def _simple_font_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
         "12 dict begin",
         "begincmap",
         "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
-        "/CMapName /ALDashboard-WinAnsi def",
+        f"/CMapName /ALDashboard-{base or 'Diff'} def",
         "/CMapType 2 def",
         "1 begincodespacerange",
         "<00> <FF>",

@@ -3327,6 +3327,263 @@ def pdf_labeler_accessibility_inspect() -> Response:
         )
 
 
+@app.route("/pdf-labeler/api/accessibility-remediate", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-remediate", methods=["POST"]
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_remediate() -> Response:
+    """Apply one explicit PDF accessibility remediation operation."""
+    request_id = str(uuid.uuid4())
+    input_path = ""
+    output_path = ""
+    try:
+        from .pdf_accessibility import (
+            PDFAccessibilityError,
+            apply_pdf_accessibility_settings,
+            apply_manual_structure_repairs,
+            create_draft_structure_tree,
+            embed_fonts_and_rebuild_unicode,
+            inspect_pdf_accessibility,
+        )
+
+        filename, content, post_data = _read_pdf_labeler_file_request()
+        action = str(post_data.get("action") or "").strip()
+        if action not in {
+            "metadata",
+            "catalog_flags",
+            "draft_structure",
+            "fonts",
+            "structure",
+        }:
+            raise DashboardAPIValidationError(
+                "action must be metadata, catalog_flags, draft_structure, fonts, or structure."
+            )
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out:
+            output_path = tmp_out.name
+
+        if action in {"metadata", "catalog_flags"}:
+            metadata_raw = post_data.get("metadata")
+            if isinstance(metadata_raw, str):
+                metadata = json.loads(metadata_raw) if metadata_raw else {}
+            else:
+                metadata = metadata_raw or {}
+            if not isinstance(metadata, dict):
+                raise DashboardAPIValidationError("metadata must be a JSON object.")
+            mark_as_tagged = None
+            if action == "catalog_flags" and "marked" in post_data:
+                mark_as_tagged = parse_bool(post_data.get("marked"), default=False)
+            result = apply_pdf_accessibility_settings(
+                input_pdf_path=input_path,
+                output_pdf_path=output_path,
+                metadata=metadata,
+                auto_fill_missing_tooltips=False,
+                mark_as_tagged=mark_as_tagged,
+                set_display_doc_title=parse_bool(
+                    post_data.get("display_doc_title"), default=True
+                ),
+                set_structure_tab_order=False,
+            )
+        elif action == "draft_structure":
+            heading_decisions_raw = post_data.get("heading_decisions")
+            heading_decisions = (
+                json.loads(heading_decisions_raw)
+                if isinstance(heading_decisions_raw, str)
+                and heading_decisions_raw.strip()
+                else None
+            )
+            if heading_decisions is not None and not isinstance(
+                heading_decisions, list
+            ):
+                raise DashboardAPIValidationError(
+                    "heading_decisions must be a JSON list."
+                )
+            result = create_draft_structure_tree(
+                input_path,
+                output_path,
+                overwrite=parse_bool(post_data.get("overwrite"), default=False),
+                heading_decisions=heading_decisions,
+            )
+        elif action == "structure":
+            operations_raw = post_data.get("operations")
+            operations = (
+                json.loads(operations_raw)
+                if isinstance(operations_raw, str)
+                else operations_raw
+            )
+            if not isinstance(operations, list):
+                raise DashboardAPIValidationError("operations must be a JSON list.")
+            result = apply_manual_structure_repairs(input_path, output_path, operations)
+        else:
+            result = embed_fonts_and_rebuild_unicode(
+                input_path,
+                output_path,
+                embed_exact_fonts=parse_bool(
+                    post_data.get("embed_exact_fonts"), default=True
+                ),
+                add_unicode_maps=parse_bool(
+                    post_data.get("add_unicode_maps"), default=True
+                ),
+            )
+
+        with open(output_path, "rb") as output_file:
+            output_bytes = output_file.read()
+        inspection = inspect_pdf_accessibility(output_path)
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "filename": filename.replace(".pdf", f"-{action}.pdf"),
+                    "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
+                    "remediation_result": result,
+                    "inspection": inspection,
+                },
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except (PDFAccessibilityError, json.JSONDecodeError) as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "accessibility_error", "message": str(exc)},
+            },
+            400,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+    finally:
+        for path in (input_path, output_path):
+            if path and os.path.exists(path):
+                os.remove(path)
+
+
+@app.route("/pdf-labeler/api/accessibility-ai-tooltips", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-tooltips",
+    methods=["POST"],
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_ai_tooltips() -> Response:
+    """Draft accessible field names only after an explicit authenticated request."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_ai_auth_check():
+        return _ai_auth_fail(request_id)
+    try:
+        payload = request.get_json(silent=True) or {}
+        fields = payload.get("fields")
+        if not isinstance(fields, list):
+            raise DashboardAPIValidationError("fields must be a list.")
+        if len(fields) > 500:
+            raise DashboardAPIValidationError(
+                "At most 500 fields may be drafted at once."
+            )
+        from .pdf_accessibility import draft_field_tooltips_with_ai
+
+        tooltips = draft_field_tooltips_with_ai(
+            fields, model=str(payload.get("model") or LABELER_DEFAULT_MODEL)
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"tooltips": tooltips, "review_required": True},
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "ai_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
+@app.route("/pdf-labeler/api/accessibility-ai-headings", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-headings",
+    methods=["POST"],
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_ai_headings() -> Response:
+    """Draft heading decisions only after an explicit authenticated request."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_ai_auth_check():
+        return _ai_auth_fail(request_id)
+    try:
+        payload = request.get_json(silent=True) or {}
+        candidates = payload.get("candidates")
+        if not isinstance(candidates, list):
+            raise DashboardAPIValidationError("candidates must be a list.")
+        if len(candidates) > 500:
+            raise DashboardAPIValidationError(
+                "At most 500 heading candidates may be drafted at once."
+            )
+        from .pdf_accessibility import draft_heading_levels_with_ai
+
+        decisions = draft_heading_levels_with_ai(
+            candidates, model=str(payload.get("model") or LABELER_DEFAULT_MODEL)
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"decisions": decisions, "review_required": True},
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
 @app.route("/pdf-labeler/api/auto-detect", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/auto-detect", methods=["POST"])
 @csrf.exempt
@@ -3690,6 +3947,7 @@ def pdf_labeler_apply_fields() -> Response:
                         accessibility_payload.get("auto_fill_missing_tooltips"),
                         default=True,
                     ),
+                    set_structure_tab_order=True,
                 )
 
             # Read the output file

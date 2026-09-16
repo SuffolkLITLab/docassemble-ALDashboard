@@ -274,6 +274,7 @@ let fieldsListProgrammaticScroll = false;
 let pageManagerState = null;
 let pageManagerDragPageId = null;
 let a11yDragFieldId = null;
+let structurePreviewGeneration = 0;
 
 const fileInput = document.getElementById("file-input");
 const pdfContainer = document.getElementById("pdf-container");
@@ -1774,9 +1775,15 @@ function renderAccessibilityReport() {
   issues
     .slice()
     .sort(function (left, right) {
-      if (left.status !== right.status) return left.status === "fail" ? -1 : 1;
-      if (left.severity !== right.severity)
-        return left.severity === "fail" ? -1 : 1;
+      const statusRank = { fail: 0, review: 1, blocked: 2, pass: 3 };
+      const severityRank = { fail: 0, warning: 1 };
+      const statusDifference =
+        (statusRank[left.status] ?? 4) - (statusRank[right.status] ?? 4);
+      if (statusDifference) return statusDifference;
+      const severityDifference =
+        (severityRank[left.severity] ?? 2) -
+        (severityRank[right.severity] ?? 2);
+      if (severityDifference) return severityDifference;
       return Number(right.count || 0) - Number(left.count || 0);
     })
     .forEach(function (issue) {
@@ -2199,11 +2206,14 @@ function renderHeadingCandidates() {
 }
 
 async function renderStructurePreview() {
+  structurePreviewGeneration += 1;
+  const generation = structurePreviewGeneration;
   if (!a11yStructurePreview || !state.pdfDoc) return;
   a11yStructurePreview.innerHTML = "";
   const candidates = state.accessibility.headingCandidates || [];
   for (let pageIndex = 0; pageIndex < state.pageCount; pageIndex += 1) {
     const page = await state.pdfDoc.getPage(pageIndex + 1);
+    if (generation !== structurePreviewGeneration) return;
     const baseViewport = page.getViewport({ scale: 1 });
     const scale = Math.min(1, 520 / baseViewport.width);
     const viewport = page.getViewport({ scale: scale });
@@ -2217,6 +2227,7 @@ async function renderStructurePreview() {
     shell.appendChild(canvas);
     await page.render({ canvasContext: canvas.getContext("2d"), viewport })
       .promise;
+    if (generation !== structurePreviewGeneration) return;
 
     (state.pageTextBoxes[pageIndex] || []).forEach(function (box) {
       const outline = document.createElement("div");
@@ -7742,7 +7753,7 @@ function draftTooltipsFromNearbyText() {
 }
 
 function applyDeterministicFieldOrder(direction) {
-  const factor = direction === "rtl" || direction === "ttb" ? -1 : 1;
+  const factor = direction === "rtl" ? -1 : 1;
   state.accessibility.fieldOrder = state.fields
     .slice()
     .sort(function (left, right) {
@@ -8518,9 +8529,21 @@ function handleStructureEditorAction(event) {
     };
   } else if (action === "save-cell-role") {
     const input = structureValueInput("cell-role", target);
+    if (!input) {
+      showError(
+        "The table cell control is no longer available. Refresh and retry.",
+      );
+      return;
+    }
     operation = { action: "set_role", path: path, role: input.value };
   } else if (action === "save-header-scope") {
     const input = structureValueInput("header-scope", target);
+    if (!input) {
+      showError(
+        "The table header control is no longer available. Refresh and retry.",
+      );
+      return;
+    }
     operation = { action: "set_scope", path: path, scope: input.value };
   } else if (action === "pad-table") {
     if (

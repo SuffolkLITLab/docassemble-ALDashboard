@@ -12,15 +12,71 @@ from docassemble.ALDashboard.pdf_accessibility import (
     build_default_field_order,
     create_draft_structure_tree,
     default_pdf_field_tooltip,
+    draft_field_tooltips_with_ai,
     embed_fonts_and_rebuild_unicode,
     extract_pdf_field_tooltips,
     inspect_pdf_accessibility,
+    _iter_pdf_fonts,
     _heading_candidates_from_xml,
     _winansi_to_unicode_cmap,
 )
 
 
 class TestPDFAccessibilityHelpers(unittest.TestCase):
+    def test_ai_tooltip_prompt_requires_short_labels_not_instructions(self):
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "tooltips": [{"name": "users1_name", "tooltip": "Full name"}]
+            },
+        ) as completion:
+            result = draft_field_tooltips_with_ai(
+                [
+                    {
+                        "name": "users1_name",
+                        "type": "text",
+                        "nearby_text": ["Your full legal name"],
+                    }
+                ]
+            )
+
+        self.assertEqual(result, {"users1_name": "Full name"})
+        system_prompt = completion.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("at most 45 characters", system_prompt)
+        self.assertIn("not an instruction", system_prompt)
+        self.assertIn("Do not begin with Enter", system_prompt)
+        self.assertIn("sentence fragment", system_prompt)
+
+    def test_direct_font_objects_use_resource_fallback_identity(self):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {
+                "/Font": pikepdf.Dictionary(
+                    {
+                        "/F1": pikepdf.Dictionary(
+                            {
+                                "/Type": pikepdf.Name("/Font"),
+                                "/Subtype": pikepdf.Name("/Type1"),
+                                "/BaseFont": pikepdf.Name("/Helvetica"),
+                            }
+                        ),
+                        "/F2": pikepdf.Dictionary(
+                            {
+                                "/Type": pikepdf.Name("/Font"),
+                                "/Subtype": pikepdf.Name("/Type1"),
+                                "/BaseFont": pikepdf.Name("/Courier"),
+                            }
+                        ),
+                    }
+                )
+            }
+        )
+        self.assertEqual([resource for resource, _font in _iter_pdf_fonts(pdf)], ["p1/F1", "p1/F2"])
+        pdf.close()
+
     def test_draft_structure_uses_only_approved_heading_decisions(self):
         import pikepdf
 
@@ -82,6 +138,54 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             with pikepdf.open(output_path) as tagged:
                 part = tagged.Root.StructTreeRoot.K.K[0]
                 self.assertEqual([str(child.S) for child in part.K], ["/H3", "/P"])
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_draft_structure_starts_after_existing_content_mcids(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/F1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/Type1"),
+                                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"/Span <</MCID 5>> BDC EMC "
+                b"BT /F1 12 Tf 72 700 Td (New paragraph) Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+
+            create_draft_structure_tree(source_path, output_path)
+
+            with pikepdf.open(output_path) as tagged:
+                page_part = tagged.Root.StructTreeRoot.K.K[0]
+                paragraph = next(
+                    child for child in page_part.K if str(child.S) == "/P"
+                )
+                self.assertEqual(int(paragraph.K), 6)
+                parent_entries = tagged.Root.StructTreeRoot.ParentTree.Nums[1]
+                self.assertEqual(len(parent_entries), 7)
+                self.assertIsNone(parent_entries[5])
+                self.assertEqual(str(parent_entries[6].S), "/P")
         finally:
             os.remove(source_path)
             os.remove(output_path)
@@ -380,13 +484,20 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             pdf.save(source_path)
             pdf.close()
 
-            result = embed_fonts_and_rebuild_unicode(
-                source_path,
-                output_path,
-                embed_exact_fonts=False,
-                add_unicode_maps=True,
-            )
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts"
+            ) as font_inventory, patch(
+                "docassemble.ALDashboard.pdf_accessibility.inspect_pdf_accessibility",
+                side_effect=AssertionError("full inspection should not run"),
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path,
+                    output_path,
+                    embed_exact_fonts=False,
+                    add_unicode_maps=True,
+                )
 
+            font_inventory.assert_not_called()
             self.assertEqual(result["unresolved"], [])
             self.assertEqual(result["unicode_maps_added"], ["p1/F1"])
             self.assertFalse(result["requested"]["embed_exact_fonts"])
@@ -656,6 +767,30 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     bool(repaired.Root["/ViewerPreferences"]["/DisplayDocTitle"])
                 )
                 self.assertNotIn("/MarkInfo", repaired.Root)
+        finally:
+            os.remove(pdf_path)
+
+    def test_metadata_repair_does_not_display_a_missing_title(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+        try:
+            pdf = pikepdf.new()
+            pdf.add_blank_page(page_size=(612, 792))
+            pdf.save(pdf_path)
+            pdf.close()
+
+            apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                metadata={"language": "en-US", "title": ""},
+                auto_fill_missing_tooltips=False,
+                set_display_doc_title=True,
+            )
+
+            with pikepdf.open(pdf_path) as repaired:
+                self.assertNotIn("/ViewerPreferences", repaired.Root)
         finally:
             os.remove(pdf_path)
 

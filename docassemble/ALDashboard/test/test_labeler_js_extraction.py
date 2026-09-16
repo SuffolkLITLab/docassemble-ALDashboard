@@ -296,6 +296,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def test_accessibility_reading_order_has_a_dedicated_editor(self):
         self.assertIn('id="a11y-order-list"', self.html)
         self.assertIn("renderAccessibilityOrderList", self.js)
+        self.assertIn('const factor = direction === "rtl" ? -1 : 1;', self.js)
         self.assertIn('a11yOrderList.addEventListener("click"', self.js)
         self.assertIn('a11yOrderList.addEventListener("drop"', self.js)
 
@@ -305,9 +306,16 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('id="a11y-headings-reject-all"', self.html)
         self.assertIn('id="a11y-ai-headings"', self.html)
         self.assertIn("renderStructurePreview", self.js)
+        self.assertIn("structurePreviewGeneration", self.js)
         self.assertIn("setHeadingDecision", self.js)
         self.assertIn("/pdf-labeler/api/accessibility-ai-headings", self.js)
         self.assertIn("heading_decisions: decisions", self.js)
+
+    def test_accessibility_review_guards_dynamic_structure_controls(self):
+        self.assertIn("if (!input)", self.js)
+        self.assertIn("The table cell control is no longer available", self.js)
+        self.assertIn("The table header control is no longer available", self.js)
+        self.assertIn("const statusRank", self.js)
 
     def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
         self.assertIn("data.data.menu_items", self.js)

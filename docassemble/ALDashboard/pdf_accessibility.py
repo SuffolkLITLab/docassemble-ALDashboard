@@ -107,8 +107,15 @@ def draft_field_tooltips_with_ai(
             {
                 "role": "system",
                 "content": (
-                    "Draft accessible names for PDF form controls. Use the nearby printed label "
-                    "and field type. Be concise but unambiguous. Do not rename the opaque PDF field. "
+                    "Draft short, plain-language labels for PDF form controls. Use the nearby printed "
+                    "label, current label, and field type while preserving the legal meaning. Each "
+                    "tooltip must name the information or choice represented by the control: use a "
+                    "sentence fragment of at most 45 characters, not an instruction or a full sentence. "
+                    "Do not begin with Enter, Type, Input, Provide, Choose, Select, Check, or Please. "
+                    "Prefer labels such as 'Date of birth' and 'Mother’s full name', not 'Enter your date "
+                    "of birth' or 'Please provide the mother’s full name'. Use simple vocabulary, avoid "
+                    "variable names and underscores, and keep a good current label when it is already "
+                    "short and clear. Do not rename the opaque PDF field. "
                     "Return JSON with a tooltips array of objects containing exactly name and tooltip."
                 ),
             },
@@ -126,9 +133,11 @@ def draft_field_tooltips_with_ai(
         if not isinstance(row, Mapping):
             continue
         name = str(row.get("name") or "").strip()
-        tooltip = re.sub(r"\s+", " ", str(row.get("tooltip") or "")).strip()
+        tooltip = str(row.get("tooltip") or "")
+        tooltip = re.sub(r"\s+", " ", tooltip).strip(" .:-")
+        tooltip = tooltip[:45].strip()
         if name in allowed_names and tooltip:
-            result[name] = tooltip[:240]
+            result[name] = tooltip
     return result
 
 
@@ -412,71 +421,6 @@ def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
     return moved
 
 
-def _analyze_structure(root: Any) -> Dict[str, int]:
-    """Count common semantic tag-tree defects surfaced by the corpus."""
-    counts = {
-        "invalid_tr_children": 0,
-        "inconsistent_table_rows": 0,
-        "th_missing_scope": 0,
-        "figures_missing_alt": 0,
-        "link_elements": 0,
-        "annot_elements": 0,
-    }
-    struct_root = root.get("/StructTreeRoot") if root is not None else None
-    if struct_root is None:
-        return counts
-
-    def walk(node: Any) -> None:
-        role = (
-            _safe_pdf_string(node.get("/S", "")).lstrip("/")
-            if hasattr(node, "get")
-            else ""
-        )
-        children = _structure_children(node)
-        if role == "TR":
-            counts["invalid_tr_children"] += sum(
-                1
-                for child in children
-                if _safe_pdf_string(child.get("/S", "")).lstrip("/") not in {"TH", "TD"}
-            )
-        elif role == "TH" and not _structure_scope(node):
-            counts["th_missing_scope"] += 1
-        elif role == "Figure" and not _safe_pdf_string(node.get("/Alt", "")).strip():
-            counts["figures_missing_alt"] += 1
-        elif role == "Link":
-            counts["link_elements"] += 1
-        elif role == "Annot":
-            counts["annot_elements"] += 1
-        if role == "Table":
-            rows = [
-                child
-                for child in children
-                if _safe_pdf_string(child.get("/S", "")).lstrip("/") == "TR"
-            ]
-            widths = [
-                len(
-                    [
-                        cell
-                        for cell in _structure_children(row)
-                        if _safe_pdf_string(cell.get("/S", "")).lstrip("/")
-                        in {"TH", "TD"}
-                    ]
-                )
-                for row in rows
-            ]
-            if widths and len(set(widths)) > 1:
-                expected = max(set(widths), key=widths.count)
-                counts["inconsistent_table_rows"] += sum(
-                    1 for width in widths if width != expected
-                )
-        for child in children:
-            walk(child)
-
-    for child in _structure_children(struct_root):
-        walk(child)
-    return counts
-
-
 def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
     """Return stable tree paths and annotation coordinates for manual repairs."""
     struct_root = pdf.Root.get("/StructTreeRoot")
@@ -669,6 +613,14 @@ def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
     return records, ordered_names
 
 
+def _pdf_object_identity(obj: Any, fallback: Any) -> str:
+    """Use an indirect object number, but never collapse direct objects at (0, 0)."""
+    objgen = getattr(obj, "objgen", None)
+    if objgen is not None and tuple(objgen) != (0, 0):
+        return str(objgen)
+    return str(fallback)
+
+
 def _walk_resource_xobjects(
     resources: Any, *, prefix: str = "", seen: Optional[set[str]] = None
 ) -> Iterable[Tuple[str, Any]]:
@@ -681,7 +633,7 @@ def _walk_resource_xobjects(
     for key, obj in xobjects.items():
         name = str(key).lstrip("/")
         path = f"{prefix}/{name}" if prefix else name
-        identity = str(getattr(obj, "objgen", None) or path)
+        identity = _pdf_object_identity(obj, path)
         yield path, obj
         if (
             _safe_pdf_string(obj.get("/Subtype", "")) == "/Form"
@@ -800,8 +752,8 @@ def _iter_pdf_fonts(pdf: Any) -> Iterable[Tuple[str, Any]]:
         if not fonts:
             continue
         for resource_name, font in fonts.items():
-            identity = str(
-                getattr(font, "objgen", None) or (resource_path, str(resource_name))
+            identity = _pdf_object_identity(
+                font, (resource_path, str(resource_name))
             )
             if identity in seen:
                 continue
@@ -1715,7 +1667,10 @@ def apply_pdf_accessibility_settings(
                 if language:
                     pdf.Root["/Lang"] = pikepdf.String(language)
                     metadata_updates += 1
-                if set_display_doc_title:
+                document_title = title or _safe_pdf_string(
+                    docinfo.get("/Title", "")
+                ).strip()
+                if set_display_doc_title and document_title:
                     viewer_preferences = pdf.Root.get("/ViewerPreferences")
                     if not isinstance(viewer_preferences, pikepdf.Dictionary):
                         viewer_preferences = pikepdf.Dictionary()
@@ -1948,9 +1903,24 @@ def create_draft_structure_tree(
                 )
                 document_children.append(page_part)
                 page_children: List[Any] = []
-                mcid_elements: List[Any] = []
 
                 instructions = list(pikepdf.parse_content_stream(page))
+                existing_mcids: List[int] = []
+                for instruction in instructions:
+                    if str(instruction.operator) != "BDC":
+                        continue
+                    for operand in instruction.operands:
+                        if not hasattr(operand, "get") or operand.get("/MCID") is None:
+                            continue
+                        try:
+                            existing_mcids.append(int(operand.get("/MCID")))
+                        except (TypeError, ValueError):
+                            continue
+                first_new_mcid = max(existing_mcids, default=-1) + 1
+                # ParentTree arrays are indexed by MCID. Preserve slots used by
+                # existing marked content so newly drafted elements cannot
+                # collide with them, even when the old tree is absent/broken.
+                mcid_elements: List[Any] = [None] * first_new_mcid
                 rewritten: List[Any] = []
                 text_block: List[Any] = []
                 inside_text = False
@@ -2392,8 +2362,12 @@ def embed_fonts_and_rebuild_unicode(
     try:
         import pikepdf
 
-        before = inspect_pdf_accessibility(input_pdf_path)["report"]["fonts"]
-        inventory = _system_truetype_fonts()
+        with pikepdf.open(input_pdf_path) as source_pdf:
+            before = _extract_font_records(source_pdf)
+        needs_embedding_lookup = embed_exact_fonts and any(
+            not bool(record.get("embedded")) for record in before
+        )
+        inventory = _system_truetype_fonts() if needs_embedding_lookup else []
         embedded: List[Dict[str, str]] = []
         unicode_maps: List[str] = []
         unicode_unresolved: List[Dict[str, str]] = []
@@ -2465,7 +2439,8 @@ def embed_fonts_and_rebuild_unicode(
                             }
                         )
             pdf.save(output_pdf_path)
-        after = inspect_pdf_accessibility(output_pdf_path)["report"]["fonts"]
+        with pikepdf.open(output_pdf_path) as repaired_pdf:
+            after = _extract_font_records(repaired_pdf)
         return {
             "action": "fonts",
             "before": before,

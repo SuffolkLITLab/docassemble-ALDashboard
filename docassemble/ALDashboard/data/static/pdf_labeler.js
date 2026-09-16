@@ -214,6 +214,9 @@ const state = {
     report: null,
     headingCandidates: [],
     headingDecisions: {},
+    contentBlocks: [],
+    contentDecisions: {},
+    selectedContentBlockId: "",
     headingReviewSavedSignature: "",
     headingReviewDirty: true,
     activeIssueId: "",
@@ -474,6 +477,7 @@ const a11yHeadingReviewStatus = optionalWorkshopElement(
 );
 const a11yHeadingList = optionalWorkshopElement("a11y-heading-list");
 const a11yStructurePreview = optionalWorkshopElement("a11y-structure-preview");
+const a11yContentEditor = optionalWorkshopElement("a11y-content-editor");
 const a11yAnnotationList = optionalWorkshopElement("a11y-annotation-list");
 const a11yWidgetList = optionalWorkshopElement("a11y-widget-list");
 const a11yTableList = optionalWorkshopElement("a11y-table-list");
@@ -2784,6 +2788,29 @@ async function copyFontAdministratorRequest() {
   showSuccess("Administrator font request copied.");
 }
 
+function contentDecision(block) {
+  const blockId = String(block.blockId || "");
+  if (!state.accessibility.contentDecisions[blockId]) {
+    const pageBlocks = state.accessibility.contentBlocks.filter(
+      function (item) {
+        return Number(item.pageIndex || 0) === Number(block.pageIndex || 0);
+      },
+    );
+    state.accessibility.contentDecisions[blockId] = {
+      role: "P",
+      order: Math.max(0, pageBlocks.indexOf(block)),
+      reviewed: false,
+    };
+  }
+  return state.accessibility.contentDecisions[blockId];
+}
+
+function contentBlockForHeading(candidateId) {
+  return state.accessibility.contentBlocks.find(function (block) {
+    return String(block.headingCandidateId || "") === String(candidateId || "");
+  });
+}
+
 function headingDecision(candidate) {
   const candidateId = String(candidate.candidateId || "");
   if (!state.accessibility.headingDecisions[candidateId]) {
@@ -2797,14 +2824,20 @@ function headingDecision(candidate) {
 }
 
 function headingReviewSignature() {
-  return JSON.stringify(
-    Object.keys(state.accessibility.headingDecisions)
+  return JSON.stringify({
+    headings: Object.keys(state.accessibility.headingDecisions)
       .sort()
       .map(function (candidateId) {
         const decision = state.accessibility.headingDecisions[candidateId];
         return [candidateId, decision.status, decision.tag];
       }),
-  );
+    blocks: Object.keys(state.accessibility.contentDecisions)
+      .sort()
+      .map(function (blockId) {
+        const decision = state.accessibility.contentDecisions[blockId];
+        return [blockId, decision.role, decision.order, decision.reviewed];
+      }),
+  });
 }
 
 function updateHeadingReviewDirty() {
@@ -2820,7 +2853,7 @@ function renderHeadingReviewStatus() {
     "badge " + (dirty ? "text-bg-warning" : "text-bg-success");
   a11yHeadingReviewStatus.textContent = dirty
     ? "Unsaved changes"
-    : "Heading review saved";
+    : "Structure review saved";
   a11ySaveHeadingReviewBtn.disabled = !dirty;
   const hasTagTree = !!(
     state.accessibility.tagStructure && state.accessibility.tagStructure.present
@@ -2843,6 +2876,85 @@ function headingLevelOptions(selected) {
       );
     })
     .join("");
+}
+
+function semanticRoleOptions(selected) {
+  return [
+    ["P", "Paragraph"],
+    ["H1", "Heading 1"],
+    ["H2", "Heading 2"],
+    ["H3", "Heading 3"],
+    ["H4", "Heading 4"],
+    ["H5", "Heading 5"],
+    ["H6", "Heading 6"],
+    ["Caption", "Caption"],
+    ["Quote", "Quotation"],
+    ["Note", "Note"],
+    ["LI", "List item"],
+    ["Artifact", "Decorative artifact"],
+  ]
+    .map(function (item) {
+      return (
+        '<option value="' +
+        item[0] +
+        '"' +
+        (item[0] === selected ? " selected" : "") +
+        ">" +
+        item[1] +
+        "</option>"
+      );
+    })
+    .join("");
+}
+
+function renderContentEditor() {
+  if (!a11yContentEditor) return;
+  const blocks = state.accessibility.contentBlocks || [];
+  if (!blocks.length) {
+    a11yContentEditor.innerHTML =
+      '<div class="text-muted">No positioned text blocks were extracted. You can still review heading candidates and existing tags.</div>';
+    return;
+  }
+  let selected = blocks.find(function (block) {
+    return (
+      String(block.blockId || "") ===
+      String(state.accessibility.selectedContentBlockId || "")
+    );
+  });
+  if (!selected) {
+    selected = blocks[0];
+    state.accessibility.selectedContentBlockId = String(selected.blockId || "");
+  }
+  const decision = contentDecision(selected);
+  const pageBlocks = blocks
+    .filter(function (block) {
+      return Number(block.pageIndex || 0) === Number(selected.pageIndex || 0);
+    })
+    .sort(function (left, right) {
+      return contentDecision(left).order - contentDecision(right).order;
+    });
+  const position = pageBlocks.findIndex(function (block) {
+    return String(block.blockId || "") === String(selected.blockId || "");
+  });
+  a11yContentEditor.innerHTML =
+    '<div class="fw-semibold mb-1">Selected content block</div><div class="mb-2">' +
+    escapeHtml(String(selected.text || "")) +
+    '</div><div class="text-muted mb-2">Page ' +
+    String(Number(selected.pageIndex || 0) + 1) +
+    " · reading position " +
+    String(position + 1) +
+    " of " +
+    String(pageBlocks.length) +
+    '</div><label class="form-label mb-1" for="a11y-content-role">Semantic role</label><select id="a11y-content-role" class="form-select form-select-sm mb-2" data-content-action="role">' +
+    semanticRoleOptions(String(decision.role || "P")) +
+    '</select><div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-content-action="previous"' +
+    (position <= 0 ? " disabled" : "") +
+    '>Move earlier</button><button type="button" class="btn btn-sm btn-outline-secondary" data-content-action="next"' +
+    (position < 0 || position >= pageBlocks.length - 1 ? " disabled" : "") +
+    ">Move later</button></div>" +
+    (decision.role === "Artifact"
+      ? '<div class="alert alert-warning py-2 mt-2 mb-0">This text will be hidden from assistive technology. Use only for decorative or repeated content.</div>'
+      : "");
 }
 
 function renderHeadingCandidates() {
@@ -2948,40 +3060,67 @@ async function renderStructurePreview() {
       .promise;
     if (generation !== structurePreviewGeneration) return;
 
-    (state.pageTextBoxes[pageIndex] || []).forEach(function (box) {
-      const outline = document.createElement("div");
-      outline.className = "a11y-structure-box";
-      outline.textContent = "P";
-      outline.style.left = String(box.x * 100) + "%";
-      outline.style.top = String(box.y * 100) + "%";
-      outline.style.width = String(Math.max(box.width * 100, 1)) + "%";
-      outline.style.height = String(Math.max(box.height * 100, 1)) + "%";
+    const contentBlocks = (state.accessibility.contentBlocks || []).filter(
+      function (block) {
+        return Number(block.pageIndex || 0) === pageIndex && block.box;
+      },
+    );
+    const previewBlocks = contentBlocks.length
+      ? contentBlocks
+      : state.pageTextBoxes[pageIndex] || [];
+    previewBlocks.forEach(function (box) {
+      const visualBox = box.box || box;
+      const decision = box.blockId ? contentDecision(box) : { role: "P" };
+      const outline = document.createElement(box.blockId ? "button" : "div");
+      if (box.blockId) outline.setAttribute("type", "button");
+      outline.className =
+        "a11y-structure-box" +
+        (decision.role === "Artifact" ? " is-artifact" : "") +
+        (String(box.blockId || "") ===
+        String(state.accessibility.selectedContentBlockId || "")
+          ? " is-selected"
+          : "");
+      outline.textContent = decision.role;
+      if (box.blockId) {
+        outline.dataset.contentBlockId = String(box.blockId);
+        outline.title = String(box.text || "");
+        outline.setAttribute(
+          "aria-label",
+          String(decision.role || "P") + ": " + String(box.text || ""),
+        );
+      }
+      outline.style.left = String(visualBox.x * 100) + "%";
+      outline.style.top = String(visualBox.y * 100) + "%";
+      outline.style.width = String(Math.max(visualBox.width * 100, 1)) + "%";
+      outline.style.height = String(Math.max(visualBox.height * 100, 1)) + "%";
       shell.appendChild(outline);
     });
-    candidates
-      .filter(function (candidate) {
-        return Number(candidate.pageIndex) === pageIndex && candidate.box;
-      })
-      .forEach(function (candidate) {
-        const decision = headingDecision(candidate);
-        const box = candidate.box;
-        const outline = document.createElement("button");
-        outline.type = "button";
-        outline.className =
-          "a11y-structure-box is-heading is-" + decision.status;
-        outline.dataset.headingId = String(candidate.candidateId || "");
-        outline.textContent = decision.tag;
-        outline.title = String(candidate.text || "");
-        outline.style.left = String(Number(box.x || 0) * 100) + "%";
-        outline.style.top = String(Number(box.y || 0) * 100) + "%";
-        outline.style.width =
-          String(Math.max(Number(box.width || 0) * 100, 1)) + "%";
-        outline.style.height =
-          String(Math.max(Number(box.height || 0) * 100, 1)) + "%";
-        shell.appendChild(outline);
-      });
+    if (!contentBlocks.length)
+      candidates
+        .filter(function (candidate) {
+          return Number(candidate.pageIndex) === pageIndex && candidate.box;
+        })
+        .forEach(function (candidate) {
+          const decision = headingDecision(candidate);
+          const box = candidate.box;
+          const outline = document.createElement("button");
+          outline.type = "button";
+          outline.className =
+            "a11y-structure-box is-heading is-" + decision.status;
+          outline.dataset.headingId = String(candidate.candidateId || "");
+          outline.textContent = decision.tag;
+          outline.title = String(candidate.text || "");
+          outline.style.left = String(Number(box.x || 0) * 100) + "%";
+          outline.style.top = String(Number(box.y || 0) * 100) + "%";
+          outline.style.width =
+            String(Math.max(Number(box.width || 0) * 100, 1)) + "%";
+          outline.style.height =
+            String(Math.max(Number(box.height || 0) * 100, 1)) + "%";
+          shell.appendChild(outline);
+        });
     a11yStructurePreview.appendChild(shell);
   }
+  renderContentEditor();
 }
 
 function renderAccessibilityModal() {
@@ -2996,9 +3135,9 @@ function renderAccessibilityModal() {
     state.accessibility.tagStructure && state.accessibility.tagStructure.present
   );
   if (a11yDraftStructureBtn) {
-    a11yDraftStructureBtn.disabled = hasTagTree;
+    a11yDraftStructureBtn.disabled = false;
     a11yDraftStructureBtn.textContent = hasTagTree
-      ? "Tag tree already present"
+      ? "Rebuild tags from reviewed draft"
       : "Create tags from approved draft";
   }
   if (a11yToggleMarkedBtn) {
@@ -3129,6 +3268,30 @@ async function inspectAccessibilityData(forceRefresh) {
   )
     ? payload.data.heading_candidates
     : [];
+  state.accessibility.contentBlocks = Array.isArray(payload.data.content_blocks)
+    ? payload.data.content_blocks
+    : [];
+  const currentBlockIds = new Set(
+    state.accessibility.contentBlocks.map(function (block) {
+      return String(block.blockId || "");
+    }),
+  );
+  Object.keys(state.accessibility.contentDecisions).forEach(function (blockId) {
+    if (!currentBlockIds.has(blockId)) {
+      delete state.accessibility.contentDecisions[blockId];
+    }
+  });
+  state.accessibility.contentBlocks.forEach(contentDecision);
+  if (
+    !currentBlockIds.has(
+      String(state.accessibility.selectedContentBlockId || ""),
+    )
+  ) {
+    state.accessibility.selectedContentBlockId = state.accessibility
+      .contentBlocks.length
+      ? String(state.accessibility.contentBlocks[0].blockId || "")
+      : "";
+  }
   const currentHeadingIds = new Set(
     state.accessibility.headingCandidates.map(function (candidate) {
       return String(candidate.candidateId || "");
@@ -4680,6 +4843,7 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
   };
   state.accessibility.report = null;
   state.accessibility.headingCandidates = [];
+  state.accessibility.contentBlocks = [];
   state.accessibility.glyphReview = null;
   state.accessibility.glyphDecisions = {};
   state.accessibility.glyphRendered = {};
@@ -4690,6 +4854,8 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
     a11yAutoFixStatus.classList.add("hidden");
     state.accessibility.draftRemediations = {};
     state.accessibility.headingDecisions = {};
+    state.accessibility.contentDecisions = {};
+    state.accessibility.selectedContentBlockId = "";
     state.accessibility.headingReviewSavedSignature = "";
     state.accessibility.headingReviewDirty = true;
     state.accessibility.activeIssueId = "";
@@ -8918,18 +9084,10 @@ a11yApplyMetadataBtn.addEventListener("click", function () {
 
 function refreshHeadingDecisionDisplay() {
   renderHeadingCandidates();
-  a11yStructurePreview
-    .querySelectorAll("[data-heading-id]")
-    .forEach(function (outline) {
-      const decision =
-        state.accessibility.headingDecisions[
-          String(outline.dataset.headingId || "")
-        ];
-      if (!decision) return;
-      outline.classList.remove("is-pending", "is-approved", "is-rejected");
-      outline.classList.add("is-" + decision.status);
-      outline.textContent = decision.tag;
-    });
+  renderContentEditor();
+  renderStructurePreview().catch(function (error) {
+    console.warn("Could not update structure preview", error);
+  });
 }
 
 function setHeadingDecision(candidateId, updates, deferStatus) {
@@ -8939,6 +9097,20 @@ function setHeadingDecision(candidateId, updates, deferStatus) {
   if (!candidate) return;
   const decision = headingDecision(candidate);
   Object.assign(decision, updates || {});
+  const block = contentBlockForHeading(candidateId);
+  if (block) {
+    const blockDecision = contentDecision(block);
+    if (decision.status === "approved") {
+      blockDecision.role = decision.tag;
+      blockDecision.reviewed = true;
+    } else if (
+      decision.status === "rejected" &&
+      /^H[1-6]$/.test(String(blockDecision.role || ""))
+    ) {
+      blockDecision.role = "P";
+      blockDecision.reviewed = true;
+    }
+  }
   if (!deferStatus) {
     markAccessibilityDraft(
       "draft_structure",
@@ -8968,6 +9140,23 @@ a11yHeadingList.addEventListener("change", function (event) {
   refreshHeadingDecisionDisplay();
 });
 a11yStructurePreview.addEventListener("click", function (event) {
+  const contentTarget = event.target.closest("[data-content-block-id]");
+  if (contentTarget) {
+    state.accessibility.selectedContentBlockId = String(
+      contentTarget.dataset.contentBlockId || "",
+    );
+    renderContentEditor();
+    a11yStructurePreview
+      .querySelectorAll("[data-content-block-id]")
+      .forEach(function (outline) {
+        outline.classList.toggle(
+          "is-selected",
+          String(outline.dataset.contentBlockId || "") ===
+            state.accessibility.selectedContentBlockId,
+        );
+      });
+    return;
+  }
   const target = event.target.closest("[data-heading-id]");
   if (!target) return;
   const candidateId = String(target.dataset.headingId || "");
@@ -8982,6 +9171,86 @@ a11yStructurePreview.addEventListener("click", function (event) {
     if (select) select.focus();
   }
 });
+
+function updateSelectedContentRole(role) {
+  const block = state.accessibility.contentBlocks.find(function (item) {
+    return (
+      String(item.blockId || "") ===
+      String(state.accessibility.selectedContentBlockId || "")
+    );
+  });
+  if (!block) return;
+  const decision = contentDecision(block);
+  decision.role = role;
+  decision.reviewed = true;
+  const candidateId = String(block.headingCandidateId || "");
+  const candidate = state.accessibility.headingCandidates.find(function (item) {
+    return String(item.candidateId || "") === candidateId;
+  });
+  if (candidate) {
+    const heading = headingDecision(candidate);
+    if (/^H[1-6]$/.test(role)) {
+      heading.status = "approved";
+      heading.tag = role;
+      heading.source = "manual";
+    } else if (heading.status === "approved") {
+      heading.status = "rejected";
+      heading.source = "manual";
+    }
+  }
+  markAccessibilityDraft(
+    "draft_structure",
+    "Visual content roles or reading order reviewed",
+  );
+  setDirty(true);
+  refreshHeadingDecisionDisplay();
+}
+
+function moveSelectedContent(direction) {
+  const selected = state.accessibility.contentBlocks.find(function (item) {
+    return (
+      String(item.blockId || "") ===
+      String(state.accessibility.selectedContentBlockId || "")
+    );
+  });
+  if (!selected) return;
+  const pageBlocks = state.accessibility.contentBlocks
+    .filter(function (block) {
+      return Number(block.pageIndex || 0) === Number(selected.pageIndex || 0);
+    })
+    .sort(function (left, right) {
+      return contentDecision(left).order - contentDecision(right).order;
+    });
+  const index = pageBlocks.indexOf(selected);
+  const other = pageBlocks[index + direction];
+  if (!other) return;
+  const selectedDecision = contentDecision(selected);
+  const otherDecision = contentDecision(other);
+  const previousOrder = selectedDecision.order;
+  selectedDecision.order = otherDecision.order;
+  otherDecision.order = previousOrder;
+  markAccessibilityDraft(
+    "draft_structure",
+    "Visual content roles or reading order reviewed",
+  );
+  setDirty(true);
+  renderContentEditor();
+  renderHeadingReviewStatus();
+}
+
+if (a11yContentEditor) {
+  a11yContentEditor.addEventListener("change", function (event) {
+    const target = event.target.closest('[data-content-action="role"]');
+    if (!target) return;
+    updateSelectedContentRole(String(target.value || "P"));
+  });
+  a11yContentEditor.addEventListener("click", function (event) {
+    const target = event.target.closest("[data-content-action]");
+    if (!target) return;
+    if (target.dataset.contentAction === "previous") moveSelectedContent(-1);
+    if (target.dataset.contentAction === "next") moveSelectedContent(1);
+  });
+}
 a11yHeadingsApproveAllBtn.addEventListener("click", function () {
   state.accessibility.headingCandidates.forEach(function (candidate) {
     setHeadingDecision(
@@ -9101,7 +9370,7 @@ a11ySaveHeadingReviewBtn.addEventListener("click", function () {
     return decision.status === "rejected";
   }).length;
   showSuccess(
-    "Heading review saved: " +
+    "Structure review saved: " +
       String(approvedCount) +
       " approved and " +
       String(rejectedCount) +
@@ -9113,7 +9382,7 @@ a11yDraftStructureBtn.addEventListener("click", function () {
   updateHeadingReviewDirty();
   if (state.accessibility.headingReviewDirty) {
     showError(
-      "Save the heading review before creating tags. Your AI and manual decisions have not been lost.",
+      "Save the structure review before creating tags. Your AI and manual decisions have not been lost.",
     );
     renderHeadingReviewStatus();
     return;
@@ -9122,9 +9391,14 @@ a11yDraftStructureBtn.addEventListener("click", function () {
   const approvedCount = decisions.filter(function (decision) {
     return decision.status === "approved";
   }).length;
+  const hasTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
   if (
     !window.confirm(
-      "Create content-block tags with " +
+      (hasTagTree
+        ? "Replace the current tag tree with the reviewed visual draft and "
+        : "Create content-block tags with ") +
         String(approvedCount) +
         " approved headings? Pending and rejected candidates will remain paragraphs.",
     )
@@ -9132,6 +9406,8 @@ a11yDraftStructureBtn.addEventListener("click", function () {
     return;
   runAccessibilityRemediation("draft_structure", {
     heading_decisions: decisions,
+    content_decisions: accessibilityContentDecisionPayload(),
+    overwrite: hasTagTree,
     mark_as_tagged: false,
   }).catch(function (error) {
     showError(error.message || String(error));
@@ -9361,6 +9637,21 @@ function accessibilityHeadingDecisionPayload() {
       };
     },
   );
+}
+
+function accessibilityContentDecisionPayload() {
+  return state.accessibility.contentBlocks.map(function (block) {
+    const decision = contentDecision(block);
+    return {
+      blockId: String(block.blockId || ""),
+      pageIndex: Number(block.pageIndex || 0),
+      text: String(block.text || ""),
+      occurrence: Number(block.occurrence || 0),
+      role: String(decision.role || "P"),
+      order: Number(decision.order || 0),
+      roleReviewed: !!decision.reviewed,
+    };
+  });
 }
 
 function accessibilityAiReviewContext() {

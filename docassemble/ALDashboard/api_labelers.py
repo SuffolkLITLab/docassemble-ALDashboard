@@ -3558,11 +3558,26 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 raise DashboardAPIValidationError(
                     "heading_decisions must be a JSON list."
                 )
+            content_decisions_raw = post_data.get("content_decisions")
+            content_decisions = (
+                json.loads(content_decisions_raw)
+                if isinstance(content_decisions_raw, str)
+                and content_decisions_raw.strip()
+                else None
+            )
+            if content_decisions is not None and (
+                not isinstance(content_decisions, list)
+                or any(not isinstance(item, dict) for item in content_decisions)
+            ):
+                raise DashboardAPIValidationError(
+                    "content_decisions must be a JSON list of objects."
+                )
             result = create_draft_structure_tree(
                 input_path,
                 output_path,
                 overwrite=parse_bool(post_data.get("overwrite"), default=False),
                 heading_decisions=heading_decisions,
+                content_decisions=content_decisions,
                 mark_as_tagged=parse_bool(
                     post_data.get("mark_as_tagged"), default=False
                 ),

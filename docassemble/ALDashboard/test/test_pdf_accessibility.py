@@ -36,6 +36,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     inspect_pdf_accessibility,
     _artifact_untagged_content,
     _iter_pdf_fonts,
+    _content_blocks_from_xml,
     _heading_candidates_from_xml,
     _repair_embedded_cidsets,
     _repair_identity_cid_to_gid_maps,
@@ -420,6 +421,101 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         finally:
             os.remove(source_path)
             os.remove(output_path)
+
+    def test_visual_content_decisions_set_roles_order_and_artifacts(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/F1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/Type1"),
+                                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT /F1 12 Tf 72 700 Td (Alpha) Tj ET "
+                b"BT /F1 12 Tf 72 660 Td (Beta) Tj ET "
+                b"BT /F1 12 Tf 72 620 Td (Decoration) Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility.suggest_heading_candidates",
+                return_value=[],
+            ):
+                result = create_draft_structure_tree(
+                    source_path,
+                    output_path,
+                    heading_decisions=[],
+                    content_decisions=[
+                        {
+                            "pageIndex": 0,
+                            "text": "Alpha",
+                            "occurrence": 0,
+                            "role": "LI",
+                            "roleReviewed": True,
+                            "order": 1,
+                        },
+                        {
+                            "pageIndex": 0,
+                            "text": "Beta",
+                            "occurrence": 0,
+                            "role": "LI",
+                            "roleReviewed": True,
+                            "order": 0,
+                        },
+                        {
+                            "pageIndex": 0,
+                            "text": "Decoration",
+                            "occurrence": 0,
+                            "role": "Artifact",
+                            "roleReviewed": True,
+                            "order": 2,
+                        },
+                    ],
+                )
+            self.assertEqual(result["manual_artifact_blocks"], 1)
+            with pikepdf.open(output_path) as tagged:
+                part = tagged.Root.StructTreeRoot.K.K[0]
+                self.assertEqual([str(child.S) for child in part.K], ["/L"])
+                list_items = list(part.K[0].K)
+                self.assertEqual([str(item.S) for item in list_items], ["/LI", "/LI"])
+                self.assertEqual(
+                    [int(item.K[0].K) for item in list_items],
+                    [1, 0],
+                )
+                self.assertIn(b"/Artifact BMC", tagged.pages[0].Contents.read_bytes())
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_visual_content_blocks_have_stable_boxes_and_occurrences(self):
+        root = ET.fromstring(
+            """<pdf2xml><fontspec id="0" size="12" family="Arial"/>
+            <page width="600" height="800">
+              <text top="100" left="50" width="80" height="14" font="0">Same</text>
+              <text top="150" left="50" width="80" height="14" font="0">Same</text>
+            </page></pdf2xml>"""
+        )
+        blocks = _content_blocks_from_xml(root)
+        self.assertEqual([block["occurrence"] for block in blocks], [0, 1])
+        self.assertNotEqual(blocks[0]["blockId"], blocks[1]["blockId"])
+        self.assertAlmostEqual(blocks[0]["box"]["x"], 50 / 600)
 
     def test_draft_structure_prevents_heading_sequence_gaps(self):
         import pikepdf

@@ -275,7 +275,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('id="a11y-heading-review-status"', self.html)
         self.assertIn("headingReviewSavedSignature", self.js)
         self.assertIn("Unsaved changes", self.js)
-        self.assertIn("Save the heading review before creating tags", self.js)
+        self.assertIn("Save the structure review before creating tags", self.js)
 
     def test_semantic_findings_focus_editable_targets(self):
         self.assertIn('id="a11y-figure-focus"', self.html)

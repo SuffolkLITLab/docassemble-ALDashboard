@@ -3533,8 +3533,8 @@ def _normalized_running_text(value: str) -> str:
     return re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE).strip()
 
 
-def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
-    """Infer conservative heading candidates from pdftohtml's visual XML."""
+def _visual_lines_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
+    """Return reading-order visual lines from pdftohtml's positioned XML."""
     font_specs: Dict[str, Dict[str, Any]] = {}
     for spec in root.findall(".//fontspec"):
         size = _xml_number(spec, "size")
@@ -3628,6 +3628,53 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
                 }
             )
 
+    return lines
+
+
+def _content_blocks_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
+    """Expose visual text lines as reviewable semantic draft blocks."""
+    blocks: List[Dict[str, Any]] = []
+    occurrences: Dict[Tuple[int, str], int] = {}
+    for line in _visual_lines_from_xml(root):
+        normalized = _normalized_running_text(line["text"])
+        if not normalized:
+            continue
+        key = (int(line["pageIndex"]), normalized)
+        occurrence = occurrences.get(key, 0)
+        occurrences[key] = occurrence + 1
+        page_width = float(line["pageWidth"] or 0)
+        page_height = float(line["pageHeight"] or 0)
+        block_id = (
+            f"p{int(line['pageIndex']) + 1}:{line['top']:.1f}:"
+            f"{line['left']:.1f}:{occurrence}"
+        )
+        blocks.append(
+            {
+                "blockId": block_id,
+                "pageIndex": int(line["pageIndex"]),
+                "text": str(line["text"]),
+                "occurrence": occurrence,
+                "fontSize": line["fontSize"],
+                "fontFamily": line["fontFamily"],
+                "suggestedRole": "P",
+                "box": {
+                    "x": line["left"] / page_width if page_width else 0,
+                    "y": line["top"] / page_height if page_height else 0,
+                    "width": (
+                        (line["right"] - line["left"]) / page_width
+                        if page_width
+                        else 0
+                    ),
+                    "height": line["height"] / page_height if page_height else 0,
+                },
+            }
+        )
+    return blocks[:2000]
+
+
+def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
+    """Infer conservative heading candidates from pdftohtml's visual XML."""
+    lines = _visual_lines_from_xml(root)
     if not lines:
         return []
     body_size = _dominant_text_size(
@@ -3736,11 +3783,13 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
     return candidates[:250]
 
 
-def suggest_heading_candidates(pdf_path: str) -> List[Dict[str, Any]]:
-    """Return conservative, review-only heading candidates from Poppler XML."""
+def _visual_content_analysis(
+    pdf_path: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Extract heading candidates and semantic blocks in one Poppler pass."""
     executable = shutil.which("pdftohtml")
     if not executable:
-        return []
+        return [], []
     with tempfile.TemporaryDirectory(prefix="pdf-a11y-headings-") as tmp_dir:
         xml_path = os.path.join(tmp_dir, "document.xml")
         command = [executable, "-q", "-xml", "-hidden", "-i", pdf_path, xml_path]
@@ -3750,8 +3799,26 @@ def suggest_heading_candidates(pdf_path: str) -> List[Dict[str, Any]]:
             )  # nosec B603
             tree = ET.parse(xml_path)
         except (OSError, subprocess.SubprocessError, ET.ParseError):
-            return []
-    return _heading_candidates_from_xml(tree.getroot())
+            return [], []
+    root = tree.getroot()
+    headings = _heading_candidates_from_xml(root)
+    blocks = _content_blocks_from_xml(root)
+    heading_by_position = {
+        ":".join(str(item.get("candidateId") or "").split(":")[:3]): item
+        for item in headings
+    }
+    for block in blocks:
+        position = ":".join(str(block.get("blockId") or "").split(":")[:3])
+        heading = heading_by_position.get(position)
+        if heading is not None:
+            block["headingCandidateId"] = heading.get("candidateId")
+            block["suggestedRole"] = heading.get("suggestedTag", "P")
+    return headings, blocks
+
+
+def suggest_heading_candidates(pdf_path: str) -> List[Dict[str, Any]]:
+    """Return conservative, review-only heading candidates from Poppler XML."""
+    return _visual_content_analysis(pdf_path)[0]
 
 
 def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
@@ -3759,6 +3826,7 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
     try:
         import pikepdf
 
+        heading_candidates, content_blocks = _visual_content_analysis(pdf_path)
         with pikepdf.open(pdf_path) as pdf:
             fields, field_order = _extract_field_records(pdf)
             structure_editor = _structure_editor_data(pdf)
@@ -3770,7 +3838,8 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
                 "tag_structure": _extract_struct_tree_summary(pdf.Root),
                 "structure_editor": structure_editor,
                 "report": build_accessibility_report(pdf, structure_editor),
-                "heading_candidates": suggest_heading_candidates(pdf_path),
+                "heading_candidates": heading_candidates,
+                "content_blocks": content_blocks,
             }
     except Exception as exc:
         raise PDFAccessibilityError(f"Failed to inspect PDF accessibility data: {exc}")
@@ -4062,6 +4131,7 @@ def create_draft_structure_tree(
     *,
     overwrite: bool = False,
     heading_decisions: Optional[Iterable[Mapping[str, Any]]] = None,
+    content_decisions: Optional[Iterable[Mapping[str, Any]]] = None,
     mark_as_tagged: bool = False,
 ) -> Dict[str, Any]:
     """Create a content-block tag-tree draft without redrawing page content.
@@ -4098,6 +4168,40 @@ def create_draft_structure_tree(
                 headings_by_page.setdefault(int(candidate["pageIndex"]), {})[
                     normalized
                 ] = selected_tag
+        allowed_roles = {
+            "P",
+            "H1",
+            "H2",
+            "H3",
+            "H4",
+            "H5",
+            "H6",
+            "Caption",
+            "Quote",
+            "Note",
+            "LI",
+            "Artifact",
+        }
+        content_by_key: Dict[Tuple[int, str, int], Dict[str, Any]] = {}
+        for item in content_decisions or []:
+            normalized = _normalized_running_text(str(item.get("text") or ""))
+            role = str(item.get("role") or "P").strip()
+            if not normalized or role not in allowed_roles:
+                continue
+            try:
+                key = (
+                    int(item.get("pageIndex", -1)),
+                    normalized,
+                    int(item.get("occurrence", 0)),
+                )
+                order = int(item.get("order", 0))
+            except (TypeError, ValueError):
+                continue
+            content_by_key[key] = {
+                "role": role,
+                "order": order,
+                "role_reviewed": bool(item.get("roleReviewed", False)),
+            }
 
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
             page_count = len(pdf.pages)
@@ -4128,6 +4232,7 @@ def create_draft_structure_tree(
             annotation_description_count = 0
             stale_mcid_wrappers_removed = 0
             heading_levels_normalized = 0
+            manual_artifact_count = 0
             previous_heading_level = 0
             for page_index, page in enumerate(pdf.pages):
                 page["/StructParents"] = page_index
@@ -4143,6 +4248,8 @@ def create_draft_structure_tree(
                 )
                 document_children.append(page_part)
                 page_children: List[Any] = []
+                text_children: List[Tuple[int, int, Any, str]] = []
+                content_occurrences: Dict[str, int] = {}
 
                 instructions = list(pikepdf.parse_content_stream(page))
                 if overwrite:
@@ -4221,7 +4328,7 @@ def create_draft_structure_tree(
                             if current_group:
                                 raw_groups.append(current_group)
 
-                            groups: List[Tuple[List[int], str]] = []
+                            groups: List[Tuple[List[int], str, int]] = []
                             group_index = 0
                             page_headings = headings_by_page.get(page_index, {})
                             while group_index < len(raw_groups):
@@ -4261,14 +4368,77 @@ def create_draft_structure_tree(
                                         )
                                         group_index += span
                                         break
+                                if matched is None and content_by_key:
+                                    for span in range(max_span, 0, -1):
+                                        selected = raw_groups[
+                                            group_index : group_index + span
+                                        ]
+                                        group = [
+                                            index
+                                            for selected_group in selected
+                                            for index in selected_group
+                                        ]
+                                        spaced_text = " ".join(
+                                            _shown_instruction_text(text_block[index])
+                                            for index in group
+                                        )
+                                        compact_text = "".join(
+                                            _shown_instruction_text(text_block[index])
+                                            for index in group
+                                        )
+                                        for candidate_text in (
+                                            spaced_text,
+                                            compact_text,
+                                        ):
+                                            candidate_normalized = (
+                                                _normalized_running_text(
+                                                    candidate_text
+                                                )
+                                            )
+                                            candidate_occurrence = (
+                                                content_occurrences.get(
+                                                    candidate_normalized, 0
+                                                )
+                                            )
+                                            if (
+                                                page_index,
+                                                candidate_normalized,
+                                                candidate_occurrence,
+                                            ) in content_by_key:
+                                                matched = (group, "P")
+                                                group_index += span
+                                                break
+                                        if matched is not None:
+                                            break
                                 if matched is None:
                                     matched = (raw_groups[group_index], "P")
                                     group_index += 1
-                                groups.append(matched)
+                                group, tag_name = matched
+                                group_text = " ".join(
+                                    _shown_instruction_text(text_block[index])
+                                    for index in group
+                                )
+                                normalized_group = _normalized_running_text(group_text)
+                                occurrence = content_occurrences.get(normalized_group, 0)
+                                content_occurrences[normalized_group] = occurrence + 1
+                                content_decision = content_by_key.get(
+                                    (page_index, normalized_group, occurrence)
+                                )
+                                order = len(text_children)
+                                if content_decision is not None:
+                                    if content_decision["role_reviewed"]:
+                                        tag_name = str(content_decision["role"])
+                                    order = int(content_decision["order"])
+                                groups.append((group, tag_name, order))
 
                             starts: Dict[int, Tuple[int, str]] = {}
-                            ends: Dict[int, int] = {}
-                            for group, tag_name in groups:
+                            ends: Dict[int, Tuple[int, bool]] = {}
+                            for group, tag_name, order in groups:
+                                if tag_name == "Artifact":
+                                    starts[group[0]] = (-1, "Artifact")
+                                    ends[group[-1]] = (-1, True)
+                                    manual_artifact_count += 1
+                                    continue
                                 if tag_name.startswith("H"):
                                     level = int(tag_name[1:])
                                     maximum_level = (
@@ -4284,20 +4454,38 @@ def create_draft_structure_tree(
                                     tag_name = f"H{next_level}"
                                 mcid = len(mcid_elements)
                                 starts[group[0]] = (mcid, tag_name)
-                                ends[group[-1]] = mcid
-                                element = pdf.make_indirect(
+                                ends[group[-1]] = (mcid, False)
+                                content_element = pdf.make_indirect(
                                     pikepdf.Dictionary(
                                         {
                                             "/Type": pikepdf.Name("/StructElem"),
-                                            "/S": pikepdf.Name(f"/{tag_name}"),
+                                            "/S": pikepdf.Name(
+                                                "/LBody" if tag_name == "LI" else f"/{tag_name}"
+                                            ),
                                             "/P": page_part,
                                             "/Pg": page.obj,
                                             "/K": mcid,
                                         }
                                     )
                                 )
-                                page_children.append(element)
-                                mcid_elements.append(element)
+                                element = content_element
+                                if tag_name == "LI":
+                                    element = pdf.make_indirect(
+                                        pikepdf.Dictionary(
+                                            {
+                                                "/Type": pikepdf.Name("/StructElem"),
+                                                "/S": pikepdf.Name("/LI"),
+                                                "/P": page_part,
+                                                "/Pg": page.obj,
+                                                "/K": pikepdf.Array([content_element]),
+                                            }
+                                        )
+                                    )
+                                    content_element["/P"] = element
+                                text_children.append(
+                                    (order, len(text_children), element, tag_name)
+                                )
+                                mcid_elements.append(content_element)
                                 text_block_count += 1
                                 if tag_name.startswith("H"):
                                     heading_count += 1
@@ -4305,15 +4493,23 @@ def create_draft_structure_tree(
                             for block_index, block_instruction in enumerate(text_block):
                                 if block_index in starts:
                                     mcid, tag_name = starts[block_index]
-                                    rewritten.append(
-                                        pikepdf.ContentStreamInstruction(
-                                            [
-                                                pikepdf.Name(f"/{tag_name}"),
-                                                pikepdf.Dictionary({"/MCID": mcid}),
-                                            ],
-                                            pikepdf.Operator("BDC"),
+                                    if tag_name == "Artifact":
+                                        rewritten.append(
+                                            pikepdf.ContentStreamInstruction(
+                                                [pikepdf.Name("/Artifact")],
+                                                pikepdf.Operator("BMC"),
+                                            )
                                         )
-                                    )
+                                    else:
+                                        rewritten.append(
+                                            pikepdf.ContentStreamInstruction(
+                                                [
+                                                    pikepdf.Name(f"/{tag_name}"),
+                                                    pikepdf.Dictionary({"/MCID": mcid}),
+                                                ],
+                                                pikepdf.Operator("BDC"),
+                                            )
+                                        )
                                 rewritten.append(block_instruction)
                                 if block_index in ends:
                                     rewritten.append(
@@ -4345,6 +4541,30 @@ def create_draft_structure_tree(
                         pikepdf.unparse_content_stream(rewritten)
                     )
                 parent_tree_entries[page_index] = pikepdf.Array(mcid_elements)
+                ordered_text = sorted(
+                    text_children, key=lambda item: (item[0], item[1])
+                )
+                list_element = None
+                for _order, _sequence, element, role in ordered_text:
+                    if role == "LI":
+                        if list_element is None:
+                            list_element = pdf.make_indirect(
+                                pikepdf.Dictionary(
+                                    {
+                                        "/Type": pikepdf.Name("/StructElem"),
+                                        "/S": pikepdf.Name("/L"),
+                                        "/P": page_part,
+                                        "/Pg": page.obj,
+                                        "/K": pikepdf.Array(),
+                                    }
+                                )
+                            )
+                            page_children.append(list_element)
+                        element["/P"] = list_element
+                        list_element["/K"].append(element)
+                    else:
+                        list_element = None
+                        page_children.append(element)
 
                 annots = page.get("/Annots")
                 page_has_annotations = False
@@ -4430,6 +4650,7 @@ def create_draft_structure_tree(
             "form_alts_added": form_alt_count,
             "stale_mcid_wrappers_removed": stale_mcid_wrappers_removed,
             "content_artifact_runs": content_artifact_runs,
+            "manual_artifact_blocks": manual_artifact_count,
             "marked_as_tagged": bool(mark_as_tagged),
             "review_required": True,
             "warning": "Content-block tags are a draft. Review reading order, heading levels, paragraph grouping, field placement, lists, tables, figures, links, and artifacts manually.",

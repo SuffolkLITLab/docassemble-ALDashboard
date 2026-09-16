@@ -530,8 +530,8 @@
                     </div>
                     <div class="alert alert-secondary small py-2">Developer: setting <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier is a declaration, not an automated fix. Click it only after reviewing every draft change and completing external validation. Auto-fix never enables it.</div>
                     <pre id="a11y-tag-structure" class="small mb-0" style="max-height: 14rem; overflow: auto;"></pre>
-                    <h4 class="h6 mt-3">Visual structure draft</h4>
-                    <p class="small text-muted">The preview outlines extracted paragraph blocks and proposed headings. The heuristic intentionally favors recall: approve real headings, reject false matches, and choose the correct level before creating tags.</p>
+                    <h4 class="h6 mt-3">Visual content and tag draft</h4>
+                    <p class="small text-muted">Select an outlined text block in the document to set its semantic role, mark decorative text as an artifact, or adjust its reading order. Heading approvals use these same block decisions.</p>
                     <div class="d-flex flex-wrap gap-2 mb-3">
                         <button id="a11y-headings-approve-all" type="button" class="btn btn-sm btn-outline-primary">Approve all candidates</button>
                         <button id="a11y-headings-reject-all" type="button" class="btn btn-sm btn-outline-secondary">Reject all</button>
@@ -539,13 +539,17 @@
                         <span class="small text-muted align-self-center">AI is used only when you choose the AI button.</span>
                     </div>
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-3 border rounded p-2">
-                        <button id="a11y-save-heading-review" type="button" class="btn btn-sm btn-primary">Save heading review</button>
+                        <button id="a11y-save-heading-review" type="button" class="btn btn-sm btn-primary">Save structure review</button>
                         <span id="a11y-heading-review-status" class="badge text-bg-warning">Unsaved changes</span>
-                        <span class="small text-muted">Saving keeps the current approvals, rejections, and levels. “Create tags” then writes that saved review into the PDF.</span>
+                        <span class="small text-muted">Saving keeps content roles, order, artifacts, and heading decisions. “Create tags” then writes that saved review into the PDF.</span>
                     </div>
                     <div class="a11y-structure-draft-layout">
                         <div id="a11y-structure-preview" class="a11y-structure-preview" aria-label="Document structure preview"></div>
-                        <div id="a11y-heading-list" class="vstack gap-2"></div>
+                        <div>
+                            <div id="a11y-content-editor" class="border rounded p-3 mb-3 small"></div>
+                            <h5 class="h6">Heading candidates</h5>
+                            <div id="a11y-heading-list" class="vstack gap-2"></div>
+                        </div>
                     </div>
                 </section>
 

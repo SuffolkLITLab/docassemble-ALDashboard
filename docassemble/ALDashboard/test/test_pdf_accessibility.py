@@ -726,6 +726,9 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         by_id = {issue["id"]: issue for issue in report["issues"]}
         self.assertEqual(by_id["mark-info"]["status"], "fail")
         self.assertEqual(by_id["structure-tree"]["status"], "fail")
+        self.assertEqual(
+            by_id["structure-tree"]["title"], "No semantic structures to inspect"
+        )
         self.assertEqual(by_id["document-language"]["status"], "fail")
         for issue_id in (
             "table-row-children",
@@ -735,12 +738,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             "link-tags",
             "annotation-tags",
         ):
-            self.assertEqual(by_id[issue_id]["status"], "blocked", issue_id)
-            self.assertEqual(by_id[issue_id]["count"], 0, issue_id)
-            self.assertEqual(by_id[issue_id]["editorTargetCount"], 0, issue_id)
-            self.assertEqual(
-                by_id[issue_id]["remediation"], "draft_structure", issue_id
-            )
+            self.assertNotIn(issue_id, by_id)
         self.assertIn("disclaimer", report["summary"])
         pdf.close()
 
@@ -859,6 +857,20 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     [str(child["/S"]) for child in first_page_part["/K"]],
                     ["/P", "/P", "/Form"],
                 )
+            issue_ids = {
+                issue["id"]
+                for issue in inspect_pdf_accessibility(output_path)["report"]["issues"]
+            }
+            self.assertTrue(
+                {
+                    "table-row-children",
+                    "table-columns",
+                    "table-header-scope",
+                    "figure-structure-alt",
+                    "link-tags",
+                    "annotation-tags",
+                }.isdisjoint(issue_ids)
+            )
         finally:
             os.remove(source_path)
             os.remove(output_path)

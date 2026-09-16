@@ -1156,13 +1156,6 @@ def build_accessibility_report(
             "structure",
         ),
     ]
-    if not tag_summary["present"]:
-        for item in semantic_issues:
-            item["status"] = "blocked"
-            item["remediation"] = "draft_structure"
-            item["description"] = (
-                "Create or repair the tag tree before this semantic check can run."
-            )
     for item in semantic_issues:
         issue_id = str(item["id"])
         if issue_id.startswith("table-"):
@@ -1173,6 +1166,43 @@ def build_accessibility_report(
             item["editorTargetCount"] = editor_issue_count(
                 issue_id, editor_annotations
             )
+    if tag_summary["present"]:
+        has_link_annotations = any(
+            item.get("subtype") == "Link" for item in editor_annotations
+        )
+        has_other_annotations = any(
+            item.get("subtype") != "Link" for item in editor_annotations
+        )
+        semantic_issues = [
+            item
+            for item in semantic_issues
+            if (
+                (str(item["id"]).startswith("table-") and bool(editor_tables))
+                or (item["id"] == "figure-structure-alt" and bool(editor_figures))
+                or (item["id"] == "link-tags" and has_link_annotations)
+                or (item["id"] == "annotation-tags" and has_other_annotations)
+            )
+        ]
+    else:
+        semantic_issues = []
+
+    structure_tree_present = bool(tag_summary["present"])
+    structure_tree_issue = _issue(
+        "structure-tree",
+        "7.1.11",
+        (
+            "Logical structure tree exists"
+            if structure_tree_present
+            else "No semantic structures to inspect"
+        ),
+        0 if structure_tree_present else 1,
+        "draft_structure",
+        description=(
+            "Create or import a logical tag tree before inspecting tables, figures, links, and annotations."
+            if not structure_tree_present
+            else ""
+        ),
+    )
     issues = [
         _issue(
             "mark-info",
@@ -1181,13 +1211,7 @@ def build_accessibility_report(
             0 if _mark_info_marked(root) else 1,
             "catalog_flags",
         ),
-        _issue(
-            "structure-tree",
-            "7.1.11",
-            "Logical structure tree exists",
-            0 if tag_summary["present"] else 1,
-            "draft_structure",
-        ),
+        structure_tree_issue,
         _issue(
             "content-tags",
             "7.1.3",

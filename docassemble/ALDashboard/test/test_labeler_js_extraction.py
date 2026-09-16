@@ -285,7 +285,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('? "Blocked"', self.js)
 
     def test_accessibility_workshop_exposes_draft_status_and_structure_edits(self):
-        self.assertIn("Draft applied", self.html)
+        self.assertIn("Draft passed preflight", self.html)
         self.assertIn('id="a11y-figure-tag-list"', self.html)
         self.assertIn('id="a11y-table-list"', self.html)
         self.assertIn("renderStructureEditor", self.js)
@@ -345,6 +345,14 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("mark_as_tagged: false", self.js)
         self.assertIn("Auto-fix never enables it", self.html)
         self.assertIn("Only after checking all fixes", self.js)
+        self.assertIn("function draftMissingDocumentLanguage", self.js)
+        self.assertIn("document.documentElement.lang", self.js)
+        self.assertIn("function remainingAccessibilityIssues", self.js)
+        self.assertIn("checks still need attention", self.js)
+        self.assertIn("fonts still need manual resolution", self.js)
+        self.assertIn("Unicode mappings still need glyph review", self.js)
+        self.assertIn("clientSettings.quiet", self.js)
+        self.assertIn("Draft passed preflight", self.html)
 
     def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
         self.assertIn("data.data.menu_items", self.js)

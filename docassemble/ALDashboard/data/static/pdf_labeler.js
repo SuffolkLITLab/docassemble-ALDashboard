@@ -1840,9 +1840,10 @@ function renderAccessibilityReport() {
         state.accessibility.draftRemediations[issue.id || ""] ||
         state.accessibility.draftRemediations[issue.remediation || ""];
       const blocked = issue.status === "blocked";
+      const draftPassed = !!draft && issue.status === "pass";
       button.dataset.status = blocked
         ? "blocked"
-        : draft
+        : draftPassed
           ? "draft"
           : issue.status || "fail";
       button.dataset.panel = issue.remediation || "structure";
@@ -1854,10 +1855,8 @@ function renderAccessibilityReport() {
       button.dataset.hasEditorTargets = String(hasEditorTargets);
       const badge = blocked
         ? "Blocked"
-        : draft
-          ? issue.status === "pass"
-            ? "Draft · preflight pass"
-            : "Draft · " + String(issue.count || 1) + " remain"
+        : draftPassed
+          ? "Draft · preflight pass"
           : issue.status === "pass"
             ? "Preflight pass"
             : String(issue.count || 1) + " to review";
@@ -1867,7 +1866,7 @@ function renderAccessibilityReport() {
         '</span><span class="badge ' +
         (blocked
           ? "text-bg-secondary"
-          : draft
+          : draftPassed
             ? "text-bg-info"
             : issue.status === "pass"
               ? "text-bg-success"
@@ -1902,7 +1901,8 @@ function renderAccessibilityReport() {
             "</div>"
           : "") +
         (draft && !blocked
-          ? '<div class="small mt-1">Provisional: ' +
+          ? '<div class="small mt-1">' +
+            (draftPassed ? "Provisional: " : "Attempted: ") +
             escapeHtml(draft.detail) +
             "</div>"
           : "");
@@ -8430,7 +8430,8 @@ function accessibilityRemediationFeedback(action, result, options) {
   return "Accessibility remediation finished and the report was refreshed.";
 }
 
-async function runAccessibilityRemediation(action, options) {
+async function runAccessibilityRemediation(action, options, clientOptions) {
+  const clientSettings = clientOptions || {};
   const formData = new FormData();
   formData.append("file", getPdfFileForRequests());
   formData.append("action", action);
@@ -8542,7 +8543,9 @@ async function runAccessibilityRemediation(action, options) {
       });
     }
     renderAccessibilityReport();
-    if (action === "fonts" && a11yFontResult) {
+    if (clientSettings.quiet) {
+      hideToasts();
+    } else if (action === "fonts" && a11yFontResult) {
       a11yFontResult.focus();
     } else {
       showSuccess(
@@ -9078,6 +9081,27 @@ function showAccessibilityAutoFixStatus(message, isError) {
   a11yAutoFixStatus.focus();
 }
 
+function draftMissingDocumentLanguage() {
+  if (state.accessibility.metadata.language) return "";
+  const language = String(document.documentElement.lang || "en").trim();
+  state.accessibility.metadata.language = language;
+  a11yMetaLanguage.value = language;
+  markAccessibilityDraft(
+    "document-language",
+    "Document language drafted as " + language + " from the editor language",
+  );
+  return language;
+}
+
+function remainingAccessibilityIssues() {
+  const report = state.accessibility.report || {};
+  return (Array.isArray(report.issues) ? report.issues : []).filter(
+    function (issue) {
+      return issue.status !== "pass" && issue.status !== "blocked";
+    },
+  );
+}
+
 async function runAccessibilityAutoFix() {
   if (!state.pdfBytes) throw new Error("Open a PDF before running auto-fix.");
   if (!state.auth.aiEnabled) {
@@ -9087,6 +9111,7 @@ async function runAccessibilityAutoFix() {
   }
 
   updateAccessibilityMetadataFromInputs();
+  const draftedLanguage = draftMissingDocumentLanguage();
   showLoading("Drafting accessibility fixes with AI…");
   const summary = {
     nearbyTooltips: draftTooltipsFromNearbyText({ quiet: true }),
@@ -9095,6 +9120,9 @@ async function runAccessibilityAutoFix() {
     structureCreated: false,
     fontsEmbedded: 0,
     unicodeMapsAdded: 0,
+    fontsUnresolved: 0,
+    unicodeMapsUnresolved: 0,
+    draftedLanguage: draftedLanguage,
   };
   applyDeterministicFieldOrder("ltr", { quiet: true });
   if (state.fields.length) {
@@ -9111,33 +9139,51 @@ async function runAccessibilityAutoFix() {
     renderHeadingReviewStatus();
   }
 
-  await runAccessibilityRemediation("metadata", {
-    metadata: state.accessibility.metadata,
-    field_tooltips: accessibilityTooltipPayload(),
-    field_order: accessibilityFieldOrderPayload(),
-    display_doc_title: true,
-    set_structure_tab_order: false,
-  });
+  await runAccessibilityRemediation(
+    "metadata",
+    {
+      metadata: state.accessibility.metadata,
+      field_tooltips: accessibilityTooltipPayload(),
+      field_order: accessibilityFieldOrderPayload(),
+      display_doc_title: true,
+      set_structure_tab_order: false,
+    },
+    { quiet: true },
+  );
 
-  const fontResult = await runAccessibilityRemediation("fonts", {
-    embed_exact_fonts: true,
-    add_unicode_maps: true,
-  });
+  const fontResult = await runAccessibilityRemediation(
+    "fonts",
+    {
+      embed_exact_fonts: true,
+      add_unicode_maps: true,
+    },
+    { quiet: true },
+  );
   summary.fontsEmbedded = Array.isArray(fontResult.fonts_embedded)
     ? fontResult.fonts_embedded.length
     : 0;
   summary.unicodeMapsAdded = Array.isArray(fontResult.unicode_maps_added)
     ? fontResult.unicode_maps_added.length
     : 0;
+  summary.fontsUnresolved = Array.isArray(fontResult.unresolved)
+    ? fontResult.unresolved.length
+    : 0;
+  summary.unicodeMapsUnresolved = Array.isArray(fontResult.unicode_unresolved)
+    ? fontResult.unicode_unresolved.length
+    : 0;
 
   const hasTagTree = !!(
     state.accessibility.tagStructure && state.accessibility.tagStructure.present
   );
   if (!hasTagTree) {
-    await runAccessibilityRemediation("draft_structure", {
-      heading_decisions: accessibilityHeadingDecisionPayload(),
-      mark_as_tagged: false,
-    });
+    await runAccessibilityRemediation(
+      "draft_structure",
+      {
+        heading_decisions: accessibilityHeadingDecisionPayload(),
+        mark_as_tagged: false,
+      },
+      { quiet: true },
+    );
     summary.structureCreated = true;
   }
 
@@ -9147,15 +9193,41 @@ async function runAccessibilityAutoFix() {
     String(summary.aiTooltips) + " AI field-label drafts",
     String(summary.aiHeadings) + " AI heading decisions",
     String(summary.fontsEmbedded) + " exact fonts embedded",
+    String(summary.fontsUnresolved) + " fonts still need manual resolution",
     String(summary.unicodeMapsAdded) + " Unicode maps added",
+    String(summary.unicodeMapsUnresolved) +
+      " Unicode mappings still need glyph review",
+    summary.draftedLanguage
+      ? "document language drafted as " + summary.draftedLanguage
+      : "existing document language preserved",
     summary.structureCreated
       ? "a draft tag tree created"
       : "the existing tag tree preserved for manual review",
   ];
+  const remaining = remainingAccessibilityIssues();
+  const remainingText = remaining.length
+    ? " " +
+      String(remaining.length) +
+      " checks still need attention: " +
+      remaining
+        .map(function (issue) {
+          return (
+            String(issue.title || issue.id || "Finding") +
+            " (" +
+            String(issue.count || 1) +
+            ")"
+          );
+        })
+        .join("; ") +
+      "."
+    : " The workshop preflight has no remaining findings.";
+  hideToasts();
   showAccessibilityAutoFixStatus(
     "Auto-fix draft finished: " +
       details.join("; ") +
-      ". Auto-fix did not enable MarkInfo.Marked. Review every field label, reading-order item, heading, paragraph, font result, table, figure, link, annotation, and artifact; then run veraPDF and screen-reader tests. Only after checking all fixes should a developer use “Set MarkInfo.Marked to true.”",
+      "." +
+      remainingText +
+      " Auto-fix did not enable MarkInfo.Marked. Review every draft and run veraPDF and screen-reader tests. Only after checking all fixes should a developer use “Set MarkInfo.Marked to true.”",
     false,
   );
   renderAccessibilityModal();

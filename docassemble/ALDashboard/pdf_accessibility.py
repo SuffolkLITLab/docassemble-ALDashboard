@@ -1343,15 +1343,16 @@ def _complete_standard_14_widths(pdf_font: Any) -> bool:
 def _embed_into_standard_14_font(
     pdf: Any, pdf_font: Any, font_name: str, font_path: str
 ) -> bool:
-    """Complete a standard face with the verified TrueType program."""
+    """Complete a standard face with a verified TrueType or CFF program."""
     import pikepdf
 
     if not _complete_standard_14_widths(pdf_font):
         return False
-    pdf_font["/FontDescriptor"] = _descriptor_for_program(
-        pdf, font_name, font_path, False
+    descriptor = _descriptor_for_program(pdf, font_name, font_path, False)
+    pdf_font["/FontDescriptor"] = descriptor
+    pdf_font["/Subtype"] = pikepdf.Name(
+        "/TrueType" if "/FontFile2" in descriptor else "/Type1"
     )
-    pdf_font["/Subtype"] = pikepdf.Name("/TrueType")
     return True
 
 
@@ -4223,7 +4224,7 @@ def embed_fonts_and_rebuild_unicode(
     embed_exact_fonts: bool = True,
     add_unicode_maps: bool = True,
 ) -> Dict[str, Any]:
-    """Embed exact local TrueType matches and add deterministic WinAnsi maps.
+    """Embed exact local TrueType/CFF matches and add deterministic Unicode maps.
 
     Unlike a PDF re-distiller, this changes only font dictionaries and streams.
     It never substitutes a font or rewrites page content.
@@ -4238,7 +4239,7 @@ def embed_fonts_and_rebuild_unicode(
         needs_embedding_lookup = embed_exact_fonts and any(
             not bool(record.get("embedded")) for record in before
         )
-        inventory = _system_truetype_fonts() if needs_embedding_lookup else []
+        inventory = _system_embeddable_fonts() if needs_embedding_lookup else []
         embedded: List[Dict[str, Any]] = []
         unicode_maps: List[str] = []
         unicode_unresolved: List[Dict[str, Any]] = []
@@ -4315,11 +4316,28 @@ def embed_fonts_and_rebuild_unicode(
                                     }
                                 )
                         elif descriptor is not None:
-                            font_bytes = Path(match["path"]).read_bytes()
-                            stream = pdf.make_stream(font_bytes)
-                            stream["/Length1"] = len(font_bytes)
-                            descriptor["/FontFile2"] = stream
-                            font["/Subtype"] = pikepdf.Name("/TrueType")
+                            program, file_key, file_subtype = _embeddable_program(
+                                match["path"]
+                            )
+                            if program is None:
+                                unresolved.append(
+                                    {
+                                        "resource": resource,
+                                        "font": font_name,
+                                        "reason": "The installed font program could not be read safely.",
+                                        "suggested_alternative": None,
+                                        "next_step": "Ask an administrator to reinstall the exact font using the Dashboard font manager.",
+                                    }
+                                )
+                                continue
+                            stream = pdf.make_stream(program)
+                            if file_key == "/FontFile2":
+                                stream["/Length1"] = len(program)
+                                font["/Subtype"] = pikepdf.Name("/TrueType")
+                            elif file_subtype:
+                                stream["/Subtype"] = pikepdf.Name(file_subtype)
+                                font["/Subtype"] = pikepdf.Name("/Type1")
+                            descriptor[file_key] = stream
                             embedded.append(
                                 {
                                     "resource": resource,

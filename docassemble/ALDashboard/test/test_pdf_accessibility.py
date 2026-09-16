@@ -1920,7 +1920,7 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
             if candidate is None:
                 self.skipTest("No Helvetica-metric font is installed.")
             with patch(
-                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                "docassemble.ALDashboard.pdf_accessibility._system_embeddable_fonts",
                 return_value=self._inventory(candidate),
             ):
                 result = embed_fonts_and_rebuild_unicode(
@@ -1946,6 +1946,34 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
             os.remove(source_path)
             os.remove(output_path)
 
+    def test_metric_compatible_cff_helvetica_is_embedded(self):
+        import pikepdf
+
+        candidate = "/usr/share/fonts/opentype/urw-base35/NimbusSans-Regular.otf"
+        if not os.path.exists(candidate):
+            self.skipTest("No Helvetica-metric CFF font is installed.")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._standard_14_pdf(source_path)
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_embeddable_fonts",
+                return_value=self._inventory(candidate),
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path, output_path, add_unicode_maps=False
+                )
+            self.assertEqual(len(result["fonts_embedded"]), 1)
+            with pikepdf.open(output_path) as pdf:
+                font = pdf.pages[0].Resources.Font.Helv
+                self.assertEqual(str(font.Subtype), "/Type1")
+                self.assertEqual(str(font.FontDescriptor.FontFile3.Subtype), "/Type1C")
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
     def test_font_with_wrong_metrics_is_still_refused(self):
         """Sharing a name is not evidence of being the same face."""
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
@@ -1958,7 +1986,7 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
             if not os.path.exists(wrong):
                 self.skipTest("DejaVu Sans is not installed.")
             with patch(
-                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                "docassemble.ALDashboard.pdf_accessibility._system_embeddable_fonts",
                 return_value=self._inventory(wrong),
             ):
                 result = embed_fonts_and_rebuild_unicode(
@@ -1979,7 +2007,7 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
         try:
             self._standard_14_pdf(source_path)
             with patch(
-                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                "docassemble.ALDashboard.pdf_accessibility._system_embeddable_fonts",
                 return_value=[],
             ):
                 result = embed_fonts_and_rebuild_unicode(
@@ -2003,7 +2031,7 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
             if candidate is None:
                 self.skipTest("No Helvetica-metric font is installed.")
             with patch(
-                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts",
+                "docassemble.ALDashboard.pdf_accessibility._system_embeddable_fonts",
                 return_value=self._inventory(candidate, embeddable=False),
             ):
                 result = embed_fonts_and_rebuild_unicode(

@@ -966,17 +966,39 @@ def find_exact_system_font(
     return min(scored, key=lambda item: item[0])[1] if scored else None
 
 
-def _simple_font_code_points(pdf_font: Any) -> Dict[int, int]:
+def _encoding_base_name(pdf_font: Any) -> str:
+    """Return the base encoding a simple font declares, if it names one.
+
+    /Encoding may be a bare name or a dictionary that names a base and then
+    overrides individual codes. A dictionary with no /BaseEncoding leaves the
+    base as the font program's built-in encoding, which is not WinAnsi and
+    must not be assumed to be.
+    """
+    encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
+    if encoding is None:
+        return ""
+    import pikepdf
+
+    if isinstance(encoding, pikepdf.Name):
+        return _safe_pdf_string(encoding).lstrip("/")
+    base = encoding.get("/BaseEncoding") if hasattr(encoding, "get") else None
+    return _safe_pdf_string(base).lstrip("/") if base is not None else ""
+
+
+def _simple_font_code_points(pdf_font: Any, default_base: str = "") -> Dict[int, int]:
     """Map each single-byte character code to the code point it draws.
 
-    Starts from WinAnsi, which is what a form field's text is encoded as, then
-    applies any /Differences the font declares. Codes that resolve to nothing
-    are simply absent, and the caller gives them a missing width.
+    Resolves the declared base encoding, then applies any /Differences on top.
+    When no base is declared, only the ASCII range is mapped, because that is
+    the part every base encoding agrees on; guessing the upper half would
+    invent characters. Codes that resolve to nothing are simply absent.
     """
     from fontTools.agl import toUnicode  # type: ignore[import-untyped]
 
+    base = _encoding_base_name(pdf_font) or default_base
     mapping: Dict[int, int] = {}
-    for code in range(0x20, 0x100):
+    limit = 0x100 if base == "WinAnsiEncoding" else 0x7F
+    for code in range(0x20, limit):
         try:
             mapping[code] = ord(bytes([code]).decode("cp1252"))
         except (UnicodeDecodeError, ValueError):
@@ -1090,7 +1112,7 @@ def _embed_into_standard_14_font(
     published = standard_14_widths(canonical)
     if published is None:
         return False
-    code_points = _simple_font_code_points(pdf_font)
+    code_points = _simple_font_code_points(pdf_font, "WinAnsiEncoding")
     codes = sorted(code_points)
     if not codes:
         return False
@@ -1179,19 +1201,32 @@ def _embedding_unresolved_reason(
     )
 
 
-def _winansi_to_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
-    """Build a one-byte ToUnicode map for a simple WinAnsi font."""
+def _simple_font_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
+    """Build a one-byte ToUnicode map for a simple font with a known encoding.
+
+    Accepts a bare /WinAnsiEncoding name and the dictionary form that names it
+    as a base, including one that overrides codes through /Differences. A
+    dictionary with no base is still usable for whatever /Differences spells
+    out plus the ASCII range every base encoding shares. Symbolic fonts have
+    no such encoding and are refused, since their glyphs carry no characters.
+    """
+    base = _encoding_base_name(pdf_font)
     encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
-    if str(encoding) != "/WinAnsiEncoding":
+    has_differences = bool(
+        hasattr(encoding, "get") and encoding is not None and encoding.get("/Differences")
+    )
+    if base != "WinAnsiEncoding" and not has_differences:
         return None
+    if base and base != "WinAnsiEncoding":
+        return None
+    code_points = _simple_font_code_points(pdf_font)
     pairs: List[Tuple[int, str]] = []
-    for code in range(256):
-        try:
-            character = bytes([code]).decode("cp1252")
-        except UnicodeDecodeError:
-            continue
-        if character and (ord(character) >= 32 or character in "\t\r\n"):
+    for code in sorted(code_points):
+        character = chr(code_points[code])
+        if ord(character) >= 32 or character in "\t\r\n":
             pairs.append((code, character.encode("utf-16-be").hex().upper()))
+    if not pairs:
+        return None
     lines = [
         "/CIDInit /ProcSet findresource begin",
         "12 dict begin",
@@ -1203,8 +1238,8 @@ def _winansi_to_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
         "<00> <FF>",
         "endcodespacerange",
     ]
-    for start in range(0, len(pairs), 100):
-        batch = pairs[start : start + 100]
+    for start_index in range(0, len(pairs), 100):
+        batch = pairs[start_index : start_index + 100]
         lines.append(f"{len(batch)} beginbfchar")
         lines.extend(f"<{code:02X}> <{unicode_hex}>" for code, unicode_hex in batch)
         lines.append("endbfchar")
@@ -1212,6 +1247,7 @@ def _winansi_to_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
         ["endcmap", "CMapName currentdict /CMap defineresource pop", "end", "end"]
     )
     return ("\n".join(lines) + "\n").encode("ascii")
+
 
 def _font_program_bytes(pdf_font: Any) -> Tuple[Optional[bytes], str]:
     """Return the embedded font program and which FontFile key supplied it."""
@@ -1641,7 +1677,7 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
                         "truncated": len(counts) > GLYPH_REVIEW_LIMIT,
                         "proposedCount": proposed,
                         "glyphs": glyphs,
-                        "winAnsiEligible": _winansi_to_unicode_cmap(font) is not None,
+                        "winAnsiEligible": _simple_font_unicode_cmap(font) is not None,
                     }
                 )
         return {
@@ -2042,7 +2078,7 @@ def _substitute_font_program(
     canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
     published = standard_14_widths(canonical)
     if "/Widths" not in pdf_font and published is not None:
-        code_points = _simple_font_code_points(pdf_font)
+        code_points = _simple_font_code_points(pdf_font, "WinAnsiEncoding")
         codes = sorted(code_points)
         if codes:
             first_char, last_char = codes[0], codes[-1]
@@ -3856,7 +3892,7 @@ def embed_fonts_and_rebuild_unicode(
                                 }
                             )
                 if add_unicode_maps and "/ToUnicode" not in font:
-                    cmap = _winansi_to_unicode_cmap(font)
+                    cmap = _simple_font_unicode_cmap(font)
                     if cmap is not None:
                         font["/ToUnicode"] = pdf.make_stream(cmap)
                         unicode_maps.append(resource)

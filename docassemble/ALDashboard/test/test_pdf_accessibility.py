@@ -31,7 +31,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     inspect_pdf_accessibility,
     _iter_pdf_fonts,
     _heading_candidates_from_xml,
-    _winansi_to_unicode_cmap,
+    _simple_font_unicode_cmap,
 )
 
 
@@ -821,7 +821,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         import pikepdf
 
         font = pikepdf.Dictionary({"/Encoding": pikepdf.Name("/WinAnsiEncoding")})
-        cmap = _winansi_to_unicode_cmap(font)
+        cmap = _simple_font_unicode_cmap(font)
         self.assertIsNotNone(cmap)
         self.assertIn(b"<80> <20AC>", cmap)
         self.assertTrue(cmap.endswith(b"end\n"))
@@ -830,7 +830,71 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         import pikepdf
 
         font = pikepdf.Dictionary({"/Encoding": pikepdf.Name("/MacRomanEncoding")})
-        self.assertIsNone(_winansi_to_unicode_cmap(font))
+        self.assertIsNone(_simple_font_unicode_cmap(font))
+
+    def test_unicode_map_accepts_winansi_declared_as_a_base(self):
+        """A dictionary naming WinAnsi as its base is still a WinAnsi font."""
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Encoding": pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Encoding"),
+                        "/BaseEncoding": pikepdf.Name("/WinAnsiEncoding"),
+                    }
+                )
+            }
+        )
+        cmap = _simple_font_unicode_cmap(font)
+        self.assertIsNotNone(cmap)
+        self.assertIn(b"<80> <20AC>", cmap)
+
+    def test_unicode_map_honours_differences_over_the_base(self):
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Encoding": pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Encoding"),
+                        "/BaseEncoding": pikepdf.Name("/WinAnsiEncoding"),
+                        "/Differences": pikepdf.Array(
+                            [65, pikepdf.Name("/breve")]
+                        ),
+                    }
+                )
+            }
+        )
+        cmap = _simple_font_unicode_cmap(font)
+        self.assertIsNotNone(cmap)
+        # Code 65 is "A" in WinAnsi, but /Differences reassigns it to U+02D8.
+        self.assertIn(b"<41> <02D8>", cmap)
+        self.assertNotIn(b"<41> <0041>", cmap)
+
+    def test_unicode_map_from_differences_without_a_declared_base(self):
+        """The built-in base is unknown, so only shared ASCII plus the
+        overrides may be mapped."""
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Encoding": pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Encoding"),
+                        "/Differences": pikepdf.Array(
+                            [24, pikepdf.Name("/breve")]
+                        ),
+                    }
+                )
+            }
+        )
+        cmap = _simple_font_unicode_cmap(font)
+        self.assertIsNotNone(cmap)
+        self.assertIn(b"<18> <02D8>", cmap)
+        self.assertIn(b"<41> <0041>", cmap)
+        # Nothing in the upper half may be invented from an unknown base.
+        self.assertNotIn(b"<80> <20AC>", cmap)
 
     def test_extract_pdf_field_tooltips_reads_parent_and_widget_tu(self):
         import pikepdf

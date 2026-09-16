@@ -3008,6 +3008,48 @@ def _set_pdfua_identifier(pdf: Any, declared: bool) -> bool:
     return False
 
 
+def _sync_xmp_accessibility_metadata(
+    pdf: Any, *, title: str = "", language: str = ""
+) -> int:
+    """Keep Dublin Core XMP metadata aligned with the catalog and docinfo."""
+    updates = 0
+    if not title and not language:
+        return updates
+    with pdf.open_metadata(set_pikepdf_as_editor=False) as xmp:
+        if title:
+            xmp["dc:title"] = title
+            updates += 1
+        if language:
+            xmp["dc:language"] = [language]
+            updates += 1
+    return updates
+
+
+def _strip_stale_mcid_wrappers(instructions: Iterable[Any]) -> List[Any]:
+    """Remove obsolete MCID wrappers while preserving their drawing operations."""
+    output: List[Any] = []
+    stripped_stack: List[bool] = []
+    for instruction in instructions:
+        operator = str(instruction.operator)
+        if operator in {"BMC", "BDC"}:
+            stale = False
+            if operator == "BDC":
+                stale = any(
+                    hasattr(operand, "get") and operand.get("/MCID") is not None
+                    for operand in instruction.operands
+                )
+            stripped_stack.append(stale)
+            if not stale:
+                output.append(instruction)
+        elif operator == "EMC" and stripped_stack:
+            stale = stripped_stack.pop()
+            if not stale:
+                output.append(instruction)
+        else:
+            output.append(instruction)
+    return output
+
+
 def _missing_structure_form_alt_count(root: Any) -> int:
     struct_root = root.get("/StructTreeRoot") if root is not None else None
     if struct_root is None:
@@ -3717,6 +3759,9 @@ def apply_pdf_accessibility_settings(
                 if language:
                     pdf.Root["/Lang"] = pikepdf.String(language)
                     metadata_updates += 1
+                metadata_updates += _sync_xmp_accessibility_metadata(
+                    pdf, title=title, language=language
+                )
                 document_title = (
                     title or _safe_pdf_string(docinfo.get("/Title", "")).strip()
                 )
@@ -3889,6 +3934,19 @@ def apply_pdf_accessibility_settings(
         )
 
 
+def _annotation_description(annot: Any) -> str:
+    """Return a deterministic description for a visible non-widget annotation."""
+    existing = _safe_pdf_string(annot.get("/Contents", "")).strip()
+    if existing:
+        return existing
+    action = annot.get("/A") if hasattr(annot, "get") else None
+    uri = _safe_pdf_string(action.get("/URI", "")).strip() if action else ""
+    if uri:
+        return uri
+    subtype = _safe_pdf_string(annot.get("/Subtype", "")).lstrip("/")
+    return f"{subtype or 'PDF'} annotation"
+
+
 def create_draft_structure_tree(
     input_pdf_path: str,
     output_pdf_path: str,
@@ -3957,6 +4015,11 @@ def create_draft_structure_tree(
             text_block_count = 0
             heading_count = 0
             form_alt_count = 0
+            annotation_count = 0
+            annotation_description_count = 0
+            stale_mcid_wrappers_removed = 0
+            heading_levels_normalized = 0
+            previous_heading_level = 0
             for page_index, page in enumerate(pdf.pages):
                 page["/StructParents"] = page_index
                 page_part = pdf.make_indirect(
@@ -3973,6 +4036,10 @@ def create_draft_structure_tree(
                 page_children: List[Any] = []
 
                 instructions = list(pikepdf.parse_content_stream(page))
+                if overwrite:
+                    stripped = _strip_stale_mcid_wrappers(instructions)
+                    stale_mcid_wrappers_removed += len(instructions) - len(stripped)
+                    instructions = stripped
                 existing_mcids: List[int] = []
                 for instruction in instructions:
                     if str(instruction.operator) != "BDC":
@@ -4093,6 +4160,19 @@ def create_draft_structure_tree(
                             starts: Dict[int, Tuple[int, str]] = {}
                             ends: Dict[int, int] = {}
                             for group, tag_name in groups:
+                                if tag_name.startswith("H"):
+                                    level = int(tag_name[1:])
+                                    maximum_level = (
+                                        1
+                                        if previous_heading_level == 0
+                                        else previous_heading_level + 1
+                                    )
+                                    next_level = min(level, maximum_level)
+                                    heading_levels_normalized += int(
+                                        next_level != level
+                                    )
+                                    previous_heading_level = next_level
+                                    tag_name = f"H{next_level}"
                                 mcid = len(mcid_elements)
                                 starts[group[0]] = (mcid, tag_name)
                                 ends[group[-1]] = mcid
@@ -4158,13 +4238,15 @@ def create_draft_structure_tree(
                 parent_tree_entries[page_index] = pikepdf.Array(mcid_elements)
 
                 annots = page.get("/Annots")
-                page_has_widgets = False
+                page_has_annotations = False
                 for annot in cast(Iterable[Any], annots or []):
                     if not hasattr(annot, "get"):
                         continue
-                    if _safe_pdf_string(annot.get("/Subtype", "")) != "/Widget":
+                    subtype = _safe_pdf_string(annot.get("/Subtype", ""))
+                    flags = int(annot.get("/F", 0) or 0)
+                    if subtype == "/PrinterMark" or flags & 3:
                         continue
-                    page_has_widgets = True
+                    page_has_annotations = True
                     annot["/StructParent"] = next_struct_parent
                     object_reference = pikepdf.Dictionary(
                         {
@@ -4173,27 +4255,39 @@ def create_draft_structure_tree(
                             "/Pg": page.obj,
                         }
                     )
-                    form_element = pdf.make_indirect(
+                    role = (
+                        "Form"
+                        if subtype == "/Widget"
+                        else ("Link" if subtype == "/Link" else "Annot")
+                    )
+                    structure_element = pdf.make_indirect(
                         pikepdf.Dictionary(
                             {
                                 "/Type": pikepdf.Name("/StructElem"),
-                                "/S": pikepdf.Name("/Form"),
+                                "/S": pikepdf.Name(f"/{role}"),
                                 "/P": page_part,
                                 "/Pg": page.obj,
                                 "/K": object_reference,
                             }
                         )
                     )
-                    parent = _named_parent(annot)
-                    tooltip = _widget_tooltip(annot, parent)
-                    if tooltip:
-                        form_element["/Alt"] = pikepdf.String(tooltip)
-                        form_alt_count += 1
-                    page_children.append(form_element)
-                    parent_tree_entries[next_struct_parent] = form_element
+                    if subtype == "/Widget":
+                        parent = _named_parent(annot)
+                        tooltip = _widget_tooltip(annot, parent)
+                        if tooltip:
+                            structure_element["/Alt"] = pikepdf.String(tooltip)
+                            form_alt_count += 1
+                        widget_count += 1
+                    else:
+                        description = _annotation_description(annot)
+                        if not _safe_pdf_string(annot.get("/Contents", "")).strip():
+                            annot["/Contents"] = pikepdf.String(description[:1000])
+                            annotation_description_count += 1
+                        annotation_count += 1
+                    page_children.append(structure_element)
+                    parent_tree_entries[next_struct_parent] = structure_element
                     next_struct_parent += 1
-                    widget_count += 1
-                if page_has_widgets:
+                if page_has_annotations:
                     page["/Tabs"] = pikepdf.Name("/S")
                 page_part["/K"] = pikepdf.Array(page_children)
 
@@ -4220,8 +4314,12 @@ def create_draft_structure_tree(
             "pages_tagged": page_count,
             "text_blocks_tagged": text_block_count,
             "headings_drafted": heading_count,
+            "heading_levels_normalized": heading_levels_normalized,
             "widgets_tagged": widget_count,
+            "annotations_tagged": annotation_count,
+            "annotation_descriptions_added": annotation_description_count,
             "form_alts_added": form_alt_count,
+            "stale_mcid_wrappers_removed": stale_mcid_wrappers_removed,
             "content_artifact_runs": content_artifact_runs,
             "marked_as_tagged": bool(mark_as_tagged),
             "review_required": True,
@@ -4514,6 +4612,59 @@ def apply_manual_structure_repairs(
         raise PDFAccessibilityError(f"Failed to apply structure edits: {exc}") from exc
 
 
+def _repair_embedded_cidsets(pdf: Any) -> List[str]:
+    """Rebuild subset CIDSet streams from embedded TrueType glyph counts."""
+    import io
+
+    from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+    repaired: List[str] = []
+    seen: set[str] = set()
+    for resource, font in _iter_pdf_fonts(pdf):
+        if _safe_pdf_string(font.get("/Subtype", "")) != "/Type0":
+            continue
+        descendants = font.get("/DescendantFonts")
+        if not descendants:
+            continue
+        descendant = descendants[0]
+        identity = _pdf_object_identity(descendant, resource)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        base_font = _safe_pdf_string(descendant.get("/BaseFont", "")).lstrip("/")
+        if not re.match(r"^[A-Z]{6}\+", base_font):
+            continue
+        descriptor = descendant.get("/FontDescriptor")
+        program = descriptor.get("/FontFile2") if descriptor is not None else None
+        if program is None:
+            continue
+        try:
+            ttfont = TTFont(io.BytesIO(program.read_bytes()), lazy=True)
+            try:
+                glyph_count = int(ttfont["maxp"].numGlyphs)
+            finally:
+                ttfont.close()
+        except Exception:
+            continue
+        if glyph_count <= 0:
+            continue
+        byte_count = (glyph_count + 7) // 8
+        bits = bytearray([0xFF] * byte_count)
+        remainder = glyph_count % 8
+        if remainder:
+            bits[-1] = (0xFF << (8 - remainder)) & 0xFF
+        existing = descriptor.get("/CIDSet")
+        if existing is not None:
+            try:
+                if existing.read_bytes() == bytes(bits):
+                    continue
+            except Exception:
+                pass
+        descriptor["/CIDSet"] = pdf.make_stream(bytes(bits))
+        repaired.append(resource)
+    return repaired
+
+
 def embed_fonts_and_rebuild_unicode(
     input_pdf_path: str,
     output_pdf_path: str,
@@ -4541,6 +4692,7 @@ def embed_fonts_and_rebuild_unicode(
         unicode_maps: List[str] = []
         unicode_unresolved: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
+        cidsets_repaired: List[str] = []
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
             font_usage = _font_code_usage(pdf)
             for resource, font in _iter_pdf_fonts(pdf):
@@ -4673,6 +4825,7 @@ def embed_fonts_and_rebuild_unicode(
                                 "reviewable": True,
                             }
                         )
+            cidsets_repaired = _repair_embedded_cidsets(pdf)
             pdf.save(output_pdf_path)
         with pikepdf.open(output_pdf_path) as repaired_pdf:
             after = _extract_font_records(repaired_pdf)
@@ -4683,6 +4836,7 @@ def embed_fonts_and_rebuild_unicode(
             "fonts_embedded": embedded,
             "unicode_maps_added": unicode_maps,
             "unicode_unresolved": unicode_unresolved,
+            "cidsets_repaired": cidsets_repaired,
             "unresolved": unresolved,
             "requested": {
                 "embed_exact_fonts": embed_exact_fonts,

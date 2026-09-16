@@ -35,6 +35,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     inspect_pdf_accessibility,
     _iter_pdf_fonts,
     _heading_candidates_from_xml,
+    _repair_embedded_cidsets,
     _simple_font_unicode_cmap,
     _to_unicode_mappings,
 )
@@ -320,7 +321,76 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             self.assertEqual(result["headings_drafted"], 1)
             with pikepdf.open(output_path) as tagged:
                 part = tagged.Root.StructTreeRoot.K.K[0]
-                self.assertEqual([str(child.S) for child in part.K], ["/H3", "/P"])
+                self.assertEqual([str(child.S) for child in part.K], ["/H1", "/P"])
+                self.assertEqual(result["heading_levels_normalized"], 1)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_draft_structure_prevents_heading_sequence_gaps(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/F1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/Type1"),
+                                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT /F1 18 Tf 72 700 Td (Title) Tj ET "
+                b"BT /F1 14 Tf 72 660 Td (Section) Tj ET "
+                b"BT /F1 16 Tf 72 620 Td (Later section) Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+            candidates = [
+                {
+                    "candidateId": "title",
+                    "pageIndex": 0,
+                    "text": "Title",
+                    "suggestedTag": "H1",
+                },
+                {
+                    "candidateId": "section",
+                    "pageIndex": 0,
+                    "text": "Section",
+                    "suggestedTag": "H3",
+                },
+                {
+                    "candidateId": "later",
+                    "pageIndex": 0,
+                    "text": "Later section",
+                    "suggestedTag": "H2",
+                },
+            ]
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility.suggest_heading_candidates",
+                return_value=candidates,
+            ):
+                result = create_draft_structure_tree(source_path, output_path)
+
+            self.assertEqual(result["heading_levels_normalized"], 1)
+            with pikepdf.open(output_path) as tagged:
+                part = tagged.Root.StructTreeRoot.K.K[0]
+                self.assertEqual(
+                    [str(child.S) for child in part.K], ["/H1", "/H2", "/H2"]
+                )
         finally:
             os.remove(source_path)
             os.remove(output_path)
@@ -367,6 +437,109 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 self.assertEqual(len(parent_entries), 7)
                 self.assertIsNone(parent_entries[5])
                 self.assertEqual(str(parent_entries[6].S), "/P")
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_draft_structure_overwrite_removes_stale_mcids(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/F1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/Type1"),
+                                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page["/Contents"] = pdf.make_stream(
+                b"/P <</MCID 9>> BDC BT /F1 12 Tf (Retag me) Tj ET EMC"
+            )
+            pdf.Root["/StructTreeRoot"] = pikepdf.Dictionary()
+            pdf.save(source_path)
+            pdf.close()
+
+            result = create_draft_structure_tree(
+                source_path, output_path, overwrite=True
+            )
+
+            self.assertEqual(result["stale_mcid_wrappers_removed"], 2)
+            with pikepdf.open(output_path) as tagged:
+                content = tagged.pages[0].Contents.read_bytes()
+                self.assertNotIn(b"/MCID 9", content)
+                paragraph = tagged.Root.StructTreeRoot.K.K[0].K[0]
+                self.assertEqual(int(paragraph.K), 0)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_draft_structure_tags_links_and_other_annotations(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            link = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Link"),
+                        "/Rect": pikepdf.Array([0, 0, 100, 20]),
+                        "/A": pikepdf.Dictionary(
+                            {
+                                "/S": pikepdf.Name("/URI"),
+                                "/URI": pikepdf.String("https://example.org"),
+                            }
+                        ),
+                    }
+                )
+            )
+            stamp = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Stamp"),
+                        "/Rect": pikepdf.Array([0, 30, 100, 50]),
+                    }
+                )
+            )
+            page["/Annots"] = pikepdf.Array([link, stamp])
+            pdf.save(source_path)
+            pdf.close()
+
+            result = create_draft_structure_tree(source_path, output_path)
+
+            self.assertEqual(result["annotations_tagged"], 2)
+            self.assertEqual(result["annotation_descriptions_added"], 2)
+            with pikepdf.open(output_path) as tagged:
+                part = tagged.Root.StructTreeRoot.K.K[0]
+                self.assertEqual(
+                    [str(child.S) for child in part.K], ["/Link", "/Annot"]
+                )
+                self.assertEqual(
+                    str(tagged.pages[0].Annots[0].Contents), "https://example.org"
+                )
+                self.assertEqual(
+                    str(tagged.pages[0].Annots[1].Contents), "Stamp annotation"
+                )
         finally:
             os.remove(source_path)
             os.remove(output_path)
@@ -430,7 +603,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             self.assertEqual(result["headings_drafted"], 1)
             with pikepdf.open(output_path) as tagged:
                 part = tagged.Root.StructTreeRoot.K.K[0]
-                self.assertEqual([str(child.S) for child in part.K], ["/H2", "/P"])
+                self.assertEqual([str(child.S) for child in part.K], ["/H1", "/P"])
         finally:
             os.remove(source_path)
             os.remove(output_path)
@@ -1238,6 +1411,84 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 self.assertIn("/StructParent", widget)
         finally:
             os.remove(pdf_path)
+
+    def test_accessibility_metadata_updates_dublin_core_xmp(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+        try:
+            pdf = pikepdf.new()
+            pdf.add_blank_page()
+            with pdf.open_metadata(set_pikepdf_as_editor=False) as metadata:
+                metadata["xmp:CreatorTool"] = "Legacy exporter"
+            pdf.save(pdf_path)
+            pdf.close()
+
+            apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                metadata={
+                    "title": "Petition for Child Custody",
+                    "language": "en-US",
+                },
+            )
+
+            with pikepdf.open(pdf_path) as updated:
+                xml = updated.Root.Metadata.read_bytes()
+                self.assertIn(b"<dc:title", xml)
+                self.assertIn(b"Petition for Child Custody", xml)
+                self.assertIn(b"<dc:language", xml)
+                self.assertIn(b"en-US", xml)
+                self.assertEqual(
+                    str(updated.docinfo.Title), "Petition for Child Custody"
+                )
+                self.assertEqual(str(updated.Root.Lang), "en-US")
+        finally:
+            os.remove(pdf_path)
+
+    def test_repair_embedded_cidset_uses_true_type_glyph_count(self):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page()
+        descriptor = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/FontDescriptor"),
+                "/FontName": pikepdf.Name("/ABCDEF+TestSubset"),
+                "/FontFile2": pdf.make_stream(_webdings_like_program()),
+                "/CIDSet": pdf.make_stream(b""),
+            }
+        )
+        descendant = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/CIDFontType2"),
+                    "/BaseFont": pikepdf.Name("/ABCDEF+TestSubset"),
+                    "/FontDescriptor": descriptor,
+                }
+            )
+        )
+        type_zero = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/Type0"),
+                    "/BaseFont": pikepdf.Name("/ABCDEF+TestSubset"),
+                    "/DescendantFonts": pikepdf.Array([descendant]),
+                }
+            )
+        )
+        page["/Resources"] = pikepdf.Dictionary(
+            {"/Font": pikepdf.Dictionary({"/F1": type_zero})}
+        )
+
+        repaired = _repair_embedded_cidsets(pdf)
+
+        self.assertEqual(repaired, ["p1/F1"])
+        self.assertEqual(descriptor.CIDSet.read_bytes(), b"\xc0")
+        pdf.close()
 
     def test_preflight_reports_catalog_metadata_and_structure(self):
         import pikepdf

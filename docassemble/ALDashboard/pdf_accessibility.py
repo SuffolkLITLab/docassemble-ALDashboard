@@ -369,7 +369,7 @@ def _structure_form_field_name(node: Any) -> str:
     import pikepdf
 
     kids = node.get("/K") if hasattr(node, "get") else None
-    candidates = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
+    candidates: List[Any] = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
     for kid in candidates:
         if not hasattr(kid, "get") or kid.get("/Type") != "/OBJR":
             continue
@@ -443,7 +443,9 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
 
         parent_role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
         kids = node.get("/K") if hasattr(node, "get") else None
-        candidates = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
+        candidates: List[Any] = (
+            list(kids) if isinstance(kids, pikepdf.Array) else [kids]
+        )
         for kid in candidates:
             if hasattr(kid, "get") and kid.get("/Type") == "/OBJR":
                 object_id = str(getattr(kid.get("/Obj"), "objgen", ""))
@@ -466,12 +468,12 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                 }
             )
         if role == "Table":
-            rows = []
+            rows: List[Dict[str, Any]] = []
             for row_index, row in enumerate(children):
                 if _safe_pdf_string(row.get("/S", "")).lstrip("/") != "TR":
                     continue
                 row_path = path + [row_index]
-                cells = []
+                cells: List[Dict[str, Any]] = []
                 for cell_index, cell in enumerate(_structure_children(row)):
                     cells.append(
                         {
@@ -792,7 +794,7 @@ def _system_truetype_fonts() -> List[Dict[str, Any]]:
             continue
         seen.add(path)
         try:
-            from fontTools.ttLib import TTFont
+            from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
 
             font = TTFont(path, lazy=True)
             if "fvar" in font:
@@ -1377,9 +1379,9 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
         page_height = _xml_number(page, "height")
         fragments: List[Dict[str, Any]] = []
         for text in page.findall(".//text"):
-            spec = font_specs.get(text.attrib.get("font", ""), {})
-            size = float(spec.get("size", 0) or 0)
-            family = str(spec.get("family", ""))
+            font_spec = font_specs.get(text.attrib.get("font", ""), {})
+            size = float(font_spec.get("size", 0) or 0)
+            family = str(font_spec.get("family", ""))
             value = "".join(text.itertext()).strip()
             if not value or size <= 0:
                 continue
@@ -1947,10 +1949,13 @@ def create_draft_structure_tree(
                     if str(instruction.operator) != "BDC":
                         continue
                     for operand in instruction.operands:
-                        if not hasattr(operand, "get") or operand.get("/MCID") is None:
+                        raw_mcid = (
+                            operand.get("/MCID") if hasattr(operand, "get") else None
+                        )
+                        if raw_mcid is None:
                             continue
                         try:
-                            existing_mcids.append(int(operand.get("/MCID")))
+                            existing_mcids.append(int(raw_mcid))
                         except (TypeError, ValueError):
                             continue
                 first_new_mcid = max(existing_mcids, default=-1) + 1

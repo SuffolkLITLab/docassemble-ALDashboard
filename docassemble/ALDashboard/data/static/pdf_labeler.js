@@ -1595,12 +1595,16 @@ function renderStructureEditor() {
                     .map(function (cell, cellIndex) {
                       const invalid = cell.role !== "TH" && cell.role !== "TD";
                       return (
-                        '<div class="d-flex flex-wrap align-items-end gap-2 mb-2"><div><label class="form-label small mb-1">Child ' +
+                        '<div class="d-flex flex-wrap align-items-end gap-2 mb-2"><div><label class="form-label small mb-1" for="a11y-cell-role-' +
+                        escapeHtml(cell.path) +
+                        '">Child ' +
                         (cellIndex + 1) +
                         (invalid
                           ? " (currently " + escapeHtml(cell.role) + ")"
                           : "") +
-                        '</label><select class="form-select form-select-sm" data-structure-value="cell-role" data-path="' +
+                        '</label><select class="form-select form-select-sm" id="a11y-cell-role-' +
+                        escapeHtml(cell.path) +
+                        '" data-structure-value="cell-role" data-path="' +
                         escapeHtml(cell.path) +
                         '"><option value="TH"' +
                         (cell.role === "TH" ? " selected" : "") +
@@ -1611,7 +1615,11 @@ function renderStructureEditor() {
                         escapeHtml(cell.path) +
                         '">Apply role</button>' +
                         (cell.role === "TH"
-                          ? '<div><label class="form-label small mb-1">Scope</label><select class="form-select form-select-sm" data-structure-value="header-scope" data-path="' +
+                          ? '<div><label class="form-label small mb-1" for="a11y-cell-scope-' +
+                            escapeHtml(cell.path) +
+                            '">Scope</label><select class="form-select form-select-sm" id="a11y-cell-scope-' +
+                            escapeHtml(cell.path) +
+                            '" data-structure-value="header-scope" data-path="' +
                             escapeHtml(cell.path) +
                             '"><option value="Column"' +
                             (cell.scope === "Column" ? " selected" : "") +
@@ -2168,7 +2176,11 @@ function renderHeadingCandidates() {
             (candidate.reason
               ? " · " + escapeHtml(String(candidate.reason))
               : "") +
-            '</div><div class="d-flex flex-wrap align-items-end gap-2 mt-2"><div><label class="form-label small mb-1">Heading level</label><select class="form-select form-select-sm" data-heading-action="level" data-heading-id="' +
+            '</div><div class="d-flex flex-wrap align-items-end gap-2 mt-2"><div><label class="form-label small mb-1" for="a11y-heading-level-' +
+            escapeHtml(candidateId) +
+            '">Heading level</label><select class="form-select form-select-sm" id="a11y-heading-level-' +
+            escapeHtml(candidateId) +
+            '" data-heading-action="level" data-heading-id="' +
             escapeHtml(candidateId) +
             '">' +
             headingLevelOptions(decision.tag) +

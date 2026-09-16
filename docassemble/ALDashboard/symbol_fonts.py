@@ -138,6 +138,10 @@ _TABLES: Dict[str, Dict[int, SymbolProposal]] = {
 # source document visually.
 _OUTLINE_PROPOSALS: Dict[tuple[str, str], SymbolProposal] = {
     (
+        "wingdings",
+        "6b4beb546207468fdcc16968a19efefb9d6f9b15124ee69aad2e5b692bb29390",
+    ): SymbolProposal("☐", "BALLOT BOX", "rendered-outline"),
+    (
         "webdings",
         "f21c561349f7a9f3f7ea1b5d08ec02ccff60acd1c71823c77cb9035ed8a863d1",
     ): SymbolProposal("☐", "BALLOT BOX", "rendered-outline"),

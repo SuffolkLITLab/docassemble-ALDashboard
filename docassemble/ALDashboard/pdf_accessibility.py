@@ -420,6 +420,155 @@ def _sync_structure_form_alt_text(root: Any) -> int:
     return updates
 
 
+def _sync_structure_form_objects(pdf: Any) -> int:
+    """Rebind Form OBJR entries after a field export replaces widgets."""
+    import pikepdf
+
+    widgets: Dict[Tuple[Tuple[int, int], str], List[Any]] = {}
+    for page in pdf.pages:
+        page_key = tuple(page.objgen)
+        for annot in cast(Iterable[Any], page.get("/Annots", [])):
+            if _safe_pdf_string(annot.get("/Subtype", "")) != "/Widget":
+                continue
+            parent = _named_parent(annot)
+            name = _safe_pdf_string(parent.get("/T", "")) if parent else ""
+            if name:
+                widgets.setdefault((page_key, name), []).append(annot)
+
+    struct_root = pdf.Root.get("/StructTreeRoot")
+    if struct_root is None:
+        return 0
+    parent_tree = _parent_tree_entries(struct_root)
+    form_keys = {
+        tuple(value.objgen): key
+        for key, value in parent_tree.items()
+        if hasattr(value, "objgen")
+    }
+    updates = 0
+
+    def walk(node: Any) -> None:
+        nonlocal updates
+        if not hasattr(node, "get"):
+            return
+        if _safe_pdf_string(node.get("/S", "")) == "/Form":
+            name = _structure_form_field_name(node)
+            page = cast(Any, node.get("/Pg"))
+            candidates = widgets.get((tuple(page.objgen), name), []) if page else []
+            kids = node.get("/K")
+            object_refs = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
+            object_ref = next(
+                (
+                    kid
+                    for kid in object_refs
+                    if hasattr(kid, "get") and kid.get("/Type") == "/OBJR"
+                ),
+                None,
+            )
+            if candidates and object_ref is not None:
+                current = candidates.pop(0)
+                previous = cast(Any, object_ref.get("/Obj"))
+                previous_key = (
+                    tuple(previous.objgen) if hasattr(previous, "objgen") else None
+                )
+                current_key = tuple(current.objgen)
+                struct_parent = (
+                    previous.get("/StructParent") if hasattr(previous, "get") else None
+                )
+                if struct_parent is None:
+                    struct_parent = form_keys.get(tuple(node.objgen))
+                changed = previous_key != current_key
+                if (
+                    struct_parent is not None
+                    and current.get("/StructParent") != struct_parent
+                ):
+                    current["/StructParent"] = struct_parent
+                    changed = True
+                if previous_key != current_key:
+                    if hasattr(previous, "get") and "/StructParent" in previous:
+                        del previous["/StructParent"]
+                    object_ref["/Obj"] = current
+                    object_ref["/Pg"] = page
+                if changed:
+                    updates += 1
+        for child in _structure_children(node):
+            walk(child)
+
+    walk(struct_root)
+    return updates
+
+
+def _invalid_structure_form_object_count(pdf: Any) -> int:
+    """Count Form OBJR entries that do not reference a current page widget."""
+    import pikepdf
+
+    current_widgets = {
+        (tuple(page.objgen), tuple(annot.objgen))
+        for page in pdf.pages
+        for annot in cast(Iterable[Any], page.get("/Annots", []))
+        if _safe_pdf_string(annot.get("/Subtype", "")) == "/Widget"
+    }
+    invalid = 0
+    struct_root = pdf.Root.get("/StructTreeRoot")
+    if struct_root is None:
+        return 0
+    parent_tree = _parent_tree_entries(struct_root)
+
+    def walk(node: Any) -> None:
+        nonlocal invalid
+        if not hasattr(node, "get"):
+            return
+        if _safe_pdf_string(node.get("/S", "")) == "/Form":
+            page = cast(Any, node.get("/Pg"))
+            kids = node.get("/K")
+            candidates = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
+            references = [
+                kid
+                for kid in candidates
+                if hasattr(kid, "get") and kid.get("/Type") == "/OBJR"
+            ]
+            valid = bool(page and references)
+            for ref in references:
+                obj = cast(Any, ref.get("/Obj"))
+                struct_parent = (
+                    obj.get("/StructParent") if hasattr(obj, "get") else None
+                )
+                valid = bool(
+                    valid
+                    and (tuple(page.objgen), tuple(obj.objgen)) in current_widgets
+                    and struct_parent is not None
+                    and int(struct_parent) in parent_tree
+                    and tuple(parent_tree[int(struct_parent)].objgen)
+                    == tuple(node.objgen)
+                )
+            if not valid:
+                invalid += 1
+        for child in _structure_children(node):
+            walk(child)
+
+    walk(struct_root)
+    return invalid
+
+
+def _parent_tree_entries(struct_root: Any) -> Dict[int, Any]:
+    """Flatten a structure ParentTree number tree."""
+    import pikepdf
+
+    entries: Dict[int, Any] = {}
+
+    def walk(node: Any) -> None:
+        numbers = node.get("/Nums") if hasattr(node, "get") else None
+        if isinstance(numbers, pikepdf.Array):
+            for index in range(0, len(numbers) - 1, 2):
+                entries[int(numbers[index])] = numbers[index + 1]
+        for kid in cast(Iterable[Any], node.get("/Kids", [])):
+            walk(kid)
+
+    parent_tree = struct_root.get("/ParentTree")
+    if parent_tree is not None:
+        walk(parent_tree)
+    return entries
+
+
 def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
     """Sort sibling Form elements while preserving every non-Form position."""
     import pikepdf
@@ -726,6 +875,7 @@ def _font_descriptor(font: Any) -> Optional[Any]:
 def _extract_font_records(pdf: Any) -> List[Dict[str, Any]]:
     """Inventory fonts once per indirect object, including PDF/UA essentials."""
     records: List[Dict[str, Any]] = []
+    usage = _font_code_usage(pdf)
     for resource, font in _iter_pdf_fonts(pdf):
         try:
             descriptor = _font_descriptor(font)
@@ -737,6 +887,10 @@ def _extract_font_records(pdf: Any) -> List[Dict[str, Any]]:
                 )
             )
             page_match = re.match(r"p(\d+)", resource)
+            identity = _pdf_object_identity(font, resource)
+            used_codes = set((usage.get(identity) or {}).get("counts") or {})
+            unicode_mappings = _to_unicode_mappings(font)
+            missing_used_codes = sorted(used_codes - set(unicode_mappings))
             records.append(
                 {
                     "resource": resource,
@@ -747,6 +901,10 @@ def _extract_font_records(pdf: Any) -> List[Dict[str, Any]]:
                     "pageIndex": int(page_match.group(1)) - 1 if page_match else None,
                     "embedded": embedded,
                     "hasToUnicode": "/ToUnicode" in font,
+                    "unicodeCoverageComplete": bool(
+                        "/ToUnicode" in font and not missing_used_codes
+                    ),
+                    "missingUnicodeCodes": missing_used_codes,
                 }
             )
         except Exception:
@@ -1604,6 +1762,52 @@ def _glyph_review_entry(
 GLYPH_REVIEW_LIMIT = 512
 
 
+def _to_unicode_mappings(pdf_font: Any) -> Dict[int, str]:
+    """Read the common bfchar and bfrange forms from a ToUnicode CMap."""
+    stream = pdf_font.get("/ToUnicode") if hasattr(pdf_font, "get") else None
+    if stream is None:
+        return {}
+    try:
+        source = bytes(stream.read_bytes()).decode("latin-1")
+    except Exception:
+        return {}
+
+    def decode(hex_text: str) -> Optional[str]:
+        try:
+            return bytes.fromhex(hex_text).decode("utf-16-be")
+        except (UnicodeDecodeError, ValueError):
+            return None
+
+    mappings: Dict[int, str] = {}
+    for block in re.findall(r"beginbfchar(.*?)endbfchar", source, re.DOTALL):
+        for source_hex, destination_hex in re.findall(
+            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", block
+        ):
+            destination = decode(destination_hex)
+            if destination is not None:
+                mappings[int(source_hex, 16)] = destination
+    for block in re.findall(r"beginbfrange(.*?)endbfrange", source, re.DOTALL):
+        for match in re.finditer(
+            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([^]]*)\])",
+            block,
+            re.DOTALL,
+        ):
+            start, end = int(match.group(1), 16), int(match.group(2), 16)
+            if match.group(3):
+                first = int(match.group(3), 16)
+                width = len(match.group(3))
+                destinations = [
+                    f"{first + offset:0{width}X}" for offset in range(end - start + 1)
+                ]
+            else:
+                destinations = re.findall(r"<([0-9A-Fa-f]+)>", match.group(4) or "")
+            for code, destination_hex in zip(range(start, end + 1), destinations):
+                destination = decode(destination_hex)
+                if destination is not None:
+                    mappings[code] = destination
+    return mappings
+
+
 def _curated_symbol_unicode_cmap(
     pdf_font: Any,
     font_name: str,
@@ -1619,8 +1823,10 @@ def _curated_symbol_unicode_cmap(
     except Exception:
         glyph_count = 0
     installed_codes = _installed_symbol_codes(font_name, glyph_count)
-    mappings: Dict[int, str] = {}
+    mappings = _to_unicode_mappings(pdf_font)
     for code in sorted(set(used_codes)):
+        if mappings.get(code):
+            continue
         char_code = _embedded_char_code(font_source, code)
         if char_code is None:
             char_code = installed_codes.get(code)
@@ -1701,14 +1907,20 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
             form_fonts = _acroform_appearance_fonts(pdf)
             fonts: List[Dict[str, Any]] = []
             for resource, font in _iter_pdf_fonts(pdf):
-                if "/ToUnicode" in font:
-                    continue
                 font_name = _safe_pdf_string(font.get("/BaseFont", resource)).lstrip(
                     "/"
                 )
                 identity = _pdf_object_identity(font, resource)
                 record = usage.get(identity) or {}
                 counts: Dict[int, int] = record.get("counts") or {}
+                mapped_codes = set(_to_unicode_mappings(font))
+                counts = {
+                    code: count
+                    for code, count in counts.items()
+                    if code not in mapped_codes
+                }
+                if "/ToUnicode" in font and not counts:
+                    continue
                 program, program_kind = _font_program_bytes(font)
                 font_source = _load_glyph_source(program)
                 glyph_count = 0
@@ -2427,8 +2639,7 @@ def _artifact_untagged_content(pdf: Any) -> int:
                 for instruction in pending
             )
             has_meaningful_text = any(
-                _shown_instruction_text(instruction).strip()
-                for instruction in pending
+                _shown_instruction_text(instruction).strip() for instruction in pending
             )
             if has_draft_artifact and not has_meaningful_text:
                 rewritten.append(
@@ -2580,14 +2791,13 @@ def build_accessibility_report(
     }
     missing_tooltips = [field for field in fields if not field["has_custom_tooltip"]]
     missing_form_alts = _missing_structure_form_alt_count(root)
+    invalid_form_objects = _invalid_structure_form_object_count(pdf)
     unembedded = [font for font in fonts if not font["embedded"]]
-    no_unicode = [font for font in fonts if not font["hasToUnicode"]]
+    no_unicode = [font for font in fonts if not font["unicodeCoverageComplete"]]
     undescribed_annots = [item for item in annotations if not item["hasDescription"]]
     untagged_content_count = sum(_untagged_content_count(page) for page in pdf.pages)
     content_tag_issue_count = (
-        len(pdf.pages)
-        if not tag_summary["present"]
-        else untagged_content_count
+        len(pdf.pages) if not tag_summary["present"] else untagged_content_count
     )
 
     figure_issue = _issue(
@@ -2733,6 +2943,14 @@ def build_accessibility_report(
             missing_form_alts,
             "field_tooltips",
             description="The workshop copies each reviewed field tooltip to the matching Form structure element.",
+        ),
+        _issue(
+            "form-structure-objects",
+            "7.18.1",
+            "Form tags reference the current widget annotations",
+            invalid_form_objects,
+            "field_tooltips",
+            description="Field export may replace widget objects. The workshop reconnects Form tags and structure-parent references to the exported widgets.",
         ),
         _issue(
             "tab-order",
@@ -3180,6 +3398,7 @@ def apply_pdf_accessibility_settings(
         tab_order_updates = 0
         structure_order_updates = 0
         form_alt_updates = 0
+        form_object_updates = 0
         content_artifact_runs = 0
         pdfua_declared = False
 
@@ -3248,6 +3467,7 @@ def apply_pdf_accessibility_settings(
                     except Exception:
                         continue
 
+            form_object_updates = _sync_structure_form_objects(pdf)
             form_alt_updates = _sync_structure_form_alt_text(pdf.Root)
             if mark_untagged_as_artifacts and pdf.Root.get("/StructTreeRoot"):
                 content_artifact_runs = _artifact_untagged_content(pdf)
@@ -3361,6 +3581,7 @@ def apply_pdf_accessibility_settings(
             "tab_order_updates": tab_order_updates,
             "structure_order_updates": structure_order_updates,
             "form_alt_updates": form_alt_updates,
+            "form_object_updates": form_object_updates,
             "content_artifact_runs": content_artifact_runs,
             "pdfua_declared": pdfua_declared,
         }
@@ -4106,20 +4327,24 @@ def embed_fonts_and_rebuild_unicode(
                                     "source": match["path"],
                                 }
                             )
-                if add_unicode_maps and "/ToUnicode" not in font:
-                    cmap = _simple_font_unicode_cmap(font)
-                    if cmap is None and is_symbolic_family(font_name):
-                        identity = _pdf_object_identity(font, resource)
-                        usage_record = font_usage.get(identity) or {}
-                        cmap = _curated_symbol_unicode_cmap(
-                            font,
-                            font_name,
-                            (usage_record.get("counts") or {}).keys(),
-                        )
+                if add_unicode_maps:
+                    identity = _pdf_object_identity(font, resource)
+                    usage_record = font_usage.get(identity) or {}
+                    used_codes = set((usage_record.get("counts") or {}).keys())
+                    existing_mappings = _to_unicode_mappings(font)
+                    cmap = None
+                    if "/ToUnicode" not in font:
+                        cmap = _simple_font_unicode_cmap(font)
+                    if is_symbolic_family(font_name) and used_codes - set(
+                        existing_mappings
+                    ):
+                        cmap = _curated_symbol_unicode_cmap(font, font_name, used_codes)
                     if cmap is not None:
                         font["/ToUnicode"] = pdf.make_stream(cmap)
                         unicode_maps.append(resource)
-                    else:
+                    elif "/ToUnicode" not in font or used_codes - set(
+                        existing_mappings
+                    ):
                         unicode_unresolved.append(
                             {
                                 "resource": resource,

@@ -1970,7 +1970,7 @@ function renderFontStatus(report) {
     return !font.embedded;
   });
   const missingUnicode = fonts.filter(function (font) {
-    return !font.hasToUnicode;
+    return !font.unicodeCoverageComplete;
   });
   a11yFontEmbeddingSummary.className =
     "alert small py-2 " +
@@ -2011,10 +2011,10 @@ function renderFontStatus(report) {
       ? String(missingUnicode.length) +
         " of " +
         String(fonts.length) +
-        " fonts lack a Unicode map."
+        " fonts lack Unicode mappings for every used character."
       : "All " +
         String(fonts.length) +
-        " fonts have Unicode maps. Nothing to do."
+        " fonts map every used character to Unicode. Nothing to do."
     : "No page fonts were found.";
   a11yFontUnicodeList.innerHTML = missingUnicode.length
     ? missingUnicode
@@ -2022,7 +2022,15 @@ function renderFontStatus(report) {
           return (
             '<div class="border rounded p-2 small"><span class="fw-semibold">' +
             escapeHtml(displayPdfFontName(font)) +
-            '</span><div class="text-muted">Unicode map missing · ' +
+            '</span><div class="text-muted">' +
+            (font.hasToUnicode
+              ? "Unicode map is incomplete for used codes" +
+                (Array.isArray(font.missingUnicodeCodes) &&
+                font.missingUnicodeCodes.length
+                  ? " " + font.missingUnicodeCodes.join(", ")
+                  : "")
+              : "Unicode map missing") +
+            " · " +
             escapeHtml(String(font.subtype || "unknown type")) +
             " · " +
             escapeHtml(String(font.resource || "unknown resource")) +
@@ -2030,11 +2038,13 @@ function renderFontStatus(report) {
           );
         })
         .join("")
-    : '<div class="small text-muted mb-2">No Unicode maps are missing.</div>';
+    : '<div class="small text-muted mb-2">All used characters have Unicode mappings.</div>';
   a11yAddUnicodeMapsBtn.disabled = missingUnicode.length === 0;
   a11yAddUnicodeMapsBtn.textContent = missingUnicode.length
-    ? "Add safe maps for " + String(missingUnicode.length) + " fonts"
-    : "No Unicode maps missing";
+    ? "Add or complete safe maps for " +
+      String(missingUnicode.length) +
+      " fonts"
+    : "Unicode mappings complete";
 }
 
 function substituteChoiceFor(font) {

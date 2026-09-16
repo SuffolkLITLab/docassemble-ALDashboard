@@ -34,6 +34,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _iter_pdf_fonts,
     _heading_candidates_from_xml,
     _simple_font_unicode_cmap,
+    _to_unicode_mappings,
 )
 
 
@@ -1094,6 +1095,31 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             pdf.save(pdf_path)
             pdf.close()
             create_draft_structure_tree(pdf_path, pdf_path)
+            with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
+                replacement = pdf.make_indirect(
+                    Dictionary(
+                        {
+                            "/FT": Name("/Tx"),
+                            "/T": String("copied_field"),
+                            "/Type": Name("/Annot"),
+                            "/Subtype": Name("/Widget"),
+                            "/Rect": Array([0, 0, 100, 20]),
+                        }
+                    )
+                )
+                pdf.pages[0]["/Annots"] = Array([replacement])
+                pdf.Root["/AcroForm"]["/Fields"] = Array([replacement])
+                pdf.save(pdf_path)
+
+            before = inspect_pdf_accessibility(pdf_path)["report"]["issues"]
+            self.assertEqual(
+                next(
+                    issue["count"]
+                    for issue in before
+                    if issue["id"] == "form-structure-objects"
+                ),
+                1,
+            )
 
             result = apply_pdf_accessibility_settings(
                 input_pdf_path=pdf_path,
@@ -1103,6 +1129,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             )
 
             self.assertEqual(result["form_alt_updates"], 1)
+            self.assertEqual(result["form_object_updates"], 1)
             with pikepdf.open(pdf_path) as pdf:
                 widget = pdf.pages[0]["/Annots"][0]
                 self.assertEqual(str(widget["/TU"]), "Copied source tooltip")
@@ -1112,6 +1139,8 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 )
                 form = pdf.Root.StructTreeRoot.K.K[0].K[0]
                 self.assertEqual(str(form["/Alt"]), "Copied source tooltip")
+                self.assertEqual(tuple(form.K.Obj.objgen), tuple(widget.objgen))
+                self.assertIn("/StructParent", widget)
         finally:
             os.remove(pdf_path)
 
@@ -1224,9 +1253,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             with pikepdf.open(pdf_path) as repaired:
                 self.assertFalse(bool(repaired.Root.MarkInfo.Marked))
                 with repaired.open_metadata() as metadata:
-                    self.assertNotIn(
-                        "{http://www.aiim.org/pdfua/ns/id/}part", metadata
-                    )
+                    self.assertNotIn("{http://www.aiim.org/pdfua/ns/id/}part", metadata)
         finally:
             os.remove(pdf_path)
 
@@ -1337,9 +1364,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     ["/P", "/P", "/Form"],
                 )
                 self.assertEqual(str(first_page_part["/K"][2]["/Alt"]), "Field one")
-                self.assertIn(
-                    b"/Artifact BMC", tagged.pages[0].Contents.read_bytes()
-                )
+                self.assertIn(b"/Artifact BMC", tagged.pages[0].Contents.read_bytes())
             issue_ids = {
                 issue["id"]
                 for issue in inspect_pdf_accessibility(output_path)["report"]["issues"]
@@ -1501,6 +1526,56 @@ class TestSymbolicFontGlyphReview(unittest.TestCase):
         self.assertIsNotNone(proposal)
         self.assertEqual(proposal.character, "☐")
         self.assertEqual(proposal.evidence, "rendered-outline")
+
+    def test_reviewed_alabama_wingdings_outline_is_a_ballot_box(self):
+        outline = "M321 148H1505V1332H321ZM173 0V1480H1653V0Z"
+        proposal = propose_outline_character("CELEIJ+Wingdings", outline)
+        self.assertIsNotNone(proposal)
+        self.assertEqual(proposal.character, "☐")
+        self.assertEqual(proposal.evidence, "rendered-outline")
+
+    def test_reviewed_map_preserves_existing_codes_and_fills_missing_code(self):
+        import pikepdf
+
+        existing = b"""1 beginbfchar
+<0003> <0020>
+endbfchar
+"""
+        with pikepdf.new() as pdf:
+            font = pikepdf.Dictionary(
+                {
+                    "/Subtype": pikepdf.Name("/Type0"),
+                    "/Encoding": pikepdf.Name("/Identity-H"),
+                    "/ToUnicode": pdf.make_stream(existing),
+                }
+            )
+            self.assertEqual(_to_unicode_mappings(font), {3: " "})
+            source = {"maxp": type("Maxp", (), {"numGlyphs": 200})()}
+            with (
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._font_program_bytes",
+                    return_value=(b"font", "FontFile2"),
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._load_glyph_source",
+                    return_value=source,
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._installed_symbol_codes",
+                    return_value={},
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._embedded_char_code",
+                    return_value=None,
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._glyph_outline",
+                    return_value={"path": "M321 148H1505V1332H321ZM173 0V1480H1653V0Z"},
+                ),
+            ):
+                cmap = _curated_symbol_unicode_cmap(font, "Wingdings", [3, 133])
+        self.assertIn(b"<0003> <0020>", cmap)
+        self.assertIn(b"<0085> <2610>", cmap)
 
     def test_reviewed_outline_builds_identity_font_unicode_map(self):
         import pikepdf

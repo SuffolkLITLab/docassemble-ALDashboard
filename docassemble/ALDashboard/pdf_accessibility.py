@@ -979,28 +979,35 @@ def _font_program_format(font: Any) -> str:
     return ""
 
 
+DASHBOARD_FONT_DIRECTORY = Path("/var/www/.fonts")
+
+
 def _system_embeddable_fonts() -> List[Dict[str, Any]]:
     """Inventory embeddable font files known to fontconfig.
 
     Covers TrueType and plain CFF/OpenType, recording which kind each one is
     so the caller can pick the right /FontFile entry for it.
     """
+    paths: set[str] = set()
     executable = shutil.which("fc-list")
-    if not executable:
-        return []
-    try:
-        result = subprocess.run(  # nosec B603
-            [executable, "-f", "%{file}\n"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
+    if executable:
+        try:
+            result = subprocess.run(  # nosec B603
+                [executable, "-f", "%{file}\n"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            paths.update(result.stdout.splitlines())
+        except (OSError, subprocess.SubprocessError):
+            pass
+    manager_dir = DASHBOARD_FONT_DIRECTORY
+    if manager_dir.is_dir():
+        paths.update(str(path) for path in manager_dir.iterdir() if path.is_file())
     records: List[Dict[str, Any]] = []
     seen: set[str] = set()
-    for raw_path in result.stdout.splitlines():
+    for raw_path in sorted(paths):
         path = raw_path.strip()
         if not path or path in seen:
             continue
@@ -1299,7 +1306,7 @@ def _descriptor_for_program(
     return pdf.make_indirect(descriptor)
 
 
-def _complete_standard_14_widths(pdf_font: Any) -> bool:
+def _complete_standard_14_widths(pdf_font: Any, program_format: str) -> bool:
     """Make the standard face's implicit widths and encoding explicit."""
     import pikepdf
     from fontTools.encodings.StandardEncoding import StandardEncoding  # type: ignore[import-untyped]
@@ -1309,7 +1316,11 @@ def _complete_standard_14_widths(pdf_font: Any) -> bool:
     if published is None or canonical in {"symbol", "zapfdingbats"}:
         return False
     encoding = pdf_font.get("/Encoding")
-    if (
+    if program_format == "truetype":
+        # PDF/UA requires non-symbolic TrueType fonts to use WinAnsi or
+        # MacRoman. The generated field appearances use the WinAnsi byte set.
+        pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
+    elif (
         not _encoding_base_name(pdf_font)
         or _encoding_base_name(pdf_font) == "StandardEncoding"
     ):
@@ -1346,7 +1357,9 @@ def _embed_into_standard_14_font(
     """Complete a standard face with a verified TrueType or CFF program."""
     import pikepdf
 
-    if not _complete_standard_14_widths(pdf_font):
+    program, file_key, _file_subtype = _embeddable_program(font_path)
+    program_format = "truetype" if file_key == "/FontFile2" else "cff"
+    if program is None or not _complete_standard_14_widths(pdf_font, program_format):
         return False
     descriptor = _descriptor_for_program(pdf, font_name, font_path, False)
     pdf_font["/FontDescriptor"] = descriptor
@@ -2372,7 +2385,9 @@ def _substitute_font_program(
     canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
     published = standard_14_widths(canonical)
     if "/Widths" not in pdf_font and published is not None:
-        if not _complete_standard_14_widths(pdf_font):
+        _program, file_key, _file_subtype = _embeddable_program(str(candidate["path"]))
+        program_format = "truetype" if file_key == "/FontFile2" else "cff"
+        if not _complete_standard_14_widths(pdf_font, program_format):
             return False
     postscript_name = str(candidate.get("postscript_name") or "").strip() or font_name
     symbolic = canonical in {"symbol", "zapfdingbats"}

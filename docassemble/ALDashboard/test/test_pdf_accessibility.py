@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from unittest.mock import patch
 
 from docassemble.ALDashboard.symbol_fonts import (
@@ -1881,6 +1882,26 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
             }
         ]
 
+    def test_dashboard_managed_font_is_found_without_fontconfig(self):
+        candidate = _metric_compatible_sans_path()
+        if candidate is None:
+            self.skipTest("No test TrueType font is installed.")
+        with tempfile.TemporaryDirectory() as directory:
+            managed = Path(directory) / "Helvetica.ttf"
+            os.symlink(candidate, managed)
+            with (
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility.DASHBOARD_FONT_DIRECTORY",
+                    Path(directory),
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility.shutil.which",
+                    return_value=None,
+                ),
+            ):
+                inventory = _system_embeddable_fonts()
+        self.assertIn(str(managed), {record["path"] for record in inventory})
+
     def test_expected_widths_fall_back_to_published_metrics(self):
         """Nothing in the file states the widths, so the table must supply them."""
         import pikepdf
@@ -1935,13 +1956,13 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
                 font = pdf.pages[0]["/Resources"]["/Font"]["/Helv"]
                 # The dictionary must now stand on its own.
                 self.assertEqual(str(font["/Subtype"]), "/TrueType")
+                self.assertEqual(str(font["/Encoding"]), "/WinAnsiEncoding")
                 self.assertIn("/FontFile2", font["/FontDescriptor"])
                 first = int(font["/FirstChar"])
                 widths = font["/Widths"]
                 self.assertEqual(int(widths[ord("A") - first]), 667)
                 self.assertEqual(int(widths[ord(" ") - first]), 278)
-                # Implicit StandardEncoding must not become WinAnsi apostrophe.
-                self.assertIn(b"<27> <2019>", _simple_font_unicode_cmap(font))
+                self.assertIn(b"<27> <0027>", _simple_font_unicode_cmap(font))
         finally:
             os.remove(source_path)
             os.remove(output_path)

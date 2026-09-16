@@ -453,6 +453,19 @@
     overscroll-behavior: contain;
     padding-right: 0.25rem;
 }
+.a11y-ai-review-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+}
+.a11y-ai-review.is-collapsed {
+    min-height: 0;
+    flex-basis: auto;
+}
+.a11y-ai-review.is-collapsed .a11y-ai-review-body {
+    display: none;
+}
 .a11y-ai-review-finding.is-resolved {
     opacity: 0.72;
 }

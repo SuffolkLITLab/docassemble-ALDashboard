@@ -429,16 +429,21 @@
                         <div id="a11y-certify-status" class="small text-muted">This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.</div>
                     </div>
                 </div>
-                <section class="a11y-ai-review mx-3 mt-3" aria-labelledby="a11y-ai-review-title">
+                <section id="a11y-ai-review-section" class="a11y-ai-review mx-3 mt-3" aria-labelledby="a11y-ai-review-title">
                     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
                         <div>
                             <h3 id="a11y-ai-review-title" class="h6 mb-1">AI reasonableness review <span class="badge text-bg-warning">optional</span></h3>
-                            <p class="small text-muted mb-0">Sends a document-text sample and the current draft settings to the configured AI to check whether the title, language, labels, headings, order, and other choices make sense. It never certifies the PDF. Review every proposed change.</p>
                         </div>
-                        <button id="a11y-ai-review-apply-all" class="btn btn-sm btn-outline-primary hidden">Accept all pending suggestions</button>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button id="a11y-ai-review-apply-all" class="btn btn-sm btn-outline-primary hidden">Accept all pending suggestions</button>
+                            <button id="a11y-ai-review-toggle" class="btn btn-sm btn-outline-secondary" type="button" aria-expanded="true" aria-controls="a11y-ai-review-body">Collapse review</button>
+                        </div>
                     </div>
-                    <div id="a11y-ai-review-status" class="small text-muted mt-2" role="status">No AI reasonableness check has been run for this draft.</div>
-                    <div id="a11y-ai-review-findings" class="vstack gap-2 mt-2" tabindex="0" aria-label="AI reasonableness findings"></div>
+                    <div id="a11y-ai-review-body" class="a11y-ai-review-body">
+                        <p class="small text-muted mt-2 mb-0">Sends a document-text sample and the current draft settings to the configured AI to check whether the title, language, labels, headings, order, and other choices make sense. It never certifies the PDF. Review every proposed change.</p>
+                        <div id="a11y-ai-review-status" class="small text-muted mt-2" role="status">No AI reasonableness check has been run for this draft.</div>
+                        <div id="a11y-ai-review-findings" class="vstack gap-2 mt-2" tabindex="0" aria-label="AI reasonableness findings"></div>
+                    </div>
                 </section>
                 <div class="a11y-workshop-layout">
                     <aside class="a11y-workshop-report" aria-label="Accessibility findings">

@@ -327,9 +327,14 @@ def review_pdf_accessibility_with_ai(
                     "semantic structure, fonts, tables, figures, links, and annotations. Do not claim that a "
                     "PDF is conformant and never propose changing MarkInfo or the PDF/UA declaration. Do not "
                     "invent image content when no pixels or reliable existing description were supplied. "
-                    "Return only genuine findings; an empty findings array means the supplied choices look "
-                    "reasonable. Each finding needs id, category, severity (warning or info), title, explanation, "
-                    "and optionally one change. A change must be one of: metadata with target language/title/"
+                    "Return only genuine findings; do not restate a passing check merely to recommend generic "
+                    "validation. An empty findings array means the supplied choices look reasonable. Each finding "
+                    "needs id, category, severity (warning or info), title, explanation, and a change whenever the "
+                    "problem can be corrected with one of the supported changes below. A missing language MUST "
+                    "propose a metadata language change using the inferred BCP 47 value. A filename-like, generic, "
+                    "or misleading title MUST propose a metadata title change using the real approved H1 or best "
+                    "document heading. Do not downgrade these safe metadata corrections to manual-review prose. "
+                    "A change must be one of: metadata with target language/title/"
                     "author/subject and a string value; field_tooltip with a supplied fieldId target and short "
                     "label value; image_alt_text with a supplied assetId target and string "
                     "value only when supported by supplied evidence; or reading_direction with target document "
@@ -346,6 +351,39 @@ def review_pdf_accessibility_with_ai(
     if isinstance(response, str):
         response = json.loads(response)
     rows = response.get("findings", []) if isinstance(response, Mapping) else []
+    title_candidate = next(
+        (
+            str(item.get("text") or "").strip()
+            for item in headings
+            if str(item.get("status") or "") == "approved"
+            and str(item.get("tag") or "") == "H1"
+            and str(item.get("text") or "").strip()
+        ),
+        "",
+    ) or next(
+        (
+            str(item.get("text") or "").strip()
+            for item in headings
+            if str(item.get("status") or "") != "rejected"
+            and str(item.get("heuristicTag") or item.get("tag") or "") == "H1"
+            and str(item.get("text") or "").strip()
+        ),
+        "",
+    )
+    language_names = (
+        ("us english", "en-US"),
+        ("american english", "en-US"),
+        ("english", "en"),
+        ("spanish", "es"),
+        ("arabic", "ar"),
+        ("japanese", "ja"),
+        ("french", "fr"),
+        ("portuguese", "pt"),
+        ("chinese", "zh"),
+        ("korean", "ko"),
+        ("vietnamese", "vi"),
+        ("russian", "ru"),
+    )
     findings: List[Dict[str, Any]] = []
     for index, row in enumerate(rows if isinstance(rows, list) else []):
         if not isinstance(row, Mapping):
@@ -371,6 +409,35 @@ def review_pdf_accessibility_with_ai(
             "explanation": explanation,
         }
         change = row.get("change")
+        finding_text = " ".join(
+            (str(row.get("category") or ""), title, explanation)
+        ).casefold()
+        if not isinstance(change, Mapping) and "metadata" in finding_text:
+            if "language" in finding_text:
+                inferred_language = next(
+                    (
+                        language
+                        for language_name, language in language_names
+                        if language_name in finding_text
+                    ),
+                    "",
+                )
+                if inferred_language:
+                    change = {
+                        "kind": "metadata",
+                        "target": "language",
+                        "value": inferred_language,
+                    }
+            elif (
+                "title" in finding_text
+                and "viewer" not in finding_text
+                and title_candidate
+            ):
+                change = {
+                    "kind": "metadata",
+                    "target": "title",
+                    "value": title_candidate,
+                }
         if isinstance(change, Mapping):
             kind = str(change.get("kind") or "")
             target = str(change.get("target") or "")
@@ -716,7 +783,9 @@ def _invalid_structure_form_object_count(pdf: Any) -> int:
         (tuple(page.objgen), tuple(annot.objgen))
         for page in pdf.pages
         for annot in cast(Iterable[Any], page.get("/Annots", []))
-        if _safe_pdf_string(annot.get("/Subtype", "")) == "/Widget"
+        if annot is not None
+        and hasattr(annot, "get")
+        and _safe_pdf_string(annot.get("/Subtype", "")) == "/Widget"
     }
     invalid = 0
     struct_root = pdf.Root.get("/StructTreeRoot")
@@ -3745,7 +3814,9 @@ def apply_pdf_accessibility_settings(
                         widget_slots = [
                             index
                             for index, ref in enumerate(refs)
-                            if _safe_pdf_string(ref.get("/Subtype", "")) == "/Widget"
+                            if ref is not None
+                            and hasattr(ref, "get")
+                            and _safe_pdf_string(ref.get("/Subtype", "")) == "/Widget"
                         ]
                         widgets = [refs[index] for index in widget_slots]
 

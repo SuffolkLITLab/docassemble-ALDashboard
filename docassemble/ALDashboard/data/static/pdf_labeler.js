@@ -388,8 +388,13 @@ const a11yAiReviewApplyAllBtn = optionalWorkshopElement(
   "a11y-ai-review-apply-all",
   "button",
 );
+const a11yAiReviewToggleBtn = optionalWorkshopElement(
+  "a11y-ai-review-toggle",
+  "button",
+);
 const a11yAiReviewStatus = optionalWorkshopElement("a11y-ai-review-status");
 const a11yAiReviewFindings = optionalWorkshopElement("a11y-ai-review-findings");
+const a11yAiReviewSection = optionalWorkshopElement("a11y-ai-review-section");
 const a11yExportBtn = optionalWorkshopElement("a11y-export", "button");
 const a11yCertifyAccessibleInput = optionalWorkshopElement(
   "a11y-certify-accessible",
@@ -8705,6 +8710,7 @@ a11yExportBtn.addEventListener("click", function () {
 });
 a11yAiReviewBtn.addEventListener("click", async function () {
   updateAccessibilityMetadataFromInputs();
+  setAiReviewExpanded(true);
   try {
     await runAiAccessibilityReview({ applyDrafts: false });
     showSuccess(
@@ -8714,6 +8720,9 @@ a11yAiReviewBtn.addEventListener("click", async function () {
   } catch (error) {
     showError(error.message || String(error));
   }
+});
+a11yAiReviewToggleBtn.addEventListener("click", function () {
+  setAiReviewExpanded(a11yAiReviewSection.classList.contains("is-collapsed"));
 });
 a11yAiReviewApplyAllBtn.addEventListener("click", function () {
   state.accessibility.aiReview.findings.forEach(applyAiAccessibilityFinding);
@@ -8726,7 +8735,18 @@ a11yAiReviewFindings.addEventListener("click", function (event) {
   const finding =
     state.accessibility.aiReview.findings[Number(card.dataset.aiReviewIndex)];
   if (!finding) return;
-  if (button.dataset.aiReviewAction === "apply") {
+  if (button.dataset.aiReviewAction === "open-controls") {
+    const panel = document.getElementById(
+      "a11y-panel-" + String(button.dataset.panel || ""),
+    );
+    setAiReviewExpanded(false);
+    if (panel) {
+      window.setTimeout(function () {
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
+    }
+    return;
+  } else if (button.dataset.aiReviewAction === "apply") {
     applyAiAccessibilityFinding(finding);
   } else if (button.dataset.aiReviewAction === "ignore") {
     ignoreAiAccessibilityFinding(finding);
@@ -9344,6 +9364,71 @@ function aiReviewChangeLabel(change) {
   return (labels[change.kind] || "Proposed change") + ": " + value;
 }
 
+function aiReviewPanelForFinding(finding) {
+  const description = (
+    String(finding.category || "") +
+    " " +
+    String(finding.title || "")
+  ).toLowerCase();
+  if (description.includes("metadata") || description.includes("title")) {
+    return "metadata";
+  }
+  if (description.includes("font") || description.includes("unicode")) {
+    return "fonts";
+  }
+  if (
+    description.includes("tab order") ||
+    description.includes("reading order")
+  ) {
+    return "reading_order";
+  }
+  if (
+    description.includes("form-field") ||
+    description.includes("field name")
+  ) {
+    return "field_tooltips";
+  }
+  if (description.includes("figure") || description.includes("image")) {
+    return "figures";
+  }
+  if (
+    description.includes("table") ||
+    description.includes("annotation") ||
+    description.includes("link")
+  ) {
+    return "structure";
+  }
+  if (description.includes("heading") || description.includes("structure")) {
+    return "draft_structure";
+  }
+  return "";
+}
+
+function setAiReviewExpanded(expanded) {
+  a11yAiReviewSection.classList.toggle("is-collapsed", !expanded);
+  a11yAiReviewToggleBtn.setAttribute(
+    "aria-expanded",
+    expanded ? "true" : "false",
+  );
+  a11yAiReviewToggleBtn.textContent = expanded
+    ? "Collapse review"
+    : "Expand review";
+}
+
+function aiReviewPanelLabel(panelName) {
+  return (
+    {
+      metadata: "Open metadata controls",
+      fonts: "Open font and Unicode controls",
+      reading_order: "Open reading-order controls",
+      field_tooltips: "Open field-label controls",
+      figures: "Open figure controls",
+      structure: "Open table and annotation controls",
+      draft_structure: "Open tag and heading controls",
+    }[panelName] || "Open related controls"
+  );
+}
+
 function renderAiAccessibilityReview() {
   const review = state.accessibility.aiReview;
   const findings = Array.isArray(review.findings) ? review.findings : [];
@@ -9399,6 +9484,7 @@ function renderAiAccessibilityReview() {
             : finding.severity === "info"
               ? "text-bg-info"
               : "text-bg-warning";
+      const manualPanel = aiReviewPanelForFinding(finding);
       return (
         '<article class="a11y-ai-review-finding border rounded p-2' +
         (resolved ? " is-resolved" : "") +
@@ -9431,6 +9517,13 @@ function renderAiAccessibilityReview() {
           : status === "reviewed"
             ? ""
             : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Mark reviewed</button>') +
+        (manualPanel
+          ? '<button type="button" class="btn btn-sm btn-outline-primary" data-ai-review-action="open-controls" data-panel="' +
+            escapeHtml(manualPanel) +
+            '">' +
+            escapeHtml(aiReviewPanelLabel(manualPanel)) +
+            "</button>"
+          : "") +
         "</div>" +
         "</article>"
       );
@@ -9574,6 +9667,7 @@ async function runAiAccessibilityReview(options) {
   const history = settings.preserveHistory
     ? state.accessibility.aiReview.findings.slice()
     : [];
+  setAiReviewExpanded(true);
   state.accessibility.aiReview.running = true;
   renderAiAccessibilityReview();
   try {

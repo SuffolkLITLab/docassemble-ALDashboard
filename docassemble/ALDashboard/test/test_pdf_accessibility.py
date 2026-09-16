@@ -160,6 +160,49 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertIn("BCP 47 language", system_prompt)
         self.assertIn("never propose changing MarkInfo", system_prompt)
 
+    def test_ai_reasonableness_review_recovers_safe_metadata_actions(self):
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "title",
+                        "category": "metadata",
+                        "severity": "warning",
+                        "title": "Document title is a filename",
+                        "explanation": "Use the real H1 instead.",
+                    },
+                    {
+                        "id": "language",
+                        "category": "metadata",
+                        "severity": "warning",
+                        "title": "Document language is not declared",
+                        "explanation": "The document is written in US English.",
+                    },
+                ]
+            },
+        ):
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "metadata": {},
+                    "textSample": "First Petition for Child Custody",
+                    "headings": [
+                        {
+                            "candidateId": "heading-1",
+                            "text": "First Petition for Child Custody",
+                            "status": "approved",
+                            "tag": "H1",
+                        }
+                    ],
+                }
+            )
+
+        self.assertEqual(result[0]["change"]["target"], "title")
+        self.assertEqual(
+            result[0]["change"]["value"], "First Petition for Child Custody"
+        )
+        self.assertEqual(result[1]["change"]["value"], "en-US")
+
     def test_ai_tooltip_prompt_requires_short_labels_not_instructions(self):
         with patch(
             "docassemble.ALToolbox.llms.chat_completion",

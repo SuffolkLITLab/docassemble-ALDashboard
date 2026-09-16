@@ -374,6 +374,9 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("Reject suggestion &amp; restore previous", self.js)
         self.assertIn("ignoreAiAccessibilityFinding", self.js)
         self.assertIn("overflow-y: auto", self.css)
+        self.assertIn('id="a11y-ai-review-toggle"', self.html)
+        self.assertIn("setAiReviewExpanded", self.js)
+        self.assertIn("Open related controls", self.js)
         self.assertIn("/pdf-labeler/api/accessibility-ai-review", self.js)
         self.assertIn("def pdf_labeler_accessibility_ai_review", self.api)
 

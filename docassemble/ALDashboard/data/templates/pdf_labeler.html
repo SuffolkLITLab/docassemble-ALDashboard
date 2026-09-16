@@ -414,7 +414,8 @@
                     </div>
                     <div class="d-flex flex-wrap justify-content-end align-items-center gap-2">
                         <span id="a11y-summary" class="small" aria-live="polite">Inspecting document…</span>
-                        <button id="a11y-auto-fix" class="btn btn-sm btn-warning" title="Runs deterministic drafts and explicitly invokes the configured AI for field labels and headings">Auto-fix draft (uses AI)</button>
+                        <button id="a11y-auto-fix" class="btn btn-sm btn-warning" title="Runs deterministic drafts, AI field and heading helpers, and a bounded AI reasonableness feedback loop">Auto-fix draft (uses AI)</button>
+                        <button id="a11y-ai-review" class="btn btn-sm btn-outline-warning" title="Uses the configured AI to review the current accessibility choices without certifying the PDF">AI final check</button>
                         <button id="a11y-refresh-report" class="btn btn-sm btn-outline-secondary">Re-run report</button>
                         <button id="a11y-export" class="btn btn-sm btn-primary">Export PDF</button>
                         <button id="close-accessibility" class="btn btn-sm btn-dark">Return to field editor</button>
@@ -428,6 +429,17 @@
                         <div id="a11y-certify-status" class="small text-muted">This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.</div>
                     </div>
                 </div>
+                <section class="a11y-ai-review mx-3 mt-3" aria-labelledby="a11y-ai-review-title">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <div>
+                            <h3 id="a11y-ai-review-title" class="h6 mb-1">AI reasonableness review <span class="badge text-bg-warning">optional</span></h3>
+                            <p class="small text-muted mb-0">Sends a document-text sample and the current draft settings to the configured AI to check whether the title, language, labels, headings, order, and other choices make sense. It never certifies the PDF. Review every proposed change.</p>
+                        </div>
+                        <button id="a11y-ai-review-apply-all" class="btn btn-sm btn-outline-primary hidden">Apply all pending drafts</button>
+                    </div>
+                    <div id="a11y-ai-review-status" class="small text-muted mt-2" role="status">No AI reasonableness check has been run for this draft.</div>
+                    <div id="a11y-ai-review-findings" class="vstack gap-2 mt-2"></div>
+                </section>
                 <div class="a11y-workshop-layout">
                     <aside class="a11y-workshop-report" aria-label="Accessibility findings">
                         <div class="form-check form-switch mb-3">

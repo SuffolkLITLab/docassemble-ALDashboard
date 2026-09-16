@@ -29,6 +29,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     create_draft_structure_tree,
     default_pdf_field_tooltip,
     draft_field_tooltips_with_ai,
+    review_pdf_accessibility_with_ai,
     embed_fonts_and_rebuild_unicode,
     extract_pdf_field_tooltips,
     inspect_pdf_accessibility,
@@ -109,6 +110,56 @@ def _webdings_like_program():
 
 
 class TestPDFAccessibilityHelpers(unittest.TestCase):
+    def test_ai_reasonableness_review_preserves_only_allowlisted_changes(self):
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "poor-title",
+                        "category": "metadata",
+                        "severity": "warning",
+                        "title": "Use the document heading as its title",
+                        "explanation": "The current title is a working filename.",
+                        "change": {
+                            "kind": "metadata",
+                            "target": "title",
+                            "value": "Petition for Child Custody",
+                        },
+                    },
+                    {
+                        "id": "unsafe-declaration",
+                        "category": "catalog",
+                        "severity": "warning",
+                        "title": "Invalid unsupported change",
+                        "explanation": "The model must not set the declaration.",
+                        "change": {
+                            "kind": "catalog_flags",
+                            "target": "marked",
+                            "value": True,
+                        },
+                    },
+                ]
+            },
+        ) as completion:
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "filename": "Form draft 1.docx.pdf",
+                    "metadata": {"title": "Form draft 1.docx", "language": "en-US"},
+                    "textSample": "Petition for Child Custody",
+                    "fields": [],
+                    "headings": [],
+                    "images": [],
+                }
+            )
+
+        self.assertEqual(result[0]["change"]["value"], "Petition for Child Custody")
+        self.assertNotIn("change", result[1])
+        system_prompt = completion.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Preserve a reasonable existing value", system_prompt)
+        self.assertIn("BCP 47 language", system_prompt)
+        self.assertIn("never propose changing MarkInfo", system_prompt)
+
     def test_ai_tooltip_prompt_requires_short_labels_not_instructions(self):
         with patch(
             "docassemble.ALToolbox.llms.chat_completion",

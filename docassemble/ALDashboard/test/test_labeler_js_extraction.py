@@ -362,6 +362,15 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("closeAccessibilityWorkshop", self.js)
         self.assertIn("showPdfWorkspace();", self.js)
 
+    def test_accessibility_workshop_has_reviewable_ai_final_check(self):
+        self.assertIn('id="a11y-ai-review"', self.html)
+        self.assertIn('id="a11y-ai-review-findings"', self.html)
+        self.assertIn("function runAiAccessibilityReview", self.js)
+        self.assertIn("applyDrafts: true", self.js)
+        self.assertIn("data-ai-review-action", self.js)
+        self.assertIn("/pdf-labeler/api/accessibility-ai-review", self.js)
+        self.assertIn("def pdf_labeler_accessibility_ai_review", self.api)
+
     def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
         self.assertIn("data.data.menu_items", self.js)
         self.assertIn("state.auth.menuItems", self.js)

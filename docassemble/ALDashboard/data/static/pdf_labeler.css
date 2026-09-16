@@ -435,6 +435,15 @@
     border-radius: 0.6rem;
     background: #e7f1ff;
 }
+.a11y-ai-review {
+    padding: 0.75rem 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.6rem;
+    background: #fff;
+}
+.a11y-ai-review-finding.is-resolved {
+    opacity: 0.72;
+}
 .a11y-workshop-layout {
     display: grid;
     grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);

@@ -3747,6 +3747,55 @@ def pdf_labeler_accessibility_ai_headings() -> Response:
         )
 
 
+@app.route("/pdf-labeler/api/accessibility-ai-review", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-review",
+    methods=["POST"],
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_ai_review() -> Response:
+    """Review current accessibility drafts without applying or certifying them."""
+    request_id = str(uuid.uuid4())
+    if not _labeler_ai_auth_check():
+        return _ai_auth_fail(request_id)
+    try:
+        payload = request.get_json(silent=True) or {}
+        context = payload.get("context")
+        if not isinstance(context, dict):
+            raise DashboardAPIValidationError("context must be an object.")
+        from .pdf_accessibility import review_pdf_accessibility_with_ai
+
+        findings = review_pdf_accessibility_with_ai(
+            context, model=str(payload.get("model") or LABELER_DEFAULT_MODEL)
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {"findings": findings, "review_required": True},
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "ai_error", "message": str(exc)},
+            },
+            500,
+        )
+
+
 @app.route("/pdf-labeler/api/auto-detect", methods=["POST"])
 @app.route(f"{LABELER_BASE_PATH}/pdf-labeler/api/auto-detect", methods=["POST"])
 @csrf.exempt

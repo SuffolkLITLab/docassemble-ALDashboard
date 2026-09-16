@@ -206,6 +206,7 @@ const state = {
       author: "",
       subject: "",
     },
+    readingDirection: "ltr",
     images: [],
     imageMode: false,
     tagStructure: null,
@@ -223,6 +224,7 @@ const state = {
     glyphDecisions: {},
     glyphRendered: {},
     draftRemediations: {},
+    aiReview: { findings: [], lastSignature: "", running: false },
     marked: false,
     inspected: false,
   },
@@ -381,6 +383,13 @@ const a11yRefreshReportBtn = optionalWorkshopElement(
 );
 const a11yAutoFixBtn = optionalWorkshopElement("a11y-auto-fix", "button");
 const a11yAutoFixStatus = optionalWorkshopElement("a11y-auto-fix-status");
+const a11yAiReviewBtn = optionalWorkshopElement("a11y-ai-review", "button");
+const a11yAiReviewApplyAllBtn = optionalWorkshopElement(
+  "a11y-ai-review-apply-all",
+  "button",
+);
+const a11yAiReviewStatus = optionalWorkshopElement("a11y-ai-review-status");
+const a11yAiReviewFindings = optionalWorkshopElement("a11y-ai-review-findings");
 const a11yExportBtn = optionalWorkshopElement("a11y-export", "button");
 const a11yCertifyAccessibleInput = optionalWorkshopElement(
   "a11y-certify-accessible",
@@ -2940,6 +2949,7 @@ function renderAccessibilityModal() {
   a11yCertifyStatus.innerHTML = state.accessibility.marked
     ? "Certification recorded: <code>MarkInfo.Marked=true</code> and PDF/UA-1 declared."
     : "This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.";
+  renderAiAccessibilityReview();
   renderAccessibilityFieldList();
   renderAccessibilityOrderList();
   renderAccessibilityImages();
@@ -4620,6 +4630,11 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
     state.accessibility.headingReviewSavedSignature = "";
     state.accessibility.headingReviewDirty = true;
     state.accessibility.activeIssueId = "";
+    state.accessibility.aiReview = {
+      findings: [],
+      lastSignature: "",
+      running: false,
+    };
   }
   updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
 }
@@ -7078,7 +7093,22 @@ async function exportPdf() {
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
 
-    syncPdfState(outputBytes, filename);
+    const workshopOpen = !accessibilityModal.classList.contains("hidden");
+    syncPdfState(outputBytes, filename, undefined, {
+      preserveAccessibilityDrafts: workshopOpen,
+    });
+    if (workshopOpen) {
+      try {
+        await refreshPdfDocumentFromState();
+        await inspectAccessibilityData(true);
+        renderAccessibilityModal();
+      } catch (refreshError) {
+        console.warn(
+          "The exported PDF downloaded, but the workshop could not refresh it.",
+          refreshError,
+        );
+      }
+    }
     updateDocumentName();
     setDirty(false);
     showPdfWorkspace();
@@ -8430,6 +8460,7 @@ function draftTooltipsFromNearbyText(options) {
 
 function applyDeterministicFieldOrder(direction, options) {
   const settings = options || {};
+  state.accessibility.readingDirection = direction;
   const factor = direction === "rtl" ? -1 : 1;
   state.accessibility.fieldOrder = state.fields
     .slice()
@@ -8671,6 +8702,36 @@ closeAccessibilityBtn.addEventListener("click", closeAccessibilityWorkshop);
 a11yExportBtn.addEventListener("click", function () {
   updateAccessibilityMetadataFromInputs();
   void exportPdf();
+});
+a11yAiReviewBtn.addEventListener("click", async function () {
+  updateAccessibilityMetadataFromInputs();
+  try {
+    await runAiAccessibilityReview({ applyDrafts: false });
+    showSuccess(
+      "AI final check finished. Review each finding; this does not certify the PDF.",
+      7000,
+    );
+  } catch (error) {
+    showError(error.message || String(error));
+  }
+});
+a11yAiReviewApplyAllBtn.addEventListener("click", function () {
+  state.accessibility.aiReview.findings.forEach(applyAiAccessibilityFinding);
+  renderAiAccessibilityReview();
+});
+a11yAiReviewFindings.addEventListener("click", function (event) {
+  const button = event.target.closest("[data-ai-review-action]");
+  const card = event.target.closest("[data-ai-review-index]");
+  if (!button || !card) return;
+  const finding =
+    state.accessibility.aiReview.findings[Number(card.dataset.aiReviewIndex)];
+  if (!finding) return;
+  if (button.dataset.aiReviewAction === "apply") {
+    applyAiAccessibilityFinding(finding);
+  } else if (button.dataset.aiReviewAction === "dismiss") {
+    finding.status = "dismissed";
+  }
+  renderAiAccessibilityReview();
 });
 a11yEnableInput.addEventListener("change", function () {
   state.accessibility.enabled = !!a11yEnableInput.checked;
@@ -9189,6 +9250,293 @@ function accessibilityHeadingDecisionPayload() {
   );
 }
 
+function accessibilityAiReviewContext() {
+  const report = state.accessibility.report || {};
+  const textSample = state.pageTextBoxes
+    .slice(0, 8)
+    .flatMap(function (page) {
+      return (page || []).map(function (box) {
+        return String(box.text || "").trim();
+      });
+    })
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 16000);
+  return {
+    filename: state.fileName || "",
+    metadata: Object.assign({}, state.accessibility.metadata),
+    textSample: textSample,
+    fields: state.fields.slice(0, 500).map(function (field) {
+      return {
+        fieldId: field.id,
+        name: String(field.name || ""),
+        type: String(field.type || "text"),
+        page: Number(field.pageIndex || 0) + 1,
+        tooltip: String(field.tooltip || ""),
+        tooltipSource: String(field.tooltipSource || ""),
+        nearbyText: nearbyTextForField(field).slice(0, 5),
+      };
+    }),
+    headings: state.accessibility.headingCandidates.map(function (candidate) {
+      const decision = headingDecision(candidate);
+      return {
+        candidateId: String(candidate.candidateId || ""),
+        page: Number(candidate.pageIndex || 0) + 1,
+        text: String(candidate.text || ""),
+        heuristicTag: String(candidate.suggestedTag || "H2"),
+        status: decision.status,
+        tag: decision.tag,
+        source: String(decision.source || "heuristic"),
+      };
+    }),
+    images: state.accessibility.images.map(function (item) {
+      return {
+        assetId: String(item.assetId || ""),
+        page: Number(item.pageIndex || 0) + 1,
+        name: String(item.name || ""),
+        width: Number(item.width || 0),
+        height: Number(item.height || 0),
+        altText: String(item.altText || ""),
+      };
+    }),
+    readingDirection: state.accessibility.readingDirection || "ltr",
+    reportIssues: (Array.isArray(report.issues) ? report.issues : []).map(
+      function (issue) {
+        return {
+          id: String(issue.id || ""),
+          title: String(issue.title || ""),
+          status: String(issue.status || ""),
+          count: Number(issue.count || 0),
+        };
+      },
+    ),
+    structureSummary: {
+      tagTreePresent: !!(
+        state.accessibility.tagStructure &&
+        state.accessibility.tagStructure.present
+      ),
+      tables: (state.accessibility.structureEditor.tables || []).length,
+      figures: (state.accessibility.structureEditor.figures || []).length,
+      annotations: (state.accessibility.structureEditor.annotations || [])
+        .length,
+    },
+  };
+}
+
+function accessibilityAiReviewSignature() {
+  return JSON.stringify(accessibilityAiReviewContext());
+}
+
+function aiReviewChangeLabel(change) {
+  if (!change) return "Manual review required";
+  const labels = {
+    metadata: "Update metadata",
+    field_tooltip: "Update field label",
+    heading_decision: "Update heading decision",
+    image_alt_text: "Update image-alt draft",
+    reading_direction: "Update reading direction",
+  };
+  const value =
+    typeof change.value === "object"
+      ? JSON.stringify(change.value)
+      : String(change.value || "");
+  return (labels[change.kind] || "Proposed change") + ": " + value;
+}
+
+function renderAiAccessibilityReview() {
+  const review = state.accessibility.aiReview;
+  const findings = Array.isArray(review.findings) ? review.findings : [];
+  const pendingChanges = findings.filter(function (finding) {
+    return finding.status === "pending" && finding.change;
+  });
+  a11yAiReviewBtn.disabled = !state.auth.aiEnabled || review.running;
+  a11yAiReviewBtn.textContent = review.running
+    ? "AI check running…"
+    : "AI final check";
+  a11yAiReviewApplyAllBtn.classList.toggle("hidden", !pendingChanges.length);
+  const current =
+    !!review.lastSignature &&
+    review.lastSignature === accessibilityAiReviewSignature();
+  if (review.running) {
+    a11yAiReviewStatus.textContent =
+      "Reviewing the current accessibility draft…";
+  } else if (!review.lastSignature) {
+    a11yAiReviewStatus.textContent =
+      "No AI reasonableness check has been run for this draft.";
+  } else if (!current) {
+    a11yAiReviewStatus.textContent =
+      "The document changed after this review. Run the AI final check again before export.";
+  } else if (!findings.length) {
+    a11yAiReviewStatus.textContent =
+      "AI found no additional reasonableness concerns. This is not a conformance claim.";
+  } else {
+    a11yAiReviewStatus.textContent =
+      String(findings.length) +
+      " reasonableness finding" +
+      (findings.length === 1 ? "" : "s") +
+      ". Review each item before export.";
+  }
+  a11yAiReviewFindings.innerHTML = findings
+    .map(function (finding, index) {
+      const status = String(finding.status || "pending");
+      const resolved = status !== "pending";
+      const statusLabel =
+        status === "applied"
+          ? "Applied draft"
+          : status === "dismissed"
+            ? "Dismissed"
+            : finding.change
+              ? "Proposed change"
+              : "Manual review";
+      return (
+        '<article class="a11y-ai-review-finding border rounded p-2' +
+        (resolved ? " is-resolved" : "") +
+        '" data-ai-review-index="' +
+        String(index) +
+        '"><div class="d-flex flex-wrap gap-2 align-items-center mb-1"><span class="badge ' +
+        (finding.severity === "info" ? "text-bg-info" : "text-bg-warning") +
+        '">' +
+        escapeHtml(statusLabel) +
+        '</span><span class="small text-muted">' +
+        escapeHtml(String(finding.category || "general")) +
+        '</span></div><div class="fw-semibold small">' +
+        escapeHtml(String(finding.title || "AI review finding")) +
+        '</div><div class="small text-muted">' +
+        escapeHtml(String(finding.explanation || "")) +
+        '</div><div class="small mt-1">' +
+        escapeHtml(aiReviewChangeLabel(finding.change)) +
+        "</div>" +
+        (status === "pending"
+          ? '<div class="d-flex gap-2 mt-2">' +
+            (finding.change
+              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Apply draft</button>'
+              : "") +
+            '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="dismiss">Dismiss</button></div>'
+          : "") +
+        "</article>"
+      );
+    })
+    .join("");
+}
+
+function applyAiAccessibilityFinding(finding) {
+  const change = finding && finding.change;
+  if (!change || finding.status !== "pending") return false;
+  if (change.kind === "metadata") {
+    state.accessibility.metadata[change.target] = String(change.value || "");
+    a11yMetaLanguage.value = state.accessibility.metadata.language || "";
+    a11yMetaTitle.value = state.accessibility.metadata.title || "";
+    a11yMetaAuthor.value = state.accessibility.metadata.author || "";
+    a11yMetaSubject.value = state.accessibility.metadata.subject || "";
+    markAccessibilityDraft("metadata", "AI reasonableness proposal applied");
+  } else if (change.kind === "field_tooltip") {
+    const field = state.fields.find(function (item) {
+      return String(item.id || "") === String(change.target || "");
+    });
+    if (!field) return false;
+    field.tooltip = String(change.value || "");
+    field.tooltipSource = "ai";
+    markAccessibilityDraft("field_tooltips", "AI field-label proposal applied");
+    renderAccessibilityFieldList();
+  } else if (change.kind === "heading_decision") {
+    if (
+      state.accessibility.tagStructure &&
+      state.accessibility.tagStructure.present
+    )
+      return false;
+    setHeadingDecision(
+      String(change.target || ""),
+      {
+        status: String(change.value.status || "rejected"),
+        tag: String(change.value.tag || "H2"),
+        source: "ai-review",
+        reason: String(finding.explanation || ""),
+      },
+      true,
+    );
+    markAccessibilityDraft("draft_structure", "AI heading proposal applied");
+    refreshHeadingDecisionDisplay();
+  } else if (change.kind === "image_alt_text") {
+    const image = state.accessibility.images.find(function (item) {
+      return String(item.assetId || "") === String(change.target || "");
+    });
+    if (!image) return false;
+    image.altText = String(change.value || "");
+    markAccessibilityDraft("figures", "AI image-alt proposal applied");
+    renderAccessibilityImages();
+  } else if (change.kind === "reading_direction") {
+    applyDeterministicFieldOrder(String(change.value || "ltr"), {
+      quiet: true,
+    });
+  } else {
+    return false;
+  }
+  finding.status = "applied";
+  setDirty(true);
+  return true;
+}
+
+async function requestAiAccessibilityReview() {
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-ai-review"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        context: accessibilityAiReviewContext(),
+        model: state.model,
+      }),
+    },
+  );
+  const payload = await parseApiResponse(response);
+  if (!payload.success) {
+    throw new Error(
+      (payload.error && payload.error.message) ||
+        "AI accessibility review failed.",
+    );
+  }
+  return ((payload.data && payload.data.findings) || []).map(
+    function (finding) {
+      return Object.assign({}, finding, { status: "pending" });
+    },
+  );
+}
+
+async function runAiAccessibilityReview(options) {
+  if (!state.auth.aiEnabled) {
+    throw new Error("Log in before choosing the optional AI final check.");
+  }
+  const settings = options || {};
+  const applyDrafts = !!settings.applyDrafts;
+  const passes = applyDrafts ? 2 : 1;
+  const history = settings.preserveHistory
+    ? state.accessibility.aiReview.findings.slice()
+    : [];
+  state.accessibility.aiReview.running = true;
+  renderAiAccessibilityReview();
+  try {
+    for (let pass = 0; pass < passes; pass += 1) {
+      const findings = await requestAiAccessibilityReview();
+      let applied = 0;
+      findings.forEach(function (finding) {
+        if (applyDrafts && applyAiAccessibilityFinding(finding)) applied += 1;
+        history.push(finding);
+      });
+      if (!applyDrafts || !applied) break;
+    }
+    state.accessibility.aiReview.findings = history;
+    state.accessibility.aiReview.lastSignature =
+      accessibilityAiReviewSignature();
+    return history;
+  } finally {
+    state.accessibility.aiReview.running = false;
+    renderAiAccessibilityReview();
+  }
+}
+
 function showAccessibilityAutoFixStatus(message, isError) {
   if (!a11yAutoFixStatus) return;
   a11yAutoFixStatus.className =
@@ -9227,7 +9575,7 @@ async function runAccessibilityAutoFix() {
   }
 
   updateAccessibilityMetadataFromInputs();
-  const draftedLanguage = draftMissingDocumentLanguage();
+  const originalLanguage = state.accessibility.metadata.language;
   showLoading("Drafting accessibility fixes with AI…");
   const summary = {
     nearbyTooltips: draftTooltipsFromNearbyText({ quiet: true }),
@@ -9238,7 +9586,8 @@ async function runAccessibilityAutoFix() {
     unicodeMapsAdded: 0,
     fontsUnresolved: 0,
     unicodeMapsUnresolved: 0,
-    draftedLanguage: draftedLanguage,
+    draftedLanguage: "",
+    aiReviewFindings: 0,
   };
   applyDeterministicFieldOrder("ltr", { quiet: true });
   if (state.fields.length) {
@@ -9254,6 +9603,15 @@ async function runAccessibilityAutoFix() {
     updateHeadingReviewDirty();
     renderHeadingReviewStatus();
   }
+
+  const aiReviewFindings = await runAiAccessibilityReview({
+    applyDrafts: true,
+  });
+  summary.aiReviewFindings = aiReviewFindings.length;
+  summary.draftedLanguage =
+    state.accessibility.metadata.language !== originalLanguage
+      ? state.accessibility.metadata.language
+      : draftMissingDocumentLanguage();
 
   await runAccessibilityRemediation(
     "metadata",
@@ -9304,11 +9662,18 @@ async function runAccessibilityAutoFix() {
     summary.structureCreated = true;
   }
 
+  const finalAiFindings = await runAiAccessibilityReview({
+    applyDrafts: false,
+    preserveHistory: true,
+  });
+  summary.aiReviewFindings = finalAiFindings.length;
+
   setDirty(true);
   const details = [
     String(summary.nearbyTooltips) + " nearby-text field-label drafts",
     String(summary.aiTooltips) + " AI field-label drafts",
     String(summary.aiHeadings) + " AI heading decisions",
+    String(summary.aiReviewFindings) + " AI reasonableness findings reviewed",
     String(summary.fontsEmbedded) + " exact fonts embedded",
     String(summary.fontsUnresolved) + " fonts still need manual resolution",
     String(summary.unicodeMapsAdded) + " Unicode maps added",

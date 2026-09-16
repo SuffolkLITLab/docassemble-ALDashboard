@@ -387,6 +387,39 @@ def _structure_form_field_name(node: Any) -> str:
     return ""
 
 
+def _sync_structure_form_alt_text(root: Any) -> int:
+    """Copy each widget tooltip to its Form structure element."""
+    import pikepdf
+
+    struct_root = root.get("/StructTreeRoot") if root is not None else None
+    if struct_root is None:
+        return 0
+    updates = 0
+
+    def walk(node: Any) -> None:
+        nonlocal updates
+        if not hasattr(node, "get"):
+            return
+        if _safe_pdf_string(node.get("/S", "")) == "/Form":
+            kids = node.get("/K")
+            candidates = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
+            for kid in candidates:
+                if not hasattr(kid, "get") or kid.get("/Type") != "/OBJR":
+                    continue
+                annot = kid.get("/Obj")
+                parent = _named_parent(annot)
+                tooltip = _widget_tooltip(annot, parent)
+                if tooltip and _safe_pdf_string(node.get("/Alt", "")) != tooltip:
+                    node["/Alt"] = pikepdf.String(tooltip)
+                    updates += 1
+                break
+        for child in _structure_children(node):
+            walk(child)
+
+    walk(struct_root)
+    return updates
+
+
 def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
     """Sort sibling Form elements while preserving every non-Form position."""
     import pikepdf
@@ -2310,36 +2343,129 @@ def _extract_annotation_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[in
     return records, pages_without_tabs
 
 
-def _page_has_marked_content(page: Any) -> bool:
-    """Return whether a page or nested Form stream contains marked content."""
-    streams: List[Any] = []
-    contents = page.get("/Contents") if hasattr(page, "get") else None
-    if (
-        contents is not None
-        and not hasattr(contents, "read_bytes")
-        and hasattr(contents, "__iter__")
-    ):
-        streams.extend(contents)
-    elif contents is not None:
-        streams.append(contents)
-    resources = page.get("/Resources") if hasattr(page, "get") else None
-    streams.extend(
-        obj
-        for _path, obj in _walk_resource_xobjects(resources)
-        if _safe_pdf_string(obj.get("/Subtype", "")) == "/Form"
-    )
-    for stream in streams:
+_CONTENT_PAINT_OPERATORS = {
+    "Tj",
+    "TJ",
+    "'",
+    '"',
+    "S",
+    "s",
+    "f",
+    "F",
+    "f*",
+    "B",
+    "B*",
+    "b",
+    "b*",
+    "Do",
+    "sh",
+}
+_DRAFT_ARTIFACT_OPERATORS = _CONTENT_PAINT_OPERATORS - {"Do", "sh"}
+
+
+def _shown_instruction_text(instruction: Any) -> str:
+    import pikepdf
+
+    operator = str(instruction.operator)
+    operands = list(instruction.operands)
+    if operator in {"Tj", "'", '"'} and operands:
+        return _safe_pdf_string(operands[-1])
+    if operator == "TJ" and operands:
         try:
-            data = bytes(stream.read_bytes())
-            if re.search(
-                rb"(?:/Artifact\s+BMC|/\w+\s*<<[^>]*?/MCID\s+\d+[^>]*?>>\s*BDC)",
-                data,
-                re.DOTALL,
-            ):
-                return True
+            return "".join(
+                _safe_pdf_string(item)
+                for item in operands[0]
+                if isinstance(item, pikepdf.String)
+            )
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+
+def _untagged_content_count(page: Any) -> int:
+    """Count top-level text and painting operations outside marked content."""
+    import pikepdf
+
+    try:
+        instructions = pikepdf.parse_content_stream(page)
+    except Exception:
+        return 0
+    depth = 0
+    count = 0
+    for instruction in instructions:
+        operator = str(instruction.operator)
+        if operator in {"BMC", "BDC"}:
+            depth += 1
+        elif operator == "EMC":
+            depth = max(0, depth - 1)
+        elif depth == 0 and operator in _CONTENT_PAINT_OPERATORS:
+            count += 1
+    return count
+
+
+def _artifact_untagged_content(pdf: Any) -> int:
+    """Mark remaining top-level page-content runs as artifacts."""
+    import pikepdf
+
+    runs_wrapped = 0
+    for page in pdf.pages:
+        try:
+            instructions = list(pikepdf.parse_content_stream(page))
         except Exception:
             continue
-    return False
+        rewritten: List[Any] = []
+        pending: List[Any] = []
+        depth = 0
+        page_runs_wrapped = 0
+
+        def flush() -> None:
+            nonlocal page_runs_wrapped, runs_wrapped
+            if not pending:
+                return
+            has_draft_artifact = any(
+                str(instruction.operator) in _DRAFT_ARTIFACT_OPERATORS
+                for instruction in pending
+            )
+            has_meaningful_text = any(
+                _shown_instruction_text(instruction).strip()
+                for instruction in pending
+            )
+            if has_draft_artifact and not has_meaningful_text:
+                rewritten.append(
+                    pikepdf.ContentStreamInstruction(
+                        [pikepdf.Name("/Artifact")], pikepdf.Operator("BMC")
+                    )
+                )
+                rewritten.extend(pending)
+                rewritten.append(
+                    pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC"))
+                )
+                page_runs_wrapped += 1
+                runs_wrapped += 1
+            else:
+                rewritten.extend(pending)
+            pending.clear()
+
+        for instruction in instructions:
+            operator = str(instruction.operator)
+            if operator in {"BMC", "BDC"}:
+                if depth == 0:
+                    flush()
+                rewritten.append(instruction)
+                depth += 1
+            elif operator == "EMC" and depth:
+                rewritten.append(instruction)
+                depth -= 1
+            elif depth:
+                rewritten.append(instruction)
+            else:
+                pending.append(instruction)
+        flush()
+        if page_runs_wrapped:
+            page["/Contents"] = pdf.make_stream(
+                pikepdf.unparse_content_stream(rewritten)
+            )
+    return runs_wrapped
 
 
 def _viewer_pref_display_title(root: Any) -> bool:
@@ -2350,6 +2476,51 @@ def _viewer_pref_display_title(root: Any) -> bool:
 def _mark_info_marked(root: Any) -> bool:
     mark_info = root.get("/MarkInfo") if root is not None else None
     return bool(mark_info and mark_info.get("/Marked", False))
+
+
+def _pdfua_part(pdf: Any) -> str:
+    try:
+        with pdf.open_metadata() as metadata:
+            return _safe_pdf_string(
+                metadata.get("{http://www.aiim.org/pdfua/ns/id/}part", "")
+            ).strip()
+    except Exception:
+        return ""
+
+
+def _set_pdfua_identifier(pdf: Any, declared: bool) -> bool:
+    key = "{http://www.aiim.org/pdfua/ns/id/}part"
+    if not declared and pdf.Root.get("/Metadata") is None:
+        return False
+    with pdf.open_metadata(set_pikepdf_as_editor=False) as metadata:
+        if declared:
+            metadata[key] = "1"
+            return True
+        if key in metadata:
+            del metadata[key]
+    return False
+
+
+def _missing_structure_form_alt_count(root: Any) -> int:
+    struct_root = root.get("/StructTreeRoot") if root is not None else None
+    if struct_root is None:
+        return 0
+    missing = 0
+
+    def walk(node: Any) -> None:
+        nonlocal missing
+        if not hasattr(node, "get"):
+            return
+        if (
+            _safe_pdf_string(node.get("/S", "")) == "/Form"
+            and not _safe_pdf_string(node.get("/Alt", "")).strip()
+        ):
+            missing += 1
+        for child in _structure_children(node):
+            walk(child)
+
+    walk(struct_root)
+    return missing
 
 
 def _issue(
@@ -2408,18 +2579,15 @@ def build_accessibility_report(
         )
     }
     missing_tooltips = [field for field in fields if not field["has_custom_tooltip"]]
+    missing_form_alts = _missing_structure_form_alt_count(root)
     unembedded = [font for font in fonts if not font["embedded"]]
     no_unicode = [font for font in fonts if not font["hasToUnicode"]]
     undescribed_annots = [item for item in annotations if not item["hasDescription"]]
-    pages_without_marked_content = [
-        page_index
-        for page_index, page in enumerate(pdf.pages)
-        if not _page_has_marked_content(page)
-    ]
+    untagged_content_count = sum(_untagged_content_count(page) for page in pdf.pages)
     content_tag_issue_count = (
         len(pdf.pages)
         if not tag_summary["present"]
-        else len(pages_without_marked_content)
+        else untagged_content_count
     )
 
     figure_issue = _issue(
@@ -2537,18 +2705,19 @@ def build_accessibility_report(
         _issue(
             "mark-info",
             "6.2.1",
-            "Document is marked as tagged",
-            0 if _mark_info_marked(root) else 1,
+            "Document declares tagged PDF/UA-1",
+            0 if _mark_info_marked(root) and _pdfua_part(pdf) == "1" else 1,
             "catalog_flags",
+            description="Set the tagged flag and PDF/UA-1 XMP identifier only after review and external validation.",
         ),
         structure_tree_issue,
         _issue(
             "content-tags",
             "7.1.3",
-            "Page content has semantic tags or artifact markers",
+            "Visible page content has semantic tags or artifact markers",
             content_tag_issue_count,
             "draft_structure",
-            description="This quick check finds pages with no marked content. veraPDF is still needed to find individual untagged objects.",
+            description="Counts text-showing and painting operations outside marked content. Review artifact decisions and use veraPDF for full validation.",
         ),
         _issue(
             "field-names",
@@ -2556,6 +2725,14 @@ def build_accessibility_report(
             "Form fields have accessible names",
             len(missing_tooltips),
             "field_tooltips",
+        ),
+        _issue(
+            "form-structure-alt",
+            "7.18.1",
+            "Form tags have accessible descriptions",
+            missing_form_alts,
+            "field_tooltips",
+            description="The workshop copies each reviewed field tooltip to the matching Form structure element.",
         ),
         _issue(
             "tab-order",
@@ -2981,6 +3158,7 @@ def apply_pdf_accessibility_settings(
     set_display_doc_title: bool = True,
     set_structure_tab_order: bool = False,
     mark_as_tagged: Optional[bool] = None,
+    mark_untagged_as_artifacts: bool = False,
 ) -> Dict[str, Any]:
     """Apply basic PDF accessibility metadata in place.
 
@@ -3001,6 +3179,9 @@ def apply_pdf_accessibility_settings(
         metadata_updates = 0
         tab_order_updates = 0
         structure_order_updates = 0
+        form_alt_updates = 0
+        content_artifact_runs = 0
+        pdfua_declared = False
 
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
             if metadata:
@@ -3038,6 +3219,7 @@ def apply_pdf_accessibility_settings(
                     mark_info = pikepdf.Dictionary()
                     pdf.Root["/MarkInfo"] = mark_info
                 mark_info["/Marked"] = bool(mark_as_tagged)
+                pdfua_declared = _set_pdfua_identifier(pdf, bool(mark_as_tagged))
 
             # Update tooltips by walking widget annotations.
             for page in pdf.pages:
@@ -3065,6 +3247,10 @@ def apply_pdf_accessibility_settings(
                             tooltip_updates += 1
                     except Exception:
                         continue
+
+            form_alt_updates = _sync_structure_form_alt_text(pdf.Root)
+            if mark_untagged_as_artifacts and pdf.Root.get("/StructTreeRoot"):
+                content_artifact_runs = _artifact_untagged_content(pdf)
 
             # Reorder AcroForm fields to match caller-supplied order.
             if field_order:
@@ -3174,6 +3360,9 @@ def apply_pdf_accessibility_settings(
             "metadata_updates": metadata_updates,
             "tab_order_updates": tab_order_updates,
             "structure_order_updates": structure_order_updates,
+            "form_alt_updates": form_alt_updates,
+            "content_artifact_runs": content_artifact_runs,
+            "pdfua_declared": pdfua_declared,
         }
     except Exception as exc:
         raise PDFAccessibilityError(
@@ -3248,6 +3437,7 @@ def create_draft_structure_tree(
             widget_count = 0
             text_block_count = 0
             heading_count = 0
+            form_alt_count = 0
             for page_index, page in enumerate(pdf.pages):
                 page["/StructParents"] = page_index
                 page_part = pdf.make_indirect(
@@ -3298,22 +3488,6 @@ def create_draft_structure_tree(
                         and _safe_pdf_string(operands[0]).lstrip("/") == "Artifact"
                     )
 
-                def shown_text(instruction: Any) -> str:
-                    operator = str(instruction.operator)
-                    operands = list(instruction.operands)
-                    if operator in {"Tj", "'", '"'} and operands:
-                        return str(operands[-1])
-                    if operator == "TJ" and operands:
-                        try:
-                            return "".join(
-                                str(item)
-                                for item in operands[0]
-                                if isinstance(item, pikepdf.String)
-                            )
-                        except (TypeError, ValueError):
-                            return ""
-                    return ""
-
                 for instruction in instructions:
                     operator = str(instruction.operator)
                     if operator == "BT" and not inside_text:
@@ -3345,7 +3519,9 @@ def create_draft_structure_tree(
                                     raw_groups.append(current_group)
                                     current_group = []
                                 if block_operator in {"Tj", "TJ", "'", '"'}:
-                                    if shown_text(block_instruction).strip():
+                                    if _shown_instruction_text(
+                                        block_instruction
+                                    ).strip():
                                         current_group.append(block_index)
                             if current_group:
                                 raw_groups.append(current_group)
@@ -3362,14 +3538,14 @@ def create_draft_structure_tree(
                                     ]
                                     spaced_text = " ".join(
                                         " ".join(
-                                            shown_text(text_block[index])
+                                            _shown_instruction_text(text_block[index])
                                             for index in group
                                         )
                                         for group in selected
                                     )
                                     compact_text = " ".join(
                                         "".join(
-                                            shown_text(text_block[index])
+                                            _shown_instruction_text(text_block[index])
                                             for index in group
                                         )
                                         for group in selected
@@ -3489,6 +3665,11 @@ def create_draft_structure_tree(
                             }
                         )
                     )
+                    parent = _named_parent(annot)
+                    tooltip = _widget_tooltip(annot, parent)
+                    if tooltip:
+                        form_element["/Alt"] = pikepdf.String(tooltip)
+                        form_alt_count += 1
                     page_children.append(form_element)
                     parent_tree_entries[next_struct_parent] = form_element
                     next_struct_parent += 1
@@ -3512,6 +3693,8 @@ def create_draft_structure_tree(
                 mark_info = pikepdf.Dictionary()
                 pdf.Root["/MarkInfo"] = mark_info
             mark_info["/Marked"] = bool(mark_as_tagged)
+            _set_pdfua_identifier(pdf, bool(mark_as_tagged))
+            content_artifact_runs = _artifact_untagged_content(pdf)
             pdf.save(output_pdf_path)
         return {
             "action": "draft_structure",
@@ -3519,6 +3702,8 @@ def create_draft_structure_tree(
             "text_blocks_tagged": text_block_count,
             "headings_drafted": heading_count,
             "widgets_tagged": widget_count,
+            "form_alts_added": form_alt_count,
+            "content_artifact_runs": content_artifact_runs,
             "marked_as_tagged": bool(mark_as_tagged),
             "review_required": True,
             "warning": "Content-block tags are a draft. Review reading order, heading levels, paragraph grouping, field placement, lists, tables, figures, links, and artifacts manually.",

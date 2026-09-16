@@ -2851,8 +2851,8 @@ function renderAccessibilityModal() {
   }
   if (a11yToggleMarkedBtn) {
     a11yToggleMarkedBtn.textContent = state.accessibility.marked
-      ? "Remove tagged declaration"
-      : "Set MarkInfo.Marked to true (after review)";
+      ? "Remove PDF/UA declaration"
+      : "Declare tagged PDF/UA-1 (after review)";
   }
   renderAccessibilityFieldList();
   renderAccessibilityOrderList();
@@ -3034,6 +3034,7 @@ function buildAccessibilityPayload(exportNameMap) {
     field_order: orderedNames,
     image_alt_text: imageAltText,
     metadata: Object.assign({}, state.accessibility.metadata),
+    marked: !!state.accessibility.marked,
   };
 }
 
@@ -8395,8 +8396,8 @@ function accessibilityRemediationFeedback(action, result, options) {
   }
   if (action === "catalog_flags") {
     return options.marked
-      ? "Set MarkInfo.Marked=true. This is a declaration only; review the tag tree before treating it as valid."
-      : "Set MarkInfo.Marked=false. The PDF no longer declares itself tagged.";
+      ? "Set MarkInfo.Marked=true and the PDF/UA-1 XMP identifier. This declaration is not proof of conformance."
+      : "Removed the tagged and PDF/UA-1 declarations.";
   }
   if (action === "draft_structure") {
     return (
@@ -8404,9 +8405,11 @@ function accessibilityRemediationFeedback(action, result, options) {
       String(result.text_blocks_tagged || 0) +
       " text blocks, " +
       String(result.headings_drafted || 0) +
-      " headings, and " +
+      " headings, " +
       String(result.widgets_tagged || 0) +
-      " form controls across " +
+      " form controls, and " +
+      String(result.content_artifact_runs || 0) +
+      " unclassified layout runs marked as artifacts across " +
       String(result.pages_tagged || 0) +
       " pages. Human review is required."
     );
@@ -8867,7 +8870,7 @@ a11yToggleMarkedBtn.addEventListener("click", function () {
   if (
     nextMarked &&
     !window.confirm(
-      "Only declare MarkInfo.Marked=true after reviewing every draft change and completing external validation. This flag is not a conformance guarantee. Set it now?",
+      "Only declare PDF/UA-1 after reviewing every draft change and completing external validation. This sets MarkInfo.Marked and the PDF/UA-1 XMP identifier, but does not prove conformance. Set it now?",
     )
   )
     return;
@@ -9147,6 +9150,7 @@ async function runAccessibilityAutoFix() {
       field_order: accessibilityFieldOrderPayload(),
       display_doc_title: true,
       set_structure_tab_order: false,
+      mark_untagged_as_artifacts: true,
     },
     { quiet: true },
   );

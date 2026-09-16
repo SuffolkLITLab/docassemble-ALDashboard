@@ -3540,6 +3540,9 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 set_structure_tab_order=parse_bool(
                     post_data.get("set_structure_tab_order"), default=False
                 ),
+                mark_untagged_as_artifacts=parse_bool(
+                    post_data.get("mark_untagged_as_artifacts"), default=False
+                ),
             )
         elif action == "draft_structure":
             heading_decisions_raw = post_data.get("heading_decisions")
@@ -4108,6 +4111,12 @@ def pdf_labeler_apply_fields() -> Response:
                         default=True,
                     ),
                     set_structure_tab_order=True,
+                    mark_as_tagged=(
+                        parse_bool(accessibility_payload.get("marked"), default=False)
+                        if "marked" in accessibility_payload
+                        else None
+                    ),
+                    mark_untagged_as_artifacts=True,
                 )
 
             # Read the output file

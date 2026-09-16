@@ -1093,14 +1093,16 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             pdf.Root["/AcroForm"] = Dictionary({"/Fields": Array([field])})
             pdf.save(pdf_path)
             pdf.close()
+            create_draft_structure_tree(pdf_path, pdf_path)
 
-            apply_pdf_accessibility_settings(
+            result = apply_pdf_accessibility_settings(
                 input_pdf_path=pdf_path,
                 output_pdf_path=pdf_path,
                 field_tooltips={"copied_field": "Copied source tooltip"},
                 auto_fill_missing_tooltips=False,
             )
 
+            self.assertEqual(result["form_alt_updates"], 1)
             with pikepdf.open(pdf_path) as pdf:
                 widget = pdf.pages[0]["/Annots"][0]
                 self.assertEqual(str(widget["/TU"]), "Copied source tooltip")
@@ -1108,6 +1110,8 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     str(pdf.Root["/AcroForm"]["/Fields"][0]["/TU"]),
                     "Copied source tooltip",
                 )
+                form = pdf.Root.StructTreeRoot.K.K[0].K[0]
+                self.assertEqual(str(form["/Alt"]), "Copied source tooltip")
         finally:
             os.remove(pdf_path)
 
@@ -1186,6 +1190,76 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         finally:
             os.remove(pdf_path)
 
+    def test_tagged_declaration_sets_and_removes_pdfua_identifier(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+        try:
+            pdf = pikepdf.new()
+            pdf.add_blank_page(page_size=(612, 792))
+            pdf.save(pdf_path)
+            pdf.close()
+
+            result = apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                auto_fill_missing_tooltips=False,
+                mark_as_tagged=True,
+            )
+            self.assertTrue(result["pdfua_declared"])
+            with pikepdf.open(pdf_path) as repaired:
+                self.assertTrue(bool(repaired.Root.MarkInfo.Marked))
+                with repaired.open_metadata() as metadata:
+                    self.assertEqual(
+                        metadata["{http://www.aiim.org/pdfua/ns/id/}part"], "1"
+                    )
+
+            apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                auto_fill_missing_tooltips=False,
+                mark_as_tagged=False,
+            )
+            with pikepdf.open(pdf_path) as repaired:
+                self.assertFalse(bool(repaired.Root.MarkInfo.Marked))
+                with repaired.open_metadata() as metadata:
+                    self.assertNotIn(
+                        "{http://www.aiim.org/pdfua/ns/id/}part", metadata
+                    )
+        finally:
+            os.remove(pdf_path)
+
+    def test_artifact_draft_does_not_hide_untagged_meaningful_text(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT (Meaningful untagged text) Tj ET"
+            )
+            pdf.Root["/StructTreeRoot"] = pikepdf.Dictionary(
+                {"/Type": pikepdf.Name("/StructTreeRoot")}
+            )
+            pdf.save(pdf_path)
+            pdf.close()
+
+            result = apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                auto_fill_missing_tooltips=False,
+                mark_untagged_as_artifacts=True,
+            )
+
+            self.assertEqual(result["content_artifact_runs"], 0)
+            with pikepdf.open(pdf_path) as repaired:
+                self.assertNotIn(b"/Artifact", repaired.pages[0].Contents.read_bytes())
+        finally:
+            os.remove(pdf_path)
+
     def test_draft_structure_tags_each_page_without_declaring_pdf_tagged(self):
         import pikepdf
 
@@ -1214,13 +1288,15 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             )
             first_page.obj["/Contents"] = pdf.make_stream(
                 b"BT /F1 12 Tf 72 700 Td (First block) Tj ET "
-                b"BT /F1 12 Tf 72 680 Td (Second block) Tj ET"
+                b"BT /F1 12 Tf 72 680 Td (Second block) Tj ET "
+                b"0 0 m 20 20 l S"
             )
             widget = pdf.make_indirect(
                 pikepdf.Dictionary(
                     {
                         "/FT": pikepdf.Name("/Tx"),
                         "/T": pikepdf.String("field_one"),
+                        "/TU": pikepdf.String("Field one"),
                         "/Type": pikepdf.Name("/Annot"),
                         "/Subtype": pikepdf.Name("/Widget"),
                         "/Rect": pikepdf.Array([0, 0, 100, 20]),
@@ -1236,7 +1312,16 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             result = create_draft_structure_tree(source_path, output_path)
             self.assertEqual(result["pages_tagged"], 2)
             self.assertEqual(result["text_blocks_tagged"], 2)
+            self.assertEqual(result["form_alts_added"], 1)
+            self.assertGreater(result["content_artifact_runs"], 0)
             self.assertTrue(result["review_required"])
+            second_pass = apply_pdf_accessibility_settings(
+                input_pdf_path=output_path,
+                output_pdf_path=output_path,
+                auto_fill_missing_tooltips=False,
+                mark_untagged_as_artifacts=True,
+            )
+            self.assertEqual(second_pass["content_artifact_runs"], 0)
             with pikepdf.open(output_path) as tagged:
                 self.assertIn("/StructTreeRoot", tagged.Root)
                 self.assertFalse(bool(tagged.Root["/MarkInfo"]["/Marked"]))
@@ -1250,6 +1335,10 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 self.assertEqual(
                     [str(child["/S"]) for child in first_page_part["/K"]],
                     ["/P", "/P", "/Form"],
+                )
+                self.assertEqual(str(first_page_part["/K"][2]["/Alt"]), "Field one")
+                self.assertIn(
+                    b"/Artifact BMC", tagged.pages[0].Contents.read_bytes()
                 )
             issue_ids = {
                 issue["id"]

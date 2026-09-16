@@ -467,6 +467,7 @@
 .a11y-issue[data-status="fail"] { border-left-color: #b42318; }
 .a11y-issue[data-status="draft"] { border-left-color: #087990; background: #f0fbfd; }
 .a11y-issue[data-status="pass"] { border-left-color: #17823b; }
+.a11y-issue[data-status="blocked"] { border-left-color: #6c757d; background: #f8f9fa; }
 .a11y-issue:hover, .a11y-issue:focus-visible { background: #eef5ff; }
 .a11y-issue-rule { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
 .a11y-disclaimer { padding: 0.65rem; border-radius: 0.5rem; background: #fff4ce; font-size: 0.78rem; }
@@ -478,6 +479,7 @@
 .a11y-structure-box.is-heading { border: 2px solid #b26a00; background: rgba(255,193,7,.16); pointer-events: auto; cursor: pointer; }
 .a11y-structure-box.is-approved { border-color: #17823b; background: rgba(25,135,84,.18); }
 .a11y-structure-box.is-rejected { border-color: #6c757d; background: rgba(108,117,125,.08); text-decoration: line-through; opacity: .55; }
+.a11y-structure-target.is-focused { border-color: var(--bs-primary) !important; box-shadow: 0 0 0 .2rem rgba(13,110,253,.18); }
 .a11y-heading-candidate[data-decision="approved"] { border-left: .3rem solid #17823b !important; }
 .a11y-heading-candidate[data-decision="rejected"] { opacity: .65; text-decoration: line-through; }
 @media (max-width: 800px) {

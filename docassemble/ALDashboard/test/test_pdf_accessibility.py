@@ -251,7 +251,33 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
 
             before = inspect_pdf_accessibility(source_path)["structure_editor"]
             self.assertEqual(before["tables"][0]["targetColumns"], 2)
+            self.assertEqual(
+                set(before["tables"][0]["issueIds"]),
+                {
+                    "table-row-children",
+                    "table-columns",
+                    "table-header-scope",
+                },
+            )
+            self.assertEqual(
+                before["figures"][0]["issueIds"], ["figure-structure-alt"]
+            )
             self.assertFalse(before["annotations"][0]["tagged"])
+            before_report = {
+                issue["id"]: issue
+                for issue in inspect_pdf_accessibility(source_path)["report"]["issues"]
+            }
+            for issue_id in (
+                "table-row-children",
+                "table-columns",
+                "table-header-scope",
+                "figure-structure-alt",
+                "link-tags",
+                "annotation-tags",
+            ):
+                self.assertGreater(
+                    before_report[issue_id]["editorTargetCount"], 0, issue_id
+                )
 
             result = apply_manual_structure_repairs(
                 source_path,
@@ -317,6 +343,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 "annotation-tags",
             ):
                 self.assertEqual(issues[issue_id]["status"], "pass", issue_id)
+                self.assertEqual(issues[issue_id]["editorTargetCount"], 0, issue_id)
         finally:
             os.remove(source_path)
             os.remove(output_path)
@@ -589,6 +616,20 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertEqual(by_id["mark-info"]["status"], "fail")
         self.assertEqual(by_id["structure-tree"]["status"], "fail")
         self.assertEqual(by_id["document-language"]["status"], "fail")
+        for issue_id in (
+            "table-row-children",
+            "table-columns",
+            "table-header-scope",
+            "figure-structure-alt",
+            "link-tags",
+            "annotation-tags",
+        ):
+            self.assertEqual(by_id[issue_id]["status"], "blocked", issue_id)
+            self.assertEqual(by_id[issue_id]["count"], 0, issue_id)
+            self.assertEqual(by_id[issue_id]["editorTargetCount"], 0, issue_id)
+            self.assertEqual(
+                by_id[issue_id]["remediation"], "draft_structure", issue_id
+            )
         self.assertIn("disclaimer", report["summary"])
         pdf.close()
 

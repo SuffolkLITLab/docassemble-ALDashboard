@@ -488,7 +488,7 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
     }
     tables: List[Dict[str, Any]] = []
     figures: List[Dict[str, Any]] = []
-    tagged_annotation_objects: set[str] = set()
+    tagged_annotation_roles: Dict[str, set[str]] = {}
 
     def page_index_for(node: Any) -> Optional[int]:
         page = node.get("/Pg") if hasattr(node, "get") else None
@@ -497,13 +497,13 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
     def collect_objr(node: Any) -> None:
         import pikepdf
 
+        parent_role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
         kids = node.get("/K") if hasattr(node, "get") else None
         candidates = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
         for kid in candidates:
             if hasattr(kid, "get") and kid.get("/Type") == "/OBJR":
-                tagged_annotation_objects.add(
-                    str(getattr(kid.get("/Obj"), "objgen", ""))
-                )
+                object_id = str(getattr(kid.get("/Obj"), "objgen", ""))
+                tagged_annotation_roles.setdefault(object_id, set()).add(parent_role)
 
     def walk(node: Any, path: List[int]) -> None:
         role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
@@ -511,12 +511,14 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
         collect_objr(node)
         path_text = "/".join(str(index) for index in path)
         if role == "Figure":
+            alt_text = _safe_pdf_string(node.get("/Alt", ""))
             figures.append(
                 {
                     "path": path_text,
                     "pageIndex": page_index_for(node),
-                    "altText": _safe_pdf_string(node.get("/Alt", "")),
+                    "altText": alt_text,
                     "actualText": _safe_pdf_string(node.get("/ActualText", "")),
+                    "issueIds": [] if alt_text.strip() else ["figure-structure-alt"],
                 }
             )
         if role == "Table":
@@ -553,6 +555,32 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                     "targetColumns": max(
                         (row["validCellCount"] for row in rows), default=0
                     ),
+                    "issueIds": [
+                        issue_id
+                        for issue_id, applies in (
+                            (
+                                "table-row-children",
+                                any(
+                                    cell["role"] not in {"TH", "TD"}
+                                    for row in rows
+                                    for cell in row["cells"]
+                                ),
+                            ),
+                            (
+                                "table-columns",
+                                len({row["validCellCount"] for row in rows}) > 1,
+                            ),
+                            (
+                                "table-header-scope",
+                                any(
+                                    cell["role"] == "TH" and not cell["scope"]
+                                    for row in rows
+                                    for cell in row["cells"]
+                                ),
+                            ),
+                        )
+                        if applies
+                    ],
                 }
             )
         for index, child in enumerate(children):
@@ -567,15 +595,26 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
             subtype = _safe_pdf_string(annot.get("/Subtype", "")).lstrip("/")
             if subtype == "Widget":
                 continue
+            object_id = str(getattr(annot, "objgen", ""))
+            expected_role = "Link" if subtype == "Link" else "Annot"
+            actual_roles = sorted(tagged_annotation_roles.get(object_id, set()))
+            correctly_tagged = expected_role in actual_roles
             annotations.append(
                 {
                     "pageIndex": page_index,
                     "index": index,
                     "subtype": subtype or "Annotation",
                     "contents": _safe_pdf_string(annot.get("/Contents", "")),
-                    "tagged": str(getattr(annot, "objgen", ""))
-                    in tagged_annotation_objects,
-                    "suggestedRole": "Link" if subtype == "Link" else "Annot",
+                    "tagged": correctly_tagged,
+                    "existingRoles": actual_roles,
+                    "suggestedRole": expected_role,
+                    "issueIds": (
+                        []
+                        if correctly_tagged
+                        else [
+                            "link-tags" if subtype == "Link" else "annotation-tags"
+                        ]
+                    ),
                 }
             )
     return {"tables": tables, "figures": figures, "annotations": annotations}
@@ -1053,7 +1092,9 @@ def _issue(
     }
 
 
-def build_accessibility_report(pdf: Any) -> Dict[str, Any]:
+def build_accessibility_report(
+    pdf: Any, structure_editor: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
     """Build a fast, explainable preflight report without claiming conformance.
 
     This intentionally checks document structures directly.  It is a workshop
@@ -1066,7 +1107,22 @@ def build_accessibility_report(pdf: Any) -> Dict[str, Any]:
     fonts = _extract_font_records(pdf)
     annotations, pages_without_tabs = _extract_annotation_records(pdf)
     tag_summary = _extract_struct_tree_summary(root)
-    structure_counts = _analyze_structure(root)
+    editor = dict(structure_editor or _structure_editor_data(pdf))
+    editor_tables = list(editor.get("tables") or [])
+    editor_figures = list(editor.get("figures") or [])
+    editor_annotations = list(editor.get("annotations") or [])
+
+    def editor_issue_count(issue_id: str, records: Iterable[Mapping[str, Any]]) -> int:
+        return sum(1 for record in records if issue_id in (record.get("issueIds") or []))
+
+    table_target_counts = {
+        issue_id: editor_issue_count(issue_id, editor_tables)
+        for issue_id in (
+            "table-row-children",
+            "table-columns",
+            "table-header-scope",
+        )
+    }
     missing_tooltips = [field for field in fields if not field["has_custom_tooltip"]]
     unembedded = [font for font in fonts if not font["embedded"]]
     no_unicode = [font for font in fonts if not font["hasToUnicode"]]
@@ -1092,61 +1148,78 @@ def build_accessibility_report(pdf: Any) -> Dict[str, Any]:
         description="Image-object /Alt values are drafts; PDF/UA requires alternative text on linked Figure structure elements.",
     )
     figure_issue["status"] = "review" if images else "pass"
-    link_annotations = sum(1 for item in annotations if item["subtype"] == "Link")
     semantic_issues = [
         _issue(
             "table-row-children",
             "7.2.10",
             "Table rows contain only header or data cells",
-            structure_counts["invalid_tr_children"],
+            sum(
+                1
+                for table in editor_tables
+                for row in table.get("rows", [])
+                for cell in row.get("cells", [])
+                if cell.get("role") not in {"TH", "TD"}
+            ),
             "structure",
         ),
         _issue(
             "table-columns",
             "7.2.42/7.2.43",
             "Table rows have consistent column counts",
-            structure_counts["inconsistent_table_rows"],
+            table_target_counts["table-columns"],
             "structure",
         ),
         _issue(
             "table-header-scope",
             "7.5.1",
             "Table headers declare row or column scope",
-            structure_counts["th_missing_scope"],
+            sum(
+                1
+                for table in editor_tables
+                for row in table.get("rows", [])
+                for cell in row.get("cells", [])
+                if cell.get("role") == "TH" and not cell.get("scope")
+            ),
             "structure",
         ),
         _issue(
             "figure-structure-alt",
             "7.3.1",
             "Figure tags contain alternative text",
-            structure_counts["figures_missing_alt"],
+            editor_issue_count("figure-structure-alt", editor_figures),
             "figures",
         ),
         _issue(
             "link-tags",
             "7.18.5.1",
             "Link annotations are represented by Link tags",
-            max(0, link_annotations - structure_counts["link_elements"]),
+            editor_issue_count("link-tags", editor_annotations),
             "structure",
         ),
         _issue(
             "annotation-tags",
             "7.18.1.1",
             "Non-link annotations are represented by Annot tags",
-            max(
-                0,
-                len(annotations)
-                - link_annotations
-                - structure_counts["annot_elements"],
-            ),
+            editor_issue_count("annotation-tags", editor_annotations),
             "structure",
         ),
     ]
     if not tag_summary["present"]:
         for item in semantic_issues:
             item["status"] = "blocked"
+            item["remediation"] = "draft_structure"
             item["description"] = (
                 "Create or repair the tag tree before this semantic check can run."
+            )
+    for item in semantic_issues:
+        issue_id = str(item["id"])
+        if issue_id.startswith("table-"):
+            item["editorTargetCount"] = table_target_counts.get(issue_id, 0)
+        elif issue_id == "figure-structure-alt":
+            item["editorTargetCount"] = editor_issue_count(issue_id, editor_figures)
+        else:
+            item["editorTargetCount"] = editor_issue_count(
+                issue_id, editor_annotations
             )
     issues = [
         _issue(
@@ -1540,14 +1613,15 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
 
         with pikepdf.open(pdf_path) as pdf:
             fields, field_order = _extract_field_records(pdf)
+            structure_editor = _structure_editor_data(pdf)
             return {
                 "metadata": _extract_pdf_metadata(pdf),
                 "fields": fields,
                 "field_order": field_order,
                 "images": _extract_image_assets(pdf),
                 "tag_structure": _extract_struct_tree_summary(pdf.Root),
-                "structure_editor": _structure_editor_data(pdf),
-                "report": build_accessibility_report(pdf),
+                "structure_editor": structure_editor,
+                "report": build_accessibility_report(pdf, structure_editor),
                 "heading_candidates": suggest_heading_candidates(pdf_path),
             }
     except Exception as exc:

@@ -213,6 +213,9 @@ const state = {
     report: null,
     headingCandidates: [],
     headingDecisions: {},
+    headingReviewSavedSignature: "",
+    headingReviewDirty: true,
+    activeIssueId: "",
     fontRemediation: null,
     draftRemediations: {},
     marked: false,
@@ -362,6 +365,7 @@ const a11yMetaSubject = document.getElementById("a11y-meta-subject");
 const a11yImageModeInput = document.getElementById("a11y-image-mode");
 const a11yImageList = document.getElementById("a11y-image-list");
 const a11yFigureTagList = optionalWorkshopElement("a11y-figure-tag-list");
+const a11yFigureFocus = optionalWorkshopElement("a11y-figure-focus");
 const a11yTagStructure = document.getElementById("a11y-tag-structure");
 const a11ySummary = optionalWorkshopElement("a11y-summary", "span");
 const a11yIssueList = optionalWorkshopElement("a11y-issue-list");
@@ -407,10 +411,19 @@ const a11yHeadingsRejectAllBtn = optionalWorkshopElement(
   "a11y-headings-reject-all",
   "button",
 );
+const a11ySaveHeadingReviewBtn = optionalWorkshopElement(
+  "a11y-save-heading-review",
+  "button",
+);
+const a11yHeadingReviewStatus = optionalWorkshopElement(
+  "a11y-heading-review-status",
+  "span",
+);
 const a11yHeadingList = optionalWorkshopElement("a11y-heading-list");
 const a11yStructurePreview = optionalWorkshopElement("a11y-structure-preview");
 const a11yAnnotationList = optionalWorkshopElement("a11y-annotation-list");
 const a11yTableList = optionalWorkshopElement("a11y-table-list");
+const a11yStructureFocus = optionalWorkshopElement("a11y-structure-focus");
 const utilitiesModal = document.getElementById("utilities-modal");
 const utilitiesCloseBtn = document.getElementById("utilities-close");
 const fieldRenameSummaryModal = document.getElementById(
@@ -1482,6 +1495,42 @@ function renderAccessibilityImages() {
   a11yImageList.appendChild(fragment);
 }
 
+function structureIssueIds(record) {
+  return Array.isArray(record && record.issueIds)
+    ? record.issueIds.map(String)
+    : [];
+}
+
+function structureTargetAttributes(record) {
+  const issueIds = structureIssueIds(record);
+  const active = String(state.accessibility.activeIssueId || "");
+  return (
+    ' data-issue-ids="' +
+    escapeHtml(issueIds.join(" ")) +
+    '" class="border rounded p-2 a11y-structure-target' +
+    (active && issueIds.includes(active) ? " is-focused" : "") +
+    '"'
+  );
+}
+
+function renderStructureFocus(container, issueId, targetCount) {
+  if (!container) return;
+  if (!issueId) {
+    container.className = "hidden alert alert-info small py-2";
+    container.textContent = "";
+    return;
+  }
+  container.className =
+    "alert " + (targetCount ? "alert-info" : "alert-warning") + " small py-2";
+  container.textContent = targetCount
+    ? "Showing " +
+      String(targetCount) +
+      " editable target" +
+      (targetCount === 1 ? "" : "s") +
+      " for the selected finding. Highlighted cards contain the relevant controls."
+    : "The report did not return an editable target for this finding. Re-run the report; if it remains unresolved, this PDF needs manual structure-tree repair outside this draft editor.";
+}
+
 function renderStructureEditor() {
   const editor = /** @type {any} */ (state.accessibility.structureEditor || {});
   const figures = Array.isArray(editor.figures) ? editor.figures : [];
@@ -1493,7 +1542,9 @@ function renderStructureEditor() {
               ? " · Page " + String(figure.pageIndex + 1)
               : "";
             return (
-              '<div class="border rounded p-2"><label class="form-label small fw-semibold" for="a11y-figure-alt-' +
+              "<div" +
+              structureTargetAttributes(figure) +
+              '><label class="form-label small fw-semibold" for="a11y-figure-alt-' +
               index +
               '">Figure ' +
               (index + 1) +
@@ -1572,7 +1623,9 @@ function renderStructureEditor() {
               .join("");
             const inconsistent = new Set(counts).size > 1;
             return (
-              '<div class="border rounded p-2"><div class="small fw-semibold">Table ' +
+              "<div" +
+              structureTargetAttributes(table) +
+              '><div class="small fw-semibold">Table ' +
               (tableIndex + 1) +
               "</div>" +
               (inconsistent
@@ -1602,7 +1655,9 @@ function renderStructureEditor() {
             const annotationIndex = Number(annotation.index || 0);
             const key = pageIndex + "-" + annotationIndex;
             return (
-              '<div class="border rounded p-2 small"><div class="fw-semibold">Page ' +
+              "<div" +
+              structureTargetAttributes(annotation) +
+              '><div class="fw-semibold">Page ' +
               (pageIndex + 1) +
               " · " +
               escapeHtml(annotation.subtype || "Annotation") +
@@ -1642,6 +1697,28 @@ function renderStructureEditor() {
           .join("")
       : '<div class="small text-muted">No non-widget annotations were found.</div>';
   }
+
+  const activeIssueId = String(state.accessibility.activeIssueId || "");
+  const figureTargetCount = figures.filter(function (record) {
+    return structureIssueIds(record).includes(activeIssueId);
+  }).length;
+  const structureTargetCount = tables
+    .concat(annotations)
+    .filter(function (record) {
+      return structureIssueIds(record).includes(activeIssueId);
+    }).length;
+  renderStructureFocus(
+    a11yFigureFocus,
+    activeIssueId === "figure-structure-alt" ? activeIssueId : "",
+    figureTargetCount,
+  );
+  renderStructureFocus(
+    a11yStructureFocus,
+    activeIssueId && activeIssueId !== "figure-structure-alt"
+      ? activeIssueId
+      : "",
+    structureTargetCount,
+  );
 }
 
 function renderAccessibilityTagStructure() {
@@ -1709,20 +1786,33 @@ function renderAccessibilityReport() {
       const draft =
         state.accessibility.draftRemediations[issue.id || ""] ||
         state.accessibility.draftRemediations[issue.remediation || ""];
-      button.dataset.status = draft ? "draft" : issue.status || "fail";
+      const blocked = issue.status === "blocked";
+      button.dataset.status = blocked
+        ? "blocked"
+        : draft
+          ? "draft"
+          : issue.status || "fail";
       button.dataset.panel = issue.remediation || "structure";
-      const badge = draft
-        ? issue.status === "pass"
-          ? "Draft · preflight pass"
-          : "Draft · " + String(issue.count || 1) + " remain"
-        : issue.status === "pass"
-          ? "Preflight pass"
-          : String(issue.count || 1) + " to review";
+      button.dataset.issueId = String(issue.id || "");
+      const hasEditorTargets = Number.isInteger(issue.editorTargetCount);
+      const editorTargetCount = hasEditorTargets
+        ? Number(issue.editorTargetCount)
+        : 0;
+      button.dataset.hasEditorTargets = String(hasEditorTargets);
+      const badge = blocked
+        ? "Blocked"
+        : draft
+          ? issue.status === "pass"
+            ? "Draft · preflight pass"
+            : "Draft · " + String(issue.count || 1) + " remain"
+          : issue.status === "pass"
+            ? "Preflight pass"
+            : String(issue.count || 1) + " to review";
       button.innerHTML =
         '<div class="d-flex justify-content-between gap-2"><span class="small fw-semibold">' +
         escapeHtml(String(issue.title || issue.id || "Finding")) +
         '</span><span class="badge ' +
-        (draft
+        (draft && !blocked
           ? "text-bg-info"
           : issue.status === "pass"
             ? "text-bg-success"
@@ -1737,6 +1827,25 @@ function renderAccessibilityReport() {
         " · " +
         escapeHtml(String(issue.remediation || "manual")) +
         "</div>" +
+        (issue.description
+          ? '<div class="small text-muted mt-1">' +
+            escapeHtml(String(issue.description)) +
+            "</div>"
+          : "") +
+        (hasEditorTargets &&
+        issue.status !== "pass" &&
+        issue.status !== "blocked"
+          ? '<div class="small mt-1 ' +
+            (editorTargetCount ? "text-primary" : "text-danger") +
+            '">' +
+            (editorTargetCount
+              ? "Open " +
+                String(editorTargetCount) +
+                " editable target" +
+                (editorTargetCount === 1 ? "" : "s")
+              : "No editable target was returned") +
+            "</div>"
+          : "") +
         (draft
           ? '<div class="small mt-1">Provisional: ' +
             escapeHtml(draft.detail) +
@@ -1963,6 +2072,38 @@ function headingDecision(candidate) {
   return state.accessibility.headingDecisions[candidateId];
 }
 
+function headingReviewSignature() {
+  return JSON.stringify(
+    Object.keys(state.accessibility.headingDecisions)
+      .sort()
+      .map(function (candidateId) {
+        const decision = state.accessibility.headingDecisions[candidateId];
+        return [candidateId, decision.status, decision.tag];
+      }),
+  );
+}
+
+function updateHeadingReviewDirty() {
+  state.accessibility.headingReviewDirty =
+    headingReviewSignature() !==
+    String(state.accessibility.headingReviewSavedSignature || "");
+}
+
+function renderHeadingReviewStatus() {
+  updateHeadingReviewDirty();
+  const dirty = state.accessibility.headingReviewDirty;
+  a11yHeadingReviewStatus.className =
+    "badge " + (dirty ? "text-bg-warning" : "text-bg-success");
+  a11yHeadingReviewStatus.textContent = dirty
+    ? "Unsaved changes"
+    : "Heading review saved";
+  a11ySaveHeadingReviewBtn.disabled = !dirty;
+  const hasTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hasTagTree) a11yDraftStructureBtn.disabled = dirty;
+}
+
 function headingLevelOptions(selected) {
   return [1, 2, 3, 4, 5, 6]
     .map(function (level) {
@@ -2013,11 +2154,33 @@ function renderHeadingCandidates() {
             escapeHtml(candidateId) +
             '">' +
             headingLevelOptions(decision.tag) +
-            '</select></div><button type="button" class="btn btn-sm btn-outline-success" data-heading-action="approve" data-heading-id="' +
+            '</select></div><button type="button" class="btn btn-sm ' +
+            (decision.status === "approved"
+              ? "btn-success"
+              : "btn-outline-success") +
+            '" aria-pressed="' +
+            String(decision.status === "approved") +
+            '" data-heading-action="approve" data-heading-id="' +
             escapeHtml(candidateId) +
-            '">Approve</button><button type="button" class="btn btn-sm btn-outline-secondary" data-heading-action="reject" data-heading-id="' +
+            '">' +
+            (decision.status === "approved" ? "Approved ✓" : "Approve") +
+            '</button><button type="button" class="btn btn-sm ' +
+            (decision.status === "rejected"
+              ? "btn-secondary"
+              : "btn-outline-secondary") +
+            '" aria-pressed="' +
+            String(decision.status === "rejected") +
+            '" data-heading-action="reject" data-heading-id="' +
             escapeHtml(candidateId) +
-            '">Reject</button><span class="small fw-semibold">' +
+            '">' +
+            (decision.status === "rejected" ? "Rejected ✓" : "Reject") +
+            '</button><span class="badge ' +
+            (decision.status === "approved"
+              ? "text-bg-success"
+              : decision.status === "rejected"
+                ? "text-bg-secondary"
+                : "text-bg-warning") +
+            '">' +
             escapeHtml(decision.status) +
             "</span></div>" +
             (decision.reason
@@ -2030,6 +2193,7 @@ function renderHeadingCandidates() {
         })
         .join("")
     : '<div class="small text-muted">No heading candidates were found.</div>';
+  renderHeadingReviewStatus();
 }
 
 async function renderStructurePreview() {
@@ -3774,6 +3938,9 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
   if (!settings.preserveAccessibilityDrafts) {
     state.accessibility.draftRemediations = {};
     state.accessibility.headingDecisions = {};
+    state.accessibility.headingReviewSavedSignature = "";
+    state.accessibility.headingReviewDirty = true;
+    state.accessibility.activeIssueId = "";
   }
   updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
 }
@@ -7808,10 +7975,27 @@ a11yAutofillTooltipsBtn.addEventListener("click", function () {
 a11yIssueList.addEventListener("click", function (event) {
   const issue = event.target.closest("[data-panel]");
   if (!issue) return;
+  state.accessibility.activeIssueId =
+    issue.dataset.hasEditorTargets === "true"
+      ? String(issue.dataset.issueId || "")
+      : "";
+  renderStructureEditor();
   let panelName = issue.dataset.panel || "structure";
   if (panelName === "catalog_flags") panelName = "draft_structure";
   const panel = document.getElementById("a11y-panel-" + panelName);
   if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(function () {
+    const activeIssueId = String(state.accessibility.activeIssueId || "");
+    if (!activeIssueId) return;
+    const target = Array.from(
+      document.querySelectorAll("[data-issue-ids]"),
+    ).find(function (candidate) {
+      return String(candidate.dataset.issueIds || "")
+        .split(/\s+/)
+        .includes(activeIssueId);
+    });
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 250);
 });
 a11yRefreshReportBtn.addEventListener("click", async function () {
   showLoading("Re-running accessibility report…");
@@ -7932,7 +8116,7 @@ a11yHeadingsApproveAllBtn.addEventListener("click", function () {
   showSuccess(
     "Approved " +
       String(state.accessibility.headingCandidates.length) +
-      " heading candidates as a draft. Review levels and reject false matches.",
+      " heading candidates. Review levels and reject false matches, then save the heading review.",
     7000,
   );
 });
@@ -7952,7 +8136,7 @@ a11yHeadingsRejectAllBtn.addEventListener("click", function () {
   );
   refreshHeadingDecisionDisplay();
   showSuccess(
-    "Rejected all heading candidates. You can approve any individually.",
+    "Rejected all heading candidates. You can approve any individually, then save the heading review.",
   );
 });
 a11yAiHeadingsBtn.addEventListener("click", async function () {
@@ -8004,7 +8188,7 @@ a11yAiHeadingsBtn.addEventListener("click", async function () {
     showSuccess(
       "AI drafted " +
         String(decisions.length) +
-        " heading decisions. Review every approval, rejection, and level.",
+        " heading decisions. Review every approval, rejection, and level, then save the heading review.",
       8000,
     );
   } catch (error) {
@@ -8013,7 +8197,39 @@ a11yAiHeadingsBtn.addEventListener("click", async function () {
     hideLoading();
   }
 });
+a11ySaveHeadingReviewBtn.addEventListener("click", function () {
+  state.accessibility.headingReviewSavedSignature = headingReviewSignature();
+  updateHeadingReviewDirty();
+  renderHeadingReviewStatus();
+  setDirty(true);
+  const approvedCount = Object.values(
+    state.accessibility.headingDecisions,
+  ).filter(function (decision) {
+    return decision.status === "approved";
+  }).length;
+  const rejectedCount = Object.values(
+    state.accessibility.headingDecisions,
+  ).filter(function (decision) {
+    return decision.status === "rejected";
+  }).length;
+  showSuccess(
+    "Heading review saved: " +
+      String(approvedCount) +
+      " approved and " +
+      String(rejectedCount) +
+      " rejected. You can now create tags from this review.",
+    7000,
+  );
+});
 a11yDraftStructureBtn.addEventListener("click", function () {
+  updateHeadingReviewDirty();
+  if (state.accessibility.headingReviewDirty) {
+    showError(
+      "Save the heading review before creating tags. Your AI and manual decisions have not been lost.",
+    );
+    renderHeadingReviewStatus();
+    return;
+  }
   const decisions = Object.keys(state.accessibility.headingDecisions).map(
     function (candidateId) {
       const decision = state.accessibility.headingDecisions[candidateId];

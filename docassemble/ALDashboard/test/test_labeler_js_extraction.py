@@ -252,6 +252,10 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
             "a11y-add-unicode-maps",
             "a11y-heading-list",
             "a11y-structure-preview",
+            "a11y-save-heading-review",
+            "a11y-heading-review-status",
+            "a11y-figure-focus",
+            "a11y-structure-focus",
             "a11y-table-list",
             "a11y-annotation-list",
         ]
@@ -261,6 +265,21 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
                 rf'optionalWorkshopElement\(\s*"{re.escape(element_id)}"',
                 f"New control {element_id} must be safe when older HTML is cached",
             )
+
+    def test_heading_review_has_explicit_save_lifecycle(self):
+        self.assertIn('id="a11y-save-heading-review"', self.html)
+        self.assertIn('id="a11y-heading-review-status"', self.html)
+        self.assertIn("headingReviewSavedSignature", self.js)
+        self.assertIn("Unsaved changes", self.js)
+        self.assertIn("Save the heading review before creating tags", self.js)
+
+    def test_semantic_findings_focus_editable_targets(self):
+        self.assertIn('id="a11y-figure-focus"', self.html)
+        self.assertIn('id="a11y-structure-focus"', self.html)
+        self.assertIn("editorTargetCount", self.js)
+        self.assertIn("structureTargetAttributes", self.js)
+        self.assertIn("data-issue-ids", self.js)
+        self.assertIn('? "Blocked"', self.js)
 
     def test_accessibility_workshop_exposes_draft_status_and_structure_edits(self):
         self.assertIn("Draft applied", self.html)

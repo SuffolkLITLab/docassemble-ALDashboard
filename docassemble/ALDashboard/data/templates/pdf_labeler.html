@@ -484,6 +484,7 @@
                         </label>
                     </div>
                     <p class="small text-muted">Classify meaningful figures and decorative images. Alternative text must live on the corresponding Figure structure element; raw image metadata is retained only as a draft until structure is linked.</p>
+                    <div id="a11y-figure-focus" class="hidden alert alert-info small py-2" role="status"></div>
                     <h4 class="h6">Figure tags</h4>
                     <div id="a11y-figure-tag-list" class="vstack gap-2 mb-3"></div>
                     <h4 class="h6">Raw image objects</h4>
@@ -501,10 +502,15 @@
                     <h4 class="h6 mt-3">Visual structure draft</h4>
                     <p class="small text-muted">The preview outlines extracted paragraph blocks and proposed headings. The heuristic intentionally favors recall: approve real headings, reject false matches, and choose the correct level before creating tags.</p>
                     <div class="d-flex flex-wrap gap-2 mb-3">
-                        <button id="a11y-headings-approve-all" type="button" class="btn btn-sm btn-outline-primary">Approve all visible candidates</button>
+                        <button id="a11y-headings-approve-all" type="button" class="btn btn-sm btn-outline-primary">Approve all candidates</button>
                         <button id="a11y-headings-reject-all" type="button" class="btn btn-sm btn-outline-secondary">Reject all</button>
                         <button id="a11y-ai-headings" type="button" class="btn btn-sm btn-outline-warning">Draft heading decisions with AI (optional)</button>
                         <span class="small text-muted align-self-center">AI is used only when you choose the AI button.</span>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3 border rounded p-2">
+                        <button id="a11y-save-heading-review" type="button" class="btn btn-sm btn-primary">Save heading review</button>
+                        <span id="a11y-heading-review-status" class="badge text-bg-warning">Unsaved changes</span>
+                        <span class="small text-muted">Saving keeps the current approvals, rejections, and levels. “Create tags” then writes that saved review into the PDF.</span>
                     </div>
                     <div class="a11y-structure-draft-layout">
                         <div id="a11y-structure-preview" class="a11y-structure-preview" aria-label="Document structure preview"></div>
@@ -541,6 +547,7 @@
                 <section id="a11y-panel-structure" class="a11y-panel">
                     <h3 class="h6 fw-semibold mb-2">Tables, links, and annotations</h3>
                     <p class="small text-muted">Make explicit semantic repairs below. Changing a table child role or padding a row is a human decision; no structure edit is applied until you choose its button.</p>
+                    <div id="a11y-structure-focus" class="hidden alert alert-info small py-2" role="status"></div>
                     <h4 class="h6">Tables</h4>
                     <div id="a11y-table-list" class="vstack gap-2 mb-3"></div>
                     <h4 class="h6">Links and other annotations</h4>

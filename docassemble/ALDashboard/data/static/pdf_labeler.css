@@ -429,6 +429,12 @@
     border-bottom: 1px solid #ccd6e3;
     background: #fff;
 }
+.a11y-certification-bar {
+    padding: 0.75rem 1rem;
+    border: 1px solid #9ec5fe;
+    border-radius: 0.6rem;
+    background: #e7f1ff;
+}
 .a11y-workshop-layout {
     display: grid;
     grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);

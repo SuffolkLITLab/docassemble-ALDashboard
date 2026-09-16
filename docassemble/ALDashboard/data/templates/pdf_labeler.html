@@ -412,14 +412,22 @@
                         <h2 id="accessibility-modal-title" class="h5 fw-semibold mb-0">PDF Accessibility Workshop</h2>
                         <p class="small text-muted mb-0 mt-1">Find barriers, use explainable draft fixes, and review every semantic decision.</p>
                     </div>
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex flex-wrap justify-content-end align-items-center gap-2">
                         <span id="a11y-summary" class="small" aria-live="polite">Inspecting document…</span>
                         <button id="a11y-auto-fix" class="btn btn-sm btn-warning" title="Runs deterministic drafts and explicitly invokes the configured AI for field labels and headings">Auto-fix draft (uses AI)</button>
                         <button id="a11y-refresh-report" class="btn btn-sm btn-outline-secondary">Re-run report</button>
+                        <button id="a11y-export" class="btn btn-sm btn-primary">Export PDF</button>
                         <button id="close-accessibility" class="btn btn-sm btn-dark">Return to field editor</button>
                     </div>
                 </div>
                 <div id="a11y-auto-fix-status" class="hidden alert alert-warning m-3 mb-0" role="status" tabindex="-1"></div>
+                <div class="a11y-certification-bar mx-3 mt-3">
+                    <div class="form-check mb-0">
+                        <input id="a11y-certify-accessible" class="form-check-input" type="checkbox">
+                        <label class="form-check-label fw-semibold" for="a11y-certify-accessible">I reviewed the fixes and certify that this PDF is accessible</label>
+                        <div id="a11y-certify-status" class="small text-muted">This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.</div>
+                    </div>
+                </div>
                 <div class="a11y-workshop-layout">
                     <aside class="a11y-workshop-report" aria-label="Accessibility findings">
                         <div class="form-check form-switch mb-3">
@@ -427,7 +435,7 @@
                             <label class="form-check-label fw-medium" for="a11y-enable">Apply reviewed changes on export</label>
                         </div>
                         <div class="small text-muted mb-2">Prioritized findings</div>
-                        <div class="small mb-2"><span class="badge text-bg-danger">Needs attention</span> <span class="badge text-bg-info">Draft passed preflight</span> <span class="badge text-bg-success">Preflight pass</span></div>
+                        <div id="a11y-status-legend" class="small mb-2 d-flex flex-wrap gap-1"></div>
                         <div id="a11y-issue-list" class="vstack gap-2"></div>
                         <p class="a11y-disclaimer mt-3 mb-0">This preflight is not a conformance claim. Finish with veraPDF and screen-reader testing.</p>
                     </aside>

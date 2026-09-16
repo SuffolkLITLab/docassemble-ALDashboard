@@ -381,6 +381,13 @@ const a11yRefreshReportBtn = optionalWorkshopElement(
 );
 const a11yAutoFixBtn = optionalWorkshopElement("a11y-auto-fix", "button");
 const a11yAutoFixStatus = optionalWorkshopElement("a11y-auto-fix-status");
+const a11yExportBtn = optionalWorkshopElement("a11y-export", "button");
+const a11yCertifyAccessibleInput = optionalWorkshopElement(
+  "a11y-certify-accessible",
+  "input",
+);
+const a11yCertifyStatus = optionalWorkshopElement("a11y-certify-status");
+const a11yStatusLegend = optionalWorkshopElement("a11y-status-legend");
 const a11yApplyMetadataBtn = optionalWorkshopElement(
   "a11y-apply-metadata",
   "button",
@@ -1812,6 +1819,71 @@ function renderAccessibilityReport() {
           : "")
       : "Report unavailable";
   }
+  const isDraftPass = function (issue) {
+    return !!(
+      state.accessibility.draftRemediations[issue.id || ""] ||
+      state.accessibility.draftRemediations[issue.remediation || ""]
+    );
+  };
+  const categories = [
+    [
+      "danger",
+      "Needs attention",
+      issues.some(function (issue) {
+        return (
+          issue.status !== "pass" &&
+          issue.status !== "blocked" &&
+          issue.severity !== "warning"
+        );
+      }),
+    ],
+    [
+      "warning",
+      "Review",
+      issues.some(function (issue) {
+        return (
+          issue.status !== "pass" &&
+          issue.status !== "blocked" &&
+          issue.severity === "warning"
+        );
+      }),
+    ],
+    [
+      "secondary",
+      "Blocked",
+      issues.some(function (issue) {
+        return issue.status === "blocked";
+      }),
+    ],
+    [
+      "info",
+      "Draft passed preflight",
+      issues.some(function (issue) {
+        return issue.status === "pass" && isDraftPass(issue);
+      }),
+    ],
+    [
+      "success",
+      "Preflight pass",
+      issues.some(function (issue) {
+        return issue.status === "pass" && !isDraftPass(issue);
+      }),
+    ],
+  ].filter(function (category) {
+    return category[2];
+  });
+  a11yStatusLegend.innerHTML = categories
+    .map(function (category) {
+      return (
+        '<span class="badge text-bg-' +
+        category[0] +
+        '">' +
+        category[1] +
+        "</span>"
+      );
+    })
+    .join("");
+  a11yStatusLegend.classList.toggle("hidden", !categories.length);
   if (!a11yIssueList) {
     renderFontStatus(report);
     return;
@@ -2864,6 +2936,10 @@ function renderAccessibilityModal() {
       ? "Remove PDF/UA declaration"
       : "Declare tagged PDF/UA-1 (after review)";
   }
+  a11yCertifyAccessibleInput.checked = !!state.accessibility.marked;
+  a11yCertifyStatus.innerHTML = state.accessibility.marked
+    ? "Certification recorded: <code>MarkInfo.Marked=true</code> and PDF/UA-1 declared."
+    : "This is never selected by Auto-fix. Selecting it sets <code>MarkInfo.Marked=true</code> and the PDF/UA-1 XMP identifier.";
   renderAccessibilityFieldList();
   renderAccessibilityOrderList();
   renderAccessibilityImages();
@@ -6925,8 +7001,8 @@ async function relabelFields() {
 }
 
 async function exportPdf() {
-  if (!state.pdfBytes || state.fields.length === 0) {
-    showError("There are no fields to export.");
+  if (!state.pdfBytes) {
+    showError("Open a PDF before exporting.");
     return;
   }
 
@@ -8569,6 +8645,7 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
     return result;
   } finally {
     hideLoading();
+    showPdfWorkspace();
   }
 }
 
@@ -8580,9 +8657,20 @@ accessibilityBtn.addEventListener("click", async function () {
   renderAccessibilityModal();
   accessibilityModal.classList.remove("hidden");
 });
-closeAccessibilityBtn.addEventListener("click", function () {
+
+function closeAccessibilityWorkshop() {
   updateAccessibilityMetadataFromInputs();
   accessibilityModal.classList.add("hidden");
+  showPdfWorkspace();
+  requestAnimationFrame(function () {
+    renderFieldsOnPages();
+  });
+}
+
+closeAccessibilityBtn.addEventListener("click", closeAccessibilityWorkshop);
+a11yExportBtn.addEventListener("click", function () {
+  updateAccessibilityMetadataFromInputs();
+  void exportPdf();
 });
 a11yEnableInput.addEventListener("change", function () {
   state.accessibility.enabled = !!a11yEnableInput.checked;
@@ -8875,6 +8963,23 @@ a11yDraftStructureBtn.addEventListener("click", function () {
     showError(error.message || String(error));
   });
 });
+function setAccessibilityDeclaration(marked) {
+  a11yToggleMarkedBtn.disabled = true;
+  a11yCertifyAccessibleInput.disabled = true;
+  return runAccessibilityRemediation("catalog_flags", {
+    marked: marked,
+    display_doc_title: false,
+  })
+    .catch(function (error) {
+      a11yCertifyAccessibleInput.checked = !!state.accessibility.marked;
+      showError(error.message || String(error));
+    })
+    .finally(function () {
+      a11yToggleMarkedBtn.disabled = false;
+      a11yCertifyAccessibleInput.disabled = false;
+    });
+}
+
 a11yToggleMarkedBtn.addEventListener("click", function () {
   const nextMarked = !state.accessibility.marked;
   if (
@@ -8884,12 +8989,10 @@ a11yToggleMarkedBtn.addEventListener("click", function () {
     )
   )
     return;
-  runAccessibilityRemediation("catalog_flags", {
-    marked: nextMarked,
-    display_doc_title: false,
-  }).catch(function (error) {
-    showError(error.message || String(error));
-  });
+  void setAccessibilityDeclaration(nextMarked);
+});
+a11yCertifyAccessibleInput.addEventListener("change", function () {
+  void setAccessibilityDeclaration(a11yCertifyAccessibleInput.checked);
 });
 a11yEmbedFontsBtn.addEventListener("click", function () {
   if (
@@ -9241,7 +9344,7 @@ async function runAccessibilityAutoFix() {
       details.join("; ") +
       "." +
       remainingText +
-      " Auto-fix did not enable MarkInfo.Marked. Review every draft and run veraPDF and screen-reader tests. Only after checking all fixes should a developer use “Set MarkInfo.Marked to true.”",
+      " Auto-fix did not enable MarkInfo.Marked. Review every draft and run veraPDF and screen-reader tests. Only after checking all fixes should the reviewer select “I reviewed the fixes and certify that this PDF is accessible.”",
     false,
   );
   renderAccessibilityModal();
@@ -9612,8 +9715,7 @@ document.addEventListener("mousedown", function (event) {
     !accessibilityModal.classList.contains("hidden") &&
     event.target === accessibilityModal
   ) {
-    updateAccessibilityMetadataFromInputs();
-    accessibilityModal.classList.add("hidden");
+    closeAccessibilityWorkshop();
   }
   if (
     !normalizationModal.classList.contains("hidden") &&
@@ -9928,7 +10030,9 @@ document.addEventListener("keydown", function (event) {
     selectField(null, { focusNameInput: false, scrollIntoView: false });
     aiModelSuggestions.classList.add("hidden");
     settingsModal.classList.add("hidden");
-    accessibilityModal.classList.add("hidden");
+    if (!accessibilityModal.classList.contains("hidden")) {
+      closeAccessibilityWorkshop();
+    }
     normalizationModal.classList.add("hidden");
     if (!pageManagerModal.classList.contains("hidden")) {
       closePageManager();

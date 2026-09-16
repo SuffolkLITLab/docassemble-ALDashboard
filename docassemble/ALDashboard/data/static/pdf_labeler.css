@@ -443,7 +443,7 @@
     display: flex;
     flex: 0 1 auto;
     min-height: 7rem;
-    max-height: min(18rem, 35vh);
+    max-height: min(26rem, 50vh);
     flex-direction: column;
     overflow: hidden;
 }
@@ -468,6 +468,36 @@
 }
 .a11y-ai-review-finding.is-resolved {
     opacity: 0.72;
+}
+.a11y-ai-review-summary {
+    display: grid;
+    grid-template-columns: auto minmax(10rem, 1fr) minmax(8rem, auto);
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    cursor: pointer;
+    list-style-position: inside;
+}
+.a11y-ai-review-summary::marker {
+    color: #6c757d;
+}
+.a11y-ai-review-change {
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.a11y-ai-review-detail {
+    padding: 0 0.75rem 0.65rem 2rem;
+}
+@media (max-width: 720px) {
+    .a11y-ai-review-summary {
+        grid-template-columns: auto 1fr;
+    }
+    .a11y-ai-review-change {
+        grid-column: 2;
+        max-width: none;
+    }
 }
 .a11y-workshop-layout {
     display: grid;

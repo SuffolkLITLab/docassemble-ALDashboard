@@ -9704,16 +9704,18 @@ function accessibilityAiReviewContext() {
       };
     }),
     readingDirection: state.accessibility.readingDirection || "ltr",
-    reportIssues: (Array.isArray(report.issues) ? report.issues : []).map(
-      function (issue) {
+    reportIssues: (Array.isArray(report.issues) ? report.issues : [])
+      .filter(function (issue) {
+        return issue.status !== "pass" && issue.status !== "blocked";
+      })
+      .map(function (issue) {
         return {
           id: String(issue.id || ""),
           title: String(issue.title || ""),
           status: String(issue.status || ""),
           count: Number(issue.count || 0),
         };
-      },
-    ),
+      }),
     structureSummary: {
       tagTreePresent: !!(
         state.accessibility.tagStructure &&
@@ -9867,27 +9869,28 @@ function renderAiAccessibilityReview() {
               ? "text-bg-info"
               : "text-bg-warning";
       const manualPanel = aiReviewPanelForFinding(finding);
+      const changeLabel = finding.change
+        ? aiReviewChangeLabel(finding.change)
+        : "Manual review required";
       return (
-        '<article class="a11y-ai-review-finding border rounded p-2' +
+        '<details class="a11y-ai-review-finding border rounded' +
         (resolved ? " is-resolved" : "") +
         '" data-ai-review-index="' +
         String(index) +
-        '"><div class="d-flex flex-wrap gap-2 align-items-center mb-1"><span class="badge ' +
+        '"><summary class="a11y-ai-review-summary"><span class="badge ' +
         badgeClass +
         '">' +
         escapeHtml(statusLabel) +
-        '</span><span class="small text-muted">' +
-        escapeHtml(String(finding.category || "general")) +
-        '</span></div><div class="fw-semibold small">' +
+        '</span><span class="fw-semibold small">' +
         escapeHtml(String(finding.title || "AI review finding")) +
+        '</span><span class="small text-muted a11y-ai-review-change">' +
+        escapeHtml(changeLabel) +
+        '</span></summary><div class="a11y-ai-review-detail"><div class="small text-muted mb-1">' +
+        escapeHtml(String(finding.category || "general")) +
         '</div><div class="small text-muted">' +
         escapeHtml(String(finding.explanation || "")) +
         '</div><div class="small mt-1 fw-medium">' +
-        escapeHtml(
-          finding.change
-            ? aiReviewChangeLabel(finding.change)
-            : "No automatic change is proposed. Use the workshop controls below if this needs correction.",
-        ) +
+        escapeHtml(changeLabel) +
         "</div>" +
         '<div class="d-flex flex-wrap gap-2 mt-2">' +
         (finding.change
@@ -9906,8 +9909,7 @@ function renderAiAccessibilityReview() {
             escapeHtml(aiReviewPanelLabel(manualPanel)) +
             "</button>"
           : "") +
-        "</div>" +
-        "</article>"
+        "</div></div></details>"
       );
     })
     .join("");
@@ -10072,6 +10074,19 @@ async function runAiAccessibilityReview(options) {
   }
 }
 
+function unresolvedAiAccessibilityFindings(findings) {
+  const byId = new Map();
+  (findings || []).forEach(function (finding) {
+    if (finding.status !== "pending") return;
+    const key = String(
+      finding.id ||
+        String(finding.category || "") + ":" + String(finding.title || ""),
+    );
+    byId.set(key, finding);
+  });
+  return Array.from(byId.values());
+}
+
 function showAccessibilityAutoFixStatus(message, isError) {
   if (!a11yAutoFixStatus) return;
   a11yAutoFixStatus.className =
@@ -10198,17 +10213,33 @@ async function runAccessibilityAutoFix() {
   }
 
   const finalAiFindings = await runAiAccessibilityReview({
-    applyDrafts: false,
-    preserveHistory: true,
+    applyDrafts: true,
+    preserveHistory: false,
   });
-  summary.aiReviewFindings = finalAiFindings.length;
+  await runAccessibilityRemediation(
+    "metadata",
+    {
+      metadata: state.accessibility.metadata,
+      field_tooltips: accessibilityTooltipPayload(),
+      field_order: accessibilityFieldOrderPayload(),
+      display_doc_title: true,
+      set_structure_tab_order: true,
+      mark_untagged_as_artifacts: true,
+    },
+    { quiet: true },
+  );
+  state.accessibility.aiReview.findings =
+    unresolvedAiAccessibilityFindings(finalAiFindings);
+  state.accessibility.aiReview.lastSignature = accessibilityAiReviewSignature();
+  summary.aiReviewFindings = state.accessibility.aiReview.findings.length;
+  renderAiAccessibilityReview();
 
   setDirty(true);
   const details = [
     String(summary.nearbyTooltips) + " nearby-text field-label drafts",
     String(summary.aiTooltips) + " AI field-label drafts",
     String(summary.aiHeadings) + " AI heading decisions",
-    String(summary.aiReviewFindings) + " AI reasonableness findings reviewed",
+    String(summary.aiReviewFindings) + " unresolved AI review findings",
     String(summary.fontsEmbedded) + " exact fonts embedded",
     String(summary.fontsUnresolved) + " fonts still need manual resolution",
     String(summary.unicodeMapsAdded) + " Unicode maps added",

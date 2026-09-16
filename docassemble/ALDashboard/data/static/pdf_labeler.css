@@ -440,6 +440,18 @@
     border: 1px solid #dee2e6;
     border-radius: 0.6rem;
     background: #fff;
+    display: flex;
+    flex: 0 1 auto;
+    min-height: 7rem;
+    max-height: min(18rem, 35vh);
+    flex-direction: column;
+    overflow: hidden;
+}
+#a11y-ai-review-findings {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 0.25rem;
 }
 .a11y-ai-review-finding.is-resolved {
     opacity: 0.72;

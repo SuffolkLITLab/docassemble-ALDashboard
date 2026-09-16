@@ -8728,8 +8728,10 @@ a11yAiReviewFindings.addEventListener("click", function (event) {
   if (!finding) return;
   if (button.dataset.aiReviewAction === "apply") {
     applyAiAccessibilityFinding(finding);
-  } else if (button.dataset.aiReviewAction === "dismiss") {
-    finding.status = "dismissed";
+  } else if (button.dataset.aiReviewAction === "ignore") {
+    ignoreAiAccessibilityFinding(finding);
+  } else if (button.dataset.aiReviewAction === "review") {
+    finding.status = "reviewed";
   }
   renderAiAccessibilityReview();
 });
@@ -9332,7 +9334,6 @@ function aiReviewChangeLabel(change) {
   const labels = {
     metadata: "Update metadata",
     field_tooltip: "Update field label",
-    heading_decision: "Update heading decision",
     image_alt_text: "Update image-alt draft",
     reading_direction: "Update reading direction",
   };
@@ -9379,22 +9380,32 @@ function renderAiAccessibilityReview() {
   a11yAiReviewFindings.innerHTML = findings
     .map(function (finding, index) {
       const status = String(finding.status || "pending");
-      const resolved = status !== "pending";
+      const resolved = status === "ignored" || status === "reviewed";
       const statusLabel =
-        status === "applied"
-          ? "Applied draft"
-          : status === "dismissed"
-            ? "Dismissed"
-            : finding.change
-              ? "Proposed change"
-              : "Manual review";
+        status === "accepted"
+          ? "Accepted suggestion"
+          : status === "ignored"
+            ? "Ignored — kept current setting"
+            : status === "reviewed"
+              ? "Reviewed"
+              : finding.change
+                ? "Decision needed"
+                : "Information — manual review";
+      const badgeClass =
+        status === "accepted"
+          ? "text-bg-success"
+          : status === "ignored" || status === "reviewed"
+            ? "text-bg-secondary"
+            : finding.severity === "info"
+              ? "text-bg-info"
+              : "text-bg-warning";
       return (
         '<article class="a11y-ai-review-finding border rounded p-2' +
         (resolved ? " is-resolved" : "") +
         '" data-ai-review-index="' +
         String(index) +
         '"><div class="d-flex flex-wrap gap-2 align-items-center mb-1"><span class="badge ' +
-        (finding.severity === "info" ? "text-bg-info" : "text-bg-warning") +
+        badgeClass +
         '">' +
         escapeHtml(statusLabel) +
         '</span><span class="small text-muted">' +
@@ -9403,16 +9414,24 @@ function renderAiAccessibilityReview() {
         escapeHtml(String(finding.title || "AI review finding")) +
         '</div><div class="small text-muted">' +
         escapeHtml(String(finding.explanation || "")) +
-        '</div><div class="small mt-1">' +
-        escapeHtml(aiReviewChangeLabel(finding.change)) +
+        '</div><div class="small mt-1 fw-medium">' +
+        escapeHtml(
+          finding.change
+            ? aiReviewChangeLabel(finding.change)
+            : "No automatic change is proposed. Use the workshop controls below if this needs correction.",
+        ) +
         "</div>" +
-        (status === "pending"
-          ? '<div class="d-flex gap-2 mt-2">' +
-            (finding.change
-              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Apply draft</button>'
-              : "") +
-            '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="dismiss">Dismiss</button></div>'
-          : "") +
+        '<div class="d-flex flex-wrap gap-2 mt-2">' +
+        (finding.change
+          ? status === "accepted"
+            ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Reject suggestion &amp; restore previous</button>'
+            : status === "ignored"
+              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Accept suggestion</button>'
+              : '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Accept suggestion</button><button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Ignore — keep current setting</button>'
+          : status === "reviewed"
+            ? ""
+            : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Mark reviewed</button>') +
+        "</div>" +
         "</article>"
       );
     })
@@ -9421,8 +9440,15 @@ function renderAiAccessibilityReview() {
 
 function applyAiAccessibilityFinding(finding) {
   const change = finding && finding.change;
-  if (!change || finding.status !== "pending") return false;
+  if (!change || !["pending", "ignored"].includes(finding.status)) return false;
+  const hasPreviousValue = Object.prototype.hasOwnProperty.call(
+    finding,
+    "previousValue",
+  );
   if (change.kind === "metadata") {
+    if (!hasPreviousValue) {
+      finding.previousValue = state.accessibility.metadata[change.target] || "";
+    }
     state.accessibility.metadata[change.target] = String(change.value || "");
     a11yMetaLanguage.value = state.accessibility.metadata.language || "";
     a11yMetaTitle.value = state.accessibility.metadata.title || "";
@@ -9434,45 +9460,78 @@ function applyAiAccessibilityFinding(finding) {
       return String(item.id || "") === String(change.target || "");
     });
     if (!field) return false;
+    if (!hasPreviousValue) {
+      finding.previousValue = {
+        tooltip: String(field.tooltip || ""),
+        tooltipSource: String(field.tooltipSource || ""),
+      };
+    }
     field.tooltip = String(change.value || "");
     field.tooltipSource = "ai";
     markAccessibilityDraft("field_tooltips", "AI field-label proposal applied");
     renderAccessibilityFieldList();
-  } else if (change.kind === "heading_decision") {
-    if (
-      state.accessibility.tagStructure &&
-      state.accessibility.tagStructure.present
-    )
-      return false;
-    setHeadingDecision(
-      String(change.target || ""),
-      {
-        status: String(change.value.status || "rejected"),
-        tag: String(change.value.tag || "H2"),
-        source: "ai-review",
-        reason: String(finding.explanation || ""),
-      },
-      true,
-    );
-    markAccessibilityDraft("draft_structure", "AI heading proposal applied");
-    refreshHeadingDecisionDisplay();
   } else if (change.kind === "image_alt_text") {
     const image = state.accessibility.images.find(function (item) {
       return String(item.assetId || "") === String(change.target || "");
     });
     if (!image) return false;
+    if (!hasPreviousValue) finding.previousValue = String(image.altText || "");
     image.altText = String(change.value || "");
     markAccessibilityDraft("figures", "AI image-alt proposal applied");
     renderAccessibilityImages();
   } else if (change.kind === "reading_direction") {
+    if (!hasPreviousValue) {
+      finding.previousValue = {
+        direction: state.accessibility.readingDirection || "ltr",
+        fieldOrder: state.accessibility.fieldOrder.slice(),
+      };
+    }
     applyDeterministicFieldOrder(String(change.value || "ltr"), {
       quiet: true,
     });
   } else {
     return false;
   }
-  finding.status = "applied";
+  finding.status = "accepted";
   setDirty(true);
+  return true;
+}
+
+function ignoreAiAccessibilityFinding(finding) {
+  if (!finding || !finding.change) return false;
+  const change = finding.change;
+  if (finding.status === "accepted") {
+    const previous = finding.previousValue;
+    if (change.kind === "metadata") {
+      state.accessibility.metadata[change.target] = String(previous || "");
+      a11yMetaLanguage.value = state.accessibility.metadata.language || "";
+      a11yMetaTitle.value = state.accessibility.metadata.title || "";
+      a11yMetaAuthor.value = state.accessibility.metadata.author || "";
+      a11yMetaSubject.value = state.accessibility.metadata.subject || "";
+    } else if (change.kind === "field_tooltip") {
+      const field = state.fields.find(function (item) {
+        return String(item.id || "") === String(change.target || "");
+      });
+      if (!field || !previous) return false;
+      field.tooltip = String(previous.tooltip || "");
+      field.tooltipSource = String(previous.tooltipSource || "");
+      renderAccessibilityFieldList();
+    } else if (change.kind === "image_alt_text") {
+      const image = state.accessibility.images.find(function (item) {
+        return String(item.assetId || "") === String(change.target || "");
+      });
+      if (!image) return false;
+      image.altText = String(previous || "");
+      renderAccessibilityImages();
+    } else if (change.kind === "reading_direction") {
+      if (!previous) return false;
+      state.accessibility.readingDirection = previous.direction || "ltr";
+      state.accessibility.fieldOrder = previous.fieldOrder.slice();
+      renderAccessibilityOrderList();
+    }
+    setDirty(true);
+  }
+  finding.status = "ignored";
   return true;
 }
 

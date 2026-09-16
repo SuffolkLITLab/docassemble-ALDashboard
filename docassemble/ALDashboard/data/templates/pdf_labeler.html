@@ -435,10 +435,10 @@
                             <h3 id="a11y-ai-review-title" class="h6 mb-1">AI reasonableness review <span class="badge text-bg-warning">optional</span></h3>
                             <p class="small text-muted mb-0">Sends a document-text sample and the current draft settings to the configured AI to check whether the title, language, labels, headings, order, and other choices make sense. It never certifies the PDF. Review every proposed change.</p>
                         </div>
-                        <button id="a11y-ai-review-apply-all" class="btn btn-sm btn-outline-primary hidden">Apply all pending drafts</button>
+                        <button id="a11y-ai-review-apply-all" class="btn btn-sm btn-outline-primary hidden">Accept all pending suggestions</button>
                     </div>
                     <div id="a11y-ai-review-status" class="small text-muted mt-2" role="status">No AI reasonableness check has been run for this draft.</div>
-                    <div id="a11y-ai-review-findings" class="vstack gap-2 mt-2"></div>
+                    <div id="a11y-ai-review-findings" class="vstack gap-2 mt-2" tabindex="0" aria-label="AI reasonableness findings"></div>
                 </section>
                 <div class="a11y-workshop-layout">
                     <aside class="a11y-workshop-report" aria-label="Accessibility findings">

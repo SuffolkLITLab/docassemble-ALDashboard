@@ -119,6 +119,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
     def setUp(self):
         self.html = _read_package_file("data", "templates", "pdf_labeler.html")
         self.js = _read_package_file("data", "static", "pdf_labeler.js")
+        self.css = _read_package_file("data", "static", "pdf_labeler.css")
         self.api = _read_package_file("api_labelers.py")
 
     # -- HTML template checks ------------------------------------------------
@@ -368,6 +369,11 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("function runAiAccessibilityReview", self.js)
         self.assertIn("applyDrafts: true", self.js)
         self.assertIn("data-ai-review-action", self.js)
+        self.assertIn("Accept suggestion", self.js)
+        self.assertIn("Ignore — keep current setting", self.js)
+        self.assertIn("Reject suggestion &amp; restore previous", self.js)
+        self.assertIn("ignoreAiAccessibilityFinding", self.js)
+        self.assertIn("overflow-y: auto", self.css)
         self.assertIn("/pdf-labeler/api/accessibility-ai-review", self.js)
         self.assertIn("def pdf_labeler_accessibility_ai_review", self.api)
 

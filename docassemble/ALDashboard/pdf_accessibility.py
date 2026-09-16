@@ -282,7 +282,6 @@ def review_pdf_accessibility_with_ai(
         if isinstance(item, Mapping)
     ][:250]
     allowed_fields = {str(item.get("fieldId") or "") for item in fields}
-    allowed_headings = {str(item.get("candidateId") or "") for item in headings}
     allowed_images = {str(item.get("assetId") or "") for item in images}
     prompt_context = {
         "filename": str(context.get("filename") or "")[:300],
@@ -332,8 +331,7 @@ def review_pdf_accessibility_with_ai(
                     "reasonable. Each finding needs id, category, severity (warning or info), title, explanation, "
                     "and optionally one change. A change must be one of: metadata with target language/title/"
                     "author/subject and a string value; field_tooltip with a supplied fieldId target and short "
-                    "label value; heading_decision with a supplied candidateId target and value containing status "
-                    "approved/rejected and tag H1-H6; image_alt_text with a supplied assetId target and string "
+                    "label value; image_alt_text with a supplied assetId target and string "
                     "value only when supported by supplied evidence; or reading_direction with target document "
                     "and value ltr/rtl/ttb. Use a finding without change for anything requiring visual or manual "
                     "inspection. Return JSON with a findings array."
@@ -399,13 +397,6 @@ def review_pdf_accessibility_with_ai(
                     and isinstance(value, str)
                     and bool(value.strip())
                     and len(value.strip()) <= 80
-                )
-                or (
-                    kind == "heading_decision"
-                    and target in allowed_headings
-                    and isinstance(value, Mapping)
-                    and str(value.get("status") or "") in {"approved", "rejected"}
-                    and bool(re.fullmatch(r"H[1-6]", str(value.get("tag") or "")))
                 )
                 or (
                     kind == "image_alt_text"
@@ -646,6 +637,8 @@ def _sync_structure_form_objects(pdf: Any) -> int:
     for page in pdf.pages:
         page_key = tuple(page.objgen)
         for annot in cast(Iterable[Any], page.get("/Annots", [])):
+            if annot is None or not hasattr(annot, "get"):
+                continue
             if _safe_pdf_string(annot.get("/Subtype", "")) != "/Widget":
                 continue
             parent = _named_parent(annot)

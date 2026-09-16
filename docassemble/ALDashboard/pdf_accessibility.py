@@ -1439,6 +1439,8 @@ def find_exact_system_font(
         for record in inventory
         if record["embeddable"]
         and expected_names.intersection(record["canonical_names"])
+        and (bool(record.get("bold")), bool(record.get("italic")))
+        == _font_style_flags(pdf_font)
     ]
     scored = []
     for record in candidates:

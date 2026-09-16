@@ -18,6 +18,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _font_width_match_score,
     _curated_symbol_unicode_cmap,
     _system_embeddable_fonts,
+    find_exact_system_font,
     find_metric_compatible_fonts,
     substitute_fonts,
     apply_pdf_accessibility_settings,
@@ -261,6 +262,40 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             [resource for resource, _font in _iter_pdf_fonts(pdf)], ["p1/F1", "p1/F2"]
         )
         pdf.close()
+
+    def test_exact_font_match_requires_the_same_style(self):
+        import pikepdf
+
+        pdf_font = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/Helvetica"),
+            }
+        )
+        inventory = [
+            {
+                "path": "/fonts/Helvetica-Oblique.ttf",
+                "canonical_names": {"helvetica", "helveticaoblique"},
+                "embeddable": True,
+                "bold": False,
+                "italic": True,
+            },
+            {
+                "path": "/fonts/Helvetica.ttf",
+                "canonical_names": {"helvetica"},
+                "embeddable": True,
+                "bold": False,
+                "italic": False,
+            },
+        ]
+        with patch(
+            "docassemble.ALDashboard.pdf_accessibility._font_width_match_score",
+            return_value=0.0,
+        ):
+            match = find_exact_system_font(pdf_font, inventory)
+
+        self.assertEqual(match["path"], "/fonts/Helvetica.ttf")
 
     def test_font_inventory_includes_appearance_state_streams(self):
         import pikepdf

@@ -3373,19 +3373,43 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 metadata = metadata_raw or {}
             if not isinstance(metadata, dict):
                 raise DashboardAPIValidationError("metadata must be a JSON object.")
+            field_tooltips_raw = post_data.get("field_tooltips")
+            field_tooltips = (
+                json.loads(field_tooltips_raw)
+                if isinstance(field_tooltips_raw, str) and field_tooltips_raw.strip()
+                else field_tooltips_raw or {}
+            )
+            if not isinstance(field_tooltips, dict):
+                raise DashboardAPIValidationError(
+                    "field_tooltips must be a JSON object."
+                )
+            field_order_raw = post_data.get("field_order")
+            field_order = (
+                json.loads(field_order_raw)
+                if isinstance(field_order_raw, str) and field_order_raw.strip()
+                else field_order_raw or []
+            )
+            if not isinstance(field_order, list):
+                raise DashboardAPIValidationError("field_order must be a JSON list.")
             mark_as_tagged = None
             if action == "catalog_flags" and "marked" in post_data:
                 mark_as_tagged = parse_bool(post_data.get("marked"), default=False)
             result = apply_pdf_accessibility_settings(
                 input_pdf_path=input_path,
                 output_pdf_path=output_path,
+                field_tooltips={
+                    str(key): str(value) for key, value in field_tooltips.items()
+                },
+                field_order=[str(value) for value in field_order],
                 metadata=metadata,
                 auto_fill_missing_tooltips=False,
                 mark_as_tagged=mark_as_tagged,
                 set_display_doc_title=parse_bool(
                     post_data.get("display_doc_title"), default=True
                 ),
-                set_structure_tab_order=False,
+                set_structure_tab_order=parse_bool(
+                    post_data.get("set_structure_tab_order"), default=False
+                ),
             )
         elif action == "draft_structure":
             heading_decisions_raw = post_data.get("heading_decisions")
@@ -3406,6 +3430,9 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 output_path,
                 overwrite=parse_bool(post_data.get("overwrite"), default=False),
                 heading_decisions=heading_decisions,
+                mark_as_tagged=parse_bool(
+                    post_data.get("mark_as_tagged"), default=False
+                ),
             )
         elif action == "structure":
             operations_raw = post_data.get("operations")

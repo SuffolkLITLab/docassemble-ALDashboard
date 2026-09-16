@@ -259,6 +259,8 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
             "a11y-structure-focus",
             "a11y-table-list",
             "a11y-annotation-list",
+            "a11y-auto-fix",
+            "a11y-auto-fix-status",
         ]
         for element_id in optional_ids:
             self.assertRegex(
@@ -333,6 +335,16 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         ]
         self.assertNotIn("inspect_pdf_accessibility", remediation)
         self.assertNotIn('"inspection": inspection', remediation)
+
+    def test_accessibility_auto_fix_is_draft_only_and_explicitly_uses_ai(self):
+        self.assertIn('id="a11y-auto-fix"', self.html)
+        self.assertIn("Auto-fix draft (uses AI)", self.html)
+        self.assertIn("function runAccessibilityAutoFix", self.js)
+        self.assertIn("await applyAiTooltipDraft()", self.js)
+        self.assertIn("await applyAiHeadingDraft()", self.js)
+        self.assertIn("mark_as_tagged: false", self.js)
+        self.assertIn("Auto-fix never enables it", self.html)
+        self.assertIn("Only after checking all fixes", self.js)
 
     def test_account_menu_uses_server_menu_items_and_is_rightmost(self):
         self.assertIn("data.data.menu_items", self.js)

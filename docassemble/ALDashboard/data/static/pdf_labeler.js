@@ -374,6 +374,8 @@ const a11yRefreshReportBtn = optionalWorkshopElement(
   "a11y-refresh-report",
   "button",
 );
+const a11yAutoFixBtn = optionalWorkshopElement("a11y-auto-fix", "button");
+const a11yAutoFixStatus = optionalWorkshopElement("a11y-auto-fix-status");
 const a11yApplyMetadataBtn = optionalWorkshopElement(
   "a11y-apply-metadata",
   "button",
@@ -2291,8 +2293,8 @@ function renderAccessibilityModal() {
   }
   if (a11yToggleMarkedBtn) {
     a11yToggleMarkedBtn.textContent = state.accessibility.marked
-      ? "Set MarkInfo.Marked to false"
-      : "Set MarkInfo.Marked to true";
+      ? "Remove tagged declaration"
+      : "Set MarkInfo.Marked to true (after review)";
   }
   renderAccessibilityFieldList();
   renderAccessibilityOrderList();
@@ -3065,6 +3067,7 @@ function updateAiUiState() {
   }
   if (a11yAiTooltipsBtn) a11yAiTooltipsBtn.disabled = !aiEnabled;
   if (a11yAiHeadingsBtn) a11yAiHeadingsBtn.disabled = !aiEnabled;
+  if (a11yAutoFixBtn) a11yAutoFixBtn.disabled = !aiEnabled;
   if (!aiEnabled) {
     aiAuthNotice.classList.remove("hidden");
     aiAuthNotice.innerHTML =
@@ -7728,7 +7731,8 @@ function nearbyTextForField(field) {
     .filter(Boolean);
 }
 
-function draftTooltipsFromNearbyText() {
+function draftTooltipsFromNearbyText(options) {
+  const settings = options || {};
   let changed = 0;
   state.fields.forEach(function (field) {
     const nearby = nearbyTextForField(field);
@@ -7755,17 +7759,21 @@ function draftTooltipsFromNearbyText() {
       String(changed) + " field names drafted; review each value",
     );
   }
-  showSuccess(
-    changed
-      ? "Drafted " +
-          String(changed) +
-          " accessible field names. Review each one."
-      : "No field names changed. Existing PDF tooltips and reviewed values were preserved.",
-    6500,
-  );
+  if (!settings.quiet) {
+    showSuccess(
+      changed
+        ? "Drafted " +
+            String(changed) +
+            " accessible field names. Review each one."
+        : "No field names changed. Existing PDF tooltips and reviewed values were preserved.",
+      6500,
+    );
+  }
+  return changed;
 }
 
-function applyDeterministicFieldOrder(direction) {
+function applyDeterministicFieldOrder(direction, options) {
+  const settings = options || {};
   const factor = direction === "rtl" ? -1 : 1;
   state.accessibility.fieldOrder = state.fields
     .slice()
@@ -7796,14 +7804,16 @@ function applyDeterministicFieldOrder(direction) {
       " fields ordered by " +
       labels[direction],
   );
-  showSuccess(
-    "Drafted " +
-      labels[direction] +
-      " for " +
-      String(state.accessibility.fieldOrder.length) +
-      " fields. Review the order below.",
-    6000,
-  );
+  if (!settings.quiet) {
+    showSuccess(
+      "Drafted " +
+        labels[direction] +
+        " for " +
+        String(state.accessibility.fieldOrder.length) +
+        " fields. Review the order below.",
+      6000,
+    );
+  }
 }
 
 function accessibilityRemediationFeedback(action, result, options) {
@@ -7971,6 +7981,7 @@ async function runAccessibilityRemediation(action, options) {
         8000,
       );
     }
+    return result;
   } finally {
     hideLoading();
   }
@@ -8165,55 +8176,59 @@ a11yHeadingsRejectAllBtn.addEventListener("click", function () {
     "Rejected all heading candidates. You can approve any individually, then save the heading review.",
   );
 });
-a11yAiHeadingsBtn.addEventListener("click", async function () {
+async function applyAiHeadingDraft() {
   if (!state.auth.aiEnabled) {
-    showError("Log in before choosing the optional AI heading draft.");
-    return;
+    throw new Error("Log in before choosing the optional AI heading draft.");
   }
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-ai-headings"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        candidates: state.accessibility.headingCandidates,
+        model: state.model,
+      }),
+    },
+  );
+  const payload = await parseApiResponse(response);
+  if (!payload.success) {
+    throw new Error(
+      (payload.error && payload.error.message) ||
+        "AI heading classification failed.",
+    );
+  }
+  const decisions = (payload.data && payload.data.decisions) || [];
+  decisions.forEach(function (decision) {
+    setHeadingDecision(
+      String(decision.candidateId || ""),
+      {
+        status: decision.isHeading ? "approved" : "rejected",
+        tag: String(decision.suggestedTag || "H2"),
+        source: "ai",
+        reason: String(decision.reason || ""),
+      },
+      true,
+    );
+  });
+  markAccessibilityDraft(
+    "draft_structure",
+    "Optional AI heading decisions drafted; human review required",
+  );
+  refreshHeadingDecisionDisplay();
+  return decisions.length;
+}
+
+a11yAiHeadingsBtn.addEventListener("click", async function () {
   showLoading("Drafting heading decisions with AI…");
   try {
-    const response = await fetch(
-      apiUrl("/pdf-labeler/api/accessibility-ai-headings"),
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          candidates: state.accessibility.headingCandidates,
-          model: state.model,
-        }),
-      },
-    );
-    const payload = await parseApiResponse(response);
-    if (!payload.success) {
-      throw new Error(
-        (payload.error && payload.error.message) ||
-          "AI heading classification failed.",
-      );
-    }
-    const decisions = (payload.data && payload.data.decisions) || [];
-    decisions.forEach(function (decision) {
-      setHeadingDecision(
-        String(decision.candidateId || ""),
-        {
-          status: decision.isHeading ? "approved" : "rejected",
-          tag: String(decision.suggestedTag || "H2"),
-          source: "ai",
-          reason: String(decision.reason || ""),
-        },
-        true,
-      );
-    });
-    markAccessibilityDraft(
-      "draft_structure",
-      "Optional AI heading decisions drafted; human review required",
-    );
-    refreshHeadingDecisionDisplay();
+    const decisionCount = await applyAiHeadingDraft();
     showSuccess(
       "AI drafted " +
-        String(decisions.length) +
+        String(decisionCount) +
         " heading decisions. Review every approval, rejection, and level, then save the heading review.",
       8000,
     );
@@ -8279,6 +8294,7 @@ a11yDraftStructureBtn.addEventListener("click", function () {
     return;
   runAccessibilityRemediation("draft_structure", {
     heading_decisions: decisions,
+    mark_as_tagged: false,
   }).catch(function (error) {
     showError(error.message || String(error));
   });
@@ -8288,7 +8304,7 @@ a11yToggleMarkedBtn.addEventListener("click", function () {
   if (
     nextMarked &&
     !window.confirm(
-      "MarkInfo.Marked=true is only truthful when the tag tree is meaningful. Set it now?",
+      "Only declare MarkInfo.Marked=true after reviewing every draft change and completing external validation. This flag is not a conformance guarantee. Set it now?",
     )
   )
     return;
@@ -8330,57 +8346,61 @@ a11yFontResult.addEventListener("click", function (event) {
     showError(error.message || String(error));
   });
 });
-a11yAiTooltipsBtn.addEventListener("click", async function () {
+async function applyAiTooltipDraft() {
   if (!state.auth.aiEnabled) {
-    showError("Log in before choosing the optional AI draft.");
-    return;
+    throw new Error("Log in before choosing the optional AI draft.");
   }
+  const fields = state.fields.map(function (field) {
+    return {
+      name: String(field.name || ""),
+      type: String(field.type || "text"),
+      tooltip: String(field.tooltip || ""),
+      nearby_text: nearbyTextForField(field),
+    };
+  });
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-ai-tooltips"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fields: fields, model: state.model }),
+    },
+  );
+  const payload = await parseApiResponse(response);
+  if (!payload.success)
+    throw new Error(
+      (payload.error && payload.error.message) || "AI drafting failed.",
+    );
+  const suggestions = (payload.data && payload.data.tooltips) || {};
+  let changed = 0;
+  state.fields.forEach(function (field) {
+    if (suggestions[field.name]) {
+      const nextTooltip = String(suggestions[field.name]);
+      if (nextTooltip !== field.tooltip || field.tooltipSource !== "ai") {
+        field.tooltip = nextTooltip;
+        field.tooltipSource = "ai";
+        changed += 1;
+      }
+    }
+  });
+  renderAccessibilityFieldList();
+  if (changed) {
+    setDirty(true);
+    markAccessibilityDraft(
+      "field_tooltips",
+      String(changed) + " optional AI suggestions drafted; review each value",
+    );
+  }
+  return changed;
+}
+
+a11yAiTooltipsBtn.addEventListener("click", async function () {
   showLoading("Drafting accessible field names with AI…");
   try {
-    const fields = state.fields.map(function (field) {
-      return {
-        name: String(field.name || ""),
-        type: String(field.type || "text"),
-        tooltip: String(field.tooltip || ""),
-        nearby_text: nearbyTextForField(field),
-      };
-    });
-    const response = await fetch(
-      apiUrl("/pdf-labeler/api/accessibility-ai-tooltips"),
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ fields: fields, model: state.model }),
-      },
-    );
-    const payload = await parseApiResponse(response);
-    if (!payload.success)
-      throw new Error(
-        (payload.error && payload.error.message) || "AI drafting failed.",
-      );
-    const suggestions = (payload.data && payload.data.tooltips) || {};
-    let changed = 0;
-    state.fields.forEach(function (field) {
-      if (suggestions[field.name]) {
-        const nextTooltip = String(suggestions[field.name]);
-        if (nextTooltip !== field.tooltip || field.tooltipSource !== "ai") {
-          field.tooltip = nextTooltip;
-          field.tooltipSource = "ai";
-          changed += 1;
-        }
-      }
-    });
-    renderAccessibilityFieldList();
-    if (changed) {
-      setDirty(true);
-      markAccessibilityDraft(
-        "field_tooltips",
-        String(changed) + " optional AI suggestions drafted; review each value",
-      );
-    }
+    const changed = await applyAiTooltipDraft();
     showSuccess(
       changed
         ? "AI drafted " +
@@ -8395,6 +8415,156 @@ a11yAiTooltipsBtn.addEventListener("click", async function () {
     hideLoading();
   }
 });
+
+function accessibilityTooltipPayload() {
+  const tooltips = {};
+  state.fields.forEach(function (field) {
+    const name = String(field.name || "");
+    if (!name) return;
+    tooltips[name] = String(field.tooltip || "").trim();
+  });
+  return tooltips;
+}
+
+function accessibilityFieldOrderPayload() {
+  return state.accessibility.fieldOrder
+    .map(function (fieldId) {
+      const field = state.fields.find(function (candidate) {
+        return candidate.id === fieldId;
+      });
+      return field ? String(field.name || "") : "";
+    })
+    .filter(Boolean);
+}
+
+function accessibilityHeadingDecisionPayload() {
+  return Object.keys(state.accessibility.headingDecisions).map(
+    function (candidateId) {
+      const decision = state.accessibility.headingDecisions[candidateId];
+      return {
+        candidateId: candidateId,
+        status: decision.status,
+        tag: decision.tag,
+      };
+    },
+  );
+}
+
+function showAccessibilityAutoFixStatus(message, isError) {
+  if (!a11yAutoFixStatus) return;
+  a11yAutoFixStatus.className =
+    "alert m-3 mb-0 " + (isError ? "alert-danger" : "alert-warning");
+  a11yAutoFixStatus.textContent = String(message || "");
+  a11yAutoFixStatus.focus();
+}
+
+async function runAccessibilityAutoFix() {
+  if (!state.pdfBytes) throw new Error("Open a PDF before running auto-fix.");
+  if (!state.auth.aiEnabled) {
+    throw new Error(
+      "Log in before using Auto-fix draft. The individual deterministic and manual tools remain available without AI.",
+    );
+  }
+
+  const summary = {
+    nearbyTooltips: draftTooltipsFromNearbyText({ quiet: true }),
+    aiTooltips: 0,
+    aiHeadings: 0,
+    structureCreated: false,
+    fontsEmbedded: 0,
+    unicodeMapsAdded: 0,
+  };
+  applyDeterministicFieldOrder("ltr", { quiet: true });
+  if (state.fields.length) {
+    summary.aiTooltips = await applyAiTooltipDraft();
+  }
+
+  const hadTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hadTagTree && state.accessibility.headingCandidates.length) {
+    summary.aiHeadings = await applyAiHeadingDraft();
+    state.accessibility.headingReviewSavedSignature = headingReviewSignature();
+    updateHeadingReviewDirty();
+    renderHeadingReviewStatus();
+  }
+
+  updateAccessibilityMetadataFromInputs();
+  await runAccessibilityRemediation("metadata", {
+    metadata: state.accessibility.metadata,
+    field_tooltips: accessibilityTooltipPayload(),
+    field_order: accessibilityFieldOrderPayload(),
+    display_doc_title: true,
+    set_structure_tab_order: false,
+  });
+
+  const fontResult = await runAccessibilityRemediation("fonts", {
+    embed_exact_fonts: true,
+    add_unicode_maps: true,
+  });
+  summary.fontsEmbedded = Array.isArray(fontResult.fonts_embedded)
+    ? fontResult.fonts_embedded.length
+    : 0;
+  summary.unicodeMapsAdded = Array.isArray(fontResult.unicode_maps_added)
+    ? fontResult.unicode_maps_added.length
+    : 0;
+
+  const hasTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hasTagTree) {
+    await runAccessibilityRemediation("draft_structure", {
+      heading_decisions: accessibilityHeadingDecisionPayload(),
+      mark_as_tagged: false,
+    });
+    summary.structureCreated = true;
+  }
+
+  setDirty(true);
+  const details = [
+    String(summary.nearbyTooltips) + " nearby-text field-label drafts",
+    String(summary.aiTooltips) + " AI field-label drafts",
+    String(summary.aiHeadings) + " AI heading decisions",
+    String(summary.fontsEmbedded) + " exact fonts embedded",
+    String(summary.unicodeMapsAdded) + " Unicode maps added",
+    summary.structureCreated
+      ? "a draft tag tree created"
+      : "the existing tag tree preserved for manual review",
+  ];
+  showAccessibilityAutoFixStatus(
+    "Auto-fix draft finished: " +
+      details.join("; ") +
+      ". Auto-fix did not enable MarkInfo.Marked. Review every field label, reading-order item, heading, paragraph, font result, table, figure, link, annotation, and artifact; then run veraPDF and screen-reader tests. Only after checking all fixes should a developer use “Set MarkInfo.Marked to true.”",
+    false,
+  );
+  renderAccessibilityModal();
+  return summary;
+}
+
+if (a11yAutoFixBtn) {
+  a11yAutoFixBtn.addEventListener("click", async function () {
+    a11yAutoFixBtn.disabled = true;
+    a11yAutoFixBtn.textContent = "Auto-fix running…";
+    showAccessibilityAutoFixStatus(
+      "Auto-fix is applying deterministic and optional AI drafts. It will not enable MarkInfo.Marked.",
+      false,
+    );
+    try {
+      await runAccessibilityAutoFix();
+    } catch (error) {
+      showAccessibilityAutoFixStatus(
+        "Auto-fix stopped before completing every step. Earlier draft changes may still have been applied and must be reviewed. MarkInfo.Marked was not enabled. " +
+          String(error.message || error),
+        true,
+      );
+      showError(error.message || String(error));
+    } finally {
+      a11yAutoFixBtn.textContent = "Auto-fix draft (uses AI)";
+      a11yAutoFixBtn.disabled = !state.auth.aiEnabled;
+      hideLoading();
+    }
+  });
+}
 [a11yMetaLanguage, a11yMetaTitle, a11yMetaAuthor, a11yMetaSubject].forEach(
   function (input) {
     input.addEventListener("input", function () {

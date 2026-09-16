@@ -943,7 +943,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         finally:
             os.remove(pdf_path)
 
-    def test_draft_structure_tags_each_page_and_sets_mark_info(self):
+    def test_draft_structure_tags_each_page_without_declaring_pdf_tagged(self):
         import pikepdf
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
@@ -996,7 +996,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             self.assertTrue(result["review_required"])
             with pikepdf.open(output_path) as tagged:
                 self.assertIn("/StructTreeRoot", tagged.Root)
-                self.assertTrue(bool(tagged.Root["/MarkInfo"]["/Marked"]))
+                self.assertFalse(bool(tagged.Root["/MarkInfo"]["/Marked"]))
                 self.assertEqual(int(tagged.pages[0]["/StructParents"]), 0)
                 self.assertEqual(int(tagged.pages[1]["/StructParents"]), 1)
                 self.assertEqual(str(tagged.pages[0]["/Tabs"]), "/S")

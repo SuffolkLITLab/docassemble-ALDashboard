@@ -1865,6 +1865,7 @@ def create_draft_structure_tree(
     *,
     overwrite: bool = False,
     heading_decisions: Optional[Iterable[Mapping[str, Any]]] = None,
+    mark_as_tagged: bool = False,
 ) -> Dict[str, Any]:
     """Create a content-block tag-tree draft without redrawing page content.
 
@@ -2181,7 +2182,11 @@ def create_draft_structure_tree(
             )
             struct_root["/ParentTreeNextKey"] = next_struct_parent
             pdf.Root["/StructTreeRoot"] = struct_root
-            pdf.Root["/MarkInfo"] = pikepdf.Dictionary({"/Marked": True})
+            mark_info = pdf.Root.get("/MarkInfo")
+            if not isinstance(mark_info, pikepdf.Dictionary):
+                mark_info = pikepdf.Dictionary()
+                pdf.Root["/MarkInfo"] = mark_info
+            mark_info["/Marked"] = bool(mark_as_tagged)
             pdf.save(output_pdf_path)
         return {
             "action": "draft_structure",
@@ -2189,6 +2194,7 @@ def create_draft_structure_tree(
             "text_blocks_tagged": text_block_count,
             "headings_drafted": heading_count,
             "widgets_tagged": widget_count,
+            "marked_as_tagged": bool(mark_as_tagged),
             "review_required": True,
             "warning": "Content-block tags are a draft. Review reading order, heading levels, paragraph grouping, field placement, lists, tables, figures, links, and artifacts manually.",
         }

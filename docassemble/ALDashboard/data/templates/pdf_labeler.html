@@ -414,10 +414,12 @@
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <span id="a11y-summary" class="small" aria-live="polite">Inspecting document…</span>
+                        <button id="a11y-auto-fix" class="btn btn-sm btn-warning" title="Runs deterministic drafts and explicitly invokes the configured AI for field labels and headings">Auto-fix draft (uses AI)</button>
                         <button id="a11y-refresh-report" class="btn btn-sm btn-outline-secondary">Re-run report</button>
                         <button id="close-accessibility" class="btn btn-sm btn-dark">Return to field editor</button>
                     </div>
                 </div>
+                <div id="a11y-auto-fix-status" class="hidden alert alert-warning m-3 mb-0" role="status" tabindex="-1"></div>
                 <div class="a11y-workshop-layout">
                     <aside class="a11y-workshop-report" aria-label="Accessibility findings">
                         <div class="form-check form-switch mb-3">
@@ -498,6 +500,7 @@
                         <button id="a11y-draft-structure" class="btn btn-outline-primary btn-sm">Create tags from approved draft</button>
                         <button id="a11y-toggle-marked" class="btn btn-outline-secondary btn-sm">Toggle MarkInfo.Marked</button>
                     </div>
+                    <div class="alert alert-secondary small py-2">Developer: setting <code>MarkInfo.Marked=true</code> is a declaration, not an automated fix. Click it only after reviewing every draft change and completing external validation. Auto-fix never enables it.</div>
                     <pre id="a11y-tag-structure" class="small mb-0" style="max-height: 14rem; overflow: auto;"></pre>
                     <h4 class="h6 mt-3">Visual structure draft</h4>
                     <p class="small text-muted">The preview outlines extracted paragraph blocks and proposed headings. The heuristic intentionally favors recall: approve real headings, reject false matches, and choose the correct level before creating tags.</p>

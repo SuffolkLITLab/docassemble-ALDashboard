@@ -128,9 +128,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertIn("not an instruction", system_prompt)
         self.assertIn("Do not begin with Enter", system_prompt)
         self.assertIn("sentence fragment", system_prompt)
-        self.assertGreaterEqual(
-            completion.call_args.kwargs["max_output_tokens"], 8192
-        )
+        self.assertGreaterEqual(completion.call_args.kwargs["max_output_tokens"], 8192)
 
     def test_direct_font_objects_use_resource_fallback_identity(self):
         import pikepdf
@@ -159,7 +157,9 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 )
             }
         )
-        self.assertEqual([resource for resource, _font in _iter_pdf_fonts(pdf)], ["p1/F1", "p1/F2"])
+        self.assertEqual(
+            [resource for resource, _font in _iter_pdf_fonts(pdf)], ["p1/F1", "p1/F2"]
+        )
         pdf.close()
 
     def test_draft_structure_uses_only_approved_heading_decisions(self):
@@ -263,9 +263,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
 
             with pikepdf.open(output_path) as tagged:
                 page_part = tagged.Root.StructTreeRoot.K.K[0]
-                paragraph = next(
-                    child for child in page_part.K if str(child.S) == "/P"
-                )
+                paragraph = next(child for child in page_part.K if str(child.S) == "/P")
                 self.assertEqual(int(paragraph.K), 6)
                 parent_entries = tagged.Root.StructTreeRoot.ParentTree.Nums[1]
                 self.assertEqual(len(parent_entries), 7)
@@ -596,9 +594,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     "table-header-scope",
                 },
             )
-            self.assertEqual(
-                before["figures"][0]["issueIds"], ["figure-structure-alt"]
-            )
+            self.assertEqual(before["figures"][0]["issueIds"], ["figure-structure-alt"])
             self.assertFalse(before["annotations"][0]["tagged"])
             before_report = {
                 issue["id"]: issue
@@ -616,6 +612,12 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     before_report[issue_id]["editorTargetCount"], 0, issue_id
                 )
 
+            with self.assertRaises(PDFAccessibilityError):
+                apply_manual_structure_repairs(
+                    source_path,
+                    output_path,
+                    [{"action": "set_annotation_contents", "contents": "Wrong target"}],
+                )
             result = apply_manual_structure_repairs(
                 source_path,
                 output_path,
@@ -717,11 +719,14 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             pdf.save(source_path)
             pdf.close()
 
-            with patch(
-                "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts"
-            ) as font_inventory, patch(
-                "docassemble.ALDashboard.pdf_accessibility.inspect_pdf_accessibility",
-                side_effect=AssertionError("full inspection should not run"),
+            with (
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._system_truetype_fonts"
+                ) as font_inventory,
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility.inspect_pdf_accessibility",
+                    side_effect=AssertionError("full inspection should not run"),
+                ),
             ):
                 result = embed_fonts_and_rebuild_unicode(
                     source_path,
@@ -889,6 +894,62 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertIsNotNone(cmap)
         self.assertIn(b"<80> <20AC>", cmap)
 
+    def test_unicode_ligature_and_metric_encoding(self):
+        import pikepdf
+
+        font = pikepdf.Dictionary(
+            {
+                "/Encoding": pikepdf.Dictionary(
+                    {
+                        "/BaseEncoding": pikepdf.Name("/MacRomanEncoding"),
+                        "/Differences": [65, pikepdf.Name("/f_f_i")],
+                    }
+                ),
+                "/FirstChar": 128,
+                "/Widths": [700],
+            }
+        )
+        self.assertIn(b"<41> <006600660069>", _simple_font_unicode_cmap(font))
+        self.assertEqual(_expected_font_widths(font), ({0xC4: 700.0}, "pdf-widths"))
+
+    def test_field_names_with_whitespace_are_distinct(self):
+        import pikepdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fields.pdf")
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page()
+            fields = [
+                pdf.make_indirect(
+                    pikepdf.Dictionary(
+                        {
+                            "/Subtype": pikepdf.Name("/Widget"),
+                            "/FT": pikepdf.Name("/Tx"),
+                            "/T": name,
+                            "/Rect": [0, 0, 10, 10],
+                        }
+                    )
+                )
+                for name in ("name", " name ")
+            ]
+            page["/Annots"] = fields
+            pdf.Root["/AcroForm"] = pikepdf.Dictionary({"/Fields": fields})
+            pdf.save(path)
+            pdf.close()
+            apply_pdf_accessibility_settings(
+                input_pdf_path=path,
+                output_pdf_path=path,
+                field_tooltips={"name": "First", " name ": "Second"},
+                field_order=[" name ", "name"],
+            )
+            self.assertEqual(
+                extract_pdf_field_tooltips(path), {"name": "First", " name ": "Second"}
+            )
+            with pikepdf.open(path) as result:
+                self.assertEqual(
+                    [str(f.T) for f in result.Root.AcroForm.Fields], [" name ", "name"]
+                )
+
     def test_unicode_map_honours_differences_over_the_base(self):
         import pikepdf
 
@@ -898,9 +959,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     {
                         "/Type": pikepdf.Name("/Encoding"),
                         "/BaseEncoding": pikepdf.Name("/WinAnsiEncoding"),
-                        "/Differences": pikepdf.Array(
-                            [65, pikepdf.Name("/breve")]
-                        ),
+                        "/Differences": pikepdf.Array([65, pikepdf.Name("/breve")]),
                     }
                 )
             }
@@ -912,8 +971,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertNotIn(b"<41> <0041>", cmap)
 
     def test_unicode_map_from_differences_without_a_declared_base(self):
-        """The built-in base is unknown, so only shared ASCII plus the
-        overrides may be mapped."""
+        """An unknown built-in encoding permits only explicit overrides."""
         import pikepdf
 
         font = pikepdf.Dictionary(
@@ -921,9 +979,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                 "/Encoding": pikepdf.Dictionary(
                     {
                         "/Type": pikepdf.Name("/Encoding"),
-                        "/Differences": pikepdf.Array(
-                            [24, pikepdf.Name("/breve")]
-                        ),
+                        "/Differences": pikepdf.Array([24, pikepdf.Name("/breve")]),
                     }
                 )
             }
@@ -931,7 +987,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         cmap = _simple_font_unicode_cmap(font)
         self.assertIsNotNone(cmap)
         self.assertIn(b"<18> <02D8>", cmap)
-        self.assertIn(b"<41> <0041>", cmap)
+        self.assertNotIn(b"<41> <0041>", cmap)
         # Nothing in the upper half may be invented from an unknown base.
         self.assertNotIn(b"<80> <20AC>", cmap)
 
@@ -1218,6 +1274,44 @@ if __name__ == "__main__":
 
 class TestSymbolicFontGlyphReview(unittest.TestCase):
     """Cover the reviewed-Unicode path for symbol fonts like Webdings."""
+
+    def test_artifact_repair_respects_nesting_and_graphics_state(self):
+        import pikepdf
+        from docassemble.ALDashboard.pdf_accessibility import (
+            _mark_font_runs_as_artifact,
+            _pdf_object_identity,
+            _font_code_usage,
+        )
+
+        with pikepdf.new() as pdf:
+            page = pdf.add_blank_page()
+            fonts = {
+                name: pdf.make_indirect(
+                    pikepdf.Dictionary(
+                        {
+                            "/Subtype": pikepdf.Name("/TrueType"),
+                        }
+                    )
+                )
+                for name in ("/S1", "/F1")
+            }
+            page["/Resources"] = pikepdf.Dictionary({"/Font": fonts})
+            page["/Contents"] = pdf.make_stream(
+                b"BT /S1 12 Tf q /F1 12 Tf (A) Tj Q (B) Tj "
+                b"/P <</MCID 0>> BDC /Span BMC (C) Tj EMC (D) Tj EMC "
+                b"/Artifact BMC (E) Tj EMC ET"
+            )
+            identity = _pdf_object_identity(fonts["/S1"], "p1/S1")
+            usage = _font_code_usage(pdf)
+            self.assertEqual(usage[identity]["counts"], {66: 1, 67: 1, 68: 1, 69: 1})
+            result = _mark_font_runs_as_artifact(pdf, {identity: "p1/S1"})
+            self.assertEqual(result["wrapped"], {"p1/S1": 1})
+            self.assertEqual(result["skipped_tagged"], {"p1/S1": 2})
+            # Existing artifacts stay intact and a second run is idempotent.
+            self.assertEqual(page.Contents.read_bytes().count(b"/Artifact BMC"), 2)
+            self.assertEqual(
+                _mark_font_runs_as_artifact(pdf, {identity: "p1/S1"})["wrapped"], {}
+            )
 
     def _symbolic_pdf(self, path, *, tagged=False):
         """Build a one-page PDF drawing one Identity-H symbol glyph twice."""
@@ -1637,6 +1731,8 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
                 widths = font["/Widths"]
                 self.assertEqual(int(widths[ord("A") - first]), 667)
                 self.assertEqual(int(widths[ord(" ") - first]), 278)
+                # Implicit StandardEncoding must not become WinAnsi apostrophe.
+                self.assertIn(b"<27> <2019>", _simple_font_unicode_cmap(font))
         finally:
             os.remove(source_path)
             os.remove(output_path)
@@ -1712,6 +1808,41 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
 
 class TestFontSubstitution(unittest.TestCase):
     """Substitution swaps the typeface but must never move the text."""
+
+    def test_cff_replacement_changes_a_truetype_dictionary_to_type1(self):
+        import pikepdf
+        from docassemble.ALDashboard.pdf_accessibility import _substitute_font_program
+
+        with pikepdf.new() as pdf:
+            font = pikepdf.Dictionary(
+                {
+                    "/Subtype": pikepdf.Name("/TrueType"),
+                    "/BaseFont": pikepdf.Name("/Original"),
+                    "/Encoding": pikepdf.Name("/MacRomanEncoding"),
+                    "/Widths": [600],
+                    "/FirstChar": 65,
+                }
+            )
+            with (
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._embeddable_program",
+                    return_value=(b"program", "/FontFile3", "/Type1C"),
+                ),
+                patch(
+                    "docassemble.ALDashboard.pdf_accessibility._descriptor_for_program",
+                    return_value=pikepdf.Dictionary(),
+                ),
+            ):
+                self.assertTrue(
+                    _substitute_font_program(
+                        pdf,
+                        font,
+                        "Original",
+                        {"path": "installed.otf", "postscript_name": "Replacement"},
+                    )
+                )
+            self.assertEqual(str(font.Subtype), "/Type1")
+            self.assertEqual(str(font.Encoding), "/MacRomanEncoding")
 
     URW_SANS = "/usr/share/fonts/opentype/urw-base35/NimbusSans-Regular.otf"
     URW_SANS_BOLD = "/usr/share/fonts/opentype/urw-base35/NimbusSans-Bold.otf"

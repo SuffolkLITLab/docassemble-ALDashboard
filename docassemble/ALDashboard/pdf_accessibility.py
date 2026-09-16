@@ -90,7 +90,7 @@ def draft_field_tooltips_with_ai(
     records = []
     allowed_names: set[str] = set()
     for field in fields:
-        name = str(field.get("name") or "").strip()
+        name = str(field.get("name") or "")
         if not name:
             continue
         allowed_names.add(name)
@@ -139,7 +139,7 @@ def draft_field_tooltips_with_ai(
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, Mapping):
             continue
-        name = str(row.get("name") or "").strip()
+        name = str(row.get("name") or "")
         tooltip = str(row.get("tooltip") or "")
         tooltip = re.sub(r"\s+", " ", tooltip).strip(" .:-")
         tooltip = tooltip[:45].strip()
@@ -226,7 +226,7 @@ def build_default_field_order(
     """
     rows: List[_PositionedField] = []
     for field in positioned_fields:
-        name = str(field.get("name") or "").strip()
+        name = str(field.get("name") or "")
         if not name:
             continue
         try:
@@ -382,7 +382,7 @@ def _structure_form_field_name(node: Any) -> str:
             continue
         field = _named_parent(kid.get("/Obj"))
         if field is not None:
-            return _safe_pdf_string(field.get("/T", "")).strip()
+            return _safe_pdf_string(field.get("/T", ""))
     return ""
 
 
@@ -408,12 +408,10 @@ def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
                 and _safe_pdf_string(child.get("/S", "")) == "/Form"
             ]
             forms = [values[index] for index in slots]
-            original_positions = {id(form): index for index, form in enumerate(forms)}
             sorted_forms = sorted(
                 forms,
-                key=lambda form: (
-                    order_index.get(_structure_form_field_name(form), len(order_index)),
-                    original_positions[id(form)],
+                key=lambda form: order_index.get(
+                    _structure_form_field_name(form), len(order_index)
                 ),
             )
             moved += sum(
@@ -564,9 +562,7 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                     "issueIds": (
                         []
                         if correctly_tagged
-                        else [
-                            "link-tags" if subtype == "Link" else "annotation-tags"
-                        ]
+                        else ["link-tags" if subtype == "Link" else "annotation-tags"]
                     ),
                 }
             )
@@ -588,7 +584,7 @@ def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
                 parent = _named_parent(annot)
                 if parent is None:
                     continue
-                name = _safe_pdf_string(parent.get("/T", "")).strip()
+                name = _safe_pdf_string(parent.get("/T", ""))
                 if not name or name in seen:
                     continue
                 tooltip = _widget_tooltip(annot, parent)
@@ -610,7 +606,7 @@ def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
         for field_ref in acroform["/Fields"]:
             try:
                 field_obj = field_ref
-                name = _safe_pdf_string(field_obj.get("/T", "")).strip()
+                name = _safe_pdf_string(field_obj.get("/T", ""))
                 if name and name not in ordered_names:
                     ordered_names.append(name)
             except Exception:
@@ -761,9 +757,7 @@ def _iter_pdf_fonts(pdf: Any) -> Iterable[Tuple[str, Any]]:
         if not fonts:
             continue
         for resource_name, font in fonts.items():
-            identity = _pdf_object_identity(
-                font, (resource_path, str(resource_name))
-            )
+            identity = _pdf_object_identity(font, (resource_path, str(resource_name)))
             if identity in seen:
                 continue
             seen.add(identity)
@@ -888,11 +882,11 @@ def _expected_font_widths(pdf_font: Any) -> Tuple[Dict[int, float], str]:
     widths = pdf_font.get("/Widths") if hasattr(pdf_font, "get") else None
     if widths:
         first_char = int(pdf_font.get("/FirstChar", 0))
+        characters = _simple_font_characters(pdf_font)
         for offset, pdf_width in enumerate(widths):
             code = first_char + offset
-            try:
-                character = bytes([code]).decode("cp1252")
-            except (UnicodeDecodeError, ValueError):
+            character = characters.get(code, "")
+            if len(character) != 1:
                 continue
             expected[ord(character)] = float(pdf_width)
         return expected, "pdf-widths"
@@ -1002,28 +996,30 @@ def _encoding_base_name(pdf_font: Any) -> str:
     return _safe_pdf_string(base).lstrip("/") if base is not None else ""
 
 
-def _simple_font_code_points(pdf_font: Any, default_base: str = "") -> Dict[int, int]:
-    """Map each single-byte character code to the code point it draws.
+def _simple_font_characters(pdf_font: Any) -> Dict[int, str]:
+    """Map each single-byte code to its character or ligature text.
 
     Resolves the declared base encoding, then applies any /Differences on top.
-    When no base is declared, only the ASCII range is mapped, because that is
-    the part every base encoding agrees on; guessing the upper half would
-    invent characters. Codes that resolve to nothing are simply absent.
+    Without a known base, only explicit Differences can be mapped. A font's
+    built-in encoding need not agree with ASCII (symbol fonts often do not).
     """
     from fontTools.agl import toUnicode  # type: ignore[import-untyped]
 
-    base = _encoding_base_name(pdf_font) or default_base
+    base = _encoding_base_name(pdf_font)
     codec = SIMPLE_FONT_CODECS.get(base, "")
-    mapping: Dict[int, int] = {}
-    # Without a declared base the font program's built-in encoding applies,
-    # which is not one of these; only ASCII, where every base agrees, is safe.
-    limit = 0x100 if codec else 0x7F
+    mapping: Dict[int, str] = {}
+    limit = 0x100 if codec else 0
     for code in range(0x20, limit):
         try:
-            mapping[code] = ord(bytes([code]).decode(codec or "ascii"))
+            mapping[code] = bytes([code]).decode(codec)
         except (UnicodeDecodeError, ValueError):
             continue
-    mapping.update(ENCODING_SPEC_OVERRIDES.get(base, {}))
+    mapping.update(
+        {
+            code: chr(value)
+            for code, value in ENCODING_SPEC_OVERRIDES.get(base, {}).items()
+        }
+    )
     encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
     differences = (
         encoding.get("/Differences")
@@ -1037,7 +1033,7 @@ def _simple_font_code_points(pdf_font: Any, default_base: str = "") -> Dict[int,
             continue
         text = toUnicode(_safe_pdf_string(item).lstrip("/"))
         if text:
-            mapping[current] = ord(text[0])
+            mapping[current] = text
         else:
             mapping.pop(current, None)
         current += 1
@@ -1049,8 +1045,6 @@ def _descriptor_for_program(
     font_name: str,
     font_path: str,
     symbolic: bool,
-    file_key: str = "/FontFile2",
-    file_subtype: str = "",
 ) -> Any:
     """Build the /FontDescriptor a standard 14 font never carried.
 
@@ -1099,11 +1093,9 @@ def _descriptor_for_program(
         )
     finally:
         font.close()
-    program, resolved_key, resolved_subtype = _embeddable_program(font_path)
+    program, file_key, file_subtype = _embeddable_program(font_path)
     if program is None:
         raise PDFAccessibilityError(f"{font_name} could not be read for embedding.")
-    file_key = resolved_key or file_key
-    file_subtype = resolved_subtype or file_subtype
     stream = pdf.make_stream(program)
     if file_key == "/FontFile2":
         # /Length1 is the uncompressed TrueType program length; a CFF stream
@@ -1115,25 +1107,33 @@ def _descriptor_for_program(
     return pdf.make_indirect(descriptor)
 
 
-def _embed_into_standard_14_font(
-    pdf: Any, pdf_font: Any, font_name: str, font_path: str
-) -> bool:
-    """Give a standard 14 font dictionary a real, self-contained font program.
-
-    A standard 14 entry names a face and stops there, trusting the viewer to
-    own a copy. PDF/UA does not allow that, and there is no /FontDescriptor to
-    attach a program to, so the dictionary has to be completed: published
-    widths are written out, a descriptor is built from the program, and the
-    subtype becomes /TrueType to match what is now embedded. Widths come from
-    the same table the viewer was already using, so nothing reflows.
-    """
+def _complete_standard_14_widths(pdf_font: Any) -> bool:
+    """Make the standard face's implicit widths and encoding explicit."""
     import pikepdf
+    from fontTools.encodings.StandardEncoding import StandardEncoding  # type: ignore[import-untyped]
 
-    canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
+    canonical = _canonical_font_name(pdf_font.get("/BaseFont", ""))
     published = standard_14_widths(canonical)
-    if published is None:
+    if published is None or canonical in {"symbol", "zapfdingbats"}:
         return False
-    code_points = _simple_font_code_points(pdf_font, "WinAnsiEncoding")
+    encoding = pdf_font.get("/Encoding")
+    if (
+        not _encoding_base_name(pdf_font)
+        or _encoding_base_name(pdf_font) == "StandardEncoding"
+    ):
+        # Standard Type1 text faces use StandardEncoding, not WinAnsi. Preserve
+        # it explicitly when changing the program (e.g. byte 0x27 is quoteright).
+        differences: List[Any] = [0] + [
+            pikepdf.Name("/" + name) for name in StandardEncoding
+        ]
+        if isinstance(encoding, pikepdf.Dictionary):
+            differences.extend(cast(Iterable[Any], encoding.get("/Differences") or []))
+        pdf_font["/Encoding"] = pikepdf.Dictionary({"/Differences": differences})
+    code_points = {
+        code: ord(text)
+        for code, text in _simple_font_characters(pdf_font).items()
+        if len(text) == 1
+    }
     codes = sorted(code_points)
     if not codes:
         return False
@@ -1142,20 +1142,24 @@ def _embed_into_standard_14_font(
         published.get(code_points.get(code, -1), 0)
         for code in range(first_char, last_char + 1)
     ]
-    symbolic = canonical in {"symbol", "zapfdingbats"}
-    descriptor = _descriptor_for_program(pdf, font_name, font_path, symbolic)
-    pdf_font["/FontDescriptor"] = descriptor
-    pdf_font["/Subtype"] = pikepdf.Name("/TrueType")
     pdf_font["/FirstChar"] = first_char
     pdf_font["/LastChar"] = last_char
     pdf_font["/Widths"] = pikepdf.Array(widths)
-    encoding = pdf_font.get("/Encoding")
-    if isinstance(encoding, pikepdf.Dictionary) and "/BaseEncoding" not in encoding:
-        # The widths just written are WinAnsi-based, so say so explicitly
-        # rather than leaving the base to the viewer's built-in guess.
-        encoding["/BaseEncoding"] = pikepdf.Name("/WinAnsiEncoding")
-    elif encoding is None:
-        pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
+    return True
+
+
+def _embed_into_standard_14_font(
+    pdf: Any, pdf_font: Any, font_name: str, font_path: str
+) -> bool:
+    """Complete a standard face with the verified TrueType program."""
+    import pikepdf
+
+    if not _complete_standard_14_widths(pdf_font):
+        return False
+    pdf_font["/FontDescriptor"] = _descriptor_for_program(
+        pdf, font_name, font_path, False
+    )
+    pdf_font["/Subtype"] = pikepdf.Name("/TrueType")
     return True
 
 
@@ -1227,9 +1231,7 @@ def _simple_font_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
 
     Accepts a bare /WinAnsiEncoding name and the dictionary form that names it
     as a base, including one that overrides codes through /Differences. A
-    dictionary with no base is still usable for whatever /Differences spells
-    out plus the ASCII range every base encoding shares. Symbolic fonts have
-    no such encoding and are refused, since their glyphs carry no characters.
+    dictionary with no base is usable only for explicit /Differences.
     """
     base = _encoding_base_name(pdf_font)
     encoding = pdf_font.get("/Encoding") if hasattr(pdf_font, "get") else None
@@ -1242,34 +1244,9 @@ def _simple_font_unicode_cmap(pdf_font: Any) -> Optional[bytes]:
         return None
     if not base and not has_differences:
         return None
-    code_points = _simple_font_code_points(pdf_font)
-    pairs: List[Tuple[int, str]] = []
-    for code in sorted(code_points):
-        character = chr(code_points[code])
-        if ord(character) >= 32 or character in "\t\r\n":
-            pairs.append((code, character.encode("utf-16-be").hex().upper()))
-    if not pairs:
+    if _safe_pdf_string(pdf_font.get("/Subtype", "")) in {"/Type0", "/Type3"}:
         return None
-    lines = [
-        "/CIDInit /ProcSet findresource begin",
-        "12 dict begin",
-        "begincmap",
-        "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
-        f"/CMapName /ALDashboard-{base or 'Diff'} def",
-        "/CMapType 2 def",
-        "1 begincodespacerange",
-        "<00> <FF>",
-        "endcodespacerange",
-    ]
-    for start_index in range(0, len(pairs), 100):
-        batch = pairs[start_index : start_index + 100]
-        lines.append(f"{len(batch)} beginbfchar")
-        lines.extend(f"<{code:02X}> <{unicode_hex}>" for code, unicode_hex in batch)
-        lines.append("endbfchar")
-    lines.extend(
-        ["endcmap", "CMapName currentdict /CMap defineresource pop", "end", "end"]
-    )
-    return ("\n".join(lines) + "\n").encode("ascii")
+    return _confirmed_unicode_cmap(_simple_font_characters(pdf_font), False)
 
 
 def _font_program_bytes(pdf_font: Any) -> Tuple[Optional[bytes], str]:
@@ -1517,8 +1494,13 @@ def _font_code_usage(pdf: Any) -> Dict[str, Dict[str, Any]]:
             except Exception:
                 continue
             current = ""
+            saved_fonts: List[str] = []
             for instruction in instructions:
                 operator = str(instruction.operator)
+                if operator == "q":
+                    saved_fonts.append(current)
+                elif operator == "Q" and saved_fonts:
+                    current = saved_fonts.pop()
                 if operator == "Tf" and instruction.operands:
                     current = str(instruction.operands[0])
                     continue
@@ -1792,21 +1774,29 @@ def _mark_font_runs_as_artifact(pdf: Any, targets: Mapping[str, str]) -> Dict[st
                 continue
             rewritten: List[Any] = []
             current = ""
-            tagged_depth = 0
+            saved_fonts: List[str] = []
+            marked_stack: List[str] = []
             changed = False
             for instruction in instructions:
                 operator = str(instruction.operator)
                 operands = list(instruction.operands)
                 if operator == "Tf" and operands:
                     current = str(operands[0])
-                elif operator == "BDC":
-                    tagged_depth += 1
-                elif operator == "EMC" and tagged_depth:
-                    tagged_depth -= 1
+                elif operator == "q":
+                    saved_fonts.append(current)
+                elif operator == "Q" and saved_fonts:
+                    current = saved_fonts.pop()
+                elif operator in {"BMC", "BDC"}:
+                    marked_stack.append(str(operands[0]) if operands else "")
+                elif operator == "EMC" and marked_stack:
+                    marked_stack.pop()
                 identity = identities.get(current, "")
                 resource_key = targets.get(identity, "")
                 if operator in {"Tj", "TJ", "'", '"'} and resource_key:
-                    if tagged_depth:
+                    if "/Artifact" in marked_stack:
+                        rewritten.append(instruction)
+                        continue
+                    if marked_stack:
                         skipped_tagged[resource_key] = (
                             skipped_tagged.get(resource_key, 0) + 1
                         )
@@ -2095,38 +2085,21 @@ def _substitute_font_program(
     """
     import pikepdf
 
-    program, file_key, file_subtype = _embeddable_program(str(candidate["path"]))
-    if not program:
-        return False
     canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
     published = standard_14_widths(canonical)
     if "/Widths" not in pdf_font and published is not None:
-        code_points = _simple_font_code_points(pdf_font, "WinAnsiEncoding")
-        codes = sorted(code_points)
-        if codes:
-            first_char, last_char = codes[0], codes[-1]
-            pdf_font["/FirstChar"] = first_char
-            pdf_font["/LastChar"] = last_char
-            pdf_font["/Widths"] = pikepdf.Array(
-                [
-                    published.get(code_points.get(code, -1), 0)
-                    for code in range(first_char, last_char + 1)
-                ]
-            )
+        if not _complete_standard_14_widths(pdf_font):
+            return False
     postscript_name = str(candidate.get("postscript_name") or "").strip() or font_name
     symbolic = canonical in {"symbol", "zapfdingbats"}
     descriptor = _descriptor_for_program(
-        pdf, postscript_name, str(candidate["path"]), symbolic, file_key, file_subtype
+        pdf, postscript_name, str(candidate["path"]), symbolic
     )
     pdf_font["/FontDescriptor"] = descriptor
     pdf_font["/BaseFont"] = pikepdf.Name(f"/{postscript_name}")
-    if file_key == "/FontFile2":
-        pdf_font["/Subtype"] = pikepdf.Name("/TrueType")
-    encoding = pdf_font.get("/Encoding")
-    if isinstance(encoding, pikepdf.Dictionary) and "/BaseEncoding" not in encoding:
-        encoding["/BaseEncoding"] = pikepdf.Name("/WinAnsiEncoding")
-    elif encoding is None:
-        pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
+    pdf_font["/Subtype"] = pikepdf.Name(
+        "/TrueType" if "/FontFile2" in descriptor else "/Type1"
+    )
     return True
 
 
@@ -2384,7 +2357,9 @@ def build_accessibility_report(
     editor_annotations = list(editor.get("annotations") or [])
 
     def editor_issue_count(issue_id: str, records: Iterable[Mapping[str, Any]]) -> int:
-        return sum(1 for record in records if issue_id in (record.get("issueIds") or []))
+        return sum(
+            1 for record in records if issue_id in (record.get("issueIds") or [])
+        )
 
     table_target_counts = {
         issue_id: editor_issue_count(issue_id, editor_tables)
@@ -2482,9 +2457,7 @@ def build_accessibility_report(
         elif issue_id == "figure-structure-alt":
             item["editorTargetCount"] = editor_issue_count(issue_id, editor_figures)
         else:
-            item["editorTargetCount"] = editor_issue_count(
-                issue_id, editor_annotations
-            )
+            item["editorTargetCount"] = editor_issue_count(issue_id, editor_annotations)
     if tag_summary["present"]:
         has_link_annotations = any(
             item.get("subtype") == "Link" for item in editor_annotations
@@ -3010,9 +2983,9 @@ def apply_pdf_accessibility_settings(
                 if language:
                     pdf.Root["/Lang"] = pikepdf.String(language)
                     metadata_updates += 1
-                document_title = title or _safe_pdf_string(
-                    docinfo.get("/Title", "")
-                ).strip()
+                document_title = (
+                    title or _safe_pdf_string(docinfo.get("/Title", "")).strip()
+                )
                 if set_display_doc_title and document_title:
                     viewer_preferences = pdf.Root.get("/ViewerPreferences")
                     if not isinstance(viewer_preferences, pikepdf.Dictionary):
@@ -3040,7 +3013,7 @@ def apply_pdf_accessibility_settings(
                         parent = _named_parent(annot)
                         if parent is None:
                             continue
-                        field_name = _safe_pdf_string(parent.get("/T", "")).strip()
+                        field_name = _safe_pdf_string(parent.get("/T", ""))
                         if not field_name:
                             continue
                         tooltip = _field_name_to_tooltip(
@@ -3057,9 +3030,7 @@ def apply_pdf_accessibility_settings(
 
             # Reorder AcroForm fields to match caller-supplied order.
             if field_order:
-                ordered = [
-                    str(name).strip() for name in field_order if str(name).strip()
-                ]
+                ordered = [str(name) for name in field_order if str(name)]
                 acroform = (
                     pdf.Root.get("/AcroForm") if hasattr(pdf.Root, "get") else None
                 )
@@ -3070,7 +3041,7 @@ def apply_pdf_accessibility_settings(
                         fallback_refs: List[Any] = []
                         for ref in existing_refs:
                             try:
-                                name = _safe_pdf_string(ref.get("/T", "")).strip()
+                                name = _safe_pdf_string(ref.get("/T", ""))
                                 if name and name not in by_name:
                                     by_name[name] = ref
                                 else:
@@ -3106,21 +3077,15 @@ def apply_pdf_accessibility_settings(
                             if _safe_pdf_string(ref.get("/Subtype", "")) == "/Widget"
                         ]
                         widgets = [refs[index] for index in widget_slots]
-                        original_positions = {
-                            id(ref): index for index, ref in enumerate(widgets)
-                        }
 
-                        def annotation_sort_key(ref: Any) -> Tuple[int, int]:
+                        def annotation_sort_key(ref: Any) -> int:
                             parent = _named_parent(ref)
                             name = (
-                                _safe_pdf_string(parent.get("/T", "")).strip()
+                                _safe_pdf_string(parent.get("/T", ""))
                                 if parent is not None
                                 else ""
                             )
-                            return (
-                                order_index.get(name, len(order_index)),
-                                original_positions[id(ref)],
-                            )
+                            return order_index.get(name, len(order_index))
 
                         sorted_widgets = sorted(widgets, key=annotation_sort_key)
                         for slot, widget in zip(widget_slots, sorted_widgets):
@@ -3726,6 +3691,8 @@ def apply_manual_structure_repairs(
                     try:
                         page_index = int(operation.get("pageIndex", -1))
                         annot_index = int(operation.get("index", -1))
+                        if page_index < 0 or annot_index < 0:
+                            raise ValueError("Annotation indexes must be nonnegative.")
                         annot = pdf.pages[page_index]["/Annots"][annot_index]
                     except (IndexError, KeyError, TypeError, ValueError) as exc:
                         raise PDFAccessibilityError(
@@ -3907,6 +3874,7 @@ def embed_fonts_and_rebuild_unicode(
                             stream = pdf.make_stream(font_bytes)
                             stream["/Length1"] = len(font_bytes)
                             descriptor["/FontFile2"] = stream
+                            font["/Subtype"] = pikepdf.Name("/TrueType")
                             embedded.append(
                                 {
                                     "resource": resource,

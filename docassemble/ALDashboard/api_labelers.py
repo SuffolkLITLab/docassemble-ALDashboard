@@ -3564,34 +3564,22 @@ def pdf_labeler_accessibility_remediate() -> Response:
                     post_data.get("mark_as_tagged"), default=False
                 ),
             )
-        elif action == "structure":
-            operations_raw = post_data.get("operations")
-            operations = (
-                json.loads(operations_raw)
-                if isinstance(operations_raw, str)
-                else operations_raw
-            )
-            if not isinstance(operations, list):
-                raise DashboardAPIValidationError("operations must be a JSON list.")
-            result = apply_manual_structure_repairs(input_path, output_path, operations)
-        elif action == "unicode_map":
-            decisions_raw = post_data.get("decisions")
-            decisions = (
-                json.loads(decisions_raw)
-                if isinstance(decisions_raw, str)
-                else decisions_raw
-            )
-            if not isinstance(decisions, list):
-                raise DashboardAPIValidationError("decisions must be a JSON list.")
-            result = apply_unicode_map_decisions(input_path, output_path, decisions)
-        elif action == "substitute_fonts":
-            choices_raw = post_data.get("decisions")
-            choices = (
-                json.loads(choices_raw) if isinstance(choices_raw, str) else choices_raw
-            )
-            if not isinstance(choices, list):
-                raise DashboardAPIValidationError("decisions must be a JSON list.")
-            result = substitute_fonts(input_path, output_path, choices)
+        elif action in {"structure", "unicode_map", "substitute_fonts"}:
+            key = "operations" if action == "structure" else "decisions"
+            raw = post_data.get(key)
+            decisions = json.loads(raw) if isinstance(raw, str) else raw
+            if not isinstance(decisions, list) or any(
+                not isinstance(item, dict) for item in decisions
+            ):
+                raise DashboardAPIValidationError(
+                    f"{key} must be a JSON list of objects."
+                )
+            repair = {
+                "structure": apply_manual_structure_repairs,
+                "unicode_map": apply_unicode_map_decisions,
+                "substitute_fonts": substitute_fonts,
+            }[action]
+            result = repair(input_path, output_path, decisions)
         else:
             result = embed_fonts_and_rebuild_unicode(
                 input_path,

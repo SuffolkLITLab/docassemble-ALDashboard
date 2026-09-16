@@ -2889,7 +2889,12 @@ async function inspectAccessibilityData(forceRefresh) {
     },
   );
   const payload = await parseApiResponse(response);
-  if (!payload.success || !payload.data) return;
+  if (!payload.success || !payload.data) {
+    throw new Error(
+      (payload.error && payload.error.message) ||
+        "Accessibility inspection failed.",
+    );
+  }
 
   const metadata = payload.data.metadata || {};
   if (!state.accessibility.metadata.language)
@@ -4515,8 +4520,14 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
   };
   state.accessibility.report = null;
   state.accessibility.headingCandidates = [];
-  state.accessibility.fontRemediation = null;
+  state.accessibility.glyphReview = null;
+  state.accessibility.glyphDecisions = {};
+  state.accessibility.glyphRendered = {};
+  state.accessibility.substituteOptions = null;
+  state.accessibility.substituteChoices = {};
   if (!settings.preserveAccessibilityDrafts) {
+    state.accessibility.fontRemediation = null;
+    a11yAutoFixStatus.classList.add("hidden");
     state.accessibility.draftRemediations = {};
     state.accessibility.headingDecisions = {};
     state.accessibility.headingReviewSavedSignature = "";
@@ -8829,16 +8840,7 @@ a11yDraftStructureBtn.addEventListener("click", function () {
     renderHeadingReviewStatus();
     return;
   }
-  const decisions = Object.keys(state.accessibility.headingDecisions).map(
-    function (candidateId) {
-      const decision = state.accessibility.headingDecisions[candidateId];
-      return {
-        candidateId: candidateId,
-        status: decision.status,
-        tag: decision.tag,
-      };
-    },
-  );
+  const decisions = accessibilityHeadingDecisionPayload();
   const approvedCount = decisions.filter(function (decision) {
     return decision.status === "approved";
   }).length;
@@ -9084,6 +9086,8 @@ async function runAccessibilityAutoFix() {
     );
   }
 
+  updateAccessibilityMetadataFromInputs();
+  showLoading("Drafting accessibility fixes with AI…");
   const summary = {
     nearbyTooltips: draftTooltipsFromNearbyText({ quiet: true }),
     aiTooltips: 0,
@@ -9107,7 +9111,6 @@ async function runAccessibilityAutoFix() {
     renderHeadingReviewStatus();
   }
 
-  updateAccessibilityMetadataFromInputs();
   await runAccessibilityRemediation("metadata", {
     metadata: state.accessibility.metadata,
     field_tooltips: accessibilityTooltipPayload(),

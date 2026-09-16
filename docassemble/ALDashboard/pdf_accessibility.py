@@ -1192,10 +1192,25 @@ def _extract_font_records(pdf: Any) -> List[Dict[str, Any]]:
     return records
 
 
+def _walk_appearance_streams(value: Any) -> Iterable[Any]:
+    """Yield every stream below an annotation /AP state dictionary."""
+    import pikepdf
+
+    if isinstance(value, pikepdf.Stream):
+        yield value
+    elif isinstance(value, pikepdf.Dictionary):
+        for child in value.values():
+            yield from _walk_appearance_streams(child)
+
+
 def _iter_pdf_fonts(pdf: Any) -> Iterable[Tuple[str, Any]]:
     """Yield each distinct page font object once with its resource path."""
+
     seen: set[str] = set()
     resource_sets: List[Tuple[str, Any]] = []
+    acroform = pdf.Root.get("/AcroForm")
+    if acroform is not None:
+        resource_sets.append(("acroform", acroform.get("/DR")))
     for page_index, page in enumerate(pdf.pages):
         page_prefix = f"p{page_index + 1}"
         resources = page.get("/Resources") if hasattr(page, "get") else None
@@ -1209,15 +1224,9 @@ def _iter_pdf_fonts(pdf: Any) -> Iterable[Tuple[str, Any]]:
             cast(Iterable[Any], page.get("/Annots") or [])
         ):
             appearances = annot.get("/AP") if hasattr(annot, "get") else None
-            normal = appearances.get("/N") if appearances is not None else None
-            if normal is None:
-                continue
-            streams = (
-                [normal]
-                if hasattr(normal, "read_bytes")
-                else list(normal.values()) if hasattr(normal, "values") else []
-            )
-            for state_index, stream in enumerate(streams):
+            for state_index, stream in enumerate(
+                _walk_appearance_streams(appearances) if appearances is not None else []
+            ):
                 resource_sets.append(
                     (
                         f"{page_prefix}:annot{annot_index}:ap{state_index}",
@@ -1649,6 +1658,73 @@ def _embed_into_standard_14_font(
     return True
 
 
+def _embed_zapf_dingbats_clone(
+    pdf: Any, pdf_font: Any, font_path: str, postscript_name: str
+) -> bool:
+    """Embed the metric-compatible URW Zapf Dingbats clone and its Unicode map."""
+    import pikepdf
+    from fontTools import agl  # type: ignore[import-untyped]
+    from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+    try:
+        font = TTFont(font_path, lazy=True)
+        if "CFF " not in font:
+            font.close()
+            return False
+        try:
+            top = font["CFF "].cff.topDictIndex[0]
+            encoding = top.Encoding
+            if not isinstance(encoding, list) or len(encoding) != 256:
+                return False
+            units = float(font["head"].unitsPerEm) or 1000.0
+            metrics = font["hmtx"].metrics
+            widths = [
+                (
+                    int(round(metrics.get(glyph, (0, 0))[0] * 1000.0 / units))
+                    if glyph and glyph != ".notdef"
+                    else 0
+                )
+                for glyph in encoding
+            ]
+            mappings = {
+                code: agl.toUnicode(glyph, isZapfDingbats=True)
+                for code, glyph in enumerate(encoding)
+                if glyph and glyph != ".notdef"
+            }
+        finally:
+            font.close()
+        cmap = _confirmed_unicode_cmap(mappings, False)
+        if cmap is None:
+            return False
+        descriptor = _descriptor_for_program(pdf, postscript_name, font_path, True)
+        if "/FontFile3" not in descriptor:
+            return False
+        pdf_font["/BaseFont"] = pikepdf.Name(f"/{postscript_name}")
+        pdf_font["/Subtype"] = pikepdf.Name("/Type1")
+        pdf_font["/FontDescriptor"] = descriptor
+        pdf_font["/FirstChar"] = 0
+        pdf_font["/LastChar"] = 255
+        pdf_font["/Widths"] = pikepdf.Array(widths)
+        pdf_font["/ToUnicode"] = pdf.make_stream(cmap)
+        return True
+    except Exception:
+        return False
+
+
+def _installed_zapf_dingbats_clone(
+    inventory: Iterable[Mapping[str, Any]],
+) -> Optional[Mapping[str, Any]]:
+    """Find the freely redistributable URW clone shipped by fontconfig."""
+    for record in inventory:
+        if (
+            record.get("embeddable")
+            and record.get("format") == "cff"
+            and _canonical_font_name(record.get("postscript_name")) == "d050000l"
+        ):
+            return record
+    return None
+
+
 def suggest_system_font(font_name: str) -> Optional[Dict[str, str]]:
     """Return fontconfig's closest installed alternative without applying it."""
     executable = shutil.which("fc-match")
@@ -1955,15 +2031,9 @@ def _font_code_usage(pdf: Any) -> Dict[str, Dict[str, Any]]:
             cast(Iterable[Any], page.get("/Annots") or [])
         ):
             appearances = annot.get("/AP") if hasattr(annot, "get") else None
-            normal = appearances.get("/N") if appearances is not None else None
-            if normal is None:
-                continue
-            streams = (
-                [normal]
-                if hasattr(normal, "read_bytes")
-                else list(normal.values()) if hasattr(normal, "values") else []
-            )
-            for state_index, stream in enumerate(streams):
+            for state_index, stream in enumerate(
+                _walk_appearance_streams(appearances) if appearances is not None else []
+            ):
                 containers.append(
                     (
                         f"p{page_index + 1}:annot{annot_index}:ap{state_index}",
@@ -2912,22 +2982,25 @@ def _untagged_content_count(page: Any) -> int:
 
 
 def _artifact_untagged_content(pdf: Any) -> int:
-    """Mark remaining top-level page-content runs as artifacts."""
+    """Mark untagged non-text layout runs in pages and Form XObjects."""
     import pikepdf
 
     runs_wrapped = 0
-    for page in pdf.pages:
+    seen_forms: set[str] = set()
+
+    def artifact_stream(container: Any, *, is_page: bool) -> None:
+        nonlocal runs_wrapped
         try:
-            instructions = list(pikepdf.parse_content_stream(page))
+            instructions = list(pikepdf.parse_content_stream(container))
         except Exception:
-            continue
+            return
         rewritten: List[Any] = []
         pending: List[Any] = []
         depth = 0
-        page_runs_wrapped = 0
+        stream_runs_wrapped = 0
 
         def flush() -> None:
-            nonlocal page_runs_wrapped, runs_wrapped
+            nonlocal stream_runs_wrapped, runs_wrapped
             if not pending:
                 return
             has_draft_artifact = any(
@@ -2947,7 +3020,7 @@ def _artifact_untagged_content(pdf: Any) -> int:
                 rewritten.append(
                     pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC"))
                 )
-                page_runs_wrapped += 1
+                stream_runs_wrapped += 1
                 runs_wrapped += 1
             else:
                 rewritten.extend(pending)
@@ -2968,10 +3041,25 @@ def _artifact_untagged_content(pdf: Any) -> int:
             else:
                 pending.append(instruction)
         flush()
-        if page_runs_wrapped:
-            page["/Contents"] = pdf.make_stream(
-                pikepdf.unparse_content_stream(rewritten)
-            )
+        if not stream_runs_wrapped:
+            return
+        data = pikepdf.unparse_content_stream(rewritten)
+        if is_page:
+            container["/Contents"] = pdf.make_stream(data)
+        else:
+            container.write(data)
+
+    for page in pdf.pages:
+        resources = page.get("/Resources") if hasattr(page, "get") else None
+        for path, xobject in _walk_resource_xobjects(resources):
+            if _safe_pdf_string(xobject.get("/Subtype", "")) != "/Form":
+                continue
+            identity = _pdf_object_identity(xobject, path)
+            if identity in seen_forms:
+                continue
+            seen_forms.add(identity)
+            artifact_stream(xobject, is_page=False)
+        artifact_stream(page, is_page=True)
     return runs_wrapped
 
 
@@ -4727,6 +4815,28 @@ def embed_fonts_and_rebuild_unicode(
                             }
                         )
                     else:
+                        zapf_clone = (
+                            _installed_zapf_dingbats_clone(inventory)
+                            if canonical == "zapfdingbats"
+                            and descriptor is None
+                            and font.get("/Encoding") is None
+                            else None
+                        )
+                        if zapf_clone and _embed_zapf_dingbats_clone(
+                            pdf,
+                            font,
+                            str(zapf_clone["path"]),
+                            str(zapf_clone["postscript_name"]),
+                        ):
+                            embedded.append(
+                                {
+                                    "resource": resource,
+                                    "font": font_name,
+                                    "source": zapf_clone["path"],
+                                    "completed_standard_14": True,
+                                }
+                            )
+                            continue
                         match = find_exact_system_font(font, inventory)
                         if match is None:
                             unresolved.append(
@@ -4843,10 +4953,14 @@ def embed_fonts_and_rebuild_unicode(
                 "add_unicode_maps": add_unicode_maps,
             },
             "review_required": bool(
-                embedded or unresolved or unicode_maps or unicode_unresolved
+                embedded
+                or unresolved
+                or unicode_maps
+                or unicode_unresolved
+                or cidsets_repaired
             ),
             "warning": (
-                "Only exact, license-permitted TrueType matches were embedded; page content, fields, annotations, and tags were not rewritten. "
+                "Only exact, license-permitted installed font matches were embedded; page content, fields, annotations, and tags were not rewritten. "
                 "Review unresolved fonts and validate the result with veraPDF."
             ),
         }

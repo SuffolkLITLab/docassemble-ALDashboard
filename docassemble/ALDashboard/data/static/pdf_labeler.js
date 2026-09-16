@@ -2665,9 +2665,12 @@ function renderFontRemediationResult() {
   const unicodeUnresolved = Array.isArray(result.unicode_unresolved)
     ? result.unicode_unresolved
     : [];
+  const cidsets = Array.isArray(result.cidsets_repaired)
+    ? result.cidsets_repaired
+    : [];
   const unresolved = Array.isArray(result.unresolved) ? result.unresolved : [];
   const requested = result.requested || {};
-  const changed = embedded.length + unicodeMaps.length;
+  const changed = embedded.length + unicodeMaps.length + cidsets.length;
   const statusClass = changed ? "alert-success" : "alert-warning";
   const heading = requested.embed_exact_fonts
     ? "Font embedding check finished."
@@ -2678,7 +2681,11 @@ function renderFontRemediationResult() {
       (embedded.length === 1 ? " was" : "s were") +
       " embedded; " +
       String(unresolved.length) +
-      " still need an exact installed match."
+      " still need an exact installed match; " +
+      String(cidsets.length) +
+      " invalid CIDSet" +
+      (cidsets.length === 1 ? " was" : "s were") +
+      " repaired."
     : String(unicodeMaps.length) +
       " Unicode map" +
       (unicodeMaps.length === 1 ? " was" : "s were") +
@@ -8529,7 +8536,9 @@ function accessibilityRemediationFeedback(action, result, options) {
       String(result.headings_drafted || 0) +
       " headings, " +
       String(result.widgets_tagged || 0) +
-      " form controls, and " +
+      " form controls, " +
+      String(result.annotations_tagged || 0) +
+      " other annotations, and " +
       String(result.content_artifact_runs || 0) +
       " unclassified layout runs marked as artifacts across " +
       String(result.pages_tagged || 0) +
@@ -8601,6 +8610,9 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
           : 0) +
         (Array.isArray(result.unicode_maps_added)
           ? result.unicode_maps_added.length
+          : 0) +
+        (Array.isArray(result.cidsets_repaired)
+          ? result.cidsets_repaired.length
           : 0);
       if (fontChanges) {
         if (
@@ -8610,6 +8622,16 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
           markAccessibilityDraft(
             "font-embedding",
             String(result.fonts_embedded.length) + " exact fonts embedded",
+          );
+        }
+        if (
+          Array.isArray(result.cidsets_repaired) &&
+          result.cidsets_repaired.length
+        ) {
+          markAccessibilityDraft(
+            "font-embedding",
+            String(result.cidsets_repaired.length) +
+              " invalid CIDSet streams repaired",
           );
         }
         if (
@@ -8632,8 +8654,11 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
         "draft_structure",
         String(result.text_blocks_tagged || 0) +
           " text blocks and " +
-          String(result.widgets_tagged || 0) +
-          " controls tagged",
+          String(
+            Number(result.widgets_tagged || 0) +
+              Number(result.annotations_tagged || 0),
+          ) +
+          " controls or annotations tagged",
       );
     } else if (action === "catalog_flags") {
       if (options.marked) {

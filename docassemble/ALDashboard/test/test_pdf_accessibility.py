@@ -33,6 +33,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     embed_fonts_and_rebuild_unicode,
     extract_pdf_field_tooltips,
     inspect_pdf_accessibility,
+    _artifact_untagged_content,
     _iter_pdf_fonts,
     _heading_candidates_from_xml,
     _repair_embedded_cidsets,
@@ -259,6 +260,62 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertEqual(
             [resource for resource, _font in _iter_pdf_fonts(pdf)], ["p1/F1", "p1/F2"]
         )
+        pdf.close()
+
+    def test_font_inventory_includes_appearance_state_streams(self):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        font = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/ZapfDingbats"),
+            }
+        )
+        off = pdf.make_stream(b"")
+        on = pdf.make_stream(b"BT /ZaDb 12 Tf (4) Tj ET")
+        on["/Resources"] = pikepdf.Dictionary(
+            {"/Font": pikepdf.Dictionary({"/ZaDb": font})}
+        )
+        widget = pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Annot"),
+                "/Subtype": pikepdf.Name("/Widget"),
+                "/AP": pikepdf.Dictionary(
+                    {"/N": pikepdf.Dictionary({"/Off": off, "/Yes": on})}
+                ),
+            }
+        )
+        page.obj["/Annots"] = pikepdf.Array([widget])
+
+        fonts = list(_iter_pdf_fonts(pdf))
+
+        self.assertEqual(len(fonts), 1)
+        self.assertEqual(str(fonts[0][1]["/BaseFont"]), "/ZapfDingbats")
+        pdf.close()
+
+    def test_artifact_layout_runs_inside_form_xobjects_without_hiding_text(self):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        layout = pdf.make_stream(b"0 0 20 20 re S")
+        layout["/Type"] = pikepdf.Name("/XObject")
+        layout["/Subtype"] = pikepdf.Name("/Form")
+        text = pdf.make_stream(b"BT (Visible text) Tj ET")
+        text["/Type"] = pikepdf.Name("/XObject")
+        text["/Subtype"] = pikepdf.Name("/Form")
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {"/XObject": pikepdf.Dictionary({"/Layout": layout, "/Text": text})}
+        )
+
+        changed = _artifact_untagged_content(pdf)
+
+        self.assertEqual(changed, 1)
+        self.assertIn(b"/Artifact BMC", layout.read_bytes())
+        self.assertNotIn(b"/Artifact", text.read_bytes())
         pdf.close()
 
     def test_draft_structure_uses_only_approved_heading_decisions(self):

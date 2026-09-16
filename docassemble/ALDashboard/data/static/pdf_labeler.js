@@ -9733,6 +9733,15 @@ function accessibilityAiReviewSignature() {
   return JSON.stringify(accessibilityAiReviewContext());
 }
 
+function aiReviewChangeValue(change) {
+  if (!change) return "";
+  const value =
+    typeof change.value === "object"
+      ? JSON.stringify(change.value)
+      : String(change.value || "");
+  return value.length > 48 ? value.slice(0, 47) + "…" : value;
+}
+
 function aiReviewChangeLabel(change) {
   if (!change) return "Manual review required";
   const labels = {
@@ -9741,10 +9750,7 @@ function aiReviewChangeLabel(change) {
     image_alt_text: "Update image-alt draft",
     reading_direction: "Update reading direction",
   };
-  const value =
-    typeof change.value === "object"
-      ? JSON.stringify(change.value)
-      : String(change.value || "");
+  const value = aiReviewChangeValue(change);
   return (labels[change.kind] || "Proposed change") + ": " + value;
 }
 
@@ -9852,14 +9858,14 @@ function renderAiAccessibilityReview() {
       const resolved = status === "ignored" || status === "reviewed";
       const statusLabel =
         status === "accepted"
-          ? "Accepted suggestion"
+          ? "Updated to “" + aiReviewChangeValue(finding.change) + "”"
           : status === "ignored"
-            ? "Ignored — kept current setting"
+            ? "Kept current value"
             : status === "reviewed"
-              ? "Reviewed"
+              ? "Kept as-is"
               : finding.change
                 ? "Decision needed"
-                : "Information — manual review";
+                : "Review needed";
       const badgeClass =
         status === "accepted"
           ? "text-bg-success"
@@ -9877,7 +9883,7 @@ function renderAiAccessibilityReview() {
         (resolved ? " is-resolved" : "") +
         '" data-ai-review-index="' +
         String(index) +
-        '"><summary class="a11y-ai-review-summary"><span class="badge ' +
+        '"><summary class="a11y-ai-review-summary"><span class="badge a11y-ai-review-status-badge ' +
         badgeClass +
         '">' +
         escapeHtml(statusLabel) +
@@ -9895,13 +9901,13 @@ function renderAiAccessibilityReview() {
         '<div class="d-flex flex-wrap gap-2 mt-2">' +
         (finding.change
           ? status === "accepted"
-            ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Reject suggestion &amp; restore previous</button>'
+            ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Restore previous value</button>'
             : status === "ignored"
-              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Accept suggestion</button>'
-              : '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Accept suggestion</button><button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Ignore — keep current setting</button>'
+              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Use suggested value</button>'
+              : '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Use suggested value</button><button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Keep current value</button>'
           : status === "reviewed"
             ? ""
-            : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Mark reviewed</button>') +
+            : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Keep as-is</button>') +
         (manualPanel
           ? '<button type="button" class="btn btn-sm btn-outline-primary" data-ai-review-action="open-controls" data-panel="' +
             escapeHtml(manualPanel) +

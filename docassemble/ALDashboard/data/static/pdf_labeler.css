@@ -481,6 +481,12 @@
 .a11y-ai-review-summary::marker {
     color: #6c757d;
 }
+.a11y-ai-review-status-badge {
+    max-width: 13rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .a11y-ai-review-change {
     max-width: 22rem;
     overflow: hidden;

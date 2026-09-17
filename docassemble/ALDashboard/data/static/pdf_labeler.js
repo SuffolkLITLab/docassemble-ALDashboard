@@ -4097,7 +4097,72 @@ function renderFieldEditor(field) {
   );
 }
 
+function captureFieldsListFocus() {
+  const active = /** @type {HTMLElement | null} */ (document.activeElement);
+  if (
+    !active ||
+    !fieldsList.contains(active) ||
+    !active.dataset ||
+    !active.dataset.action ||
+    !active.dataset.fieldId
+  ) {
+    return null;
+  }
+  return {
+    action: active.dataset.action,
+    fieldId: active.dataset.fieldId,
+    selectionStart:
+      (active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement) &&
+      typeof active.selectionStart === "number"
+        ? active.selectionStart
+        : null,
+    selectionEnd:
+      (active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement) &&
+      typeof active.selectionEnd === "number"
+        ? active.selectionEnd
+        : null,
+    selectionDirection:
+      (active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement) &&
+      active.selectionDirection
+        ? active.selectionDirection
+        : "none",
+  };
+}
+
+function restoreFieldsListFocus(snapshot) {
+  if (!snapshot) return;
+  const control = /** @type {HTMLElement | undefined} */ (
+    Array.from(fieldsList.querySelectorAll("[data-action]")).find(
+      function (candidate) {
+        const element = /** @type {HTMLElement} */ (candidate);
+        return (
+          element.dataset.action === snapshot.action &&
+          element.dataset.fieldId === snapshot.fieldId
+        );
+      },
+    )
+  );
+  if (!control) return;
+  control.focus({ preventScroll: true });
+  if (
+    snapshot.selectionStart !== null &&
+    snapshot.selectionEnd !== null &&
+    (control instanceof HTMLInputElement ||
+      control instanceof HTMLTextAreaElement)
+  ) {
+    control.setSelectionRange(
+      snapshot.selectionStart,
+      snapshot.selectionEnd,
+      snapshot.selectionDirection,
+    );
+  }
+}
+
 function renderFieldsList() {
+  const focusSnapshot = captureFieldsListFocus();
   updateBulkRenameUiState();
   updateFieldCount();
   if (state.fields.length === 0) {
@@ -4188,6 +4253,7 @@ function renderFieldsList() {
     currentGroup.appendChild(item);
   });
   fieldsList.appendChild(fragment);
+  restoreFieldsListFocus(focusSnapshot);
 }
 
 function renderDraftRect() {
@@ -7074,10 +7140,7 @@ fieldsList.addEventListener("input", function (event) {
         return option.trim();
       })
       .filter(Boolean);
-    if (!field.options.length) {
-      field.options = DEFAULT_OPTION_LIST.slice();
-    }
-    markDirtyAndRender();
+    markDirtyAndRender(true);
     return;
   }
   if (target.dataset.action === "field-font-size") {
@@ -7102,6 +7165,13 @@ fieldsList.addEventListener("change", function (event) {
     return candidate.id === fieldId;
   });
   if (!field) return;
+  if (target.dataset.action === "field-options") {
+    if (!field.options.length) {
+      field.options = DEFAULT_OPTION_LIST.slice();
+      markDirtyAndRender();
+    }
+    return;
+  }
   if (target.dataset.action === "field-type") {
     const newType = normalizeFieldType(target.value);
     field.type = newType;

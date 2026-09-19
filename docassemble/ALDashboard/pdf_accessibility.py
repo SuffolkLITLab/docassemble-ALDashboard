@@ -3431,6 +3431,109 @@ def _sync_xmp_accessibility_metadata(
     return updates
 
 
+def _compose_matrix(
+    first: Tuple[float, ...], second: Tuple[float, ...]
+) -> Tuple[float, float, float, float, float, float]:
+    """Apply ``first`` then ``second``, the way PDF stacks transformations."""
+    a1, b1, c1, d1, e1, f1 = first
+    a2, b2, c2, d2, e2, f2 = second
+    return (
+        a1 * a2 + b1 * c2,
+        a1 * b2 + b1 * d2,
+        c1 * a2 + d1 * c2,
+        c1 * b2 + d1 * d2,
+        e1 * a2 + f1 * c2 + e2,
+        e1 * b2 + f1 * d2 + f2,
+    )
+
+
+def _form_placements(page: Any) -> Dict[Any, Tuple[float, ...]]:
+    """Find where each Form XObject lands on the page, however deeply nested.
+
+    A form draws in its own coordinates, so text inside two different forms
+    cannot be put in reading order until both are expressed in the page's
+    space. Forms nest -- one government form here wraps its whole body in a
+    chain of them -- so the transform accumulates down the chain. A form drawn
+    more than once is dropped: there is then no single answer to where it is.
+    """
+    import pikepdf
+
+    placements: Dict[Any, Tuple[float, ...]] = {}
+    draws: Dict[Any, int] = {}
+    identity: Tuple[float, ...] = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+    def scan(
+        container: Any,
+        resources: Any,
+        base: Tuple[float, ...],
+        depth: int,
+        path: Tuple[Any, ...],
+    ) -> None:
+        if depth > 12:
+            return
+        xobjects = resources.get("/XObject") if resources is not None else None
+        if not xobjects:
+            return
+        try:
+            instructions = list(pikepdf.parse_content_stream(container))
+        except Exception:
+            return
+        ctm = base
+        stack: List[Tuple[float, ...]] = []
+        for instruction in instructions:
+            operator = str(instruction.operator)
+            operands = list(instruction.operands)
+            if operator == "q":
+                stack.append(ctm)
+            elif operator == "Q" and stack:
+                ctm = stack.pop()
+            elif operator == "cm" and len(operands) == 6:
+                try:
+                    ctm = _compose_matrix(
+                        tuple(float(value) for value in operands), ctm
+                    )
+                except (TypeError, ValueError):
+                    continue
+            elif operator == "Do" and operands:
+                name = str(operands[0])
+                if name not in xobjects:
+                    continue
+                target = xobjects[name]
+                if _safe_pdf_string(target.get("/Subtype", "")) != "/Form":
+                    continue
+                key = target.objgen
+                form_matrix: Tuple[float, ...] = identity
+                raw = target.get("/Matrix")
+                if raw is not None and len(raw) == 6:
+                    try:
+                        form_matrix = tuple(float(value) for value in raw)
+                    except (TypeError, ValueError):
+                        form_matrix = identity
+                full = _compose_matrix(form_matrix, ctm)
+                draws[key] = draws.get(key, 0) + 1
+                placements.setdefault(key, full)
+                if key in path:
+                    continue
+                # Keep walking even on a repeat: a form drawn twice draws
+                # everything inside it twice, and those are ambiguous too.
+                scan(
+                    target,
+                    target.get("/Resources") or resources,
+                    full,
+                    depth + 1,
+                    path + (key,),
+                )
+
+    scan(
+        page,
+        page.get("/Resources") if hasattr(page, "get") else None,
+        identity,
+        0,
+        (),
+    )
+    return {key: matrix for key, matrix in placements.items() if draws.get(key) == 1}
+
+
 def _strip_stale_mcid_wrappers(instructions: Iterable[Any]) -> List[Any]:
     """Remove obsolete MCID wrappers while preserving their drawing operations."""
     output: List[Any] = []
@@ -3736,6 +3839,16 @@ def _readback_sequence(
         page.obj.objgen: index for index, page in enumerate(pdf.pages)
     }
     page_runs = [_readback_page_runs(page) for page in pdf.pages]
+    # Content inside a Form XObject has its own MCID space, so it is collected
+    # against the stream it belongs to rather than the page.
+    stream_runs: Dict[Any, Dict[int, Dict[str, Any]]] = {}
+    for page in pdf.pages:
+        for _path, obj in _walk_resource_xobjects(page.get("/Resources")):
+            if _safe_pdf_string(obj.get("/Subtype", "")) != "/Form":
+                continue
+            if obj.objgen in stream_runs:
+                continue
+            stream_runs[obj.objgen] = _readback_page_runs(obj)
     sequence: List[Dict[str, Any]] = []
 
     def page_of(node: Any) -> Optional[int]:
@@ -3759,12 +3872,27 @@ def _readback_sequence(
             return
         role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
         kids = node.get("/K")
+        stream_key = None
+        if isinstance(kids, pikepdf.Dictionary) and (
+            _safe_pdf_string(kids.get("/Type", "")).lstrip("/") == "MCR"
+        ):
+            source = kids.get("/Stm")
+            if source is not None:
+                stream_key = source.objgen
+            raw_mcid = kids.get("/MCID")
+            try:
+                kids = int(raw_mcid)  # type: ignore[arg-type,assignment]
+            except (TypeError, ValueError):
+                kids = None
         if isinstance(kids, int):
-            record = (
-                page_runs[page_index].get(kids)
-                if page_index is not None and page_index < len(page_runs)
-                else None
-            )
+            if stream_key is not None:
+                record = stream_runs.get(stream_key, {}).get(kids)
+            else:
+                record = (
+                    page_runs[page_index].get(kids)
+                    if page_index is not None and page_index < len(page_runs)
+                    else None
+                )
             # Assistive technology announces /ActualText in place of the
             # glyphs, so the replay has to as well or it reports a problem the
             # listener would never hit.
@@ -5868,6 +5996,7 @@ def create_draft_structure_tree(
                 )
             )
             document_children: List[Any] = []
+            forms_tagged = 0
             parent_tree_entries: Dict[int, Any] = {}
             next_struct_parent = page_count
             widget_count = 0
@@ -5899,355 +6028,454 @@ def create_draft_structure_tree(
                 ] = []
                 content_occurrences: Dict[str, int] = {}
 
-                instructions = list(pikepdf.parse_content_stream(page))
-                if overwrite:
-                    stripped = _strip_stale_mcid_wrappers(instructions)
-                    stale_mcid_wrappers_removed += len(instructions) - len(stripped)
-                    instructions = stripped
-                existing_mcids: List[int] = []
-                for instruction in instructions:
-                    if str(instruction.operator) != "BDC":
-                        continue
-                    for operand in instruction.operands:
-                        raw_mcid = (
-                            operand.get("/MCID") if hasattr(operand, "get") else None
+                # The same drafting runs over the page's own stream and over
+                # each Form XObject it draws, because plenty of government
+                # forms put their whole body inside one and text that is never
+                # walked is text that is never tagged.
+                def tag_stream(container, mcid_reference, write_back, to_page=None):
+                    nonlocal heading_count, heading_levels_normalized
+                    nonlocal manual_artifact_count, stale_mcid_wrappers_removed
+                    nonlocal text_block_count, previous_heading_level
+                    instructions = list(pikepdf.parse_content_stream(container))
+                    if overwrite:
+                        stripped = _strip_stale_mcid_wrappers(instructions)
+                        stale_mcid_wrappers_removed += len(instructions) - len(stripped)
+                        instructions = stripped
+                    existing_mcids: List[int] = []
+                    for instruction in instructions:
+                        if str(instruction.operator) != "BDC":
+                            continue
+                        for operand in instruction.operands:
+                            raw_mcid = (
+                                operand.get("/MCID")
+                                if hasattr(operand, "get")
+                                else None
+                            )
+                            if raw_mcid is None:
+                                continue
+                            try:
+                                existing_mcids.append(int(raw_mcid))
+                            except (TypeError, ValueError):
+                                continue
+                    first_new_mcid = max(existing_mcids, default=-1) + 1
+                    # ParentTree arrays are indexed by MCID. Preserve slots used by
+                    # existing marked content so newly drafted elements cannot
+                    # collide with them, even when the old tree is absent/broken.
+                    mcid_elements: List[Any] = [None] * first_new_mcid
+                    rewritten: List[Any] = []
+                    text_block: List[Any] = []
+                    inside_text = False
+                    text_block_is_artifact = False
+                    artifact_stack: List[bool] = []
+
+                    def starts_artifact(instruction: Any) -> bool:
+                        if str(instruction.operator) not in {"BMC", "BDC"}:
+                            return False
+                        operands = list(instruction.operands)
+                        return bool(
+                            operands
+                            and _safe_pdf_string(operands[0]).lstrip("/") == "Artifact"
                         )
-                        if raw_mcid is None:
-                            continue
-                        try:
-                            existing_mcids.append(int(raw_mcid))
-                        except (TypeError, ValueError):
-                            continue
-                first_new_mcid = max(existing_mcids, default=-1) + 1
-                # ParentTree arrays are indexed by MCID. Preserve slots used by
-                # existing marked content so newly drafted elements cannot
-                # collide with them, even when the old tree is absent/broken.
-                mcid_elements: List[Any] = [None] * first_new_mcid
-                rewritten: List[Any] = []
-                text_block: List[Any] = []
-                inside_text = False
-                text_block_is_artifact = False
-                artifact_stack: List[bool] = []
 
-                def starts_artifact(instruction: Any) -> bool:
-                    if str(instruction.operator) not in {"BMC", "BDC"}:
-                        return False
-                    operands = list(instruction.operands)
-                    return bool(
-                        operands
-                        and _safe_pdf_string(operands[0]).lstrip("/") == "Artifact"
-                    )
-
-                for instruction in instructions:
-                    operator = str(instruction.operator)
-                    if operator == "BT" and not inside_text:
-                        inside_text = True
-                        text_block_is_artifact = any(artifact_stack)
-                        text_block = [instruction]
-                        continue
-                    if inside_text:
-                        text_block.append(instruction)
-                        if operator != "ET":
+                    for instruction in instructions:
+                        operator = str(instruction.operator)
+                        if operator == "BT" and not inside_text:
+                            inside_text = True
+                            text_block_is_artifact = any(artifact_stack)
+                            text_block = [instruction]
                             continue
+                        if inside_text:
+                            text_block.append(instruction)
+                            if operator != "ET":
+                                continue
 
-                        if text_block_is_artifact or any(
-                            starts_artifact(item) for item in text_block
-                        ):
-                            rewritten.extend(text_block)
-                        else:
-                            raw_groups: List[List[int]] = []
-                            group_spots: List[Tuple[float, float]] = []
-                            current_group: List[int] = []
-                            # Follow the text matrix so every run knows where it
-                            # sits. Reading order is a question about the page,
-                            # and answering it from content-stream position is
-                            # what tore sentences apart.
-                            text_x = text_y = 0.0
-                            line_x = line_y = 0.0
-                            leading = 0.0
-                            for block_index, block_instruction in enumerate(
-                                text_block[1:-1], start=1
+                            if text_block_is_artifact or any(
+                                starts_artifact(item) for item in text_block
                             ):
-                                block_operator = str(block_instruction.operator)
-                                block_operands = list(block_instruction.operands)
-                                try:
-                                    if (
-                                        block_operator == "Tm"
-                                        and len(block_operands) == 6
-                                    ):
-                                        line_x = float(block_operands[4])
-                                        line_y = float(block_operands[5])
-                                        text_x, text_y = line_x, line_y
-                                    elif (
-                                        block_operator in {"Td", "TD"}
-                                        and len(block_operands) == 2
-                                    ):
-                                        if block_operator == "TD":
-                                            leading = -float(block_operands[1])
-                                        line_x += float(block_operands[0])
-                                        line_y += float(block_operands[1])
-                                        text_x, text_y = line_x, line_y
-                                    elif block_operator == "TL" and block_operands:
-                                        leading = float(block_operands[0])
-                                    elif block_operator == "T*":
-                                        line_y -= leading
-                                        text_x, text_y = line_x, line_y
-                                    elif block_operator in {"'", '"'}:
-                                        line_y -= leading
-                                        text_x, text_y = line_x, line_y
-                                except (TypeError, ValueError):
-                                    pass
-                                if block_operator in {"Td", "TD", "Tm", "T*"}:
-                                    if current_group:
+                                rewritten.extend(text_block)
+                            else:
+                                raw_groups: List[List[int]] = []
+                                group_spots: List[Tuple[float, float]] = []
+                                current_group: List[int] = []
+                                # Follow the text matrix so every run knows where it
+                                # sits. Reading order is a question about the page,
+                                # and answering it from content-stream position is
+                                # what tore sentences apart.
+                                text_x = text_y = 0.0
+                                line_x = line_y = 0.0
+                                leading = 0.0
+                                for block_index, block_instruction in enumerate(
+                                    text_block[1:-1], start=1
+                                ):
+                                    block_operator = str(block_instruction.operator)
+                                    block_operands = list(block_instruction.operands)
+                                    try:
+                                        if (
+                                            block_operator == "Tm"
+                                            and len(block_operands) == 6
+                                        ):
+                                            line_x = float(block_operands[4])
+                                            line_y = float(block_operands[5])
+                                            text_x, text_y = line_x, line_y
+                                        elif (
+                                            block_operator in {"Td", "TD"}
+                                            and len(block_operands) == 2
+                                        ):
+                                            if block_operator == "TD":
+                                                leading = -float(block_operands[1])
+                                            line_x += float(block_operands[0])
+                                            line_y += float(block_operands[1])
+                                            text_x, text_y = line_x, line_y
+                                        elif block_operator == "TL" and block_operands:
+                                            leading = float(block_operands[0])
+                                        elif block_operator == "T*":
+                                            line_y -= leading
+                                            text_x, text_y = line_x, line_y
+                                        elif block_operator in {"'", '"'}:
+                                            line_y -= leading
+                                            text_x, text_y = line_x, line_y
+                                    except (TypeError, ValueError):
+                                        pass
+                                    if block_operator in {"Td", "TD", "Tm", "T*"}:
+                                        if current_group:
+                                            raw_groups.append(current_group)
+                                            current_group = []
+                                    if block_operator in {"'", '"'} and current_group:
                                         raw_groups.append(current_group)
                                         current_group = []
-                                if block_operator in {"'", '"'} and current_group:
+                                    if block_operator in {"Tj", "TJ", "'", '"'}:
+                                        if _shown_instruction_text(
+                                            block_instruction
+                                        ).strip():
+                                            if not current_group:
+                                                spot_y, spot_x = text_y, text_x
+                                                if to_page is not None:
+                                                    ma, mb, mc, md, me, mf = to_page
+                                                    spot_x = (
+                                                        ma * text_x + mc * text_y + me
+                                                    )
+                                                    spot_y = (
+                                                        mb * text_x + md * text_y + mf
+                                                    )
+                                                group_spots.append((spot_y, spot_x))
+                                            current_group.append(block_index)
+                                if current_group:
                                     raw_groups.append(current_group)
-                                    current_group = []
-                                if block_operator in {"Tj", "TJ", "'", '"'}:
-                                    if _shown_instruction_text(
-                                        block_instruction
-                                    ).strip():
-                                        if not current_group:
-                                            group_spots.append((text_y, text_x))
-                                        current_group.append(block_index)
-                            if current_group:
-                                raw_groups.append(current_group)
-                            while len(group_spots) < len(raw_groups):
-                                group_spots.append((0.0, 0.0))
+                                while len(group_spots) < len(raw_groups):
+                                    group_spots.append((0.0, 0.0))
 
-                            groups: List[
-                                Tuple[
-                                    List[int], str, Optional[int], Tuple[float, float]
-                                ]
-                            ] = []
-                            group_index = 0
-                            page_headings = headings_by_page.get(page_index, {})
-                            while group_index < len(raw_groups):
-                                group_start = group_index
-                                matched: Optional[Tuple[List[int], str]] = None
-                                max_span = min(4, len(raw_groups) - group_index)
-                                for span in range(max_span, 0, -1):
-                                    selected = raw_groups[
-                                        group_index : group_index + span
+                                groups: List[
+                                    Tuple[
+                                        List[int],
+                                        str,
+                                        Optional[int],
+                                        Tuple[float, float],
                                     ]
-                                    spaced_text = " ".join(
-                                        " ".join(
-                                            _shown_instruction_text(text_block[index])
-                                            for index in group
-                                        )
-                                        for group in selected
-                                    )
-                                    compact_text = " ".join(
-                                        "".join(
-                                            _shown_instruction_text(text_block[index])
-                                            for index in group
-                                        )
-                                        for group in selected
-                                    )
-                                    tag_name = page_headings.get(
-                                        _normalized_running_text(spaced_text)
-                                    ) or page_headings.get(
-                                        _normalized_running_text(compact_text)
-                                    )
-                                    if tag_name:
-                                        matched = (
-                                            [
-                                                index
-                                                for group in selected
-                                                for index in group
-                                            ],
-                                            tag_name,
-                                        )
-                                        group_index += span
-                                        break
-                                if matched is None and content_by_key:
+                                ] = []
+                                group_index = 0
+                                page_headings = headings_by_page.get(page_index, {})
+                                while group_index < len(raw_groups):
+                                    group_start = group_index
+                                    matched: Optional[Tuple[List[int], str]] = None
+                                    max_span = min(4, len(raw_groups) - group_index)
                                     for span in range(max_span, 0, -1):
                                         selected = raw_groups[
                                             group_index : group_index + span
                                         ]
-                                        group = [
-                                            index
-                                            for selected_group in selected
-                                            for index in selected_group
-                                        ]
                                         spaced_text = " ".join(
-                                            _shown_instruction_text(text_block[index])
-                                            for index in group
-                                        )
-                                        compact_text = "".join(
-                                            _shown_instruction_text(text_block[index])
-                                            for index in group
-                                        )
-                                        for candidate_text in (
-                                            spaced_text,
-                                            compact_text,
-                                        ):
-                                            candidate_normalized = (
-                                                _normalized_running_text(
-                                                    candidate_text
+                                            " ".join(
+                                                _shown_instruction_text(
+                                                    text_block[index]
                                                 )
+                                                for index in group
                                             )
-                                            candidate_occurrence = (
-                                                content_occurrences.get(
-                                                    candidate_normalized, 0
+                                            for group in selected
+                                        )
+                                        compact_text = " ".join(
+                                            "".join(
+                                                _shown_instruction_text(
+                                                    text_block[index]
                                                 )
+                                                for index in group
                                             )
-                                            if (
-                                                page_index,
-                                                candidate_normalized,
-                                                candidate_occurrence,
-                                            ) in content_by_key:
-                                                matched = (group, "P")
-                                                group_index += span
-                                                break
-                                        if matched is not None:
+                                            for group in selected
+                                        )
+                                        tag_name = page_headings.get(
+                                            _normalized_running_text(spaced_text)
+                                        ) or page_headings.get(
+                                            _normalized_running_text(compact_text)
+                                        )
+                                        if tag_name:
+                                            matched = (
+                                                [
+                                                    index
+                                                    for group in selected
+                                                    for index in group
+                                                ],
+                                                tag_name,
+                                            )
+                                            group_index += span
                                             break
-                                if matched is None:
-                                    matched = (raw_groups[group_index], "P")
-                                    group_index += 1
-                                group, tag_name = matched
-                                group_text = " ".join(
-                                    _shown_instruction_text(text_block[index])
-                                    for index in group
-                                )
-                                normalized_group = _normalized_running_text(group_text)
-                                occurrence = content_occurrences.get(normalized_group, 0)
-                                content_occurrences[normalized_group] = occurrence + 1
-                                content_decision = content_by_key.get(
-                                    (page_index, normalized_group, occurrence)
-                                )
-                                # Where this run sits, used both as the default
-                                # reading order and as the tie-break inside a
-                                # reviewed block that spans several runs.
-                                spot = (
-                                    group_spots[group_start]
-                                    if group_start < len(group_spots)
-                                    else (0.0, 0.0)
-                                )
-                                block_order: Optional[int] = None
-                                if content_decision is not None:
-                                    if content_decision["role_reviewed"]:
-                                        tag_name = str(content_decision["role"])
-                                    block_order = int(content_decision["order"])
-                                groups.append((group, tag_name, block_order, spot))
+                                    if matched is None and content_by_key:
+                                        for span in range(max_span, 0, -1):
+                                            selected = raw_groups[
+                                                group_index : group_index + span
+                                            ]
+                                            group = [
+                                                index
+                                                for selected_group in selected
+                                                for index in selected_group
+                                            ]
+                                            spaced_text = " ".join(
+                                                _shown_instruction_text(
+                                                    text_block[index]
+                                                )
+                                                for index in group
+                                            )
+                                            compact_text = "".join(
+                                                _shown_instruction_text(
+                                                    text_block[index]
+                                                )
+                                                for index in group
+                                            )
+                                            for candidate_text in (
+                                                spaced_text,
+                                                compact_text,
+                                            ):
+                                                candidate_normalized = (
+                                                    _normalized_running_text(
+                                                        candidate_text
+                                                    )
+                                                )
+                                                candidate_occurrence = (
+                                                    content_occurrences.get(
+                                                        candidate_normalized, 0
+                                                    )
+                                                )
+                                                if (
+                                                    page_index,
+                                                    candidate_normalized,
+                                                    candidate_occurrence,
+                                                ) in content_by_key:
+                                                    matched = (group, "P")
+                                                    group_index += span
+                                                    break
+                                            if matched is not None:
+                                                break
+                                    if matched is None:
+                                        matched = (raw_groups[group_index], "P")
+                                        group_index += 1
+                                    group, tag_name = matched
+                                    group_text = " ".join(
+                                        _shown_instruction_text(text_block[index])
+                                        for index in group
+                                    )
+                                    normalized_group = _normalized_running_text(
+                                        group_text
+                                    )
+                                    occurrence = content_occurrences.get(
+                                        normalized_group, 0
+                                    )
+                                    content_occurrences[normalized_group] = (
+                                        occurrence + 1
+                                    )
+                                    content_decision = content_by_key.get(
+                                        (page_index, normalized_group, occurrence)
+                                    )
+                                    # Where this run sits, used both as the default
+                                    # reading order and as the tie-break inside a
+                                    # reviewed block that spans several runs.
+                                    spot = (
+                                        group_spots[group_start]
+                                        if group_start < len(group_spots)
+                                        else (0.0, 0.0)
+                                    )
+                                    block_order: Optional[int] = None
+                                    if content_decision is not None:
+                                        if content_decision["role_reviewed"]:
+                                            tag_name = str(content_decision["role"])
+                                        block_order = int(content_decision["order"])
+                                    groups.append((group, tag_name, block_order, spot))
 
-                            starts: Dict[int, Tuple[int, str]] = {}
-                            ends: Dict[int, Tuple[int, bool]] = {}
-                            for group, tag_name, block_order, spot in groups:
-                                if tag_name == "Artifact":
-                                    starts[group[0]] = (-1, "Artifact")
-                                    ends[group[-1]] = (-1, True)
-                                    manual_artifact_count += 1
-                                    continue
-                                if tag_name.startswith("H"):
-                                    level = int(tag_name[1:])
-                                    maximum_level = (
-                                        1
-                                        if previous_heading_level == 0
-                                        else previous_heading_level + 1
-                                    )
-                                    next_level = min(level, maximum_level)
-                                    heading_levels_normalized += int(
-                                        next_level != level
-                                    )
-                                    previous_heading_level = next_level
-                                    tag_name = f"H{next_level}"
-                                mcid = len(mcid_elements)
-                                starts[group[0]] = (mcid, tag_name)
-                                ends[group[-1]] = (mcid, False)
-                                content_element = pdf.make_indirect(
-                                    pikepdf.Dictionary(
-                                        {
-                                            "/Type": pikepdf.Name("/StructElem"),
-                                            "/S": pikepdf.Name(
-                                                "/LBody" if tag_name == "LI" else f"/{tag_name}"
-                                            ),
-                                            "/P": page_part,
-                                            "/Pg": page.obj,
-                                            "/K": mcid,
-                                        }
-                                    )
-                                )
-                                element = content_element
-                                if tag_name == "LI":
-                                    element = pdf.make_indirect(
+                                starts: Dict[int, Tuple[int, str]] = {}
+                                ends: Dict[int, Tuple[int, bool]] = {}
+                                for group, tag_name, block_order, spot in groups:
+                                    if tag_name == "Artifact":
+                                        starts[group[0]] = (-1, "Artifact")
+                                        ends[group[-1]] = (-1, True)
+                                        manual_artifact_count += 1
+                                        continue
+                                    if tag_name.startswith("H"):
+                                        level = int(tag_name[1:])
+                                        maximum_level = (
+                                            1
+                                            if previous_heading_level == 0
+                                            else previous_heading_level + 1
+                                        )
+                                        next_level = min(level, maximum_level)
+                                        heading_levels_normalized += int(
+                                            next_level != level
+                                        )
+                                        previous_heading_level = next_level
+                                        tag_name = f"H{next_level}"
+                                    mcid = len(mcid_elements)
+                                    starts[group[0]] = (mcid, tag_name)
+                                    ends[group[-1]] = (mcid, False)
+                                    content_element = pdf.make_indirect(
                                         pikepdf.Dictionary(
                                             {
                                                 "/Type": pikepdf.Name("/StructElem"),
-                                                "/S": pikepdf.Name("/LI"),
+                                                "/S": pikepdf.Name(
+                                                    "/LBody"
+                                                    if tag_name == "LI"
+                                                    else f"/{tag_name}"
+                                                ),
                                                 "/P": page_part,
                                                 "/Pg": page.obj,
-                                                "/K": pikepdf.Array([content_element]),
+                                                "/K": mcid_reference(mcid),
                                             }
                                         )
                                     )
-                                    content_element["/P"] = element
-                                text_children.append(
-                                    (
-                                        block_order,
-                                        spot,
-                                        len(text_children),
-                                        element,
-                                        tag_name,
+                                    element = content_element
+                                    if tag_name == "LI":
+                                        element = pdf.make_indirect(
+                                            pikepdf.Dictionary(
+                                                {
+                                                    "/Type": pikepdf.Name(
+                                                        "/StructElem"
+                                                    ),
+                                                    "/S": pikepdf.Name("/LI"),
+                                                    "/P": page_part,
+                                                    "/Pg": page.obj,
+                                                    "/K": pikepdf.Array(
+                                                        [content_element]
+                                                    ),
+                                                }
+                                            )
+                                        )
+                                        content_element["/P"] = element
+                                    text_children.append(
+                                        (
+                                            block_order,
+                                            spot,
+                                            len(text_children),
+                                            element,
+                                            tag_name,
+                                        )
                                     )
-                                )
-                                mcid_elements.append(content_element)
-                                text_block_count += 1
-                                if tag_name.startswith("H"):
-                                    heading_count += 1
+                                    mcid_elements.append(content_element)
+                                    text_block_count += 1
+                                    if tag_name.startswith("H"):
+                                        heading_count += 1
 
-                            for block_index, block_instruction in enumerate(text_block):
-                                if block_index in starts:
-                                    mcid, tag_name = starts[block_index]
-                                    if tag_name == "Artifact":
+                                for block_index, block_instruction in enumerate(
+                                    text_block
+                                ):
+                                    if block_index in starts:
+                                        mcid, tag_name = starts[block_index]
+                                        if tag_name == "Artifact":
+                                            rewritten.append(
+                                                pikepdf.ContentStreamInstruction(
+                                                    [pikepdf.Name("/Artifact")],
+                                                    pikepdf.Operator("BMC"),
+                                                )
+                                            )
+                                        else:
+                                            rewritten.append(
+                                                pikepdf.ContentStreamInstruction(
+                                                    [
+                                                        pikepdf.Name(f"/{tag_name}"),
+                                                        pikepdf.Dictionary(
+                                                            {"/MCID": mcid}
+                                                        ),
+                                                    ],
+                                                    pikepdf.Operator("BDC"),
+                                                )
+                                            )
+                                    rewritten.append(block_instruction)
+                                    if block_index in ends:
                                         rewritten.append(
                                             pikepdf.ContentStreamInstruction(
-                                                [pikepdf.Name("/Artifact")],
-                                                pikepdf.Operator("BMC"),
+                                                [], pikepdf.Operator("EMC")
                                             )
                                         )
-                                    else:
-                                        rewritten.append(
-                                            pikepdf.ContentStreamInstruction(
-                                                [
-                                                    pikepdf.Name(f"/{tag_name}"),
-                                                    pikepdf.Dictionary({"/MCID": mcid}),
-                                                ],
-                                                pikepdf.Operator("BDC"),
-                                            )
-                                        )
-                                rewritten.append(block_instruction)
-                                if block_index in ends:
-                                    rewritten.append(
-                                        pikepdf.ContentStreamInstruction(
-                                            [], pikepdf.Operator("EMC")
-                                        )
+                            for block_instruction in text_block:
+                                block_operator = str(block_instruction.operator)
+                                if block_operator in {"BMC", "BDC"}:
+                                    artifact_stack.append(
+                                        starts_artifact(block_instruction)
                                     )
-                        for block_instruction in text_block:
-                            block_operator = str(block_instruction.operator)
-                            if block_operator in {"BMC", "BDC"}:
-                                artifact_stack.append(
-                                    starts_artifact(block_instruction)
-                                )
-                            elif block_operator == "EMC" and artifact_stack:
-                                artifact_stack.pop()
-                        inside_text = False
-                        text_block_is_artifact = False
-                        text_block = []
+                                elif block_operator == "EMC" and artifact_stack:
+                                    artifact_stack.pop()
+                            inside_text = False
+                            text_block_is_artifact = False
+                            text_block = []
+                            continue
+                        rewritten.append(instruction)
+                        if operator in {"BMC", "BDC"}:
+                            artifact_stack.append(starts_artifact(instruction))
+                        elif operator == "EMC" and artifact_stack:
+                            artifact_stack.pop()
+                    if text_block:
+                        rewritten.extend(text_block)
+                    if rewritten:
+                        write_back(pikepdf.unparse_content_stream(rewritten))
+                    return mcid_elements
+
+                def set_page_contents(data: bytes) -> None:
+                    page["/Contents"] = pdf.make_stream(data)
+
+                parent_tree_entries[page_index] = pikepdf.Array(
+                    tag_stream(page, lambda mcid: mcid, set_page_contents)
+                )
+
+                # Content inside a Form XObject keeps its own MCID space, so it
+                # needs its own /StructParents and marked-content references
+                # that name the stream they live in. A form drawn more than
+                # once could not say which copy an MCID belongs to, so those
+                # are left alone.
+                placements = _form_placements(page)
+                form_order: List[Tuple[str, Any]] = []
+                seen_forms: set = set()
+                for form_path, form_obj in _walk_resource_xobjects(
+                    page.get("/Resources")
+                ):
+                    if _safe_pdf_string(form_obj.get("/Subtype", "")) != "/Form":
                         continue
-                    rewritten.append(instruction)
-                    if operator in {"BMC", "BDC"}:
-                        artifact_stack.append(starts_artifact(instruction))
-                    elif operator == "EMC" and artifact_stack:
-                        artifact_stack.pop()
-                if text_block:
-                    rewritten.extend(text_block)
-                if rewritten:
-                    page["/Contents"] = pdf.make_stream(
-                        pikepdf.unparse_content_stream(rewritten)
+                    key = form_obj.objgen
+                    if key in seen_forms or key not in placements:
+                        continue
+                    seen_forms.add(key)
+                    form_order.append((form_path, form_obj))
+                for form_path, form_obj in form_order:
+                    form_parent = next_struct_parent
+                    next_struct_parent += 1
+
+                    def make_reference(mcid: int, target: Any = form_obj) -> Any:
+                        return pikepdf.Dictionary(
+                            {
+                                "/Type": pikepdf.Name("/MCR"),
+                                "/Pg": page.obj,
+                                "/Stm": target,
+                                "/MCID": mcid,
+                            }
+                        )
+
+                    def replace_form(data: bytes, target: Any = form_obj) -> None:
+                        target.write(data)
+
+                    form_elements = tag_stream(
+                        form_obj,
+                        make_reference,
+                        replace_form,
+                        placements[form_obj.objgen],
                     )
-                parent_tree_entries[page_index] = pikepdf.Array(mcid_elements)
+                    if not any(element is not None for element in form_elements):
+                        next_struct_parent -= 1
+                        continue
+                    form_obj["/StructParents"] = form_parent
+                    parent_tree_entries[form_parent] = pikepdf.Array(form_elements)
+                    forms_tagged += 1
                 # A reviewed block order wins where the reviewer set one; runs
                 # they never saw fall in by position rather than by a separate
                 # numbering that used to interleave them into other paragraphs.
@@ -6408,6 +6636,7 @@ def create_draft_structure_tree(
         return {
             "action": "draft_structure",
             "pages_tagged": page_count,
+            "form_xobjects_tagged": forms_tagged,
             "text_blocks_tagged": text_block_count,
             "headings_drafted": heading_count,
             "heading_levels_normalized": heading_levels_normalized,

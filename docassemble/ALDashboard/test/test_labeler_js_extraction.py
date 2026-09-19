@@ -416,6 +416,16 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("finding.confident ?", self.js)
         self.assertIn("What should be announced here?", self.js)
 
+    def test_text_inside_a_nested_form_xobject_is_tagged(self):
+        self.assertIn("def _form_placements", self.api_accessibility)
+        self.assertIn("def _compose_matrix", self.api_accessibility)
+        self.assertIn("form_xobjects_tagged", self.api_accessibility)
+        # A form drawn more than once has no single position, so it is skipped.
+        self.assertIn("draws.get(key) == 1", self.api_accessibility)
+        # Content inside a form needs a marked-content reference naming it.
+        self.assertIn('pikepdf.Name("/MCR")', self.api_accessibility)
+        self.assertIn('"/Stm": target', self.api_accessibility)
+
     def test_a_scanned_page_can_be_offered_to_ocr(self):
         self.assertIn('id="a11y-run-ocr"', self.html)
         self.assertIn('id="a11y-readback-ocr"', self.html)

@@ -2889,6 +2889,95 @@ class TestScreenReaderReadback(unittest.TestCase):
             os.remove(path)
 
 
+class TestNestedFormXObjectTagging(unittest.TestCase):
+    """Plenty of government forms draw their whole body inside a form."""
+
+    def _nested_form_pdf(self, path, *, depth=2, repeat_form=False):
+        """A page whose text lives inside a chain of Form XObjects."""
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        font = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/Font"),
+                    "/Subtype": pikepdf.Name("/Type1"),
+                    "/BaseFont": pikepdf.Name("/Helvetica"),
+                    "/Encoding": pikepdf.Name("/WinAnsiEncoding"),
+                }
+            )
+        )
+        # The innermost form carries the text, in its own coordinate space.
+        inner = pdf.make_stream(
+            b"BT /F1 12 Tf 1 0 0 1 20 -40 Tm (Second line) Tj "
+            b"1 0 0 1 20 -20 Tm (First line) Tj ET"
+        )
+        inner["/Type"] = pikepdf.Name("/XObject")
+        inner["/Subtype"] = pikepdf.Name("/Form")
+        inner["/BBox"] = pikepdf.Array([0, -100, 500, 0])
+        inner["/Resources"] = pikepdf.Dictionary(
+            {"/Font": pikepdf.Dictionary({"/F1": font})}
+        )
+        current = inner
+        for level in range(depth - 1):
+            wrapper = pdf.make_stream(b"q /Fm0 Do Q")
+            wrapper["/Type"] = pikepdf.Name("/XObject")
+            wrapper["/Subtype"] = pikepdf.Name("/Form")
+            wrapper["/BBox"] = pikepdf.Array([0, -100, 500, 0])
+            wrapper["/Resources"] = pikepdf.Dictionary(
+                {"/XObject": pikepdf.Dictionary({"/Fm0": current})}
+            )
+            current = wrapper
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {"/XObject": pikepdf.Dictionary({"/Fm0": current})}
+        )
+        body = b"q 1 0 0 1 0 700 cm /Fm0 Do Q"
+        if repeat_form:
+            body += b" q 1 0 0 1 0 400 cm /Fm0 Do Q"
+        page.obj["/Contents"] = pdf.make_stream(body)
+        pdf.save(path)
+        pdf.close()
+
+    def _tag(self, **kwargs):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._nested_form_pdf(source_path, **kwargs)
+            result = create_draft_structure_tree(
+                input_pdf_path=source_path,
+                output_pdf_path=output_path,
+                heading_decisions=[],
+                mark_as_tagged=False,
+            )
+            return result, analyze_screen_reader_readback(output_path)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_text_inside_a_nested_form_is_tagged_and_announced(self):
+        result, readback = self._tag(depth=3)
+        self.assertGreaterEqual(result["form_xobjects_tagged"], 1)
+        self.assertEqual(result["text_blocks_tagged"], 2)
+        spoken = [
+            item["text"]
+            for item in readback["announcements"]
+            if item["kind"] == "text" and item["text"].strip()
+        ]
+        self.assertEqual(spoken, ["First line", "Second line"])
+
+    def test_a_form_drawn_twice_is_left_alone(self):
+        """Its marked content could not say which copy an id belongs to."""
+        result, readback = self._tag(depth=2, repeat_form=True)
+        self.assertEqual(result["form_xobjects_tagged"], 0)
+        self.assertIn(
+            "None of the page's text is tagged",
+            [finding["title"] for finding in readback["findings"]],
+        )
+
+
 class TestScannedPageOcr(unittest.TestCase):
     """A page of pixels has nothing to announce until something reads it."""
 

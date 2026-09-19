@@ -43,6 +43,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _font_code_usage,
     _title_from_text_sample,
     analyze_screen_reader_readback,
+    repair_readback_text,
     _quoted_title_from_finding,
     _simple_font_unicode_cmap,
     _to_unicode_mappings,
@@ -2574,6 +2575,82 @@ class TestScreenReaderReadback(unittest.TestCase):
             if item["title"] == "Text would be spoken as something it does not say"
         )
         self.assertEqual(finding["suggestion"], "Mother\u2019s information")
+
+    def _repair(self, *, texts, decisions=None):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            _readback_pdf(source_path, order=[0, 1, 2, 3], texts=texts)
+            result = repair_readback_text(source_path, output_path, decisions=decisions)
+            return result, analyze_screen_reader_readback(output_path)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_replacement_text_is_written_for_the_unambiguous_case(self):
+        """A stand-in glyph between letters cannot be what the author wrote."""
+        result, after = self._repair(
+            texts=["Mother\x92s information", "Beta", "Gamma", "Delta"]
+        )
+        self.assertEqual(result["actual_text_added"], 1)
+        self.assertEqual(
+            result["applied"][0]["actualText"], "Mother\u2019s information"
+        )
+        # The replay honours /ActualText, so the finding is genuinely gone.
+        self.assertEqual(
+            [
+                finding
+                for finding in after["findings"]
+                if finding["category"] == "text-encoding"
+            ],
+            [],
+        )
+        self.assertEqual(after["announcements"][0]["text"], "Mother\u2019s information")
+
+    def test_a_control_character_alone_waits_for_a_person(self):
+        result, after = self._repair(texts=["\x00Yes", "Beta", "Gamma", "Delta"])
+        self.assertEqual(result["actual_text_added"], 0)
+        self.assertEqual(len(result["needs_review"]), 1)
+        self.assertEqual(result["needs_review"][0]["suggestion"], "Yes")
+        # Still reported, because nothing was changed.
+        self.assertTrue(
+            any(finding["category"] == "text-encoding" for finding in after["findings"])
+        )
+
+    def test_a_reviewer_can_override_or_decline_each_replacement(self):
+        result, _after = self._repair(
+            texts=["Mother\x92s information", "\x00Yes", "Gamma", "Delta"],
+            decisions=[
+                {"announcedIndex": 0, "actualText": "Parent's information"},
+                {"announcedIndex": 1, "actualText": "Yes", "apply": False},
+            ],
+        )
+        self.assertEqual(result["actual_text_added"], 1)
+        self.assertEqual(result["applied"][0]["actualText"], "Parent's information")
+
+    def test_the_page_is_never_redrawn_by_a_replacement(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            _readback_pdf(
+                source_path,
+                order=[0, 1, 2, 3],
+                texts=["Mother\x92s information", "B", "C", "D"],
+            )
+            with pikepdf.open(source_path) as before:
+                drawn = before.pages[0].Contents.read_bytes()
+            repair_readback_text(source_path, output_path)
+            with pikepdf.open(output_path) as after:
+                self.assertEqual(after.pages[0].Contents.read_bytes(), drawn)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
 
     def test_an_untagged_pdf_reports_that_there_is_nothing_to_replay(self):
         import pikepdf

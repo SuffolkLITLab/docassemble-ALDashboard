@@ -3478,6 +3478,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
             apply_unicode_map_decisions,
             create_draft_structure_tree,
             embed_fonts_and_rebuild_unicode,
+            repair_readback_text,
             substitute_fonts,
         )
 
@@ -3491,9 +3492,10 @@ def pdf_labeler_accessibility_remediate() -> Response:
             "structure",
             "unicode_map",
             "substitute_fonts",
+            "readback_text",
         }:
             raise DashboardAPIValidationError(
-                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, or substitute_fonts."
+                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, substitute_fonts, or readback_text."
             )
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
@@ -3587,6 +3589,23 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 mark_as_tagged=parse_bool(
                     post_data.get("mark_as_tagged"), default=False
                 ),
+            )
+        elif action == "readback_text":
+            raw_decisions = post_data.get("decisions")
+            readback_decisions = (
+                json.loads(raw_decisions)
+                if isinstance(raw_decisions, str) and raw_decisions.strip()
+                else raw_decisions
+            )
+            if readback_decisions is not None and (
+                not isinstance(readback_decisions, list)
+                or any(not isinstance(item, dict) for item in readback_decisions)
+            ):
+                raise DashboardAPIValidationError(
+                    "decisions must be a JSON list of objects."
+                )
+            result = repair_readback_text(
+                input_path, output_path, decisions=readback_decisions
             )
         elif action in {"structure", "unicode_map", "substitute_fonts"}:
             key = "operations" if action == "structure" else "decisions"

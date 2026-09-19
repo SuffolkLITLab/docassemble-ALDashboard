@@ -596,6 +596,11 @@
                                 <h3 class="h6 fw-semibold mb-2">Read-back simulation<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Read-back simulation" data-bs-content="Replays the tag tree in the order assistive technology announces it and compares that against where the same content sits on the page. It is not a conformance check: it reports what a listener would actually hear, so you can fix the places where the two disagree." aria-label="About the read-back simulation">?</button></h3>
                                 <div id="a11y-readback-summary" class="alert small py-2" role="status"></div>
                                 <div id="a11y-readback-findings" class="vstack gap-2 mb-3"></div>
+                                <div id="a11y-readback-text-fixes" class="hidden mb-3">
+                                    <h4 class="h6">Replacement text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Replacement text" data-bs-content="Writes /ActualText so assistive technology announces the wording below instead of the glyphs on the page. The page itself is not redrawn. Edit any line before applying, or clear it to leave that run alone." aria-label="About replacement text">?</button></h4>
+                                    <div id="a11y-readback-text-list" class="vstack gap-2 mb-2"></div>
+                                    <button id="a11y-apply-readback-text" class="btn btn-primary btn-sm">Apply replacement text</button>
+                                </div>
                                 <details id="a11y-readback-transcript-details" class="small">
                                     <summary>What a screen reader would announce, in order</summary>
                                     <ol id="a11y-readback-transcript" class="a11y-readback-transcript mt-2"></ol>

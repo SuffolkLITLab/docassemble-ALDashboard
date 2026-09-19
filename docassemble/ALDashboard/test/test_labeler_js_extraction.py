@@ -390,6 +390,18 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('run + "  \\u00d7" + String(count)', self.js)
         self.assertIn('id="a11y-tag-structure-details"', self.html)
 
+    def test_replacement_text_is_editable_before_it_is_written(self):
+        """A correction the reviewer cannot see or change is not a choice."""
+        self.assertIn('id="a11y-readback-text-list"', self.html)
+        self.assertIn('id="a11y-apply-readback-text"', self.html)
+        self.assertIn("data-readback-index", self.js)
+        self.assertIn('"readback_text"', self.js)
+        self.assertIn("Announce instead", self.js)
+        self.assertIn("def repair_readback_text", self.api_accessibility)
+        self.assertIn('"readback_text"', self.api)
+        # Only the unambiguous case is filled in for the reviewer.
+        self.assertIn('finding.confident ? String(finding.suggestion) : ""', self.js)
+
     def test_the_read_back_simulation_is_shown_and_fed_to_the_ai_pass(self):
         """Evidence a person can inspect, not just a verdict."""
         self.assertIn('id="a11y-panel-readback"', self.html)

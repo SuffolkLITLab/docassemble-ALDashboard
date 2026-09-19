@@ -3555,7 +3555,9 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
     return runs
 
 
-def _readback_sequence(pdf: Any) -> List[Dict[str, Any]]:
+def _readback_sequence(
+    pdf: Any, *, keep_elements: bool = False
+) -> List[Dict[str, Any]]:
     """Walk the tag tree in order and say what each leaf would announce."""
     import pikepdf
 
@@ -3592,16 +3594,23 @@ def _readback_sequence(pdf: Any) -> List[Dict[str, Any]]:
                 if page_index is not None and page_index < len(page_runs)
                 else None
             )
-            sequence.append(
-                {
-                    "kind": "text",
-                    "role": role,
-                    "page": page_index,
-                    "text": (record or {}).get("text", ""),
-                    "y": (record or {}).get("y"),
-                    "x": (record or {}).get("x"),
-                }
-            )
+            # Assistive technology announces /ActualText in place of the
+            # glyphs, so the replay has to as well or it reports a problem the
+            # listener would never hit.
+            replacement = _safe_pdf_string(node.get("/ActualText", ""))
+            entry: Dict[str, Any] = {
+                "kind": "text",
+                "role": role,
+                "page": page_index,
+                "text": replacement or (record or {}).get("text", ""),
+                "drawn": (record or {}).get("text", ""),
+                "replaced": bool(replacement),
+                "y": (record or {}).get("y"),
+                "x": (record or {}).get("x"),
+            }
+            if keep_elements:
+                entry["element"] = node
+            sequence.append(entry)
             return
         if isinstance(kids, pikepdf.Dictionary) and (
             _safe_pdf_string(kids.get("/Type", "")).lstrip("/") == "OBJR"
@@ -3616,22 +3625,24 @@ def _readback_sequence(pdf: Any) -> List[Dict[str, Any]]:
             except (TypeError, ValueError, IndexError):
                 top = left = None
             parent = _named_parent(annot) if hasattr(annot, "get") else None
-            sequence.append(
-                {
-                    "kind": "field",
-                    "role": role,
-                    "page": page_index,
-                    "name": (
-                        _safe_pdf_string(parent.get("/T", "")).strip()
-                        if parent is not None
-                        else ""
-                    ),
-                    "text": _safe_pdf_string(node.get("/Alt", ""))
-                    or (_widget_tooltip(annot, parent) if annot is not None else ""),
-                    "y": top,
-                    "x": left,
-                }
-            )
+            field_entry: Dict[str, Any] = {
+                "kind": "field",
+                "role": role,
+                "page": page_index,
+                "name": (
+                    _safe_pdf_string(parent.get("/T", "")).strip()
+                    if parent is not None
+                    else ""
+                ),
+                "text": _safe_pdf_string(node.get("/ActualText", ""))
+                or _safe_pdf_string(node.get("/Alt", ""))
+                or (_widget_tooltip(annot, parent) if annot is not None else ""),
+                "y": top,
+                "x": left,
+            }
+            if keep_elements:
+                field_entry["element"] = node
+            sequence.append(field_entry)
             return
         if kids is not None:
             visit(kids, page_index)
@@ -3652,6 +3663,45 @@ _READBACK_SUBSTITUTE_GLYPHS = {
     "\u00a4": "\u2019",
     "\u0092": "\u2019",
 }
+
+
+def _readback_text_correction(announced: str) -> Optional[Dict[str, Any]]:
+    """Describe how a run's announced text differs from what it should say.
+
+    Returns None when the text would be spoken as written. A substitution is
+    only claimed when a stand-in glyph sits between two letters, where no
+    author would have written a trademark sign; a bare control character is
+    reported too, but as the weaker finding it is.
+    """
+    text = str(announced or "")
+    substitutes = [
+        match.group(2)
+        for match in re.finditer(
+            r"(?i)([a-z])([\u2122\u00ae\u00a4\u0092])([a-z])", text
+        )
+    ]
+    controls = [
+        character
+        for character in text
+        if ord(character) < 0x20 or ord(character) == 0x7F
+    ]
+    if not substitutes and not controls:
+        return None
+    corrected = text
+    for glyph in dict.fromkeys(substitutes):
+        corrected = corrected.replace(glyph, _READBACK_SUBSTITUTE_GLYPHS[glyph])
+    corrected = "".join(character for character in corrected if ord(character) >= 0x20)
+    corrected = re.sub(r"\s+", " ", corrected).strip()
+    if not corrected or corrected == text:
+        return None
+    return {
+        "corrected": corrected,
+        "substitutions": len(substitutes),
+        "controls": len(controls),
+        # A punctuation stand-in between letters is unambiguous; dropping a
+        # stray control byte changes only what is spoken, never the page.
+        "confident": bool(substitutes),
+    }
 
 
 def _readback_spoken_text(text: str) -> str:
@@ -3865,29 +3915,13 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     # 5. Characters that would be spoken as something the author never wrote.
     for item in text_items + field_items:
         announced = item.get("spoken") or item.get("text") or ""
-        controls = [
-            character
-            for character in announced
-            if ord(character) < 0x20 or ord(character) == 0x7F
-        ]
-        substitutes = [
-            (match.group(2), match.start(2))
-            for match in re.finditer(
-                r"(?i)([a-z])([\u2122\u00ae\u00a4\u0092])([a-z])", announced
-            )
-        ]
-        if not controls and not substitutes:
+        correction = _readback_text_correction(announced)
+        if correction is None:
             continue
-        suggestion = announced
-        for glyph, _position in substitutes:
-            suggestion = suggestion.replace(glyph, _READBACK_SUBSTITUTE_GLYPHS[glyph])
-        suggestion = "".join(
-            character for character in suggestion if ord(character) >= 0x20
-        )
         findings.append(
             {
                 "id": f"readback-mispronounced-{item['index']}",
-                "severity": "fail" if substitutes else "warning",
+                "severity": "fail" if correction["confident"] else "warning",
                 "category": "text-encoding",
                 "title": "Text would be spoken as something it does not say",
                 "detail": (
@@ -3895,15 +3929,17 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                     + (
                         "a symbol standing in mid-word for punctuation, which a "
                         "screen reader reads aloud by name"
-                        if substitutes
+                        if correction["substitutions"]
                         else "control characters a screen reader may vocalise or swallow"
                     )
                     + "."
                 ),
                 "page": item["page"],
                 "announcedIndex": item["index"],
-                "remediation": "fonts",
-                "suggestion": suggestion,
+                "remediation": "readback",
+                "suggestion": correction["corrected"],
+                "confident": correction["confident"],
+                "announced": announced,
             }
         )
 
@@ -3951,6 +3987,105 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
             "findings": len(findings),
             "blocking": sum(1 for f in findings if f["severity"] == "fail"),
         },
+    }
+
+
+def repair_readback_text(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    *,
+    decisions: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Give runs an /ActualText so they are spoken as the author wrote them.
+
+    The glyphs on the page are left exactly as they are: only what assistive
+    technology announces changes. Corrections a person supplied through
+    ``decisions`` are applied as given; otherwise only the unambiguous case is
+    written, and anything weaker is reported back for review.
+    """
+    import pikepdf
+
+    overrides: Dict[int, Optional[str]] = {}
+    for item in decisions or []:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            index = int(item.get("announcedIndex"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        apply_flag = item.get("apply", True)
+        if isinstance(apply_flag, str):
+            apply_flag = apply_flag.strip().lower() not in {"false", "0", "no", ""}
+        if not apply_flag:
+            overrides[index] = None
+            continue
+        value = re.sub(r"\s+", " ", str(item.get("actualText") or "")).strip()
+        overrides[index] = value[:2000] or None
+
+    applied: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    try:
+        with pikepdf.open(input_pdf_path) as pdf:
+            if pdf.Root.get("/StructTreeRoot") is None:
+                raise PDFAccessibilityError(
+                    "This PDF has no tag tree, so there is nothing to give replacement text to."
+                )
+            sequence = _readback_sequence(pdf, keep_elements=True)
+            for item in sequence:
+                element = item.get("element")
+                if element is None:
+                    continue
+                if item.get("replaced") and int(item.get("index", -1)) not in overrides:
+                    continue
+                announced = _readback_spoken_text(
+                    item.get("drawn") or item.get("text", "")
+                )
+                correction = _readback_text_correction(announced)
+                index = int(item.get("index", -1))
+                chosen: Optional[str] = None
+                if index in overrides:
+                    chosen = overrides[index]
+                    if chosen is None:
+                        continue
+                elif correction is not None and correction["confident"]:
+                    chosen = correction["corrected"]
+                elif correction is not None:
+                    skipped.append(
+                        {
+                            "announcedIndex": index,
+                            "announced": announced,
+                            "suggestion": correction["corrected"],
+                            "reason": "Only control characters differ; confirm this one.",
+                        }
+                    )
+                    continue
+                else:
+                    continue
+                element["/ActualText"] = pikepdf.String(chosen)
+                applied.append(
+                    {
+                        "announcedIndex": index,
+                        "page": item.get("page"),
+                        "announced": announced,
+                        "actualText": chosen,
+                    }
+                )
+            pdf.save(output_pdf_path)
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Failed to write replacement text: {exc}")
+
+    return {
+        "action": "readback_text",
+        "actual_text_added": len(applied),
+        "applied": applied[:200],
+        "needs_review": skipped[:200],
+        "review_required": True,
+        "warning": (
+            "Replacement text changes what assistive technology announces, not "
+            "what the page draws. Read the corrected wording before export."
+        ),
     }
 
 

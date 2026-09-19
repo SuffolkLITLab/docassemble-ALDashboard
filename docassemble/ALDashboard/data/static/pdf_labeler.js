@@ -514,6 +514,14 @@ const a11yReadbackTranscript = optionalWorkshopElement(
   "a11y-readback-transcript",
   "ol",
 );
+const a11yReadbackTextFixes = optionalWorkshopElement(
+  "a11y-readback-text-fixes",
+);
+const a11yReadbackTextList = optionalWorkshopElement("a11y-readback-text-list");
+const a11yApplyReadbackTextBtn = optionalWorkshopElement(
+  "a11y-apply-readback-text",
+  "button",
+);
 const a11yPanelTabs = Array.from(
   a11yPanelNav.querySelectorAll("[data-panel-tab]"),
 );
@@ -2042,6 +2050,32 @@ function renderAccessibilityReadback() {
         '">' +
         escapeHtml(aiReviewPanelLabel(panel)) +
         "</button></div>"
+      );
+    })
+    .join("");
+  // Every correction is editable before it is written: the confident ones are
+  // filled in, the rest start blank so nothing is changed without a decision.
+  const textFixes = findings.filter(function (finding) {
+    return finding.category === "text-encoding" && finding.suggestion;
+  });
+  a11yReadbackTextFixes.classList.toggle("hidden", !textFixes.length);
+  a11yReadbackTextList.innerHTML = textFixes
+    .map(function (finding) {
+      const inputId = "a11y-readback-text-" + String(finding.announcedIndex);
+      return (
+        '<div class="border rounded p-2"><div class="small text-muted">Drawn on the page: \u201c' +
+        escapeHtml(String(finding.announced || "")) +
+        '\u201d</div><label class="form-label small mb-1 mt-1" for="' +
+        inputId +
+        '">Announce instead</label><input id="' +
+        inputId +
+        '" type="text" class="form-control form-control-sm" data-readback-index="' +
+        String(finding.announcedIndex) +
+        '" value="' +
+        escapeHtml(finding.confident ? String(finding.suggestion) : "") +
+        '" placeholder="' +
+        escapeHtml(String(finding.suggestion)) +
+        '"></div>'
       );
     })
     .join("");
@@ -9050,6 +9084,20 @@ function applyDeterministicFieldOrder(direction, options) {
 }
 
 function accessibilityRemediationFeedback(action, result, options) {
+  if (action === "readback_text") {
+    const held = Array.isArray(result.needs_review)
+      ? result.needs_review.length
+      : 0;
+    return (
+      String(result.actual_text_added || 0) +
+      " run" +
+      (Number(result.actual_text_added) === 1 ? "" : "s") +
+      " will now be announced as the replacement wording. The page still draws " +
+      "what it always did" +
+      (held ? "; " + String(held) + " more need a decision from you" : "") +
+      "."
+    );
+  }
   if (action === "metadata") {
     return (
       "Metadata operation finished: " +
@@ -9196,6 +9244,11 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
       markAccessibilityDraft(
         "metadata",
         String(result.metadata_updates || 0) + " metadata changes applied",
+      );
+    } else if (action === "readback_text") {
+      markAccessibilityDraft(
+        "readback-text",
+        String(result.actual_text_added || 0) + " replacement texts written",
       );
     } else if (action === "draft_structure") {
       state.accessibility.structureDrafted = true;
@@ -9355,6 +9408,33 @@ function initAccessibilityHelpPopovers() {
 }
 initAccessibilityHelpPopovers();
 
+if (a11yApplyReadbackTextBtn) {
+  a11yApplyReadbackTextBtn.addEventListener("click", function () {
+    const decisions = Array.from(
+      a11yReadbackTextList.querySelectorAll("[data-readback-index]"),
+    )
+      .map(function (input) {
+        const value = String(input.value || "").trim();
+        return {
+          announcedIndex: Number(input.dataset.readbackIndex),
+          actualText: value,
+          apply: !!value,
+        };
+      })
+      .filter(function (decision) {
+        return decision.apply;
+      });
+    if (!decisions.length) {
+      showError("Fill in at least one replacement before applying.");
+      return;
+    }
+    runAccessibilityRemediation("readback_text", {
+      decisions: decisions,
+    }).catch(function (error) {
+      showError(error.message || String(error));
+    });
+  });
+}
 if (a11yReadbackFindings) {
   a11yReadbackFindings.addEventListener("click", function (event) {
     const button = event.target.closest("[data-readback-panel]");

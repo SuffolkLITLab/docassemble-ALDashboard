@@ -392,6 +392,21 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('run + "  \\u00d7" + String(count)', self.js)
         self.assertIn('id="a11y-tag-structure-details"', self.html)
 
+    def test_the_workflow_steps_are_a_collapsible_vertical_rail(self):
+        """Vertical frees the ~85px the horizontal strip spent on two rows."""
+        self.assertIn('aria-orientation="vertical"', self.html)
+        self.assertIn('aria-label="Remediation workflow"', self.html)
+        self.assertIn('id="a11y-toggle-steps"', self.html)
+        self.assertIn("function setAccessibilityStepsCollapsed", self.js)
+        self.assertIn(".a11y-step-nav {", self.css)
+        self.assertIn("is-steps-collapsed", self.css)
+        # Up and down are the natural keys in a vertical list.
+        self.assertIn("ArrowUp: -1", self.js)
+        self.assertIn("ArrowDown: 1", self.js)
+        # Progress lives where the eye already goes for the workflow.
+        self.assertIn("function renderAccessibilityProgress", self.js)
+        self.assertIn('id="a11y-progress-bar"', self.html)
+
     def test_the_findings_rail_collapses_and_can_be_brought_back(self):
         self.assertIn('id="a11y-toggle-report"', self.html)
         self.assertIn('id="a11y-report-body"', self.html)

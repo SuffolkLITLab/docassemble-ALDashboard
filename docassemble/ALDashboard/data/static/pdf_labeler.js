@@ -223,6 +223,7 @@ const state = {
     activeIssueId: "",
     activePanel: "metadata",
     reportCollapsed: false,
+    stepsCollapsed: false,
     fontRemediation: null,
     glyphReview: null,
     substituteOptions: null,
@@ -496,6 +497,16 @@ const a11yToggleReportBtn = optionalWorkshopElement(
 );
 const a11yReportCount = optionalWorkshopElement("a11y-report-count", "span");
 const a11yPanelNav = optionalWorkshopElement("a11y-panel-nav");
+const a11yToggleStepsBtn = optionalWorkshopElement(
+  "a11y-toggle-steps",
+  "button",
+);
+const a11yProgressBar = optionalWorkshopElement("a11y-progress-bar");
+const a11yProgressValue = optionalWorkshopElement(
+  "a11y-progress-value",
+  "span",
+);
+const a11yProgressNote = optionalWorkshopElement("a11y-progress-note");
 const a11yPanelTabs = Array.from(
   a11yPanelNav.querySelectorAll("[data-panel-tab]"),
 );
@@ -1922,7 +1933,7 @@ function setActiveAccessibilityPanel(panelName, options) {
   });
   // Only rewind when the step really changed: every remediation re-renders the
   // modal, and losing your place after each one is what made this tedious.
-  const content = a11yPanelNav.parentElement;
+  const content = document.querySelector(".a11y-workshop-content");
   if (changed && content) content.scrollTop = 0;
   if (settings.focusTab) {
     const tab = a11yPanelTabs.find(function (candidate) {
@@ -1934,7 +1945,7 @@ function setActiveAccessibilityPanel(panelName, options) {
 
 function setAccessibilityReportCollapsed(collapsed) {
   state.accessibility.reportCollapsed = !!collapsed;
-  const layout = a11yPanelNav.closest(".a11y-workshop-layout");
+  const layout = document.querySelector(".a11y-workshop-layout");
   if (layout) layout.classList.toggle("is-report-collapsed", !!collapsed);
   a11yToggleReportBtn.setAttribute(
     "aria-expanded",
@@ -1945,6 +1956,41 @@ function setAccessibilityReportCollapsed(collapsed) {
   a11yToggleReportBtn.title = collapsed
     ? "Show the findings list"
     : "Hide the findings list";
+}
+
+function setAccessibilityStepsCollapsed(collapsed) {
+  state.accessibility.stepsCollapsed = !!collapsed;
+  const layout = document.querySelector(".a11y-workshop-layout");
+  if (layout) layout.classList.toggle("is-steps-collapsed", !!collapsed);
+  a11yToggleStepsBtn.setAttribute(
+    "aria-expanded",
+    collapsed ? "false" : "true",
+  );
+  const icon = a11yToggleStepsBtn.querySelector("span");
+  if (icon) icon.textContent = collapsed ? "\u203a" : "\u2039";
+  a11yToggleStepsBtn.title = collapsed ? "Show step names" : "Hide step names";
+}
+
+// One number for "how far along am I", in the place the eye already goes for
+// the workflow. Blocked checks are excluded: nothing here can resolve them.
+function renderAccessibilityProgress(issues) {
+  if (!a11yProgressBar) return;
+  const counted = issues.filter(function (issue) {
+    return issue.status !== "blocked";
+  });
+  const resolved = counted.filter(function (issue) {
+    return issue.status === "pass";
+  }).length;
+  const percent = counted.length
+    ? Math.round((resolved / counted.length) * 100)
+    : 0;
+  a11yProgressBar.style.width = String(percent) + "%";
+  a11yProgressValue.textContent = counted.length
+    ? String(percent) + "%"
+    : "\u2014";
+  a11yProgressNote.textContent = counted.length
+    ? String(resolved) + " of " + String(counted.length) + " checks pass"
+    : "No report yet";
 }
 
 function renderAccessibilityReportCount(issues) {
@@ -2078,6 +2124,7 @@ function renderAccessibilityReport() {
   a11yStatusLegend.classList.toggle("hidden", !categories.length);
   renderAccessibilityPanelBadges(issues);
   renderAccessibilityReportCount(issues);
+  renderAccessibilityProgress(issues);
   if (!a11yIssueList) {
     renderFontStatus(report);
     return;
@@ -2127,7 +2174,7 @@ function renderAccessibilityReport() {
             ? "Preflight pass"
             : String(issue.count || 1) + " to review";
       button.innerHTML =
-        '<div class="d-flex justify-content-between gap-2"><span class="small fw-semibold">' +
+        '<div class="d-flex justify-content-between gap-2"><span class="small fw-semibold a11y-issue-title">' +
         escapeHtml(String(issue.title || issue.id || "Finding")) +
         '</span><span class="badge ' +
         (blocked
@@ -3282,6 +3329,7 @@ function renderAccessibilityModal() {
   refreshAccessibilityFromFields();
   setActiveAccessibilityPanel(state.accessibility.activePanel);
   setAccessibilityReportCollapsed(state.accessibility.reportCollapsed);
+  setAccessibilityStepsCollapsed(state.accessibility.stepsCollapsed);
   a11yEnableInput.checked = !!state.accessibility.enabled;
   a11yImageModeInput.checked = !!state.accessibility.imageMode;
   a11yMetaLanguage.value = String(state.accessibility.metadata.language || "");
@@ -9217,6 +9265,11 @@ function initAccessibilityHelpPopovers() {
 }
 initAccessibilityHelpPopovers();
 
+if (a11yToggleStepsBtn) {
+  a11yToggleStepsBtn.addEventListener("click", function () {
+    setAccessibilityStepsCollapsed(!state.accessibility.stepsCollapsed);
+  });
+}
 if (a11yToggleReportBtn) {
   a11yToggleReportBtn.addEventListener("click", function () {
     setAccessibilityReportCollapsed(!state.accessibility.reportCollapsed);
@@ -9228,7 +9281,14 @@ a11yPanelNav.addEventListener("click", function (event) {
   setActiveAccessibilityPanel(tab.dataset.panelTab);
 });
 a11yPanelNav.addEventListener("keydown", function (event) {
-  const steps = { ArrowLeft: -1, ArrowRight: 1, Home: 0, End: 0 };
+  const steps = {
+    ArrowLeft: -1,
+    ArrowUp: -1,
+    ArrowRight: 1,
+    ArrowDown: 1,
+    Home: 0,
+    End: 0,
+  };
   if (!(event.key in steps)) return;
   const current = a11yPanelTabs.findIndex(function (tab) {
     return tab.dataset.panelTab === state.accessibility.activePanel;

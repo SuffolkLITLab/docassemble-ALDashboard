@@ -442,6 +442,61 @@
                     </div>
                 </section>
                 <div class="a11y-workshop-layout">
+                    <nav id="a11y-panel-nav" class="a11y-step-nav" role="tablist" aria-orientation="vertical" aria-label="Remediation workflow">
+                        <div class="a11y-step-nav-head">
+                            <span class="a11y-step-nav-title">Remediation workflow</span>
+                            <button id="a11y-toggle-steps" type="button" class="a11y-step-nav-collapse" aria-expanded="true" aria-controls="a11y-step-nav-list" title="Hide step names">
+                                <span aria-hidden="true">&#8249;</span>
+                            </button>
+                        </div>
+                        <div id="a11y-step-nav-list" class="a11y-step-nav-list">
+                                <button type="button" role="tab" id="a11y-tab-metadata" class="a11y-panel-tab" data-panel-tab="metadata" aria-controls="a11y-panel-metadata" aria-selected="false" tabindex="-1" title="Language, title, author, subject">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">1</span>
+                                <span class="a11y-panel-tab-label">Document basics</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-field_tooltips" class="a11y-panel-tab" data-panel-tab="field_tooltips" aria-controls="a11y-panel-field_tooltips" aria-selected="false" tabindex="-1" title="Accessible names for every control">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">2</span>
+                                <span class="a11y-panel-tab-label">Form fields</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-reading_order" class="a11y-panel-tab" data-panel-tab="reading_order" aria-controls="a11y-panel-reading_order" aria-selected="false" tabindex="-1" title="The order fields are announced in">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">3</span>
+                                <span class="a11y-panel-tab-label">Reading order</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-draft_structure" class="a11y-panel-tab" data-panel-tab="draft_structure" aria-controls="a11y-panel-draft_structure" aria-selected="false" tabindex="-1" title="The tag tree and what each block means">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">4</span>
+                                <span class="a11y-panel-tab-label">Tags &amp; headings</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-figures" class="a11y-panel-tab" data-panel-tab="figures" aria-controls="a11y-panel-figures" aria-selected="false" tabindex="-1" title="Alternative text and decorative images">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">5</span>
+                                <span class="a11y-panel-tab-label">Images</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-structure" class="a11y-panel-tab" data-panel-tab="structure" aria-controls="a11y-panel-structure" aria-selected="false" tabindex="-1" title="Table roles, link and annotation text">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">6</span>
+                                <span class="a11y-panel-tab-label">Tables &amp; links</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-fonts" class="a11y-panel-tab" data-panel-tab="fonts" aria-controls="a11y-panel-fonts" aria-selected="false" tabindex="-1" title="Embedding, Unicode maps, glyph review">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">7</span>
+                                <span class="a11y-panel-tab-label">Fonts &amp; text</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                        </div>
+                        <div class="a11y-step-nav-foot">
+                            <div class="a11y-progress-head">
+                                <span class="a11y-progress-label">Preflight health</span>
+                                <span id="a11y-progress-value" class="a11y-progress-value">&#8212;</span>
+                            </div>
+                            <div class="a11y-progress-track" role="img" aria-label="Preflight progress">
+                                <div id="a11y-progress-bar" class="a11y-progress-bar"></div>
+                            </div>
+                            <div id="a11y-progress-note" class="a11y-progress-note"></div>
+                        </div>
+                    </nav>
                     <aside class="a11y-workshop-report" aria-label="Accessibility findings">
                         <button id="a11y-toggle-report" type="button" class="a11y-report-toggle" aria-expanded="true" aria-controls="a11y-report-body">
                             <span class="a11y-report-toggle-icon" aria-hidden="true">&#8249;</span>
@@ -456,43 +511,6 @@
                         </div>
                     </aside>
                     <div class="a11y-workshop-content">
-                        <div id="a11y-panel-nav" class="a11y-panel-nav" role="tablist" aria-label="Accessibility workshop steps">
-                            <button type="button" role="tab" id="a11y-tab-metadata" class="a11y-panel-tab" data-panel-tab="metadata" aria-controls="a11y-panel-metadata" aria-selected="false" tabindex="-1" title="Language, title, author, subject">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">1</span>
-                                <span class="a11y-panel-tab-label">Document basics</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                            <button type="button" role="tab" id="a11y-tab-field_tooltips" class="a11y-panel-tab" data-panel-tab="field_tooltips" aria-controls="a11y-panel-field_tooltips" aria-selected="false" tabindex="-1" title="Accessible names for every control">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">2</span>
-                                <span class="a11y-panel-tab-label">Form fields</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                            <button type="button" role="tab" id="a11y-tab-reading_order" class="a11y-panel-tab" data-panel-tab="reading_order" aria-controls="a11y-panel-reading_order" aria-selected="false" tabindex="-1" title="The order fields are announced in">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">3</span>
-                                <span class="a11y-panel-tab-label">Reading order</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                            <button type="button" role="tab" id="a11y-tab-draft_structure" class="a11y-panel-tab" data-panel-tab="draft_structure" aria-controls="a11y-panel-draft_structure" aria-selected="false" tabindex="-1" title="The tag tree and what each block means">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">4</span>
-                                <span class="a11y-panel-tab-label">Tags &amp; headings</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                            <button type="button" role="tab" id="a11y-tab-figures" class="a11y-panel-tab" data-panel-tab="figures" aria-controls="a11y-panel-figures" aria-selected="false" tabindex="-1" title="Alternative text and decorative images">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">5</span>
-                                <span class="a11y-panel-tab-label">Images</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                            <button type="button" role="tab" id="a11y-tab-structure" class="a11y-panel-tab" data-panel-tab="structure" aria-controls="a11y-panel-structure" aria-selected="false" tabindex="-1" title="Table roles, link and annotation text">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">6</span>
-                                <span class="a11y-panel-tab-label">Tables &amp; links</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                            <button type="button" role="tab" id="a11y-tab-fonts" class="a11y-panel-tab" data-panel-tab="fonts" aria-controls="a11y-panel-fonts" aria-selected="false" tabindex="-1" title="Embedding, Unicode maps, glyph review">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">7</span>
-                                <span class="a11y-panel-tab-label">Fonts &amp; text</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                            </button>
-                        </div>
                         <div class="a11y-panel-stack">
                             <section id="a11y-panel-metadata" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-metadata" hidden>
                                 <h3 class="h6 fw-semibold mb-2">Document Metadata<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Document metadata" data-bs-content="The title is what assistive technology announces first. A document’s first heading is almost always its real title, and the button below uses it directly — no AI involved." aria-label="About document metadata">?</button></h3>

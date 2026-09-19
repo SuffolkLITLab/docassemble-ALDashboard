@@ -604,9 +604,15 @@
 }
 .a11y-workshop-layout {
     display: grid;
-    grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);
+    grid-template-columns: 14.5rem minmax(17rem, 21rem) minmax(0, 1fr);
     min-height: 12rem;
     flex: 1;
+}
+.a11y-workshop-layout.is-steps-collapsed {
+    grid-template-columns: 3rem minmax(17rem, 21rem) minmax(0, 1fr);
+}
+.a11y-workshop-layout.is-report-collapsed.is-steps-collapsed {
+    grid-template-columns: 3rem 2.9rem minmax(0, 1fr);
 }
 .a11y-workshop-report {
     overflow: auto;
@@ -668,7 +674,7 @@
 }
 /* Collapsed, the rail keeps just enough width to bring it back. */
 .a11y-workshop-layout.is-report-collapsed {
-    grid-template-columns: 2.9rem minmax(0, 1fr);
+    grid-template-columns: 14.5rem 2.9rem minmax(0, 1fr);
 }
 .a11y-workshop-layout.is-report-collapsed .a11y-workshop-report {
     padding: 0.6rem 0.3rem;
@@ -685,40 +691,72 @@
 }
 .a11y-workshop-content {
     overflow: auto;
-    padding: 0 1.25rem 1.25rem;
+    padding: 1.5rem;
 }
-.a11y-panel-nav {
-    position: sticky;
-    top: 0;
-    z-index: 4;
+.a11y-step-nav {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin: 0 auto;
-    padding: 0.75rem 0;
-    max-width: 72rem;
-    background: #eef2f7;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid #ccd6e3;
+    background: #f2f6fb;
+}
+.a11y-step-nav-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    padding: 0.6rem 0.75rem 0.4rem;
+}
+.a11y-step-nav-title {
+    color: #57657f;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.a11y-step-nav-collapse {
+    flex: 0 0 auto;
+    padding: 0 0.3rem;
+    border: 1px solid transparent;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: #57657f;
+    line-height: 1.1;
+}
+.a11y-step-nav-collapse:hover,
+.a11y-step-nav-collapse:focus-visible {
+    border-color: #ccd6e3;
+    background: #fff;
+}
+.a11y-step-nav-list {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 0.5rem 0.5rem;
 }
 .a11y-panel-tab {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.62rem;
-    border: 1px solid #d6deea;
-    border-radius: 2rem;
-    background: #fff;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    background: transparent;
     color: #33415c;
-    font-size: 0.78rem;
-    /* Uniform weight so switching steps never reflows the strip. */
+    font-size: 0.85rem;
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.25;
+    text-align: left;
 }
 .a11y-panel-tab:hover {
-    border-color: #9ec5fe;
-    background: #f2f7ff;
+    background: #e4ecf7;
 }
 .a11y-panel-tab[aria-selected="true"] {
-    border-color: #0a58ca;
     background: #0a58ca;
     color: #fff;
 }
@@ -726,47 +764,126 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.25rem;
-    height: 1.25rem;
+    flex: 0 0 auto;
+    width: 1.4rem;
+    height: 1.4rem;
     border-radius: 50%;
-    background: #eef2f7;
-    color: #57657f;
-    font-size: 0.7rem;
-    font-weight: 600;
+    background: #dbe4f0;
+    color: #4a5b74;
+    font-size: 0.72rem;
+    font-weight: 700;
 }
 .a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-step {
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.24);
     color: #fff;
 }
+.a11y-panel-tab-label {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .a11y-panel-tab-badge {
+    flex: 0 0 auto;
     min-width: 1.2rem;
     padding: 0.05rem 0.35rem;
     border-radius: 2rem;
     background: #b42318;
     color: #fff;
     font-size: 0.68rem;
-    font-weight: 600;
+    font-weight: 700;
     text-align: center;
 }
 .a11y-panel-tab-badge[data-tone="warning"] { background: #8a5200; }
 .a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-badge {
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
+/* Collapsed: numbers only, still the full workflow at a glance. */
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-title,
+.a11y-workshop-layout.is-steps-collapsed .a11y-panel-tab-label,
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-foot {
+    display: none;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-head {
+    justify-content: center;
+    padding: 0.6rem 0.2rem 0.4rem;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-panel-tab {
+    justify-content: center;
+    padding: 0.45rem 0.2rem;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-list {
+    padding: 0 0.25rem 0.5rem;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-panel-tab-badge {
+    position: absolute;
+    margin: -1rem 0 0 1.2rem;
+    min-width: 1rem;
+    padding: 0 0.2rem;
+    font-size: 0.6rem;
+}
+.a11y-step-nav-foot {
+    padding: 0.5rem 0.75rem 0.7rem;
+    border-top: 1px solid #dde5ef;
+}
+.a11y-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.4rem;
+    margin-bottom: 0.3rem;
+}
+.a11y-progress-label {
+    color: #57657f;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.a11y-progress-value {
+    color: #17324d;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+.a11y-progress-track {
+    height: 0.4rem;
+    border-radius: 2rem;
+    background: #dbe4f0;
+    overflow: hidden;
+}
+.a11y-progress-bar {
+    height: 100%;
+    width: 0;
+    border-radius: 2rem;
+    background: #17823b;
+    transition: width 0.2s ease-in-out;
+}
+.a11y-progress-note {
+    margin-top: 0.3rem;
+    color: #57657f;
+    font-size: 0.68rem;
+}
 .a11y-panel[hidden] {
     display: none;
 }
 .a11y-panel {
-    max-width: 72rem;
-    margin: 0 auto 1rem;
-    padding: 1rem;
-    border: 1px solid #d6deea;
-    border-radius: 0.75rem;
+    max-width: 58rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.75rem;
+    border: 1px solid #dde5ef;
+    border-radius: 0.9rem;
     background: #fff;
-    box-shadow: 0 4px 14px rgba(17, 36, 64, 0.05);
+    box-shadow: 0 1px 3px rgba(17, 36, 64, 0.06);
+}
+.a11y-panel > h3:first-child {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #eef2f7;
+    font-size: 1.05rem;
+}
+.a11y-panel h4 {
+    margin-top: 1.5rem;
+    font-size: 0.92rem;
 }
 .a11y-issue {
     width: 100%;
-    padding: 0.7rem;
+    padding: 0.7rem 0.8rem;
     border: 1px solid #d6deea;
     border-left: 0.3rem solid #77869a;
     border-radius: 0.55rem;
@@ -779,7 +896,9 @@
 .a11y-issue[data-status="pass"] { border-left-color: #17823b; }
 .a11y-issue[data-status="blocked"] { border-left-color: #6c757d; background: #f8f9fa; }
 .a11y-issue:hover, .a11y-issue:focus-visible { background: #eef5ff; }
-.a11y-issue-rule { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
+.a11y-issue-rule { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; }
+.a11y-issue .badge { flex: 0 0 auto; align-self: flex-start; font-size: 0.65rem; font-weight: 600; }
+.a11y-issue-title { line-height: 1.25; }
 .a11y-disclaimer { padding: 0.65rem; border-radius: 0.5rem; background: #fff4ce; font-size: 0.78rem; }
 .a11y-structure-draft-layout { display: grid; grid-template-columns: minmax(20rem, 1.2fr) minmax(18rem, 0.8fr); gap: 1rem; align-items: start; }
 .a11y-structure-preview { max-height: 70vh; overflow: auto; padding: 0.75rem; border: 1px solid #ccd6e3; border-radius: 0.5rem; background: #e8edf3; }
@@ -804,7 +923,17 @@
     #a11y-ai-review-findings { height: 16rem; }
 }
 @media (max-width: 800px) {
-    .a11y-workshop-layout { grid-template-columns: 1fr; overflow: auto; }
+    .a11y-workshop-layout,
+    .a11y-workshop-layout.is-steps-collapsed,
+    .a11y-workshop-layout.is-report-collapsed,
+    .a11y-workshop-layout.is-report-collapsed.is-steps-collapsed {
+        grid-template-columns: 1fr;
+        overflow: auto;
+    }
+    .a11y-step-nav { border-right: 0; border-bottom: 1px solid #ccd6e3; }
+    .a11y-step-nav-list { flex-direction: row; flex-wrap: wrap; }
+    .a11y-panel-tab { width: auto; }
+    .a11y-step-nav-foot { display: none; }
     .a11y-workshop-report { max-height: 38vh; border-right: 0; border-bottom: 1px solid #ccd6e3; }
     .a11y-workshop-layout.is-report-collapsed { grid-template-columns: 1fr; }
     .a11y-workshop-layout.is-report-collapsed .a11y-report-toggle { flex-direction: row; }

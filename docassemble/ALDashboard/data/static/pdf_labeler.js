@@ -213,6 +213,7 @@ const state = {
     structureEditor: { tables: [], figures: [], annotations: [], widgets: [] },
     report: null,
     headingCandidates: [],
+    knownHeadings: [],
     headingDecisions: {},
     contentBlocks: [],
     contentDecisions: {},
@@ -220,6 +221,8 @@ const state = {
     headingReviewSavedSignature: "",
     headingReviewDirty: true,
     activeIssueId: "",
+    activePanel: "metadata",
+    reportCollapsed: false,
     fontRemediation: null,
     glyphReview: null,
     substituteOptions: null,
@@ -229,6 +232,7 @@ const state = {
     draftRemediations: {},
     aiReview: { findings: [], lastSignature: "", running: false },
     marked: false,
+    structureDrafted: false,
     inspected: false,
   },
 };
@@ -482,6 +486,19 @@ const a11yAnnotationList = optionalWorkshopElement("a11y-annotation-list");
 const a11yWidgetList = optionalWorkshopElement("a11y-widget-list");
 const a11yTableList = optionalWorkshopElement("a11y-table-list");
 const a11yStructureFocus = optionalWorkshopElement("a11y-structure-focus");
+const a11yTitleFromHeadingBtn = optionalWorkshopElement(
+  "a11y-title-from-heading",
+  "button",
+);
+const a11yToggleReportBtn = optionalWorkshopElement(
+  "a11y-toggle-report",
+  "button",
+);
+const a11yReportCount = optionalWorkshopElement("a11y-report-count", "span");
+const a11yPanelNav = optionalWorkshopElement("a11y-panel-nav");
+const a11yPanelTabs = Array.from(
+  a11yPanelNav.querySelectorAll("[data-panel-tab]"),
+);
 const utilitiesModal = document.getElementById("utilities-modal");
 const utilitiesCloseBtn = document.getElementById("utilities-close");
 const fieldRenameSummaryModal = document.getElementById(
@@ -774,10 +791,13 @@ function extractTextBoxesFromPage(pageProxy) {
         });
       });
       return groupTextItemsIntoBoxes(textItems).map(function (box) {
+        // Items are grouped on their baseline, because that is what puts
+        // differently sized runs on the same line. Consumers draw and measure
+        // boxes from the top edge, so convert once the grouping is done.
         return {
           text: box.text,
           x: clamp(box.x / viewport.width, 0, 1),
-          y: clamp(box.y / viewport.height, 0, 1),
+          y: clamp((box.y - box.height) / viewport.height, 0, 1),
           width: clamp(box.width / viewport.width, 0, 1),
           height: clamp(box.height / viewport.height, 0, 1),
           fontSize: box.fontSize,
@@ -1842,21 +1862,134 @@ function renderAccessibilityTagStructure() {
     return;
   }
   const lines = [
-    "Tag tree present: yes",
-    "Nodes: " + String(summary.node_count || 0),
-    "Max depth: " + String(summary.max_depth || 0),
+    String(summary.node_count || 0) +
+      " nodes, max depth " +
+      String(summary.max_depth || 0),
     "",
-    "Preview:",
   ];
   const preview = Array.isArray(summary.preview) ? summary.preview : [];
   if (!preview.length) {
     lines.push("(no preview nodes available)");
   } else {
-    preview.forEach(function (line) {
-      lines.push(String(line));
+    // A form has dozens of identical sibling /Form nodes; listing each one
+    // tells the reviewer nothing and buries the shape of the tree.
+    let run = "";
+    let count = 0;
+    const flush = function () {
+      if (!count) return;
+      lines.push(count > 1 ? run + "  \u00d7" + String(count) : run);
+      count = 0;
+    };
+    preview.forEach(function (rawLine) {
+      const line = String(rawLine);
+      if (line === run) {
+        count += 1;
+        return;
+      }
+      flush();
+      run = line;
+      count = 1;
     });
+    flush();
   }
   a11yTagStructure.textContent = lines.join("\n");
+}
+
+// The workshop content is one step at a time rather than seven stacked panels,
+// so a finding in the left rail opens the step that fixes it instead of
+// scrolling somewhere in a very long column.
+function accessibilityPanelNameFor(remediation) {
+  const panelName = String(remediation || "structure");
+  if (panelName === "catalog_flags") return "draft_structure";
+  return a11yPanelTabs.some(function (tab) {
+    return tab.dataset.panelTab === panelName;
+  })
+    ? panelName
+    : "structure";
+}
+
+function setActiveAccessibilityPanel(panelName, options) {
+  const settings = options || {};
+  const target = accessibilityPanelNameFor(panelName);
+  const changed = state.accessibility.activePanel !== target;
+  state.accessibility.activePanel = target;
+  a11yPanelTabs.forEach(function (tab) {
+    const selected = tab.dataset.panelTab === target;
+    tab.setAttribute("aria-selected", selected ? "true" : "false");
+    tab.tabIndex = selected ? 0 : -1;
+    const panel = document.getElementById("a11y-panel-" + tab.dataset.panelTab);
+    if (panel) panel.hidden = !selected;
+  });
+  // Only rewind when the step really changed: every remediation re-renders the
+  // modal, and losing your place after each one is what made this tedious.
+  const content = a11yPanelNav.parentElement;
+  if (changed && content) content.scrollTop = 0;
+  if (settings.focusTab) {
+    const tab = a11yPanelTabs.find(function (candidate) {
+      return candidate.dataset.panelTab === target;
+    });
+    if (tab) tab.focus();
+  }
+}
+
+function setAccessibilityReportCollapsed(collapsed) {
+  state.accessibility.reportCollapsed = !!collapsed;
+  const layout = a11yPanelNav.closest(".a11y-workshop-layout");
+  if (layout) layout.classList.toggle("is-report-collapsed", !!collapsed);
+  a11yToggleReportBtn.setAttribute(
+    "aria-expanded",
+    collapsed ? "false" : "true",
+  );
+  const icon = a11yToggleReportBtn.querySelector(".a11y-report-toggle-icon");
+  if (icon) icon.textContent = collapsed ? "\u203a" : "\u2039";
+  a11yToggleReportBtn.title = collapsed
+    ? "Show the findings list"
+    : "Hide the findings list";
+}
+
+function renderAccessibilityReportCount(issues) {
+  if (!a11yReportCount) return;
+  const open = issues.filter(function (issue) {
+    return issue.status !== "pass" && issue.status !== "blocked";
+  }).length;
+  a11yReportCount.classList.toggle("hidden", !open);
+  a11yReportCount.textContent = String(open);
+  a11yToggleReportBtn.setAttribute(
+    "aria-label",
+    open
+      ? String(open) +
+          (open === 1 ? " finding needs" : " findings need") +
+          " attention"
+      : "No findings need attention",
+  );
+}
+
+function renderAccessibilityPanelBadges(issues) {
+  const counts = {};
+  issues.forEach(function (issue) {
+    if (issue.status === "pass" || issue.status === "blocked") return;
+    const panelName = accessibilityPanelNameFor(issue.remediation);
+    const bucket = counts[panelName] || { total: 0, blocking: 0 };
+    bucket.total += 1;
+    if (issue.severity !== "warning") bucket.blocking += 1;
+    counts[panelName] = bucket;
+  });
+  a11yPanelTabs.forEach(function (tab) {
+    const badge = tab.querySelector("[data-panel-badge]");
+    if (!badge) return;
+    const bucket = counts[tab.dataset.panelTab];
+    badge.classList.toggle("hidden", !bucket);
+    if (!bucket) {
+      badge.removeAttribute("title");
+      return;
+    }
+    badge.textContent = String(bucket.total);
+    badge.dataset.tone = bucket.blocking ? "error" : "warning";
+    badge.title =
+      String(bucket.total) +
+      (bucket.total === 1 ? " check needs" : " checks need") +
+      " attention in this step";
+  });
 }
 
 function renderAccessibilityReport() {
@@ -1943,6 +2076,8 @@ function renderAccessibilityReport() {
     })
     .join("");
   a11yStatusLegend.classList.toggle("hidden", !categories.length);
+  renderAccessibilityPanelBadges(issues);
+  renderAccessibilityReportCount(issues);
   if (!a11yIssueList) {
     renderFontStatus(report);
     return;
@@ -2427,6 +2562,9 @@ function glyphProvenanceBadge(glyph) {
   if (glyph.charCodeSource === "installed-font") {
     return '<span class="badge text-bg-warning" title="Matched by lining the subset up against an installed copy of this font. Confirm it looks right.">from installed font</span>';
   }
+  if (glyph.charCodeSource === "pdf-code") {
+    return '<span class="badge text-bg-info" title="The code in the page content is the character code in this font’s own encoding.">from page content</span>';
+  }
   return '<span class="badge text-bg-secondary" title="Nothing in the PDF or on this server records what this glyph means.">unknown code</span>';
 }
 
@@ -2596,6 +2734,21 @@ function renderGlyphFontCard(font) {
   );
 }
 
+// Replacing a list's innerHTML destroys the control the reviewer is using and
+// scrolls the panel back to the top. Every glyph decision re-renders the list,
+// so put them back afterwards.
+function rerenderPreservingPlace(container, render) {
+  const scroller = container.closest(".a11y-workshop-content");
+  const scrollTop = scroller ? scroller.scrollTop : 0;
+  const active = document.activeElement;
+  const activeId = active && container.contains(active) ? active.id : "";
+  render();
+  if (scroller) scroller.scrollTop = scrollTop;
+  if (!activeId) return;
+  const restored = document.getElementById(activeId);
+  if (restored && restored.focus) restored.focus({ preventScroll: true });
+}
+
 function renderGlyphReview() {
   if (!a11yGlyphReviewList || !a11yGlyphReviewSummary) return;
   const review = state.accessibility.glyphReview;
@@ -2622,7 +2775,9 @@ function renderGlyphReview() {
       (proposed === 1 ? " has" : "s have") +
       " a suggested character; confirm every one against the outline shown."
     : "Every font already has a Unicode map. Nothing to review.";
-  a11yGlyphReviewList.innerHTML = fonts.map(renderGlyphFontCard).join("");
+  rerenderPreservingPlace(a11yGlyphReviewList, function () {
+    a11yGlyphReviewList.innerHTML = fonts.map(renderGlyphFontCard).join("");
+  });
   const decided = fonts.some(function (font) {
     const decision = state.accessibility.glyphDecisions[font.resource];
     return decision && decision.action !== "skip";
@@ -3125,6 +3280,8 @@ async function renderStructurePreview() {
 
 function renderAccessibilityModal() {
   refreshAccessibilityFromFields();
+  setActiveAccessibilityPanel(state.accessibility.activePanel);
+  setAccessibilityReportCollapsed(state.accessibility.reportCollapsed);
   a11yEnableInput.checked = !!state.accessibility.enabled;
   a11yImageModeInput.checked = !!state.accessibility.imageMode;
   a11yMetaLanguage.value = String(state.accessibility.metadata.language || "");
@@ -3157,6 +3314,7 @@ function renderAccessibilityModal() {
   renderAccessibilityTagStructure();
   renderAccessibilityReport();
   renderHeadingCandidates();
+  renderTitleFromHeadingControl();
   renderStructurePreview().catch(function (error) {
     console.warn("Could not render structure preview", error);
   });
@@ -3268,6 +3426,14 @@ async function inspectAccessibilityData(forceRefresh) {
   )
     ? payload.data.heading_candidates
     : [];
+  // Tagging rewrites page content streams, so a later re-inspection can come
+  // back with fewer candidates than the first one found. Keep the best set seen
+  // for this document: the AI review needs the real H1 to suggest a title, and
+  // a suggestion it cannot name is one the reviewer has to implement by hand.
+  if (state.accessibility.headingCandidates.length) {
+    state.accessibility.knownHeadings =
+      state.accessibility.headingCandidates.slice();
+  }
   state.accessibility.contentBlocks = Array.isArray(payload.data.content_blocks)
     ? payload.data.content_blocks
     : [];
@@ -3348,15 +3514,26 @@ function buildAccessibilityPayload(exportNameMap) {
     ).trim();
   });
 
-  return {
+  const payload = {
     enabled: true,
     auto_fill_missing_tooltips: true,
     field_tooltips: fieldTooltips,
     field_order: orderedNames,
     image_alt_text: imageAltText,
     metadata: Object.assign({}, state.accessibility.metadata),
-    marked: !!state.accessibility.marked,
+    // Rewriting every page's content stream to wrap layout runs as artifacts
+    // only belongs to the tagging workflow. Exporting a PDF whose tag tree this
+    // session never touched must leave its content streams alone.
+    mark_untagged_as_artifacts: !!state.accessibility.structureDrafted,
   };
+  // Only ever re-assert an existing declaration. `marked` is false for a tagged
+  // PDF that simply lacks a PDF/UA identifier, so sending it would let a plain
+  // export clear MarkInfo/Marked on a document the user never touched. Clearing
+  // the declaration is done deliberately through the certify control instead.
+  if (state.accessibility.marked) {
+    payload.marked = true;
+  }
+  return payload;
 }
 
 function invalidateBulkRenamePreview() {
@@ -4851,8 +5028,10 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
   state.accessibility.substituteChoices = {};
   if (!settings.preserveAccessibilityDrafts) {
     state.accessibility.fontRemediation = null;
-    a11yAutoFixStatus.classList.add("hidden");
+    hideAccessibilityAutoFixStatus();
     state.accessibility.draftRemediations = {};
+    state.accessibility.knownHeadings = [];
+    state.accessibility.structureDrafted = false;
     state.accessibility.headingDecisions = {};
     state.accessibility.contentDecisions = {};
     state.accessibility.selectedContentBlockId = "";
@@ -8881,6 +9060,7 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
         String(result.metadata_updates || 0) + " metadata changes applied",
       );
     } else if (action === "draft_structure") {
+      state.accessibility.structureDrafted = true;
       markAccessibilityDraft(
         "draft_structure",
         String(result.text_blocks_tagged || 0) +
@@ -8993,15 +9173,8 @@ a11yAiReviewFindings.addEventListener("click", function (event) {
     state.accessibility.aiReview.findings[Number(card.dataset.aiReviewIndex)];
   if (!finding) return;
   if (button.dataset.aiReviewAction === "open-controls") {
-    const panel = document.getElementById(
-      "a11y-panel-" + String(button.dataset.panel || ""),
-    );
     setAiReviewExpanded(false);
-    if (panel) {
-      window.setTimeout(function () {
-        panel.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 50);
-    }
+    setActiveAccessibilityPanel(button.dataset.panel, { focusTab: true });
     return;
   } else if (button.dataset.aiReviewAction === "apply") {
     applyAiAccessibilityFinding(finding);
@@ -9011,6 +9184,66 @@ a11yAiReviewFindings.addEventListener("click", function (event) {
     finding.status = "reviewed";
   }
   renderAiAccessibilityReview();
+});
+if (a11yTitleFromHeadingBtn) {
+  a11yTitleFromHeadingBtn.addEventListener("click", function () {
+    const applied = applyDocumentTitleFromHeading();
+    if (!applied) return;
+    renderTitleFromHeadingControl();
+    showSuccess("Title set to \u201c" + applied + "\u201d.", 5000);
+  });
+}
+// Bootstrap popovers park first-run explanation behind a "?" instead of
+// spending vertical space on prose the reviewer has already read once.
+function initAccessibilityHelpPopovers() {
+  const bootstrap = window.bootstrap;
+  const helpButtons = document.querySelectorAll('[data-bs-toggle="popover"]');
+  if (!bootstrap || !bootstrap.Popover) {
+    // Bootstrap's bundle did not load. Fall back to a plain tooltip so the
+    // explanation is still reachable rather than silently lost.
+    helpButtons.forEach(function (element) {
+      if (element.title) return;
+      element.title = String(element.dataset.bsContent || "").replace(
+        /<[^>]*>/g,
+        "",
+      );
+    });
+    return;
+  }
+  helpButtons.forEach(function (element) {
+    // Constructing registers the instance on the element; that is the point.
+    bootstrap.Popover.getOrCreateInstance(element, { container: "body" });
+  });
+}
+initAccessibilityHelpPopovers();
+
+if (a11yToggleReportBtn) {
+  a11yToggleReportBtn.addEventListener("click", function () {
+    setAccessibilityReportCollapsed(!state.accessibility.reportCollapsed);
+  });
+}
+a11yPanelNav.addEventListener("click", function (event) {
+  const tab = event.target.closest("[data-panel-tab]");
+  if (!tab) return;
+  setActiveAccessibilityPanel(tab.dataset.panelTab);
+});
+a11yPanelNav.addEventListener("keydown", function (event) {
+  const steps = { ArrowLeft: -1, ArrowRight: 1, Home: 0, End: 0 };
+  if (!(event.key in steps)) return;
+  const current = a11yPanelTabs.findIndex(function (tab) {
+    return tab.dataset.panelTab === state.accessibility.activePanel;
+  });
+  const index =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? a11yPanelTabs.length - 1
+        : (Math.max(current, 0) + steps[event.key] + a11yPanelTabs.length) %
+          a11yPanelTabs.length;
+  const next = a11yPanelTabs[index];
+  if (!next) return;
+  event.preventDefault();
+  setActiveAccessibilityPanel(next.dataset.panelTab, { focusTab: true });
 });
 a11yEnableInput.addEventListener("change", function () {
   state.accessibility.enabled = !!a11yEnableInput.checked;
@@ -9030,10 +9263,7 @@ a11yIssueList.addEventListener("click", function (event) {
       ? String(issue.dataset.issueId || "")
       : "";
   renderStructureEditor();
-  let panelName = issue.dataset.panel || "structure";
-  if (panelName === "catalog_flags") panelName = "draft_structure";
-  const panel = document.getElementById("a11y-panel-" + panelName);
-  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  setActiveAccessibilityPanel(issue.dataset.panel);
   window.setTimeout(function () {
     const activeIssueId = String(state.accessibility.activeIssueId || "");
     if (!activeIssueId) return;
@@ -9409,6 +9639,10 @@ a11yDraftStructureBtn.addEventListener("click", function () {
     content_decisions: accessibilityContentDecisionPayload(),
     overwrite: hasTagTree,
     mark_as_tagged: false,
+    // What this panel already promises to do, and the only thing that clears
+    // the "visible page content has semantic tags or artifact markers" finding.
+    // Auto-fix has always sent it; the manual button left that check unfixable.
+    mark_untagged_as_artifacts: true,
   }).catch(function (error) {
     showError(error.message || String(error));
   });
@@ -9681,7 +9915,10 @@ function accessibilityAiReviewContext() {
         nearbyText: nearbyTextForField(field).slice(0, 5),
       };
     }),
-    headings: state.accessibility.headingCandidates.map(function (candidate) {
+    headings: (state.accessibility.headingCandidates.length
+      ? state.accessibility.headingCandidates
+      : state.accessibility.knownHeadings || []
+    ).map(function (candidate) {
       const decision = headingDecision(candidate);
       return {
         candidateId: String(candidate.candidateId || ""),
@@ -9704,6 +9941,7 @@ function accessibilityAiReviewContext() {
       };
     }),
     readingDirection: state.accessibility.readingDirection || "ltr",
+    documentLanguage: String(document.documentElement.lang || "").trim(),
     reportIssues: (Array.isArray(report.issues) ? report.issues : [])
       .filter(function (issue) {
         return issue.status !== "pass" && issue.status !== "blocked";
@@ -9733,25 +9971,70 @@ function accessibilityAiReviewSignature() {
   return JSON.stringify(accessibilityAiReviewContext());
 }
 
+function aiReviewShortValue(value) {
+  const text =
+    typeof value === "object" ? JSON.stringify(value) : String(value || "");
+  return text.length > 48 ? text.slice(0, 47) + "…" : text;
+}
+
 function aiReviewChangeValue(change) {
   if (!change) return "";
-  const value =
-    typeof change.value === "object"
-      ? JSON.stringify(change.value)
-      : String(change.value || "");
-  return value.length > 48 ? value.slice(0, 47) + "…" : value;
+  return aiReviewShortValue(change.value);
+}
+
+// What the document says right now, so a card can show the reviewer both
+// values instead of asking them to guess what "keep" would leave behind.
+function aiReviewCurrentValue(change) {
+  if (!change) return "";
+  const target = String(change.target || "");
+  if (change.kind === "metadata") {
+    return String(state.accessibility.metadata[target] || "");
+  }
+  if (change.kind === "field_tooltip") {
+    const field = state.fields.find(function (item) {
+      return String(item.id || "") === target;
+    });
+    return field ? String(field.tooltip || "") : "";
+  }
+  if (change.kind === "image_alt_text") {
+    const image = state.accessibility.images.find(function (item) {
+      return String(item.assetId || "") === target;
+    });
+    return image ? String(image.altText || "") : "";
+  }
+  if (change.kind === "reading_direction") {
+    return String(state.accessibility.readingDirection || "ltr");
+  }
+  return "";
+}
+
+function aiReviewPreviousValueText(finding) {
+  const previous = finding ? finding.previousValue : null;
+  if (previous === undefined || previous === null) return "";
+  if (typeof previous === "object") {
+    if (typeof previous.tooltip === "string") return previous.tooltip;
+    if (typeof previous.direction === "string") return previous.direction;
+    return "";
+  }
+  return String(previous);
 }
 
 function aiReviewChangeLabel(change) {
   if (!change) return "Manual review required";
-  const labels = {
-    metadata: "Update metadata",
-    field_tooltip: "Update field label",
-    image_alt_text: "Update image-alt draft",
-    reading_direction: "Update reading direction",
+  const target = String(change.target || "");
+  const subjects = {
+    metadata: "document " + (target || "metadata"),
+    field_tooltip: "field label",
+    image_alt_text: "image alt text",
+    reading_direction: "reading direction",
   };
-  const value = aiReviewChangeValue(change);
-  return (labels[change.kind] || "Proposed change") + ": " + value;
+  return (
+    "Set the " +
+    (subjects[change.kind] || "value") +
+    " to “" +
+    aiReviewChangeValue(change) +
+    "”"
+  );
 }
 
 function aiReviewPanelForFinding(finding) {
@@ -9760,6 +10043,16 @@ function aiReviewPanelForFinding(finding) {
     " " +
     String(finding.title || "")
   ).toLowerCase();
+  // A declaration mismatch is about the tag tree and the certify control, so
+  // check it before the generic "metadata" match below can claim it.
+  if (
+    description.includes("markinfo") ||
+    description.includes("pdf/ua") ||
+    description.includes("pdfua") ||
+    description.includes("tagged")
+  ) {
+    return "draft_structure";
+  }
   if (description.includes("metadata") || description.includes("title")) {
     return "metadata";
   }
@@ -9830,6 +10123,16 @@ function renderAiAccessibilityReview() {
     ? "AI check running…"
     : "AI final check";
   a11yAiReviewApplyAllBtn.classList.toggle("hidden", !pendingChanges.length);
+  // Once there are findings to work through, the standing explanation of what
+  // the check does is just height between the reviewer and the list.
+  const intro = a11yAiReviewSection.querySelector(".a11y-ai-review-intro");
+  if (intro) intro.classList.toggle("hidden", !!findings.length);
+  // The optional check has its own button in the header, so keep its panel out
+  // of the way until it has something to report.
+  a11yAiReviewSection.classList.toggle(
+    "hidden",
+    !review.running && !review.lastSignature,
+  );
   const current =
     !!review.lastSignature &&
     review.lastSignature === accessibilityAiReviewSignature();
@@ -9852,38 +10155,88 @@ function renderAiAccessibilityReview() {
       (findings.length === 1 ? "" : "s") +
       ". Review each item before export.";
   }
+  // Acting on one finding re-renders the whole list. Keep the expanded cards
+  // expanded and the pane where it was, so a decision does not throw the
+  // reviewer back to the top of a dozen collapsed findings.
+  const expandedIndexes = new Set(
+    Array.from(
+      a11yAiReviewFindings.querySelectorAll(
+        "details[open][data-ai-review-index]",
+      ),
+    ).map(function (node) {
+      return node.dataset.aiReviewIndex;
+    }),
+  );
+  const previousScrollTop = a11yAiReviewFindings.scrollTop;
   a11yAiReviewFindings.innerHTML = findings
     .map(function (finding, index) {
       const status = String(finding.status || "pending");
+      const change = finding.change;
       const resolved = status === "ignored" || status === "reviewed";
-      const statusLabel =
-        status === "accepted"
-          ? "Updated to “" + aiReviewChangeValue(finding.change) + "”"
+      // Two different kinds of finding, kept verbally distinct so "keep" never
+      // has to mean two things: a finding either carries a change the workshop
+      // can apply for you, or it is something only you can judge.
+      const statusLabel = change
+        ? status === "accepted"
+          ? "Applied"
           : status === "ignored"
-            ? "Kept current value"
-            : status === "reviewed"
-              ? "Kept as-is"
-              : finding.change
-                ? "Decision needed"
-                : "Review needed";
+            ? "Not applied"
+            : "Needs a decision"
+        : status === "reviewed"
+          ? "Reviewed"
+          : "Read and decide";
       const badgeClass =
         status === "accepted"
           ? "text-bg-success"
-          : status === "ignored" || status === "reviewed"
+          : resolved
             ? "text-bg-secondary"
             : finding.severity === "info"
               ? "text-bg-info"
               : "text-bg-warning";
       const manualPanel = aiReviewPanelForFinding(finding);
-      const changeLabel = finding.change
-        ? aiReviewChangeLabel(finding.change)
-        : "Manual review required";
+      const changeLabel = change
+        ? aiReviewChangeLabel(change)
+        : "No one-click fix \u2014 open the controls";
+      const emptyValue = '<span class="text-muted fst-italic">(empty)</span>';
+      const asValue = function (text) {
+        return text ? escapeHtml(aiReviewShortValue(text)) : emptyValue;
+      };
+      // Spell out what each button will leave behind, because "keep" and
+      // "apply" are only meaningful next to the two actual values.
+      const comparison = change
+        ? '<dl class="a11y-ai-review-values">' +
+          "<dt>" +
+          (status === "accepted" ? "Was" : "Now") +
+          "</dt><dd>" +
+          asValue(
+            status === "accepted"
+              ? aiReviewPreviousValueText(finding)
+              : aiReviewCurrentValue(change),
+          ) +
+          "</dd><dt>" +
+          (status === "accepted" ? "Now" : "AI suggests") +
+          "</dt><dd>" +
+          asValue(aiReviewChangeValue(change)) +
+          "</dd></dl>"
+        : "";
+      const actions = change
+        ? status === "accepted"
+          ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Undo: put the old value back</button>'
+          : '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Apply the AI suggestion</button>' +
+            (status === "ignored"
+              ? ""
+              : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Keep the current value</button>')
+        : status === "reviewed"
+          ? ""
+          : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Mark as reviewed</button>';
       return (
         '<details class="a11y-ai-review-finding border rounded' +
         (resolved ? " is-resolved" : "") +
         '" data-ai-review-index="' +
         String(index) +
-        '"><summary class="a11y-ai-review-summary"><span class="badge a11y-ai-review-status-badge ' +
+        '"' +
+        (expandedIndexes.has(String(index)) ? " open" : "") +
+        '><summary class="a11y-ai-review-summary"><span class="a11y-ai-review-chevron" aria-hidden="true">&#9656;</span><span class="badge a11y-ai-review-status-badge ' +
         badgeClass +
         '">' +
         escapeHtml(statusLabel) +
@@ -9895,19 +10248,13 @@ function renderAiAccessibilityReview() {
         escapeHtml(String(finding.category || "general")) +
         '</div><div class="small text-muted">' +
         escapeHtml(String(finding.explanation || "")) +
-        '</div><div class="small mt-1 fw-medium">' +
-        escapeHtml(changeLabel) +
         "</div>" +
+        comparison +
+        (change
+          ? ""
+          : '<div class="small mt-2">No value to apply: this one is a judgement call, or a declaration only you can make. Open the related step to change it yourself.</div>') +
         '<div class="d-flex flex-wrap gap-2 mt-2">' +
-        (finding.change
-          ? status === "accepted"
-            ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Restore previous value</button>'
-            : status === "ignored"
-              ? '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Use suggested value</button>'
-              : '<button type="button" class="btn btn-sm btn-primary" data-ai-review-action="apply">Use suggested value</button><button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="ignore">Keep current value</button>'
-          : status === "reviewed"
-            ? ""
-            : '<button type="button" class="btn btn-sm btn-outline-secondary" data-ai-review-action="review">Keep as-is</button>') +
+        actions +
         (manualPanel
           ? '<button type="button" class="btn btn-sm btn-outline-primary" data-ai-review-action="open-controls" data-panel="' +
             escapeHtml(manualPanel) +
@@ -9919,6 +10266,7 @@ function renderAiAccessibilityReview() {
       );
     })
     .join("");
+  a11yAiReviewFindings.scrollTop = previousScrollTop;
 }
 
 function applyAiAccessibilityFinding(finding) {
@@ -10093,12 +10441,130 @@ function unresolvedAiAccessibilityFindings(findings) {
   return Array.from(byId.values());
 }
 
-function showAccessibilityAutoFixStatus(message, isError) {
+// The summary is long, and it sits above the workspace. Lead with one line, put
+// the rest behind a disclosure, and let the reviewer dismiss it once read.
+function showAccessibilityAutoFixStatus(message, isError, details) {
   if (!a11yAutoFixStatus) return;
+  const rows = (Array.isArray(details) ? details : []).filter(Boolean);
   a11yAutoFixStatus.className =
-    "alert m-3 mb-0 " + (isError ? "alert-danger" : "alert-warning");
-  a11yAutoFixStatus.textContent = String(message || "");
+    "alert m-3 mb-0 a11y-auto-fix-status " +
+    (isError ? "alert-danger" : "alert-warning");
+  a11yAutoFixStatus.innerHTML =
+    '<div class="a11y-auto-fix-head"><span class="a11y-auto-fix-headline">' +
+    escapeHtml(String(message || "")) +
+    "</span>" +
+    (rows.length
+      ? '<button type="button" class="btn btn-sm btn-outline-dark flex-shrink-0" data-auto-fix-toggle aria-expanded="false" aria-controls="a11y-auto-fix-details">Show details</button>'
+      : "") +
+    '<button type="button" class="btn-close flex-shrink-0" data-auto-fix-dismiss aria-label="Dismiss the auto-fix summary"></button></div>' +
+    (rows.length
+      ? '<ul id="a11y-auto-fix-details" class="a11y-auto-fix-details hidden">' +
+        rows
+          .map(function (row) {
+            return "<li>" + escapeHtml(String(row)) + "</li>";
+          })
+          .join("") +
+        "</ul>"
+      : "");
   a11yAutoFixStatus.focus();
+}
+
+function hideAccessibilityAutoFixStatus() {
+  if (!a11yAutoFixStatus) return;
+  a11yAutoFixStatus.classList.add("hidden");
+  a11yAutoFixStatus.innerHTML = "";
+}
+
+if (a11yAutoFixStatus) {
+  a11yAutoFixStatus.addEventListener("click", function (event) {
+    if (event.target.closest("[data-auto-fix-dismiss]")) {
+      hideAccessibilityAutoFixStatus();
+      if (a11yAutoFixBtn) a11yAutoFixBtn.focus();
+      return;
+    }
+    const toggle = event.target.closest("[data-auto-fix-toggle]");
+    if (!toggle) return;
+    const list = a11yAutoFixStatus.querySelector(".a11y-auto-fix-details");
+    if (!list) return;
+    const expanded = list.classList.toggle("hidden");
+    toggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+    toggle.textContent = expanded ? "Show details" : "Hide details";
+  });
+}
+
+// A document's own H1 is the best title it has, and working that out needs no
+// AI at all -- the heading review already knows it.
+function documentHeadingTitle() {
+  const candidates = state.accessibility.headingCandidates.length
+    ? state.accessibility.headingCandidates
+    : state.accessibility.knownHeadings || [];
+  const pick = function (test) {
+    const found = candidates.find(function (candidate) {
+      const decision = headingDecision(candidate);
+      return decision.status !== "rejected" && test(candidate, decision);
+    });
+    return found ? String(found.text || "").trim() : "";
+  };
+  return (
+    pick(function (_candidate, decision) {
+      return decision.status === "approved" && decision.tag === "H1";
+    }) ||
+    pick(function (candidate, decision) {
+      return (decision.tag || candidate.suggestedTag) === "H1";
+    }) ||
+    pick(function () {
+      return true;
+    })
+  );
+}
+
+function shortHeadingLabel(text) {
+  const value = String(text || "").trim();
+  return value.length > 48 ? value.slice(0, 47) + "\u2026" : value;
+}
+
+function looksLikeFilenameTitle(title) {
+  const text = String(title || "").trim();
+  if (!text) return true;
+  if (/\.(pdf|docx?|rtf|odt)$/i.test(text)) return true;
+  // Word and other exporters stamp the source filename in as the title.
+  if (/^microsoft word\s*-\s*/i.test(text)) return true;
+  const stem = String(state.fileName || "").replace(/\.pdf$/i, "");
+  return !!stem && text.toLowerCase() === stem.toLowerCase();
+}
+
+function applyDocumentTitleFromHeading() {
+  const heading = documentHeadingTitle();
+  if (!heading || heading === state.accessibility.metadata.title) return "";
+  state.accessibility.metadata.title = heading;
+  a11yMetaTitle.value = heading;
+  markAccessibilityDraft(
+    "document-title",
+    "Document title drafted from the first reviewed heading",
+  );
+  setDirty(true);
+  return heading;
+}
+
+function draftFilenameLikeDocumentTitle() {
+  if (!looksLikeFilenameTitle(state.accessibility.metadata.title)) return "";
+  return applyDocumentTitleFromHeading();
+}
+
+function renderTitleFromHeadingControl() {
+  if (!a11yTitleFromHeadingBtn) return;
+  const heading = documentHeadingTitle();
+  const same = !!heading && heading === state.accessibility.metadata.title;
+  a11yTitleFromHeadingBtn.classList.toggle("hidden", !heading);
+  a11yTitleFromHeadingBtn.disabled = !heading || same;
+  a11yTitleFromHeadingBtn.textContent = !heading
+    ? "No reviewed heading to use"
+    : same
+      ? "Title already matches the first heading"
+      : "Use the first heading: \u201c" + shortHeadingLabel(heading) + "\u201d";
+  a11yTitleFromHeadingBtn.title = heading
+    ? "Replaces the title with " + heading
+    : "";
 }
 
 function draftMissingDocumentLanguage() {
@@ -10168,6 +10634,7 @@ async function runAccessibilityAutoFix() {
     state.accessibility.metadata.language !== originalLanguage
       ? state.accessibility.metadata.language
       : draftMissingDocumentLanguage();
+  summary.draftedTitle = draftFilenameLikeDocumentTitle();
 
   await runAccessibilityRemediation(
     "metadata",
@@ -10211,6 +10678,9 @@ async function runAccessibilityAutoFix() {
       "draft_structure",
       {
         heading_decisions: accessibilityHeadingDecisionPayload(),
+        // Same block roles, artifacts, and order the manual button sends, so
+        // auto-fix and "Create tags" produce the same tag tree.
+        content_decisions: accessibilityContentDecisionPayload(),
         mark_as_tagged: false,
       },
       { quiet: true },
@@ -10254,35 +10724,35 @@ async function runAccessibilityAutoFix() {
     summary.draftedLanguage
       ? "document language drafted as " + summary.draftedLanguage
       : "existing document language preserved",
+    summary.draftedTitle
+      ? "document title drafted from the heading: " + summary.draftedTitle
+      : "existing document title preserved",
     summary.structureCreated
       ? "a draft tag tree created"
       : "the existing tag tree preserved for manual review",
   ];
   const remaining = remainingAccessibilityIssues();
-  const remainingText = remaining.length
-    ? " " +
-      String(remaining.length) +
-      " checks still need attention: " +
-      remaining
-        .map(function (issue) {
-          return (
-            String(issue.title || issue.id || "Finding") +
-            " (" +
-            String(issue.count || 1) +
-            ")"
-          );
-        })
-        .join("; ") +
-      "."
-    : " The workshop preflight has no remaining findings.";
+  remaining.forEach(function (issue) {
+    details.push(
+      "Still needs attention: " +
+        String(issue.title || issue.id || "Finding") +
+        " (" +
+        String(issue.count || 1) +
+        ")",
+    );
+  });
+  details.push(
+    "Auto-fix did not enable MarkInfo.Marked. Review every draft and run veraPDF and screen-reader tests. Only after checking all fixes should the reviewer select “I reviewed the fixes and certify that this PDF is accessible.”",
+  );
   hideToasts();
   showAccessibilityAutoFixStatus(
-    "Auto-fix draft finished: " +
-      details.join("; ") +
-      "." +
-      remainingText +
-      " Auto-fix did not enable MarkInfo.Marked. Review every draft and run veraPDF and screen-reader tests. Only after checking all fixes should the reviewer select “I reviewed the fixes and certify that this PDF is accessible.”",
+    "Auto-fix draft finished. " +
+      (remaining.length
+        ? String(remaining.length) + " checks still need attention."
+        : "The workshop preflight has no remaining findings.") +
+      " Nothing is certified — review every draft before exporting.",
     false,
+    details,
   );
   renderAccessibilityModal();
   return summary;

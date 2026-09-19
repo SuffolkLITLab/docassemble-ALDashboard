@@ -131,6 +131,12 @@ LABELER_JOB_EXPIRE_SECONDS = 24 * 60 * 60
 ASYNC_CELERY_MODULE = "docassemble.ALDashboard.api_dashboard_worker"
 
 
+def _suffixed_pdf_name(filename: Any, suffix: str) -> str:
+    """Append a suffix to a PDF filename without touching an interior ".pdf"."""
+    base = re.sub(r"\.pdf$", "", str(filename or "document.pdf"), flags=re.IGNORECASE)
+    return f"{base}-{suffix}.pdf"
+
+
 def _sanitize_checkbox_export_value(raw_value: Any) -> str:
     """Normalize a checkbox export value into a safe PDF name token.
 
@@ -3617,7 +3623,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 "success": True,
                 "request_id": request_id,
                 "data": {
-                    "filename": filename.replace(".pdf", f"-{action}.pdf"),
+                    "filename": _suffixed_pdf_name(filename, action),
                     "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
                     "remediation_result": result,
                 },
@@ -4180,14 +4186,17 @@ def pdf_labeler_apply_fields() -> Response:
                         if "marked" in accessibility_payload
                         else None
                     ),
-                    mark_untagged_as_artifacts=True,
+                    mark_untagged_as_artifacts=parse_bool(
+                        accessibility_payload.get("mark_untagged_as_artifacts"),
+                        default=False,
+                    ),
                 )
 
             # Read the output file
             with open(output_path, "rb") as f:
                 output_bytes = f.read()
 
-            output_filename = filename.replace(".pdf", "-with-fields.pdf")
+            output_filename = _suffixed_pdf_name(filename, "with-fields")
 
             return jsonify(
                 {
@@ -4349,7 +4358,7 @@ def pdf_labeler_test_fill() -> Response:
                     "success": True,
                     "request_id": request_id,
                     "data": {
-                        "filename": filename.replace(".pdf", "-test-filled.pdf"),
+                        "filename": _suffixed_pdf_name(filename, "test-filled"),
                         "pdf_base64": base64.b64encode(output_bytes).decode("ascii"),
                     },
                 }
@@ -4470,7 +4479,7 @@ def pdf_labeler_rename_fields() -> Response:
             with open(output_path, "rb") as f:
                 output_bytes = f.read()
 
-            output_filename = filename.replace(".pdf", "-renamed.pdf")
+            output_filename = _suffixed_pdf_name(filename, "renamed")
 
             return jsonify(
                 {
@@ -4707,7 +4716,7 @@ def pdf_labeler_copy_fields() -> Response:
 
             with open(output_path, "rb") as fh:
                 output_bytes = fh.read()
-            output_filename = dest_name.replace(".pdf", "-with-fields.pdf")
+            output_filename = _suffixed_pdf_name(dest_name, "with-fields")
             return jsonify(
                 {
                     "success": True,

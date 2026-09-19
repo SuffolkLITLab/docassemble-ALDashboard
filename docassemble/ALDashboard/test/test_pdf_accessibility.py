@@ -41,6 +41,8 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _repair_embedded_cidsets,
     _repair_identity_cid_to_gid_maps,
     _font_code_usage,
+    _title_from_text_sample,
+    _quoted_title_from_finding,
     _simple_font_unicode_cmap,
     _to_unicode_mappings,
 )
@@ -115,6 +117,72 @@ def _webdings_like_program():
     return stripped.getvalue()
 
 
+def _simple_symbol_program(*, box_glyph_id, decoy_glyph_id, code):
+    """A symbolic TrueType that keeps its (3,0) cmap, as Word's Wingdings does.
+
+    ``code`` selects ``box`` through the cmap, while ``decoy_glyph_id`` holds a
+    different outline at the glyph index equal to the character code. Reading
+    the code as a glyph id therefore shows the wrong shape.
+    """
+    import io
+
+    from fontTools.fontBuilder import FontBuilder  # type: ignore[import-untyped]
+    from fontTools.pens.ttGlyphPen import TTGlyphPen  # type: ignore[import-untyped]
+
+    order = [".notdef"]
+    while len(order) <= max(box_glyph_id, decoy_glyph_id):
+        index = len(order)
+        order.append(
+            "box"
+            if index == box_glyph_id
+            else "decoy" if index == decoy_glyph_id else f"g{index}"
+        )
+    box = TTGlyphPen(None)
+    box.moveTo((100, 0))
+    box.lineTo((100, 800))
+    box.lineTo((900, 800))
+    box.lineTo((900, 0))
+    box.closePath()
+    decoy = TTGlyphPen(None)
+    decoy.moveTo((0, 0))
+    decoy.lineTo((500, 500))
+    decoy.lineTo((0, 500))
+    decoy.closePath()
+
+    builder = FontBuilder(1000, isTTF=True)
+    builder.setupGlyphOrder(order)
+    builder.setupCharacterMap({0xF000 | code: "box"}, allowFallback=True)
+    glyphs = {name: TTGlyphPen(None).glyph() for name in order}
+    glyphs["box"] = box.glyph()
+    glyphs["decoy"] = decoy.glyph()
+    builder.setupGlyf(glyphs)
+    builder.setupHorizontalMetrics({name: (1000, 100) for name in order})
+    builder.setupHorizontalHeader(ascent=800, descent=-200)
+    builder.setupNameTable({"familyName": "Wingdings", "styleName": "Regular"})
+    builder.setupOS2()
+    builder.setupPost()
+    buffer = io.BytesIO()
+    builder.save(buffer)
+
+    # Replace the builder's Unicode subtables with the (3,0) symbol subtable a
+    # real symbolic font carries.
+    from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+    from fontTools.ttLib.tables._c_m_a_p import (  # type: ignore[import-untyped]
+        CmapSubtable,
+    )
+
+    font = TTFont(io.BytesIO(buffer.getvalue()))
+    subtable = CmapSubtable.newSubtable(4)
+    subtable.platformID = 3
+    subtable.platEncID = 0
+    subtable.language = 0
+    subtable.cmap = {0xF000 | code: "box"}
+    font["cmap"].tables = [subtable]
+    symbolic = io.BytesIO()
+    font.save(symbolic)
+    return symbolic.getvalue()
+
+
 class TestPDFAccessibilityHelpers(unittest.TestCase):
     def test_ai_reasonableness_review_preserves_only_allowlisted_changes(self):
         with patch(
@@ -165,6 +233,276 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertIn("Preserve a reasonable existing value", system_prompt)
         self.assertIn("BCP 47 language", system_prompt)
         self.assertIn("never propose changing MarkInfo", system_prompt)
+
+    def test_h1_title_finding_is_actionable_without_the_word_metadata(self):
+        """A prose-only suggestion still has to be applicable in one click."""
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "title-from-heading",
+                        "category": "document-title",
+                        "severity": "warning",
+                        "title": "The H1 would make a better document title",
+                        "explanation": (
+                            "The document opens with a clear heading; the stored "
+                            "title is the working filename."
+                        ),
+                    }
+                ]
+            },
+        ):
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "filename": "scan0001.pdf",
+                    "metadata": {"title": "scan0001", "language": "en-US"},
+                    "textSample": "Petition for Name Change",
+                    "fields": [],
+                    "headings": [
+                        {
+                            "text": "Petition for Name Change",
+                            "tag": "H1",
+                            "status": "approved",
+                        }
+                    ],
+                    "images": [],
+                }
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            result[0]["change"],
+            {
+                "kind": "metadata",
+                "target": "title",
+                "value": "Petition for Name Change",
+            },
+        )
+
+    def test_generic_filename_title_is_applicable_without_a_heading_review(self):
+        """Verbatim finding from a real run; no heading review had been done."""
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "generic-title",
+                        "category": "metadata",
+                        "severity": "warning",
+                        "title": "Document title appears to be a generic filename",
+                        "explanation": (
+                            'The PDF metadata title is currently "Microsoft Word - '
+                            'PS-05.doc", which appears to be a generic filename '
+                            "rather than the document's actual approved heading."
+                        ),
+                    }
+                ]
+            },
+        ):
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "filename": "PS-05.pdf",
+                    "metadata": {"title": "Microsoft Word - PS-05.doc"},
+                    "textSample": (
+                        "Microsoft Word - PS-05.doc\n"
+                        "Petition for Protection from Abuse\n"
+                        "Name of petitioner:"
+                    ),
+                    "fields": [],
+                    "headings": [],
+                    "images": [],
+                }
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            result[0]["change"],
+            {
+                "kind": "metadata",
+                "target": "title",
+                "value": "Petition for Protection from Abuse",
+            },
+        )
+
+    def test_bcp47_language_finding_falls_back_to_the_editor_language(self):
+        """The finding names no language, so the tag has to come from context."""
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "bcp47",
+                        "category": "metadata",
+                        "severity": "warning",
+                        "title": "Metadata language should use a specific BCP 47 tag",
+                        "explanation": "The declared language is not a specific tag.",
+                    }
+                ]
+            },
+        ):
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "filename": "form.pdf",
+                    "metadata": {"title": "A form", "language": "en"},
+                    "documentLanguage": "en-US",
+                    "textSample": "A form",
+                    "fields": [],
+                    "headings": [],
+                    "images": [],
+                }
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            result[0]["change"],
+            {"kind": "metadata", "target": "language", "value": "en-US"},
+        )
+
+    def test_a_change_that_fails_the_allow_list_still_gets_reconstructed(self):
+        """A near-miss target used to suppress the fallback and leave no button."""
+        row = {
+            "id": "lang",
+            "category": "metadata",
+            "severity": "warning",
+            "title": "Document language metadata is too generic",
+            "explanation": (
+                'The file metadata currently lists language as "en". The text is '
+                "US English (dates, addresses, and references to Alabama)."
+            ),
+        }
+        for broken in (
+            {"kind": "metadata", "target": "locale", "value": "en-US"},
+            {"kind": "language", "target": "language", "value": "en-US"},
+            {"kind": "metadata", "target": "language", "value": {"tag": "en-US"}},
+            {"kind": "metadata", "target": "language", "value": "not a tag!"},
+        ):
+            with self.subTest(broken=broken):
+                with patch(
+                    "docassemble.ALToolbox.llms.chat_completion",
+                    return_value={"findings": [dict(row, change=broken)]},
+                ):
+                    result = review_pdf_accessibility_with_ai(
+                        {
+                            "filename": "form.pdf",
+                            "metadata": {"title": "A form", "language": "en"},
+                            "textSample": "A form",
+                            "fields": [],
+                            "headings": [],
+                            "images": [],
+                        }
+                    )
+                self.assertEqual(
+                    result[0]["change"],
+                    {"kind": "metadata", "target": "language", "value": "en-US"},
+                )
+
+    def test_title_finding_uses_the_h1_it_quotes_when_candidates_are_gone(self):
+        """Verbatim finding from a real run; the H1 is named in the prose."""
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "title",
+                        "category": "metadata",
+                        "severity": "warning",
+                        "title": "Document title appears to be a filename",
+                        "explanation": (
+                            'The document title in metadata is "Microsoft Word - '
+                            'PS-05.doc", which is a generic, filename-like title. '
+                            "The document's approved top-level heading (H1) is "
+                            "'First Petition for Child Custody' and should be used "
+                            "as the metadata title."
+                        ),
+                    }
+                ]
+            },
+        ):
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "filename": "PS-05.pdf",
+                    "metadata": {"title": "Microsoft Word - PS-05.doc"},
+                    "textSample": "",
+                    "fields": [],
+                    "headings": [],
+                    "images": [],
+                }
+            )
+
+        self.assertEqual(
+            result[0]["change"],
+            {
+                "kind": "metadata",
+                "target": "title",
+                "value": "First Petition for Child Custody",
+            },
+        )
+
+    def test_quoted_title_ignores_apostrophes_and_the_current_title(self):
+        self.assertEqual(
+            _quoted_title_from_finding(
+                "The document's heading is 'First Petition for Child Custody'.",
+                "Microsoft Word - PS-05.doc",
+            ),
+            "First Petition for Child Custody",
+        )
+        # The only quoted value is the title being complained about.
+        self.assertEqual(
+            _quoted_title_from_finding('The title "scan0001" is poor.', "scan0001"),
+            "",
+        )
+        self.assertEqual(
+            _quoted_title_from_finding('Replace "form.pdf" with it.', "x"), ""
+        )
+
+    def test_title_candidate_skips_filenames_and_form_labels(self):
+        self.assertEqual(
+            _title_from_text_sample(
+                "Microsoft Word - PS-05.doc\n  \n123\nName of petitioner:\n"
+                "Petition for Protection from Abuse"
+            ),
+            "Petition for Protection from Abuse",
+        )
+        self.assertEqual(_title_from_text_sample(""), "")
+
+    def test_title_finding_stays_advisory_when_the_title_already_matches(self):
+        with patch(
+            "docassemble.ALToolbox.llms.chat_completion",
+            return_value={
+                "findings": [
+                    {
+                        "id": "title-from-heading",
+                        "category": "document-title",
+                        "severity": "info",
+                        "title": "Check the document title",
+                        "explanation": "The title should match the heading.",
+                    }
+                ]
+            },
+        ):
+            result = review_pdf_accessibility_with_ai(
+                {
+                    "filename": "petition.pdf",
+                    "metadata": {
+                        "title": "Petition for Name Change",
+                        "language": "en-US",
+                    },
+                    "textSample": "Petition for Name Change",
+                    "fields": [],
+                    "headings": [
+                        {
+                            "text": "Petition for Name Change",
+                            "tag": "H1",
+                            "status": "approved",
+                        }
+                    ],
+                    "images": [],
+                }
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertNotIn("change", result[0])
 
     def test_ai_reasonableness_review_recovers_safe_metadata_actions(self):
         with patch(
@@ -355,6 +693,89 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         self.assertIn(b"/Artifact BMC", layout.read_bytes())
         self.assertNotIn(b"/Artifact", text.read_bytes())
         pdf.close()
+
+    def test_artifact_wrapping_leaves_a_run_that_draws_an_image_alone(self):
+        """An image in the run may be meaningful, and the whole run is wrapped."""
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        image = pdf.make_stream(b"\x00")
+        image["/Type"] = pikepdf.Name("/XObject")
+        image["/Subtype"] = pikepdf.Name("/Image")
+        image["/Width"] = 1
+        image["/Height"] = 1
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {"/XObject": pikepdf.Dictionary({"/Im0": image})}
+        )
+        page.obj["/Contents"] = pdf.make_stream(b"0 0 20 20 re S /Im0 Do")
+
+        changed = _artifact_untagged_content(pdf)
+
+        self.assertEqual(changed, 0)
+        self.assertNotIn(b"/Artifact", page.obj["/Contents"].read_bytes())
+        pdf.close()
+
+    def test_metadata_repair_keeps_docinfo_keys_that_have_no_xmp_entry(self):
+        """pikepdf rewrites docinfo from XMP on exit unless that is turned off."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+        try:
+            pdf = pikepdf.new()
+            pdf.add_blank_page(page_size=(612, 792))
+            pdf.save(pdf_path)
+            pdf.close()
+
+            apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                metadata={
+                    "title": "Court form",
+                    "language": "en-US",
+                    "author": "Clerk of Court",
+                    "subject": "Civil docketing",
+                },
+                auto_fill_missing_tooltips=False,
+            )
+
+            with pikepdf.open(pdf_path) as repaired:
+                self.assertEqual(str(repaired.docinfo["/Title"]), "Court form")
+                self.assertEqual(str(repaired.docinfo["/Author"]), "Clerk of Court")
+                self.assertEqual(str(repaired.docinfo["/Subject"]), "Civil docketing")
+        finally:
+            os.remove(pdf_path)
+
+    def test_declaring_pdfua_keeps_an_existing_title_with_no_dc_title(self):
+        """Certifying must not delete the title the document-title check reads."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+        try:
+            pdf = pikepdf.new()
+            pdf.add_blank_page(page_size=(612, 792))
+            pdf.docinfo["/Title"] = "Existing title"
+            with pdf.open_metadata(
+                set_pikepdf_as_editor=False, update_docinfo=False
+            ) as meta:
+                meta["dc:creator"] = ["Clerk of Court"]
+            pdf.save(pdf_path)
+            pdf.close()
+
+            apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                metadata={},
+                auto_fill_missing_tooltips=False,
+                mark_as_tagged=True,
+            )
+
+            with pikepdf.open(pdf_path) as repaired:
+                self.assertEqual(str(repaired.docinfo["/Title"]), "Existing title")
+        finally:
+            os.remove(pdf_path)
 
     def test_draft_structure_uses_only_approved_heading_decisions(self):
         import pikepdf
@@ -2098,6 +2519,70 @@ class TestSymbolicFontGlyphReview(unittest.TestCase):
         pdf.save(path)
         pdf.close()
 
+    def test_simple_symbol_font_code_resolves_through_the_cmap(self):
+        """A simple font's show-text code is a character code, not a glyph id."""
+        import pikepdf
+
+        code = 0xFC
+        program = _simple_symbol_program(box_glyph_id=1, decoy_glyph_id=code, code=code)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            descriptor = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/FontDescriptor"),
+                        "/FontName": pikepdf.Name("/ABCDEF+Wingdings"),
+                        "/Flags": 4,
+                        "/FontBBox": [0, -200, 1000, 900],
+                        "/ItalicAngle": 0,
+                        "/Ascent": 900,
+                        "/Descent": -200,
+                        "/CapHeight": 700,
+                        "/StemV": 80,
+                    }
+                )
+            )
+            stream = pdf.make_stream(program)
+            stream["/Length1"] = len(program)
+            descriptor["/FontFile2"] = stream
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {
+                    "/Font": pikepdf.Dictionary(
+                        {
+                            "/S1": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/Font"),
+                                    "/Subtype": pikepdf.Name("/TrueType"),
+                                    "/BaseFont": pikepdf.Name("/ABCDEF+Wingdings"),
+                                    "/FirstChar": code,
+                                    "/LastChar": code,
+                                    "/Widths": pikepdf.Array([1000]),
+                                    "/FontDescriptor": descriptor,
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT /S1 12 Tf 72 700 Td <FC> Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+
+            review = collect_symbolic_font_review(source_path)
+            glyph = review["fonts"][0]["glyphs"][0]
+            self.assertEqual(glyph["code"], code)
+            # The outline is the one the cmap selects, not glyph number 0xFC.
+            self.assertEqual(glyph["outline"]["glyphName"], "box")
+            self.assertEqual(glyph["charCode"], code)
+            self.assertEqual(glyph["charCodeSource"], "pdf-code")
+        finally:
+            os.remove(source_path)
+
     def test_review_reports_used_codes_with_outlines(self):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
             source_path = source.name
@@ -2530,6 +3015,34 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
         # Courier is monospaced, so every character shares one width.
         self.assertEqual({courier[ord(c)] for c in "AiW "}, {600})
 
+    def test_zapfdingbats_widths_are_keyed_by_its_built_in_encoding(self):
+        """Its glyphs have no AGL entries, and the clones cmap these codes."""
+        widths = standard_14_widths("zapfdingbats")
+        self.assertIsNotNone(widths)
+        # 32 is space and 33 is a1, exactly as the AFM records them.
+        self.assertEqual(widths[32], 278)
+        self.assertEqual(widths[33], 974)
+        self.assertEqual(widths[34], 961)
+        clone = "/usr/share/fonts/opentype/urw-base35/D050000L.otf"
+        if not os.path.exists(clone):
+            self.skipTest("No Zapf Dingbats clone is installed.")
+        from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+
+        font = TTFont(clone, lazy=True)
+        try:
+            cmap = font.getBestCmap()
+            metrics = font["hmtx"].metrics
+            units = float(font["head"].unitsPerEm)
+            for code, expected in widths.items():
+                glyph = cmap.get(code)
+                if not glyph:
+                    continue
+                self.assertAlmostEqual(
+                    metrics[glyph][0] * 1000.0 / units, expected, delta=2
+                )
+        finally:
+            font.close()
+
     def test_metric_compatible_font_completes_the_dictionary(self):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
             source_path = source.name
@@ -2563,6 +3076,67 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
                 self.assertEqual(int(widths[ord("A") - first]), 667)
                 self.assertEqual(int(widths[ord(" ") - first]), 278)
                 self.assertIn(b"<27> <0027>", _simple_font_unicode_cmap(font))
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_completing_a_standard_14_font_keeps_its_differences(self):
+        """A /Differences entry still describes what the page draws."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            candidate = _metric_compatible_sans_path()
+            if candidate is None:
+                self.skipTest("No Helvetica-metric font is installed.")
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            helv = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Font"),
+                        "/Subtype": pikepdf.Name("/Type1"),
+                        "/BaseFont": pikepdf.Name("/Helvetica"),
+                        "/Name": pikepdf.Name("/Helv"),
+                        "/Encoding": pikepdf.Dictionary(
+                            {
+                                "/Differences": pikepdf.Array(
+                                    [39, pikepdf.Name("/quoteright")]
+                                )
+                            }
+                        ),
+                    }
+                )
+            )
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {"/Font": pikepdf.Dictionary({"/Helv": helv})}
+            )
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT /Helv 12 Tf 72 700 Td (Hi) Tj ET"
+            )
+            pdf.save(source_path)
+            pdf.close()
+
+            with patch(
+                "docassemble.ALDashboard.pdf_accessibility._system_embeddable_fonts",
+                return_value=self._inventory(candidate),
+            ):
+                result = embed_fonts_and_rebuild_unicode(
+                    source_path, output_path, add_unicode_maps=False
+                )
+            self.assertEqual(len(result["fonts_embedded"]), 1)
+
+            with pikepdf.open(output_path) as embedded:
+                font = embedded.pages[0]["/Resources"]["/Font"]["/Helv"]
+                encoding = font["/Encoding"]
+                self.assertEqual(str(encoding["/BaseEncoding"]), "/WinAnsiEncoding")
+                self.assertEqual(
+                    [str(item) for item in encoding["/Differences"]],
+                    ["39", "/quoteright"],
+                )
         finally:
             os.remove(source_path)
             os.remove(output_path)

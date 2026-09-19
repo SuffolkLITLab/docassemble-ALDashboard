@@ -121,6 +121,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.js = _read_package_file("data", "static", "pdf_labeler.js")
         self.css = _read_package_file("data", "static", "pdf_labeler.css")
         self.api = _read_package_file("api_labelers.py")
+        self.api_accessibility = _read_package_file("pdf_accessibility.py")
 
     # -- HTML template checks ------------------------------------------------
 
@@ -355,6 +356,162 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("clientSettings.quiet", self.js)
         self.assertIn("Draft passed preflight", self.js)
 
+    def test_panel_prose_lives_behind_dismissible_bootstrap_popovers(self):
+        """Explanation stays available without spending vertical space on it."""
+        # Bootstrap comes from docassemble's own static files, not a CDN.
+        self.assertIn(
+            '<script src="/static/bootstrap/js/bootstrap.bundle.min.js">', self.html
+        )
+        self.assertNotIn("cdnjs.cloudflare.com/ajax/libs/bootstrap", self.html)
+        self.assertIn("function initAccessibilityHelpPopovers", self.js)
+        self.assertIn("bootstrap.Popover.getOrCreateInstance", self.js)
+        self.assertIn(".a11y-help {", self.css)
+        # If that bundle ever fails to load, the text is still reachable.
+        self.assertIn("element.dataset.bsContent", self.js)
+        # Focus trigger is what makes a popover dismiss on the next click.
+        self.assertIn('data-bs-trigger="focus"', self.html)
+        self.assertGreaterEqual(self.html.count('class="a11y-help"'), 10)
+        # Every help button is reachable by name and names its own popover.
+        for chunk in self.html.split('class="a11y-help"')[1:]:
+            attrs = chunk[: chunk.index(">")]
+            self.assertIn("data-bs-title=", attrs)
+            self.assertIn("data-bs-content=", attrs)
+            self.assertIn("aria-label=", attrs)
+        # The prose itself is retained, just not printed on the panel.
+        self.assertNotIn(
+            '<div class="alert alert-warning small">A tag tree must describe',
+            self.html,
+        )
+        self.assertIn("A tag tree must describe the real document", self.html)
+        self.assertIn("Auto-fix never enables it", self.html)
+
+    def test_the_tag_tree_preview_collapses_repeated_siblings(self):
+        """A form has dozens of identical /Form nodes; listing each says nothing."""
+        self.assertIn("function renderAccessibilityTagStructure", self.js)
+        self.assertIn("nodes, max depth ", self.js)
+        self.assertIn('run + "  \\u00d7" + String(count)', self.js)
+        self.assertIn('id="a11y-tag-structure-details"', self.html)
+
+    def test_the_findings_rail_collapses_and_can_be_brought_back(self):
+        self.assertIn('id="a11y-toggle-report"', self.html)
+        self.assertIn('id="a11y-report-body"', self.html)
+        self.assertIn("function setAccessibilityReportCollapsed", self.js)
+        self.assertIn("is-report-collapsed", self.js)
+        self.assertIn(".a11y-workshop-layout.is-report-collapsed", self.css)
+        # Collapsed it still shows how many findings are waiting.
+        self.assertIn('id="a11y-report-count"', self.html)
+        self.assertIn("function renderAccessibilityReportCount", self.js)
+
+    def test_manual_tagging_can_clear_the_untagged_content_finding(self):
+        """Auto-fix always artifacted leftover content; the button did not."""
+        manual = self.js[
+            self.js.index('runAccessibilityRemediation("draft_structure"') :
+        ][:600]
+        self.assertIn("mark_untagged_as_artifacts: true", manual)
+        self.assertIn(
+            "content_decisions: accessibilityContentDecisionPayload()", manual
+        )
+
+    def test_the_h1_is_a_rules_based_title_source_with_no_ai_involved(self):
+        """A document's own heading needs no model to be usable as its title."""
+        self.assertIn('id="a11y-title-from-heading"', self.html)
+        self.assertIn("no AI involved", self.html)
+        self.assertIn("function documentHeadingTitle", self.js)
+        self.assertIn("function applyDocumentTitleFromHeading", self.js)
+        self.assertIn("function looksLikeFilenameTitle", self.js)
+        self.assertIn("Use the first heading:", self.js)
+        self.assertIn("Title already matches the first heading", self.js)
+        # Auto-fix takes the deterministic route before the AI ever sees it.
+        self.assertIn(
+            "summary.draftedTitle = draftFilenameLikeDocumentTitle()", self.js
+        )
+        self.assertIn("document title drafted from the heading", self.js)
+        # An approved H1 outranks a heuristic one, and a rejected heading is skipped.
+        self.assertIn(
+            'decision.status === "approved" && decision.tag === "H1"', self.js
+        )
+        self.assertIn('decision.status !== "rejected"', self.js)
+
+    def test_ai_review_context_keeps_the_headings_it_has_already_seen(self):
+        """Tagging rewrites content streams, so a re-inspection can lose them."""
+        self.assertIn("knownHeadings", self.js)
+        self.assertIn("state.accessibility.knownHeadings =", self.js)
+        self.assertIn("documentLanguage:", self.js)
+        self.assertIn("def _title_from_text_sample", self.api_accessibility)
+
+    def test_ai_findings_pane_has_room_to_read_and_act_on_a_finding(self):
+        """Open one finding and still see the next summary lines."""
+        self.assertIn("#a11y-ai-review-findings {", self.css)
+        self.assertIn("resize: vertical", self.css)
+        self.assertIn("min-height: 8rem", self.css)
+        # The working area keeps a floor of its own, so dragging the pane
+        # taller can never leave nothing to work in.
+        self.assertIn("min-height: 12rem", self.css)
+        self.assertIn(".a11y-workshop-shell > .a11y-ai-review", self.css)
+        # The standing explanation gives way to the findings themselves.
+        self.assertIn("a11y-ai-review-intro", self.html)
+        self.assertIn("a11y-ai-review-intro", self.js)
+
+    def test_auto_fix_summary_is_collapsible_dismissible_and_height_capped(self):
+        """It sits above the workspace, so it must not eat a laptop screen."""
+        self.assertIn("data-auto-fix-dismiss", self.js)
+        self.assertIn("data-auto-fix-toggle", self.js)
+        self.assertIn("function hideAccessibilityAutoFixStatus", self.js)
+        self.assertIn("Show details", self.js)
+        self.assertIn("Hide details", self.js)
+        self.assertIn(".a11y-auto-fix-status", self.css)
+        self.assertIn("max-height: min(12rem, 24vh)", self.css)
+        # The working area is the only part of the shell allowed to absorb
+        # leftover height, so banners cannot squeeze the panels away.
+        self.assertIn(".a11y-workshop-shell > *:not(.a11y-workshop-layout)", self.css)
+        self.assertIn("@media (max-height: 820px)", self.css)
+
+    def test_accessibility_workshop_steps_are_tabs_not_one_long_column(self):
+        self.assertIn('id="a11y-panel-nav"', self.html)
+        self.assertIn('role="tablist"', self.html)
+        self.assertIn('data-panel-tab="metadata"', self.html)
+        self.assertIn('data-panel-tab="fonts"', self.html)
+        self.assertIn("function setActiveAccessibilityPanel", self.js)
+        self.assertIn("function renderAccessibilityPanelBadges", self.js)
+        self.assertIn('aria-selected="true"', self.css)
+        # Every panel is a tab panel, and every tab names an existing panel.
+        for panel in (
+            "metadata",
+            "field_tooltips",
+            "reading_order",
+            "draft_structure",
+            "figures",
+            "structure",
+            "fonts",
+        ):
+            self.assertIn(f'data-panel-tab="{panel}"', self.html)
+            self.assertIn(f'id="a11y-panel-{panel}" class="a11y-panel"', self.html)
+
+    def test_ai_review_findings_keep_their_place_and_show_an_affordance(self):
+        self.assertIn("expandedIndexes", self.js)
+        self.assertIn("a11yAiReviewFindings.scrollTop = previousScrollTop", self.js)
+        self.assertIn("a11y-ai-review-chevron", self.js)
+        self.assertIn(".a11y-ai-review-chevron", self.css)
+        self.assertIn("function rerenderPreservingPlace", self.js)
+
+    def test_export_only_reasserts_an_existing_pdfua_declaration(self):
+        """A tagged PDF without a PDF/UA identifier must not be downgraded."""
+        self.assertNotIn("marked: !!state.accessibility.marked", self.js)
+        self.assertIn("if (state.accessibility.marked) {", self.js)
+        self.assertIn("payload.marked = true;", self.js)
+
+    def test_export_only_artifacts_untagged_content_for_drafted_structure(self):
+        self.assertIn(
+            "mark_untagged_as_artifacts: !!state.accessibility.structureDrafted",
+            self.js,
+        )
+        self.assertIn("state.accessibility.structureDrafted = true;", self.js)
+        self.assertNotIn("mark_untagged_as_artifacts=True", self.api)
+
+    def test_pdf_output_names_only_replace_a_trailing_extension(self):
+        self.assertIn("def _suffixed_pdf_name", self.api)
+        self.assertNotIn('.replace(".pdf"', self.api)
+
     def test_accessibility_workshop_exposes_completion_and_export_actions(self):
         self.assertIn('id="a11y-certify-accessible"', self.html)
         self.assertIn('id="a11y-export"', self.html)
@@ -369,14 +526,20 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("function runAiAccessibilityReview", self.js)
         self.assertIn("applyDrafts: true", self.js)
         self.assertIn("data-ai-review-action", self.js)
-        self.assertIn("Use suggested value", self.js)
+        self.assertIn("Apply the AI suggestion", self.js)
         self.assertIn("unresolvedAiAccessibilityFindings", self.js)
         self.assertIn('issue.status !== "pass"', self.js)
         self.assertIn('<details class="a11y-ai-review-finding', self.js)
-        self.assertIn("Keep current value", self.js)
-        self.assertIn("Restore previous value", self.js)
-        self.assertIn("Keep as-is", self.js)
-        self.assertIn("Updated to “", self.js)
+        # Each action says what it leaves behind, and no two of them read the
+        # same way. "Keep" only ever appears where there is a suggestion to
+        # decline; a finding with no automatic fix is acknowledged instead.
+        self.assertIn("Keep the current value", self.js)
+        self.assertIn("Undo: put the old value back", self.js)
+        self.assertIn("Mark as reviewed", self.js)
+        self.assertNotIn("Keep as-is", self.js)
+        self.assertIn("function aiReviewCurrentValue", self.js)
+        self.assertIn("AI suggests", self.js)
+        self.assertIn(".a11y-ai-review-values", self.css)
         self.assertIn("ignoreAiAccessibilityFinding", self.js)
         self.assertIn("overflow-y: auto", self.css)
         self.assertIn('id="a11y-ai-review-toggle"', self.html)

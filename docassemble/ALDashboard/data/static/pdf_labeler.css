@@ -415,9 +415,40 @@
     overflow: hidden;
 }
 .a11y-workshop-shell {
-    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
     display: flex;
     flex-direction: column;
+}
+/* Everything but the working area keeps its own height, so a long banner can
+   never squeeze the panels off a laptop screen. */
+.a11y-workshop-shell > *:not(.a11y-workshop-layout):not(.a11y-ai-review) {
+    flex: 0 0 auto;
+}
+/* The findings pane is the one banner allowed to give ground when a short
+   screen cannot seat everything, down to its own floor. */
+.a11y-workshop-shell > .a11y-ai-review {
+    flex: 0 1 auto;
+}
+.a11y-auto-fix-status {
+    max-height: min(12rem, 24vh);
+    overflow: auto;
+    padding: 0.55rem 0.8rem;
+    font-size: 0.85rem;
+}
+.a11y-auto-fix-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+}
+.a11y-auto-fix-headline {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.a11y-auto-fix-details {
+    margin: 0.5rem 0 0;
+    padding-left: 1.15rem;
+    font-size: 0.82rem;
 }
 .a11y-workshop-header {
     min-height: 4.5rem;
@@ -429,8 +460,42 @@
     border-bottom: 1px solid #ccd6e3;
     background: #fff;
 }
+.a11y-workshop-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+}
+.a11y-workshop-title > .btn {
+    white-space: nowrap;
+}
+.a11y-workshop-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+.a11y-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid #ccd6e3;
+}
+.a11y-workshop-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 1.25rem;
+    border-top: 1px solid #ccd6e3;
+    background: #fff;
+}
 .a11y-certification-bar {
-    padding: 0.75rem 1rem;
+    flex: 1 1 22rem;
+    min-width: 0;
+    padding: 0.5rem 0.85rem;
     border: 1px solid #9ec5fe;
     border-radius: 0.6rem;
     background: #e7f1ff;
@@ -441,23 +506,26 @@
     border-radius: 0.6rem;
     background: #fff;
     display: flex;
-    flex: 0 1 auto;
-    min-height: 7rem;
-    max-height: min(26rem, 50vh);
     flex-direction: column;
-    overflow: hidden;
-}
-#a11y-ai-review-findings {
     min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding-right: 0.25rem;
+    overflow: hidden;
 }
 .a11y-ai-review-body {
     display: flex;
     min-height: 0;
-    flex: 1;
     flex-direction: column;
+}
+/* The list sets the section's height rather than a share of the viewport, so
+   there is always room for one open finding plus a couple of summary lines --
+   and the reviewer can drag the bottom edge for more or less. */
+#a11y-ai-review-findings {
+    height: 17rem;
+    min-height: 8rem;
+    max-height: 70vh;
+    resize: vertical;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 0.25rem;
 }
 .a11y-ai-review.is-collapsed {
     min-height: 0;
@@ -469,17 +537,30 @@
 .a11y-ai-review-finding.is-resolved {
     opacity: 0.72;
 }
+/* A <summary> loses its disclosure marker as soon as its display is changed,
+   so the chevron below is a real element rather than a ::marker. */
 .a11y-ai-review-summary {
     display: grid;
-    grid-template-columns: auto minmax(10rem, 1fr) minmax(8rem, auto);
+    grid-template-columns: auto auto minmax(10rem, 1fr) minmax(8rem, auto);
     align-items: center;
     gap: 0.5rem;
     padding: 0.45rem 0.6rem;
     cursor: pointer;
-    list-style-position: inside;
+    list-style: none;
 }
-.a11y-ai-review-summary::marker {
+.a11y-ai-review-summary::-webkit-details-marker {
+    display: none;
+}
+.a11y-ai-review-chevron {
+    display: inline-block;
+    width: 0.75rem;
     color: #6c757d;
+    font-size: 0.7rem;
+    line-height: 1;
+    transition: transform 0.12s ease-in-out;
+}
+.a11y-ai-review-finding[open] > .a11y-ai-review-summary .a11y-ai-review-chevron {
+    transform: rotate(90deg);
 }
 .a11y-ai-review-status-badge {
     max-width: 13rem;
@@ -496,19 +577,35 @@
 .a11y-ai-review-detail {
     padding: 0 0.75rem 0.65rem 2rem;
 }
+.a11y-ai-review-values {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.15rem 0.6rem;
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
+}
+.a11y-ai-review-values dt {
+    color: #57657f;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.a11y-ai-review-values dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
 @media (max-width: 720px) {
     .a11y-ai-review-summary {
-        grid-template-columns: auto 1fr;
+        grid-template-columns: auto auto 1fr;
     }
     .a11y-ai-review-change {
-        grid-column: 2;
+        grid-column: 2 / -1;
         max-width: none;
     }
 }
 .a11y-workshop-layout {
     display: grid;
     grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);
-    min-height: 0;
+    min-height: 12rem;
     flex: 1;
 }
 .a11y-workshop-report {
@@ -517,9 +614,146 @@
     border-right: 1px solid #ccd6e3;
     background: #f8fafc;
 }
+/* A small "?" that parks first-run explanation out of the way. */
+.a11y-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    padding: 0;
+    margin-left: 0.35rem;
+    border: 1px solid #b6c2d3;
+    border-radius: 50%;
+    background: #fff;
+    color: #4a5b74;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: middle;
+}
+.a11y-help:hover,
+.a11y-help:focus-visible {
+    border-color: #0a58ca;
+    background: #eef5ff;
+    color: #0a58ca;
+}
+.popover {
+    max-width: 24rem;
+}
+.a11y-report-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    margin-bottom: 0.35rem;
+    padding: 0.25rem 0.35rem;
+    border: 1px solid transparent;
+    border-radius: 0.4rem;
+    background: transparent;
+    color: #33415c;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-align: left;
+}
+.a11y-report-toggle:hover,
+.a11y-report-toggle:focus-visible {
+    border-color: #ccd6e3;
+    background: #fff;
+}
+.a11y-report-toggle-icon {
+    color: #57657f;
+    font-size: 1rem;
+    line-height: 1;
+}
+/* Collapsed, the rail keeps just enough width to bring it back. */
+.a11y-workshop-layout.is-report-collapsed {
+    grid-template-columns: 2.9rem minmax(0, 1fr);
+}
+.a11y-workshop-layout.is-report-collapsed .a11y-workshop-report {
+    padding: 0.6rem 0.3rem;
+    overflow: hidden;
+}
+.a11y-workshop-layout.is-report-collapsed .a11y-report-body,
+.a11y-workshop-layout.is-report-collapsed .a11y-report-toggle-label {
+    display: none;
+}
+.a11y-workshop-layout.is-report-collapsed .a11y-report-toggle {
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.35rem 0.1rem;
+}
 .a11y-workshop-content {
     overflow: auto;
-    padding: 1.25rem;
+    padding: 0 1.25rem 1.25rem;
+}
+.a11y-panel-nav {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0 auto;
+    padding: 0.75rem 0;
+    max-width: 72rem;
+    background: #eef2f7;
+}
+.a11y-panel-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.62rem;
+    border: 1px solid #d6deea;
+    border-radius: 2rem;
+    background: #fff;
+    color: #33415c;
+    font-size: 0.78rem;
+    /* Uniform weight so switching steps never reflows the strip. */
+    font-weight: 600;
+    line-height: 1.2;
+}
+.a11y-panel-tab:hover {
+    border-color: #9ec5fe;
+    background: #f2f7ff;
+}
+.a11y-panel-tab[aria-selected="true"] {
+    border-color: #0a58ca;
+    background: #0a58ca;
+    color: #fff;
+}
+.a11y-panel-tab-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    background: #eef2f7;
+    color: #57657f;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-step {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
+}
+.a11y-panel-tab-badge {
+    min-width: 1.2rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 2rem;
+    background: #b42318;
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-align: center;
+}
+.a11y-panel-tab-badge[data-tone="warning"] { background: #8a5200; }
+.a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-badge {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+.a11y-panel[hidden] {
+    display: none;
 }
 .a11y-panel {
     max-width: 72rem;
@@ -560,12 +794,28 @@
 .a11y-structure-target.is-focused { border-color: var(--bs-primary) !important; box-shadow: 0 0 0 .2rem rgba(13,110,253,.18); }
 .a11y-heading-candidate[data-decision="approved"] { border-left: .3rem solid #17823b !important; }
 .a11y-heading-candidate[data-decision="rejected"] { opacity: .65; text-decoration: line-through; }
+/* Laptop screens: give the chrome less and the working area more. */
+@media (max-height: 820px) {
+    .a11y-workshop-header { min-height: 0; padding: 0.5rem 1.25rem; }
+    .a11y-workshop-subtitle { display: none; }
+    .a11y-panel-nav { padding: 0.5rem 0; }
+    .a11y-workshop-footer { padding: 0.45rem 1.25rem; }
+    .a11y-auto-fix-status { max-height: min(9rem, 20vh); }
+    #a11y-ai-review-findings { height: 16rem; }
+}
 @media (max-width: 800px) {
     .a11y-workshop-layout { grid-template-columns: 1fr; overflow: auto; }
     .a11y-workshop-report { max-height: 38vh; border-right: 0; border-bottom: 1px solid #ccd6e3; }
+    .a11y-workshop-layout.is-report-collapsed { grid-template-columns: 1fr; }
+    .a11y-workshop-layout.is-report-collapsed .a11y-report-toggle { flex-direction: row; }
+    .a11y-workshop-layout.is-report-collapsed .a11y-report-toggle-label { display: inline; }
     .a11y-workshop-content { overflow: visible; }
     .a11y-workshop-header { align-items: flex-start; flex-direction: column; }
+    .a11y-workshop-actions { justify-content: flex-start; }
+    .a11y-action-group { padding-left: 0; border-left: 0; }
     .a11y-structure-draft-layout { grid-template-columns: 1fr; }
+    .a11y-panel-tab-label { display: none; }
+    .a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-label { display: inline; }
 }
 .loading-spinner { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

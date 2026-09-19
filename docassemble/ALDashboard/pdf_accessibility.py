@@ -189,7 +189,11 @@ def draft_heading_levels_with_ai(
             },
             {"role": "user", "content": json.dumps({"candidates": records})},
         ],
+        temperature=0,
+        max_output_tokens=min(32768, max(8192, len(records) * 96)),
     )
+    if isinstance(response, str):
+        response = json.loads(response)
     rows = response.get("decisions", []) if isinstance(response, dict) else []
     decisions = []
     for row in rows:
@@ -208,6 +212,62 @@ def draft_heading_levels_with_ai(
             }
         )
     return decisions
+
+
+def _title_from_text_sample(sample: str) -> str:
+    """Pick the document's opening line as a human-facing title candidate.
+
+    A heading review may not have been run yet, and a title finding the reviewer
+    cannot act on is little better than no finding at all. The first substantial
+    line of page text is what a person would read as the document's name, and
+    they still confirm it before it is written.
+    """
+    for raw_line in str(sample or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip().strip("|")
+        line = line.strip()
+        if not 4 <= len(line) <= 120:
+            continue
+        if not re.search(r"[A-Za-z]{2}", line):
+            continue
+        # A filename is the very thing these findings complain about, and a
+        # trailing colon marks a form label rather than a title.
+        if re.search(r"\.(pdf|docx?|rtf|odt)$", line, re.IGNORECASE):
+            continue
+        if line.endswith(":"):
+            continue
+        return line
+    return ""
+
+
+def _quoted_title_from_finding(text: str, current_title: str) -> str:
+    """Take the title a finding quotes when no heading candidate is available.
+
+    These findings almost always name their replacement outright -- "the H1 is
+    'First Petition for Child Custody'" -- so the value the reviewer is being
+    promised is right there in the prose. The document's own title is quoted too,
+    and is skipped, as is anything that reads like a filename.
+    """
+    source = str(text or "")
+    current = re.sub(r"\s+", " ", str(current_title or "")).strip().casefold()
+    # Each quote style is matched to its own partner so an apostrophe inside a
+    # word ("the document's heading") cannot open a quotation.
+    patterns = (
+        r'"([^"]{4,120})"',
+        "\u201c([^\u201d]{4,120})\u201d",
+        "\u2018([^\u2019]{4,120})\u2019",
+        r"(?:(?<=\s)|^)'([^']{4,120})'(?=[\s.,;:)!?]|$)",
+    )
+    for pattern in patterns:
+        for quoted in re.findall(pattern, source):
+            candidate = re.sub(r"\s+", " ", quoted).strip()
+            if not candidate or candidate.casefold() == current:
+                continue
+            if not re.search(r"[A-Za-z]{2}", candidate):
+                continue
+            if re.search(r"\.(pdf|docx?|rtf|odt)$", candidate, re.IGNORECASE):
+                continue
+            return candidate
+    return ""
 
 
 def review_pdf_accessibility_with_ai(
@@ -351,24 +411,39 @@ def review_pdf_accessibility_with_ai(
     if isinstance(response, str):
         response = json.loads(response)
     rows = response.get("findings", []) if isinstance(response, Mapping) else []
-    title_candidate = next(
-        (
-            str(item.get("text") or "").strip()
-            for item in headings
-            if str(item.get("status") or "") == "approved"
-            and str(item.get("tag") or "") == "H1"
-            and str(item.get("text") or "").strip()
-        ),
-        "",
-    ) or next(
-        (
-            str(item.get("text") or "").strip()
-            for item in headings
-            if str(item.get("status") or "") != "rejected"
-            and str(item.get("heuristicTag") or item.get("tag") or "") == "H1"
-            and str(item.get("text") or "").strip()
-        ),
-        "",
+    title_candidate = (
+        next(
+            (
+                str(item.get("text") or "").strip()
+                for item in headings
+                if str(item.get("status") or "") == "approved"
+                and str(item.get("tag") or "") == "H1"
+                and str(item.get("text") or "").strip()
+            ),
+            "",
+        )
+        or next(
+            (
+                str(item.get("text") or "").strip()
+                for item in headings
+                if str(item.get("status") or "") != "rejected"
+                and str(item.get("heuristicTag") or item.get("tag") or "") == "H1"
+                and str(item.get("text") or "").strip()
+            ),
+            "",
+        )
+        # A heading review may not have run yet, so accept any reviewed heading
+        # before falling back to the document's own opening line.
+        or next(
+            (
+                str(item.get("text") or "").strip()
+                for item in headings
+                if str(item.get("status") or "") != "rejected"
+                and str(item.get("text") or "").strip()
+            ),
+            "",
+        )
+        or _title_from_text_sample(str(context.get("textSample") or ""))
     )
     language_names = (
         ("us english", "en-US"),
@@ -384,6 +459,9 @@ def review_pdf_accessibility_with_ai(
         ("vietnamese", "vi"),
         ("russian", "ru"),
     )
+    current_title = str(metadata_input.get("title") or "").strip()
+    current_language = str(metadata_input.get("language") or "").strip()
+    editor_language = str(context.get("documentLanguage") or "").strip()
     findings: List[Dict[str, Any]] = []
     for index, row in enumerate(rows if isinstance(rows, list) else []):
         if not isinstance(row, Mapping):
@@ -408,40 +486,17 @@ def review_pdf_accessibility_with_ai(
             "title": title,
             "explanation": explanation,
         }
-        change = row.get("change")
         finding_text = " ".join(
             (str(row.get("category") or ""), title, explanation)
         ).casefold()
-        if not isinstance(change, Mapping) and "metadata" in finding_text:
-            if "language" in finding_text:
-                inferred_language = next(
-                    (
-                        language
-                        for language_name, language in language_names
-                        if language_name in finding_text
-                    ),
-                    "",
-                )
-                if inferred_language:
-                    change = {
-                        "kind": "metadata",
-                        "target": "language",
-                        "value": inferred_language,
-                    }
-            elif (
-                "title" in finding_text
-                and "viewer" not in finding_text
-                and title_candidate
-            ):
-                change = {
-                    "kind": "metadata",
-                    "target": "title",
-                    "value": title_candidate,
-                }
-        if isinstance(change, Mapping):
-            kind = str(change.get("kind") or "")
-            target = str(change.get("target") or "")
-            value = change.get("value")
+
+        def usable_change(candidate: Any) -> Optional[Dict[str, Any]]:
+            """Return an allow-listed, normalized change, or None."""
+            if not isinstance(candidate, Mapping):
+                return None
+            kind = str(candidate.get("kind") or "")
+            target = str(candidate.get("target") or "")
+            value = candidate.get("value")
             valid_metadata = (
                 kind == "metadata"
                 and target in metadata_keys
@@ -476,12 +531,61 @@ def review_pdf_accessibility_with_ai(
                     and value in {"ltr", "rtl", "ttb"}
                 )
             )
-            if valid:
-                if isinstance(value, str):
-                    value = re.sub(r"\s+", " ", value).strip()[:500]
-                else:
-                    value = dict(value)
-                finding["change"] = {"kind": kind, "target": target, "value": value}
+            if not valid:
+                return None
+            if isinstance(value, str):
+                value = re.sub(r"\s+", " ", value).strip()[:500]
+            else:
+                value = dict(value)
+            return {"kind": kind, "target": target, "value": value}
+
+        # Reconstruct from prose whenever the model supplied no change *or* one
+        # that did not survive the allow-list -- a near-miss like target "locale"
+        # used to leave the reviewer with a confident suggestion and no button.
+        change = usable_change(row.get("change"))
+        if change is None and "language" in finding_text:
+            inferred_language = next(
+                (
+                    language
+                    for language_name, language in language_names
+                    if language_name in finding_text
+                ),
+                "",
+            )
+            if not inferred_language and re.fullmatch(
+                r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", editor_language
+            ):
+                inferred_language = editor_language
+            if inferred_language and inferred_language != current_language:
+                change = usable_change(
+                    {
+                        "kind": "metadata",
+                        "target": "language",
+                        "value": inferred_language,
+                    }
+                )
+        # Not an elif: a finding that mentions both must still get its title fix.
+        if (
+            change is None
+            and "title" in finding_text
+            # A DisplayDocTitle finding is about a viewer flag, not the text.
+            and "viewer" not in finding_text
+        ):
+            # Headings stay authoritative; the quoted prose is the fallback for
+            # when a re-inspection left us without one.
+            proposed_title = title_candidate or _quoted_title_from_finding(
+                " ".join((title, explanation)), current_title
+            )
+            if proposed_title and proposed_title != current_title:
+                change = usable_change(
+                    {
+                        "kind": "metadata",
+                        "target": "title",
+                        "value": proposed_title,
+                    }
+                )
+        if change is not None:
+            finding["change"] = change
         findings.append(finding)
     return findings[:100]
 
@@ -1627,7 +1731,22 @@ def _complete_standard_14_widths(pdf_font: Any, program_format: str) -> bool:
     if program_format == "truetype":
         # PDF/UA requires non-symbolic TrueType fonts to use WinAnsi or
         # MacRoman. The generated field appearances use the WinAnsi byte set.
-        pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
+        # Any existing /Differences still describe what the page draws, so they
+        # ride along on top of the new base encoding rather than being dropped.
+        truetype_differences = (
+            list(cast(Iterable[Any], encoding.get("/Differences") or []))
+            if isinstance(encoding, pikepdf.Dictionary)
+            else []
+        )
+        if truetype_differences:
+            pdf_font["/Encoding"] = pikepdf.Dictionary(
+                {
+                    "/BaseEncoding": pikepdf.Name("/WinAnsiEncoding"),
+                    "/Differences": truetype_differences,
+                }
+            )
+        else:
+            pdf_font["/Encoding"] = pikepdf.Name("/WinAnsiEncoding")
     elif (
         not _encoding_base_name(pdf_font)
         or _encoding_base_name(pdf_font) == "StandardEncoding"
@@ -1861,24 +1980,35 @@ def _load_glyph_source(program: Optional[bytes]) -> Optional[Any]:
 
 
 def _glyph_outline(font_source: Any, glyph_id: int) -> Optional[Dict[str, Any]]:
+    """Extract one glyph outline by glyph id. See :func:`_glyph_outline_by_name`."""
+    if font_source is None:
+        return None
+    try:
+        order = font_source.getGlyphOrder()
+    except Exception:
+        return None
+    if glyph_id < 0 or glyph_id >= len(order):
+        return None
+    return _glyph_outline_by_name(font_source, order[glyph_id])
+
+
+def _glyph_outline_by_name(font_source: Any, name: str) -> Optional[Dict[str, Any]]:
     """Extract one glyph outline as an SVG path so a human can look at it.
 
     The outline is read from the program embedded in the PDF, so the reviewer
     sees the glyph the document actually draws rather than a lookalike from an
     installed font.
     """
-    if font_source is None:
+    if font_source is None or not name:
         return None
     try:
         from fontTools.pens.svgPathPen import (  # type: ignore[import-untyped]
             SVGPathPen,
         )
 
-        order = font_source.getGlyphOrder()
-        if glyph_id < 0 or glyph_id >= len(order):
-            return None
         glyph_set = font_source.getGlyphSet()
-        name = order[glyph_id]
+        if name not in glyph_set:
+            return None
         pen = SVGPathPen(glyph_set)
         glyph_set[name].draw(pen)
         path = pen.getCommands()
@@ -1926,6 +2056,98 @@ def _embedded_char_code(font_source: Any, glyph_id: int) -> Optional[int]:
     except Exception:
         return None
     return None
+
+
+def _code_glyph_name(font_source: Any, code: int) -> Optional[str]:
+    """Find the glyph a simple font's character code selects, via its own cmap.
+
+    A simple font's show-text codes are character codes, not glyph ids. Symbolic
+    TrueType programs carry a (3,0) subtable keyed either by the raw code or by
+    the same code in the 0xF000 private-use block, and older Mac-encoded fonts
+    use (1,0). Returns None when no subtable claims the code, which is the
+    honest answer: guessing here would show the reviewer an unrelated shape.
+    """
+    if font_source is None:
+        return None
+    try:
+        if "cmap" not in font_source:
+            return None
+        tables = list(font_source["cmap"].tables)
+    except Exception:
+        return None
+    lookups = [
+        (3, 0, 0xF000 | (code & 0xFF)),
+        (3, 0, code),
+        (1, 0, code),
+    ]
+    if code < 0x80:
+        # Every byte encoding a simple font can declare agrees with Unicode
+        # below 0x80, so this is a lookup rather than a guess.
+        lookups.append((3, 1, code))
+    for platform_id, encoding_id, key in lookups:
+        for table in tables:
+            if (
+                getattr(table, "platformID", None) != platform_id
+                or getattr(table, "platEncID", None) != encoding_id
+            ):
+                continue
+            name = table.cmap.get(key)
+            if name:
+                return str(name)
+    return None
+
+
+def _glyph_drawn_for_code(
+    font_source: Any,
+    code: int,
+    *,
+    two_byte: bool,
+) -> Optional[Dict[str, Any]]:
+    """Outline the glyph this font actually draws for one show-text code.
+
+    Only Identity-H/V CIDs are glyph ids; everything else is a character code
+    that has to go through the font's cmap first, or — when a subset program
+    dropped its cmap — through the specification's fallback of treating the code
+    as a glyph index.
+    """
+    if font_source is None:
+        return None
+    if two_byte:
+        return _glyph_outline(font_source, code)
+    name = _code_glyph_name(font_source, code)
+    if name is not None:
+        return _glyph_outline_by_name(font_source, name)
+    try:
+        has_cmap = "cmap" in font_source
+    except Exception:
+        has_cmap = False
+    if has_cmap:
+        return None
+    return _glyph_outline(font_source, code)
+
+
+def _character_code_for_code(
+    font_source: Any,
+    code: int,
+    installed_codes: Mapping[int, int],
+    *,
+    two_byte: bool,
+) -> Tuple[Optional[int], str]:
+    """Recover the symbol font's own character code for one show-text code.
+
+    For a simple font the show-text code already *is* the character code in the
+    font's built-in encoding, so there is nothing to recover. Only Identity-H/V
+    codes are glyph ids that have to be traced back to a character.
+    """
+    if not two_byte:
+        return code, "pdf-code"
+    char_code = _embedded_char_code(font_source, code)
+    if char_code is not None:
+        return char_code, "embedded-cmap"
+    char_code = installed_codes.get(code)
+    if char_code is not None:
+        return char_code, "installed-font"
+    return None, ""
 
 
 def _installed_symbol_codes(font_name: str, glyph_count: int) -> Dict[int, int]:
@@ -2108,14 +2330,14 @@ def _glyph_review_entry(
     code: int,
     count: int,
     installed_codes: Mapping[int, int],
+    *,
+    two_byte: bool = True,
 ) -> Dict[str, Any]:
     """Describe one unmapped code: what it draws and what we think it means."""
-    outline = _glyph_outline(font_source, code)
-    char_code = _embedded_char_code(font_source, code)
-    code_source = "embedded-cmap" if char_code is not None else ""
-    if char_code is None:
-        char_code = installed_codes.get(code)
-        code_source = "installed-font" if char_code is not None else ""
+    outline = _glyph_drawn_for_code(font_source, code, two_byte=two_byte)
+    char_code, code_source = _character_code_for_code(
+        font_source, code, installed_codes, two_byte=two_byte
+    )
     proposal = (
         propose_character(font_name, char_code) if char_code is not None else None
     )
@@ -2207,17 +2429,18 @@ def _curated_symbol_unicode_cmap(
         glyph_count = 0
     installed_codes = _installed_symbol_codes(font_name, glyph_count)
     mappings = _to_unicode_mappings(pdf_font)
+    two_byte = _is_two_byte_font(pdf_font)
     for code in sorted(set(used_codes)):
         if mappings.get(code):
             continue
-        char_code = _embedded_char_code(font_source, code)
-        if char_code is None:
-            char_code = installed_codes.get(code)
+        char_code, _code_source = _character_code_for_code(
+            font_source, code, installed_codes, two_byte=two_byte
+        )
         proposal = (
             propose_character(font_name, char_code) if char_code is not None else None
         )
         if proposal is None:
-            outline = _glyph_outline(font_source, code)
+            outline = _glyph_drawn_for_code(font_source, code, two_byte=two_byte)
             proposal = propose_outline_character(
                 font_name,
                 str((outline or {}).get("path") or ""),
@@ -2312,7 +2535,13 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
                         glyph_count = int(font_source["maxp"].numGlyphs)
                     except Exception:
                         glyph_count = 0
-                needs_installed = font_source is not None and "cmap" not in font_source
+                two_byte = _is_two_byte_font(font)
+                # Only an Identity-H/V code is a glyph id, so only that case can
+                # be lined up against an installed copy of the font by glyph
+                # number. A simple font's code is already its character code.
+                needs_installed = (
+                    two_byte and font_source is not None and "cmap" not in font_source
+                )
                 installed_codes = (
                     _installed_symbol_codes(font_name, glyph_count)
                     if needs_installed
@@ -2321,7 +2550,12 @@ def collect_symbolic_font_review(input_pdf_path: str) -> Dict[str, Any]:
                 ordered = sorted(counts.items(), key=lambda item: item[0])
                 glyphs = [
                     _glyph_review_entry(
-                        font_source, font_name, code, count, installed_codes
+                        font_source,
+                        font_name,
+                        code,
+                        count,
+                        installed_codes,
+                        two_byte=two_byte,
                     )
                     for code, count in ordered[:GLYPH_REVIEW_LIMIT]
                 ]
@@ -3029,7 +3263,13 @@ def _artifact_untagged_content(pdf: Any) -> int:
             has_meaningful_text = any(
                 _shown_instruction_text(instruction).strip() for instruction in pending
             )
-            if has_draft_artifact and not has_meaningful_text:
+            # An image or shading in the run may well be meaningful content, and
+            # the whole run is wrapped together, so leaving it untagged is far
+            # safer than hiding it from assistive technology.
+            has_drawn_object = any(
+                str(instruction.operator) in {"Do", "sh"} for instruction in pending
+            )
+            if has_draft_artifact and not has_meaningful_text and not has_drawn_object:
                 rewritten.append(
                     pikepdf.ContentStreamInstruction(
                         [pikepdf.Name("/Artifact")], pikepdf.Operator("BMC")
@@ -3106,7 +3346,9 @@ def _set_pdfua_identifier(pdf: Any, declared: bool) -> bool:
     key = "{http://www.aiim.org/pdfua/ns/id/}part"
     if not declared and pdf.Root.get("/Metadata") is None:
         return False
-    with pdf.open_metadata(set_pikepdf_as_editor=False) as metadata:
+    with pdf.open_metadata(
+        set_pikepdf_as_editor=False, update_docinfo=False
+    ) as metadata:
         if declared:
             metadata[key] = "1"
             return True
@@ -3122,7 +3364,7 @@ def _sync_xmp_accessibility_metadata(
     updates = 0
     if not title and not language:
         return updates
-    with pdf.open_metadata(set_pikepdf_as_editor=False) as xmp:
+    with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as xmp:
         if title:
             xmp["dc:title"] = title
             updates += 1

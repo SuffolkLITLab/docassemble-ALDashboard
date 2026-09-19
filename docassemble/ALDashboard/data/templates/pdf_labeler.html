@@ -470,18 +470,23 @@
                                 <span class="a11y-panel-tab-label">Tags &amp; headings</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
-                                <button type="button" role="tab" id="a11y-tab-figures" class="a11y-panel-tab" data-panel-tab="figures" aria-controls="a11y-panel-figures" aria-selected="false" tabindex="-1" title="Alternative text and decorative images">
+                                <button type="button" role="tab" id="a11y-tab-readback" class="a11y-panel-tab" data-panel-tab="readback" aria-controls="a11y-panel-readback" aria-selected="false" tabindex="-1" title="What the tagged order would announce">
                                 <span class="a11y-panel-tab-step" aria-hidden="true">5</span>
+                                <span class="a11y-panel-tab-label">Read-back</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-figures" class="a11y-panel-tab" data-panel-tab="figures" aria-controls="a11y-panel-figures" aria-selected="false" tabindex="-1" title="Alternative text and decorative images">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">6</span>
                                 <span class="a11y-panel-tab-label">Images</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
                                 <button type="button" role="tab" id="a11y-tab-structure" class="a11y-panel-tab" data-panel-tab="structure" aria-controls="a11y-panel-structure" aria-selected="false" tabindex="-1" title="Table roles, link and annotation text">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">6</span>
+                                <span class="a11y-panel-tab-step" aria-hidden="true">7</span>
                                 <span class="a11y-panel-tab-label">Tables &amp; links</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
                                 <button type="button" role="tab" id="a11y-tab-fonts" class="a11y-panel-tab" data-panel-tab="fonts" aria-controls="a11y-panel-fonts" aria-selected="false" tabindex="-1" title="Embedding, Unicode maps, glyph review">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">7</span>
+                                <span class="a11y-panel-tab-step" aria-hidden="true">8</span>
                                 <span class="a11y-panel-tab-label">Fonts &amp; text</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
@@ -586,6 +591,15 @@
                                         <div id="a11y-heading-list" class="vstack gap-2"></div>
                                     </div>
                                 </div>
+                            </section>
+                            <section id="a11y-panel-readback" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-readback" hidden>
+                                <h3 class="h6 fw-semibold mb-2">Read-back simulation<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Read-back simulation" data-bs-content="Replays the tag tree in the order assistive technology announces it and compares that against where the same content sits on the page. It is not a conformance check: it reports what a listener would actually hear, so you can fix the places where the two disagree." aria-label="About the read-back simulation">?</button></h3>
+                                <div id="a11y-readback-summary" class="alert small py-2" role="status"></div>
+                                <div id="a11y-readback-findings" class="vstack gap-2 mb-3"></div>
+                                <details id="a11y-readback-transcript-details" class="small">
+                                    <summary>What a screen reader would announce, in order</summary>
+                                    <ol id="a11y-readback-transcript" class="a11y-readback-transcript mt-2"></ol>
+                                </details>
                             </section>
                             <section id="a11y-panel-figures" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-figures" hidden>
                                 <div class="d-flex align-items-center justify-content-between mb-2">

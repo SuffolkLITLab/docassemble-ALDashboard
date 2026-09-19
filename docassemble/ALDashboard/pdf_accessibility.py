@@ -143,9 +143,45 @@ def draft_field_tooltips_with_ai(
         name = str(row.get("name") or "")
         tooltip = str(row.get("tooltip") or "")
         tooltip = re.sub(r"\s+", " ", tooltip).strip(" .:-")
-        tooltip = tooltip[:45].strip()
+        tooltip = _clip_tooltip(tooltip)
         if name in allowed_names and tooltip:
             result[name] = tooltip
+    return _distinguish_tooltips(result)
+
+
+def _clip_tooltip(tooltip: str, limit: int = 64) -> str:
+    """Shorten a tooltip at a word boundary rather than mid-word.
+
+    Cutting "in the children's best interests" to "...best" leaves a screen
+    reader announcing a sentence fragment, so stop at the last whole word that
+    fits and keep a little more room than a label strictly needs.
+    """
+    text = str(tooltip or "").strip()
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit]
+    spaced = clipped.rsplit(" ", 1)[0]
+    return (spaced if len(spaced) >= limit // 2 else clipped).strip(" .,:;-")
+
+
+def _distinguish_tooltips(tooltips: Mapping[str, str]) -> Dict[str, str]:
+    """Make repeated tooltips tell their fields apart.
+
+    Continuation lines of one long answer legitimately describe the same thing,
+    and a reviewer tabbing through four identical names cannot tell which blank
+    they are in. Number them in the order the fields were supplied.
+    """
+    counts: Dict[str, int] = {}
+    for value in tooltips.values():
+        counts[value] = counts.get(value, 0) + 1
+    seen: Dict[str, int] = {}
+    result: Dict[str, str] = {}
+    for name, value in tooltips.items():
+        if counts.get(value, 0) < 2:
+            result[name] = value
+            continue
+        seen[value] = seen.get(value, 0) + 1
+        result[name] = f"{value} (line {seen[value]} of {counts[value]})"
     return result
 
 
@@ -363,6 +399,20 @@ def review_pdf_accessibility_with_ai(
             for item in raw_issues
             if isinstance(item, Mapping)
         ][:100],
+        "readbackFindings": [
+            {
+                "title": str(item.get("title") or "")[:160],
+                "detail": str(item.get("detail") or "")[:400],
+                "severity": str(item.get("severity") or "")[:20],
+                "page": item.get("page"),
+            }
+            for item in (
+                cast(List[Any], context.get("readbackFindings"))
+                if isinstance(context.get("readbackFindings"), list)
+                else []
+            )[:40]
+            if isinstance(item, Mapping)
+        ],
         "structureSummary": {
             "tagTreePresent": bool(raw_structure.get("tagTreePresent")),
             "tables": scalar(raw_structure.get("tables")),
@@ -387,6 +437,12 @@ def review_pdf_accessibility_with_ai(
                     "semantic structure, fonts, tables, figures, links, and annotations. Do not claim that a "
                     "PDF is conformant and never propose changing MarkInfo or the PDF/UA declaration. Do not "
                     "invent image content when no pixels or reliable existing description were supplied. "
+                    "readbackFindings is a deterministic replay of the tag tree in the order assistive "
+                    "technology announces it, compared against where the same content sits on the page. Treat "
+                    "it as observed evidence, not a guess: where it reports a torn line, a control announced "
+                    "away from its label, or text that would be spoken as something it does not say, say what "
+                    "a listener would actually hear and which step fixes it. Do not repeat an entry verbatim "
+                    "and do not contradict it. "
                     "Return only genuine findings; do not restate a passing check merely to recommend generic "
                     "validation. An empty findings array means the supplied choices look reasonable. Each finding "
                     "needs id, category, severity (warning or info), title, explanation, and a change whenever the "
@@ -3443,6 +3499,461 @@ def _issue(
     }
 
 
+READBACK_LINE_TOLERANCE = 4.0
+READBACK_LABEL_DISTANCE = 6
+
+
+def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
+    """Collect each marked-content id's text and where it sits on the page."""
+    import pikepdf
+
+    runs: Dict[int, Dict[str, Any]] = {}
+    try:
+        instructions = list(pikepdf.parse_content_stream(page))
+    except Exception:
+        return runs
+    current: Optional[int] = None
+    stack: List[Optional[int]] = []
+    line_x = line_y = text_x = text_y = 0.0
+    leading = 0.0
+    for instruction in instructions:
+        operator = str(instruction.operator)
+        operands = list(instruction.operands)
+        if operator in {"BMC", "BDC"}:
+            stack.append(current)
+            current = None
+            if operator == "BDC" and len(operands) >= 2:
+                try:
+                    current = int(operands[1].get("/MCID"))  # type: ignore[arg-type]
+                except Exception:
+                    current = None
+        elif operator == "EMC":
+            current = stack.pop() if stack else None
+        try:
+            if operator == "Tm" and len(operands) == 6:
+                line_x, line_y = float(operands[4]), float(operands[5])
+                text_x, text_y = line_x, line_y
+            elif operator in {"Td", "TD"} and len(operands) == 2:
+                if operator == "TD":
+                    leading = -float(operands[1])
+                line_x += float(operands[0])
+                line_y += float(operands[1])
+                text_x, text_y = line_x, line_y
+            elif operator == "TL" and operands:
+                leading = float(operands[0])
+            elif operator in {"T*", "'", '"'}:
+                line_y -= leading
+                text_x, text_y = line_x, line_y
+        except (TypeError, ValueError):
+            pass
+        if operator in {"Tj", "TJ", "'", '"'} and current is not None:
+            text = _shown_instruction_text(instruction)
+            if not text:
+                continue
+            record = runs.setdefault(current, {"text": "", "y": text_y, "x": text_x})
+            record["text"] += text
+    return runs
+
+
+def _readback_sequence(pdf: Any) -> List[Dict[str, Any]]:
+    """Walk the tag tree in order and say what each leaf would announce."""
+    import pikepdf
+
+    page_index_by_objgen = {
+        page.obj.objgen: index for index, page in enumerate(pdf.pages)
+    }
+    page_runs = [_readback_page_runs(page) for page in pdf.pages]
+    sequence: List[Dict[str, Any]] = []
+
+    def page_of(node: Any) -> Optional[int]:
+        target = node.get("/Pg") if hasattr(node, "get") else None
+        if target is None:
+            return None
+        return page_index_by_objgen.get(target.objgen)
+
+    def visit(node: Any, inherited_page: Optional[int]) -> None:
+        if isinstance(node, pikepdf.Array):
+            for child in node:
+                visit(child, inherited_page)
+            return
+        if not isinstance(node, pikepdf.Dictionary):
+            return
+        page_index = page_of(node)
+        if page_index is None:
+            page_index = inherited_page
+        if "/S" not in node:
+            visit(node.get("/K"), page_index)
+            return
+        role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
+        kids = node.get("/K")
+        if isinstance(kids, int):
+            record = (
+                page_runs[page_index].get(kids)
+                if page_index is not None and page_index < len(page_runs)
+                else None
+            )
+            sequence.append(
+                {
+                    "kind": "text",
+                    "role": role,
+                    "page": page_index,
+                    "text": (record or {}).get("text", ""),
+                    "y": (record or {}).get("y"),
+                    "x": (record or {}).get("x"),
+                }
+            )
+            return
+        if isinstance(kids, pikepdf.Dictionary) and (
+            _safe_pdf_string(kids.get("/Type", "")).lstrip("/") == "OBJR"
+        ):
+            annot = kids.get("/Obj")
+            rect = annot.get("/Rect") if hasattr(annot, "get") else None  # type: ignore[union-attr]
+            top: Optional[float] = None
+            left: Optional[float] = None
+            try:
+                top = max(float(rect[1]), float(rect[3]))  # type: ignore[index]
+                left = min(float(rect[0]), float(rect[2]))  # type: ignore[index]
+            except (TypeError, ValueError, IndexError):
+                top = left = None
+            parent = _named_parent(annot) if hasattr(annot, "get") else None
+            sequence.append(
+                {
+                    "kind": "field",
+                    "role": role,
+                    "page": page_index,
+                    "name": (
+                        _safe_pdf_string(parent.get("/T", "")).strip()
+                        if parent is not None
+                        else ""
+                    ),
+                    "text": _safe_pdf_string(node.get("/Alt", ""))
+                    or (_widget_tooltip(annot, parent) if annot is not None else ""),
+                    "y": top,
+                    "x": left,
+                }
+            )
+            return
+        if kids is not None:
+            visit(kids, page_index)
+
+    root = pdf.Root.get("/StructTreeRoot")
+    if root is not None:
+        visit(root.get("/K"), None)
+    for position, item in enumerate(sequence):
+        item["index"] = position
+    return sequence
+
+
+# Characters that routinely stand in for punctuation after an encoding drift.
+# Word-internally, none of these is plausible as the author's intent.
+_READBACK_SUBSTITUTE_GLYPHS = {
+    "\u2122": "\u2019",  # trademark where a right single quote belongs
+    "\u00ae": "\u2019",
+    "\u00a4": "\u2019",
+    "\u0092": "\u2019",
+}
+
+
+def _readback_spoken_text(text: str) -> str:
+    """Approximate what a speech engine would make of a run."""
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _readback_line_peers(
+    sequence: List[Dict[str, Any]],
+) -> Dict[int, List[int]]:
+    """Group announced text by the page line it is drawn on."""
+    lines: Dict[Tuple[Optional[int], int], List[int]] = {}
+    for item in sequence:
+        if item["kind"] != "text" or item.get("y") is None:
+            continue
+        key = (item["page"], int(round(float(item["y"]) / READBACK_LINE_TOLERANCE)))
+        lines.setdefault(key, []).append(item["index"])
+    peers: Dict[int, List[int]] = {}
+    for members in lines.values():
+        if len(members) < 2:
+            continue
+        for index in members:
+            peers[index] = members
+    return peers
+
+
+def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
+    """Replay the tagged reading order and report where it would mislead.
+
+    This is a deterministic stand-in for listening to the file: it walks the
+    structure tree in the order assistive technology would, resolves every leaf
+    to the text or control it would announce, and compares that sequence
+    against where the same content actually sits on the page. Nothing here is
+    tuned to one document -- each check states a property the tag tree should
+    have, so a passing report means the property held, not that a known bug was
+    absent.
+    """
+    import pikepdf
+
+    findings: List[Dict[str, Any]] = []
+    try:
+        with pikepdf.open(pdf_path) as pdf:
+            if pdf.Root.get("/StructTreeRoot") is None:
+                return {
+                    "available": False,
+                    "reason": "This PDF has no tag tree, so there is no reading order to replay.",
+                    "announcements": [],
+                    "findings": [],
+                }
+            sequence = _readback_sequence(pdf)
+            tagged_mcids = {(item["page"], item.get("text", "")) for item in sequence}
+            page_run_totals = [len(_readback_page_runs(page)) for page in pdf.pages]
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Failed to replay the reading order: {exc}")
+
+    spoken = [
+        dict(item, spoken=_readback_spoken_text(item.get("text", "")))
+        for item in sequence
+    ]
+    text_items = [item for item in spoken if item["kind"] == "text" and item["spoken"]]
+    field_items = [item for item in spoken if item["kind"] == "field"]
+
+    # 1. A run announced away from the rest of its own line. This is the general
+    #    form of a sentence losing a word to somewhere else in the document.
+    peers = _readback_line_peers(text_items)
+    # Distance is measured in text runs, not raw positions: a control announced
+    # between two labels on one line is the point of interleaving them, and must
+    # not read as the line having been torn apart.
+    text_rank = {item["index"]: rank for rank, item in enumerate(text_items)}
+    for item in text_items:
+        members = peers.get(item["index"])
+        if not members:
+            continue
+        gaps = [
+            abs(text_rank[item["index"]] - text_rank[other])
+            for other in members
+            if other != item["index"] and other in text_rank
+        ]
+        if gaps and min(gaps) > 2:
+            neighbours = [
+                other["spoken"]
+                for other in text_items
+                if other["index"] in members and other["index"] != item["index"]
+            ]
+            findings.append(
+                {
+                    "id": f"readback-split-line-{item['index']}",
+                    "severity": "fail",
+                    "category": "reading-order",
+                    "title": "A line is announced in pieces, far apart",
+                    "detail": (
+                        f"\u201c{item['spoken'][:60]}\u201d is announced "
+                        f"{min(gaps)} places away from the rest of its line "
+                        f"(\u201c{' '.join(neighbours)[:60]}\u201d), so the "
+                        "sentence it belongs to is broken and the words turn up "
+                        "somewhere unrelated."
+                    ),
+                    "page": item["page"],
+                    "announcedIndex": item["index"],
+                    "remediation": "draft_structure",
+                }
+            )
+
+    # 2. The order jumps back up the page without starting a new column.
+    inversions = []
+    for previous, item in zip(text_items, text_items[1:]):
+        if previous["page"] != item["page"]:
+            continue
+        if previous.get("y") is None or item.get("y") is None:
+            continue
+        climbed = float(item["y"]) - float(previous["y"])
+        if climbed <= READBACK_LINE_TOLERANCE:
+            continue
+        started_column = (
+            item.get("x") is not None
+            and previous.get("x") is not None
+            and float(item["x"]) > float(previous["x"]) + 36
+        )
+        if not started_column:
+            inversions.append((previous, item, climbed))
+    if inversions:
+        worst = max(inversions, key=lambda entry: entry[2])
+        findings.append(
+            {
+                "id": "readback-order-jumps",
+                "severity": "fail",
+                "category": "reading-order",
+                "title": "Reading order moves back up the page",
+                "detail": (
+                    f"{len(inversions)} time(s) the next thing announced sits "
+                    f"higher on the page than the one before it. The largest "
+                    f"jump goes from \u201c{worst[0]['spoken'][:40]}\u201d back up "
+                    f"to \u201c{worst[1]['spoken'][:40]}\u201d."
+                ),
+                "page": worst[1]["page"],
+                "announcedIndex": worst[1]["index"],
+                "count": len(inversions),
+                "remediation": "draft_structure",
+            }
+        )
+
+    # 3. Controls announced away from the words that introduce them.
+    detached = []
+    for field in field_items:
+        if field.get("y") is None:
+            continue
+        nearest = None
+        for candidate in text_items:
+            if candidate["page"] != field["page"] or candidate.get("y") is None:
+                continue
+            distance = abs(float(candidate["y"]) - float(field["y"]))
+            if nearest is None or distance < nearest[0]:
+                nearest = (distance, candidate)
+        if nearest is None or nearest[0] > 24:
+            continue
+        if abs(nearest[1]["index"] - field["index"]) > READBACK_LABEL_DISTANCE:
+            detached.append((field, nearest[1]))
+    if detached:
+        findings.append(
+            {
+                "id": "readback-detached-fields",
+                "severity": "fail",
+                "category": "reading-order",
+                "title": "Form controls are announced away from their labels",
+                "detail": (
+                    f"{len(detached)} of {len(field_items)} controls are announced "
+                    "far from the text sitting beside them on the page, so a "
+                    "listener hears the prompt and the blank at different times. "
+                    f"For example \u201c{detached[0][0].get('text') or detached[0][0].get('name') or 'a control'}"
+                    f"\u201d sits beside \u201c{detached[0][1]['spoken'][:40]}\u201d but is "
+                    f"announced {abs(detached[0][0]['index'] - detached[0][1]['index'])} places later."
+                ),
+                "page": detached[0][0]["page"],
+                "announcedIndex": detached[0][0]["index"],
+                "count": len(detached),
+                "remediation": "draft_structure",
+            }
+        )
+
+    # 4. Controls a listener cannot tell apart.
+    by_name: Dict[str, List[Dict[str, Any]]] = {}
+    for field in field_items:
+        announced = field.get("text") or ""
+        if announced:
+            by_name.setdefault(announced, []).append(field)
+    for announced, group in by_name.items():
+        if len(group) < 2:
+            continue
+        findings.append(
+            {
+                "id": "readback-duplicate-names-"
+                + re.sub(r"[^a-z0-9]+", "-", announced.lower())[:40],
+                "severity": "fail",
+                "category": "field-names",
+                "title": "Several controls announce the same name",
+                "detail": (
+                    f"{len(group)} controls all announce \u201c{announced}\u201d, so "
+                    "tabbing through them gives no way to tell which blank is "
+                    "which."
+                ),
+                "page": group[0]["page"],
+                "announcedIndex": group[0]["index"],
+                "count": len(group),
+                "fieldNames": [item.get("name", "") for item in group],
+                "remediation": "field_tooltips",
+            }
+        )
+
+    # 5. Characters that would be spoken as something the author never wrote.
+    for item in text_items + field_items:
+        announced = item.get("spoken") or item.get("text") or ""
+        controls = [
+            character
+            for character in announced
+            if ord(character) < 0x20 or ord(character) == 0x7F
+        ]
+        substitutes = [
+            (match.group(2), match.start(2))
+            for match in re.finditer(
+                r"(?i)([a-z])([\u2122\u00ae\u00a4\u0092])([a-z])", announced
+            )
+        ]
+        if not controls and not substitutes:
+            continue
+        suggestion = announced
+        for glyph, _position in substitutes:
+            suggestion = suggestion.replace(glyph, _READBACK_SUBSTITUTE_GLYPHS[glyph])
+        suggestion = "".join(
+            character for character in suggestion if ord(character) >= 0x20
+        )
+        findings.append(
+            {
+                "id": f"readback-mispronounced-{item['index']}",
+                "severity": "fail" if substitutes else "warning",
+                "category": "text-encoding",
+                "title": "Text would be spoken as something it does not say",
+                "detail": (
+                    f"\u201c{announced[:60]}\u201d contains "
+                    + (
+                        "a symbol standing in mid-word for punctuation, which a "
+                        "screen reader reads aloud by name"
+                        if substitutes
+                        else "control characters a screen reader may vocalise or swallow"
+                    )
+                    + "."
+                ),
+                "page": item["page"],
+                "announcedIndex": item["index"],
+                "remediation": "fonts",
+                "suggestion": suggestion,
+            }
+        )
+
+    # 6. Page text the tag tree never reaches.
+    tagged_per_page: Dict[Optional[int], int] = {}
+    for item in text_items:
+        tagged_per_page[item["page"]] = tagged_per_page.get(item["page"], 0) + 1
+    for page_index, total in enumerate(page_run_totals):
+        announced_here = tagged_per_page.get(page_index, 0)
+        if total and announced_here < total:
+            findings.append(
+                {
+                    "id": f"readback-untagged-{page_index}",
+                    "severity": "warning",
+                    "category": "reading-order",
+                    "title": "Page content is never announced",
+                    "detail": (
+                        f"Page {page_index + 1} draws {total} marked runs but only "
+                        f"{announced_here} are reachable from the tag tree, so the "
+                        "rest is silent."
+                    ),
+                    "page": page_index,
+                    "remediation": "draft_structure",
+                }
+            )
+
+    return {
+        "available": True,
+        "announcements": [
+            {
+                "index": item["index"],
+                "page": item["page"],
+                "kind": item["kind"],
+                "role": item.get("role", ""),
+                "text": item.get("spoken") or item.get("text", ""),
+                "name": item.get("name", ""),
+            }
+            for item in spoken
+        ],
+        "findings": findings[:200],
+        "summary": {
+            "announced": len(spoken),
+            "textRuns": len(text_items),
+            "fields": len(field_items),
+            "findings": len(findings),
+            "blocking": sum(1 for f in findings if f["severity"] == "fail"),
+        },
+    }
+
+
 def build_accessibility_report(
     pdf: Any, structure_editor: Optional[Mapping[str, Any]] = None
 ) -> Dict[str, Any]:
@@ -4069,6 +4580,10 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
         import pikepdf
 
         heading_candidates, content_blocks = _visual_content_analysis(pdf_path)
+        try:
+            readback = analyze_screen_reader_readback(pdf_path)
+        except PDFAccessibilityError:
+            readback = {"available": False, "findings": [], "announcements": []}
         with pikepdf.open(pdf_path) as pdf:
             fields, field_order = _extract_field_records(pdf)
             structure_editor = _structure_editor_data(pdf)
@@ -4081,6 +4596,7 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
                 "structure_editor": structure_editor,
                 "report": build_accessibility_report(pdf, structure_editor),
                 "heading_candidates": heading_candidates,
+                "readback": readback,
                 "content_blocks": content_blocks,
             }
     except Exception as exc:
@@ -4490,7 +5006,9 @@ def create_draft_structure_tree(
                 )
                 document_children.append(page_part)
                 page_children: List[Any] = []
-                text_children: List[Tuple[int, int, Any, str]] = []
+                text_children: List[
+                    Tuple[Optional[int], Tuple[float, float], int, Any, str]
+                ] = []
                 content_occurrences: Dict[str, int] = {}
 
                 instructions = list(pikepdf.parse_content_stream(page))
@@ -4550,11 +5068,47 @@ def create_draft_structure_tree(
                             rewritten.extend(text_block)
                         else:
                             raw_groups: List[List[int]] = []
+                            group_spots: List[Tuple[float, float]] = []
                             current_group: List[int] = []
+                            # Follow the text matrix so every run knows where it
+                            # sits. Reading order is a question about the page,
+                            # and answering it from content-stream position is
+                            # what tore sentences apart.
+                            text_x = text_y = 0.0
+                            line_x = line_y = 0.0
+                            leading = 0.0
                             for block_index, block_instruction in enumerate(
                                 text_block[1:-1], start=1
                             ):
                                 block_operator = str(block_instruction.operator)
+                                block_operands = list(block_instruction.operands)
+                                try:
+                                    if (
+                                        block_operator == "Tm"
+                                        and len(block_operands) == 6
+                                    ):
+                                        line_x = float(block_operands[4])
+                                        line_y = float(block_operands[5])
+                                        text_x, text_y = line_x, line_y
+                                    elif (
+                                        block_operator in {"Td", "TD"}
+                                        and len(block_operands) == 2
+                                    ):
+                                        if block_operator == "TD":
+                                            leading = -float(block_operands[1])
+                                        line_x += float(block_operands[0])
+                                        line_y += float(block_operands[1])
+                                        text_x, text_y = line_x, line_y
+                                    elif block_operator == "TL" and block_operands:
+                                        leading = float(block_operands[0])
+                                    elif block_operator == "T*":
+                                        line_y -= leading
+                                        text_x, text_y = line_x, line_y
+                                    elif block_operator in {"'", '"'}:
+                                        line_y -= leading
+                                        text_x, text_y = line_x, line_y
+                                except (TypeError, ValueError):
+                                    pass
                                 if block_operator in {"Td", "TD", "Tm", "T*"}:
                                     if current_group:
                                         raw_groups.append(current_group)
@@ -4566,14 +5120,23 @@ def create_draft_structure_tree(
                                     if _shown_instruction_text(
                                         block_instruction
                                     ).strip():
+                                        if not current_group:
+                                            group_spots.append((text_y, text_x))
                                         current_group.append(block_index)
                             if current_group:
                                 raw_groups.append(current_group)
+                            while len(group_spots) < len(raw_groups):
+                                group_spots.append((0.0, 0.0))
 
-                            groups: List[Tuple[List[int], str, int]] = []
+                            groups: List[
+                                Tuple[
+                                    List[int], str, Optional[int], Tuple[float, float]
+                                ]
+                            ] = []
                             group_index = 0
                             page_headings = headings_by_page.get(page_index, {})
                             while group_index < len(raw_groups):
+                                group_start = group_index
                                 matched: Optional[Tuple[List[int], str]] = None
                                 max_span = min(4, len(raw_groups) - group_index)
                                 for span in range(max_span, 0, -1):
@@ -4666,16 +5229,24 @@ def create_draft_structure_tree(
                                 content_decision = content_by_key.get(
                                     (page_index, normalized_group, occurrence)
                                 )
-                                order = len(text_children)
+                                # Where this run sits, used both as the default
+                                # reading order and as the tie-break inside a
+                                # reviewed block that spans several runs.
+                                spot = (
+                                    group_spots[group_start]
+                                    if group_start < len(group_spots)
+                                    else (0.0, 0.0)
+                                )
+                                block_order: Optional[int] = None
                                 if content_decision is not None:
                                     if content_decision["role_reviewed"]:
                                         tag_name = str(content_decision["role"])
-                                    order = int(content_decision["order"])
-                                groups.append((group, tag_name, order))
+                                    block_order = int(content_decision["order"])
+                                groups.append((group, tag_name, block_order, spot))
 
                             starts: Dict[int, Tuple[int, str]] = {}
                             ends: Dict[int, Tuple[int, bool]] = {}
-                            for group, tag_name, order in groups:
+                            for group, tag_name, block_order, spot in groups:
                                 if tag_name == "Artifact":
                                     starts[group[0]] = (-1, "Artifact")
                                     ends[group[-1]] = (-1, True)
@@ -4725,7 +5296,13 @@ def create_draft_structure_tree(
                                     )
                                     content_element["/P"] = element
                                 text_children.append(
-                                    (order, len(text_children), element, tag_name)
+                                    (
+                                        block_order,
+                                        spot,
+                                        len(text_children),
+                                        element,
+                                        tag_name,
+                                    )
                                 )
                                 mcid_elements.append(content_element)
                                 text_block_count += 1
@@ -4783,11 +5360,43 @@ def create_draft_structure_tree(
                         pikepdf.unparse_content_stream(rewritten)
                     )
                 parent_tree_entries[page_index] = pikepdf.Array(mcid_elements)
-                ordered_text = sorted(
-                    text_children, key=lambda item: (item[0], item[1])
-                )
+                # A reviewed block order wins where the reviewer set one; runs
+                # they never saw fall in by position rather than by a separate
+                # numbering that used to interleave them into other paragraphs.
+                reviewed = [item[0] for item in text_children if item[0] is not None]
+                if reviewed:
+                    fallback = float(max(reviewed)) + 1.0
+                    resolved: List[Any] = []
+                    last_order = -1.0
+                    for entry in sorted(
+                        text_children, key=lambda row: (-row[1][0], row[1][1])
+                    ):
+                        if entry[0] is not None:
+                            last_order = float(entry[0])
+                        resolved.append(
+                            (last_order if last_order >= 0 else fallback, entry)
+                        )
+                    ordered_text = [
+                        item
+                        for _key, item in sorted(
+                            resolved,
+                            key=lambda pair: (
+                                pair[0],
+                                -pair[1][1][0],
+                                pair[1][1][1],
+                                pair[1][2],
+                            ),
+                        )
+                    ]
+                else:
+                    ordered_text = sorted(
+                        text_children,
+                        key=lambda item: (-item[1][0], item[1][1], item[2]),
+                    )
                 list_element = None
-                for _order, _sequence, element, role in ordered_text:
+                page_flow: List[Tuple[float, float, int, Any]] = []
+                text_spots: List[Tuple[float, float]] = []
+                for _order, _spot, _sequence, element, role in ordered_text:
                     if role == "LI":
                         if list_element is None:
                             list_element = pdf.make_indirect(
@@ -4804,9 +5413,12 @@ def create_draft_structure_tree(
                             page_children.append(list_element)
                         element["/P"] = list_element
                         list_element["/K"].append(element)
-                    else:
-                        list_element = None
-                        page_children.append(element)
+                        continue
+                    list_element = None
+                    text_spots.append(_spot)
+                    page_flow.append(
+                        (float(len(text_spots) - 1), 0.0, len(page_flow), element)
+                    )
 
                 annots = page.get("/Annots")
                 page_has_annotations = False
@@ -4855,9 +5467,34 @@ def create_draft_structure_tree(
                             annot["/Contents"] = pikepdf.String(description[:1000])
                             annotation_description_count += 1
                         annotation_count += 1
-                    page_children.append(structure_element)
+                    # Slot the control in after the last run that precedes it on
+                    # the page, so a listener hears each field next to the words
+                    # that introduce it instead of as a flat list at the end.
+                    rect = annot.get("/Rect")
+                    try:
+                        top = max(float(rect[1]), float(rect[3]))
+                        left = min(float(rect[0]), float(rect[2]))
+                    except (TypeError, ValueError, IndexError):
+                        top, left = 0.0, 0.0
+                    preceding = sum(
+                        1
+                        for spot in text_spots
+                        if spot[0] > top + 2 or (spot[0] > top - 6 and spot[1] <= left)
+                    )
+                    page_flow.append(
+                        (
+                            float(preceding) - 0.5,
+                            left,
+                            len(page_flow),
+                            structure_element,
+                        )
+                    )
                     parent_tree_entries[next_struct_parent] = structure_element
                     next_struct_parent += 1
+                for _primary, _secondary, _seq, element in sorted(
+                    page_flow, key=lambda entry: (entry[0], entry[1], entry[2])
+                ):
+                    page_children.append(element)
                 if page_has_annotations:
                     page["/Tabs"] = pikepdf.Name("/S")
                 page_part["/K"] = pikepdf.Array(page_children)

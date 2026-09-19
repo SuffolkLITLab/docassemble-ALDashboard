@@ -327,9 +327,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("{ allowNeighborFieldText: true }", self.js)
 
     def test_accessibility_remediation_avoids_duplicate_inspection(self):
-        self.assertIn(
-            "from .pdf_accessibility import PDFAccessibilityError", self.api
-        )
+        self.assertIn("from .pdf_accessibility import PDFAccessibilityError", self.api)
         remediation = self.api[
             self.api.index("def pdf_labeler_accessibility_remediate") : self.api.index(
                 'f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-tooltips"'
@@ -391,6 +389,19 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("nodes, max depth ", self.js)
         self.assertIn('run + "  \\u00d7" + String(count)', self.js)
         self.assertIn('id="a11y-tag-structure-details"', self.html)
+
+    def test_the_read_back_simulation_is_shown_and_fed_to_the_ai_pass(self):
+        """Evidence a person can inspect, not just a verdict."""
+        self.assertIn('id="a11y-panel-readback"', self.html)
+        self.assertIn('data-panel-tab="readback"', self.html)
+        self.assertIn('id="a11y-readback-transcript"', self.html)
+        self.assertIn("function renderAccessibilityReadback", self.js)
+        self.assertIn("data-readback-panel", self.js)
+        # The AI pass reviews the same replay rather than the settings alone.
+        self.assertIn("readbackFindings:", self.js)
+        self.assertIn('"readbackFindings"', self.api_accessibility)
+        self.assertIn("def analyze_screen_reader_readback", self.api_accessibility)
+        self.assertIn("deterministic replay of the tag tree", self.api_accessibility)
 
     def test_the_workflow_steps_are_a_collapsible_vertical_rail(self):
         """Vertical frees the ~85px the horizontal strip spent on two rows."""

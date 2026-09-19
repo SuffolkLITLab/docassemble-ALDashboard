@@ -1421,3 +1421,12 @@
 .a11y-glyph-missing { width: 2.75rem; height: 2.75rem; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; text-align: center; border: 1px dashed #ccd6e3; border-radius: 0.35rem; background: #f8f9fa; font-size: 0.6rem; line-height: 1.05; }
 .a11y-glyph-input { font-size: 1rem; text-align: center; min-width: 3.5rem; }
 .a11y-glyph-row { background: #fff; }
+
+.a11y-readback-transcript {
+    max-height: 22rem;
+    overflow-y: auto;
+    padding-left: 1.4rem;
+    font-size: 0.82rem;
+}
+.a11y-readback-transcript li { margin-bottom: 0.15rem; }
+.a11y-readback-field { color: #0a58ca; }

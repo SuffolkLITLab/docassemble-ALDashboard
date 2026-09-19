@@ -42,6 +42,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _repair_identity_cid_to_gid_maps,
     _font_code_usage,
     _title_from_text_sample,
+    analyze_screen_reader_readback,
     _quoted_title_from_finding,
     _simple_font_unicode_cmap,
     _to_unicode_mappings,
@@ -2408,6 +2409,187 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _readback_pdf(path, *, order, texts=None, tooltips=None):
+    """Build a one-page PDF and tag its runs in a chosen announcement order.
+
+    ``order`` lists run indexes in the order the tag tree should announce them,
+    so a test can state the property under test rather than depend on a
+    particular document.
+    """
+    import pikepdf
+
+    runs = texts or ["Alpha one", "Beta two", "Gamma three", "Delta four"]
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+    font = pdf.make_indirect(
+        pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/Type1"),
+                "/BaseFont": pikepdf.Name("/Helvetica"),
+            }
+        )
+    )
+    page.obj["/Resources"] = pikepdf.Dictionary(
+        {"/Font": pikepdf.Dictionary({"/F1": font})}
+    )
+    body = b"BT /F1 12 Tf\n"
+    for index, text in enumerate(runs):
+        # Two runs per line, so a torn line is expressible.
+        x = 72 + (index % 2) * 200
+        y = 700 - (index // 2) * 20
+        escaped = text.replace("\\", "").replace("(", "").replace(")", "")
+        body += (
+            f"1 0 0 1 {x} {y} Tm /P <</MCID {index}>> BDC "
+            f"({escaped}) Tj EMC\n".encode("latin-1")
+        )
+    body += b"ET"
+    page.obj["/Contents"] = pdf.make_stream(body)
+
+    struct_root = pdf.make_indirect(
+        pikepdf.Dictionary(
+            {"/Type": pikepdf.Name("/StructTreeRoot"), "/K": pikepdf.Array()}
+        )
+    )
+    document = pdf.make_indirect(
+        pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/StructElem"),
+                "/S": pikepdf.Name("/Document"),
+                "/P": struct_root,
+                "/K": pikepdf.Array(),
+            }
+        )
+    )
+    kids = []
+    for mcid in order:
+        kids.append(
+            pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/StructElem"),
+                        "/S": pikepdf.Name("/P"),
+                        "/P": document,
+                        "/Pg": page.obj,
+                        "/K": mcid,
+                    }
+                )
+            )
+        )
+    if tooltips:
+        widgets = []
+        for name, tooltip in tooltips:
+            annot = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Widget"),
+                        "/FT": pikepdf.Name("/Tx"),
+                        "/T": pikepdf.String(name),
+                        "/TU": pikepdf.String(tooltip),
+                        "/Rect": pikepdf.Array([300, 690, 400, 706]),
+                    }
+                )
+            )
+            widgets.append(annot)
+            kids.append(
+                pdf.make_indirect(
+                    pikepdf.Dictionary(
+                        {
+                            "/Type": pikepdf.Name("/StructElem"),
+                            "/S": pikepdf.Name("/Form"),
+                            "/P": document,
+                            "/Pg": page.obj,
+                            "/Alt": pikepdf.String(tooltip),
+                            "/K": pikepdf.Dictionary(
+                                {
+                                    "/Type": pikepdf.Name("/OBJR"),
+                                    "/Obj": annot,
+                                    "/Pg": page.obj,
+                                }
+                            ),
+                        }
+                    )
+                )
+            )
+        page.obj["/Annots"] = pikepdf.Array(widgets)
+    document["/K"] = pikepdf.Array(kids)
+    struct_root["/K"] = pikepdf.Array([document])
+    pdf.Root["/StructTreeRoot"] = struct_root
+    pdf.Root["/MarkInfo"] = pikepdf.Dictionary({"/Marked": True})
+    pdf.save(path)
+    pdf.close()
+
+
+class TestScreenReaderReadback(unittest.TestCase):
+    """The read-back simulation states properties, not known bugs."""
+
+    def _run(self, **kwargs):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            path = handle.name
+        try:
+            _readback_pdf(path, **kwargs)
+            return analyze_screen_reader_readback(path)
+        finally:
+            os.remove(path)
+
+    def titles(self, result):
+        return [finding["title"] for finding in result["findings"]]
+
+    def test_an_order_that_follows_the_page_reports_nothing(self):
+        result = self._run(order=[0, 1, 2, 3])
+        self.assertTrue(result["available"])
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["summary"]["textRuns"], 4)
+
+    def test_a_run_pulled_away_from_its_line_is_flagged(self):
+        # Run 1 shares a line with run 0 but is announced last.
+        result = self._run(order=[0, 2, 3, 1])
+        self.assertIn("A line is announced in pieces, far apart", self.titles(result))
+
+    def test_order_that_climbs_back_up_the_page_is_flagged(self):
+        result = self._run(order=[2, 3, 0, 1])
+        self.assertIn("Reading order moves back up the page", self.titles(result))
+
+    def test_controls_sharing_an_announced_name_are_flagged(self):
+        result = self._run(
+            order=[0, 1, 2, 3],
+            tooltips=[("a", "Reason for the request"), ("b", "Reason for the request")],
+        )
+        self.assertIn("Several controls announce the same name", self.titles(result))
+
+    def test_a_symbol_standing_in_for_punctuation_mid_word_is_flagged(self):
+        # 0x92 is the Windows-1252 right single quote; read as a raw byte it is
+        # the control character that turns up in place of the apostrophe.
+        result = self._run(
+            order=[0, 1, 2, 3], texts=["Mother\x92s information", "B", "C", "D"]
+        )
+        titles = self.titles(result)
+        self.assertIn("Text would be spoken as something it does not say", titles)
+        finding = next(
+            item
+            for item in result["findings"]
+            if item["title"] == "Text would be spoken as something it does not say"
+        )
+        self.assertEqual(finding["suggestion"], "Mother\u2019s information")
+
+    def test_an_untagged_pdf_reports_that_there_is_nothing_to_replay(self):
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            path = handle.name
+        try:
+            pdf = pikepdf.new()
+            pdf.add_blank_page(page_size=(612, 792))
+            pdf.save(path)
+            pdf.close()
+            result = analyze_screen_reader_readback(path)
+            self.assertFalse(result["available"])
+            self.assertIn("no tag tree", result["reason"])
+        finally:
+            os.remove(path)
 
 
 class TestSymbolicFontGlyphReview(unittest.TestCase):

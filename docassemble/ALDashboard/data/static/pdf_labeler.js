@@ -232,6 +232,7 @@ const state = {
     glyphRendered: {},
     draftRemediations: {},
     aiReview: { findings: [], lastSignature: "", running: false },
+    readback: null,
     marked: false,
     structureDrafted: false,
     inspected: false,
@@ -507,6 +508,12 @@ const a11yProgressValue = optionalWorkshopElement(
   "span",
 );
 const a11yProgressNote = optionalWorkshopElement("a11y-progress-note");
+const a11yReadbackSummary = optionalWorkshopElement("a11y-readback-summary");
+const a11yReadbackFindings = optionalWorkshopElement("a11y-readback-findings");
+const a11yReadbackTranscript = optionalWorkshopElement(
+  "a11y-readback-transcript",
+  "ol",
+);
 const a11yPanelTabs = Array.from(
   a11yPanelNav.querySelectorAll("[data-panel-tab]"),
 );
@@ -1973,6 +1980,87 @@ function setAccessibilityStepsCollapsed(collapsed) {
 
 // One number for "how far along am I", in the place the eye already goes for
 // the workflow. Blocked checks are excluded: nothing here can resolve them.
+// The replay is evidence, so show both the verdicts and the transcript they
+// came from: a reviewer who disagrees needs to see what was actually heard.
+function renderAccessibilityReadback() {
+  if (!a11yReadbackSummary) return;
+  const readback = state.accessibility.readback || {};
+  const findings = Array.isArray(readback.findings) ? readback.findings : [];
+  const announcements = Array.isArray(readback.announcements)
+    ? readback.announcements
+    : [];
+  if (!readback.available) {
+    a11yReadbackSummary.className = "alert small py-2 alert-secondary";
+    a11yReadbackSummary.textContent =
+      readback.reason ||
+      "Create tags first; there is no reading order to replay yet.";
+    a11yReadbackFindings.innerHTML = "";
+    a11yReadbackTranscript.innerHTML = "";
+    return;
+  }
+  const blocking = findings.filter(function (finding) {
+    return finding.severity === "fail";
+  }).length;
+  a11yReadbackSummary.className =
+    "alert small py-2 " + (findings.length ? "alert-warning" : "alert-success");
+  a11yReadbackSummary.textContent = findings.length
+    ? String(announcements.length) +
+      " things would be announced. " +
+      String(findings.length) +
+      " place" +
+      (findings.length === 1 ? "" : "s") +
+      " where the reading order and the page disagree" +
+      (blocking ? ", " + String(blocking) + " of them serious" : "") +
+      "."
+    : String(announcements.length) +
+      " things would be announced, and the order follows the page throughout.";
+  a11yReadbackFindings.innerHTML = findings
+    .map(function (finding) {
+      const panel = accessibilityPanelNameFor(finding.remediation);
+      return (
+        '<div class="a11y-readback-finding border rounded p-2"><div class="d-flex justify-content-between gap-2"><span class="small fw-semibold">' +
+        escapeHtml(String(finding.title || "Finding")) +
+        '</span><span class="badge ' +
+        (finding.severity === "fail" ? "text-bg-danger" : "text-bg-warning") +
+        '">' +
+        escapeHtml(
+          finding.page === null || finding.page === undefined
+            ? "document"
+            : "page " + String(Number(finding.page) + 1),
+        ) +
+        "</span></div>" +
+        '<div class="small text-muted mt-1">' +
+        escapeHtml(String(finding.detail || "")) +
+        "</div>" +
+        (finding.suggestion
+          ? '<div class="small mt-1">Would read correctly as: \u201c' +
+            escapeHtml(String(finding.suggestion)) +
+            "\u201d</div>"
+          : "") +
+        '<button type="button" class="btn btn-sm btn-outline-primary mt-2" data-readback-panel="' +
+        escapeHtml(panel) +
+        '">' +
+        escapeHtml(aiReviewPanelLabel(panel)) +
+        "</button></div>"
+      );
+    })
+    .join("");
+  a11yReadbackTranscript.innerHTML = announcements
+    .slice(0, 400)
+    .map(function (item) {
+      const isField = item.kind === "field";
+      return (
+        '<li class="' +
+        (isField ? "a11y-readback-field" : "") +
+        '">' +
+        (isField ? "<em>form control:</em> " : "") +
+        escapeHtml(String(item.text || item.name || "(silent)")) +
+        "</li>"
+      );
+    })
+    .join("");
+}
+
 function renderAccessibilityProgress(issues) {
   if (!a11yProgressBar) return;
   const counted = issues.filter(function (issue) {
@@ -3363,6 +3451,7 @@ function renderAccessibilityModal() {
   renderAccessibilityReport();
   renderHeadingCandidates();
   renderTitleFromHeadingControl();
+  renderAccessibilityReadback();
   renderStructurePreview().catch(function (error) {
     console.warn("Could not render structure preview", error);
   });
@@ -3469,6 +3558,7 @@ async function inspectAccessibilityData(forceRefresh) {
     widgets: [],
   };
   state.accessibility.report = payload.data.report || null;
+  state.accessibility.readback = payload.data.readback || null;
   state.accessibility.headingCandidates = Array.isArray(
     payload.data.heading_candidates,
   )
@@ -9265,6 +9355,15 @@ function initAccessibilityHelpPopovers() {
 }
 initAccessibilityHelpPopovers();
 
+if (a11yReadbackFindings) {
+  a11yReadbackFindings.addEventListener("click", function (event) {
+    const button = event.target.closest("[data-readback-panel]");
+    if (!button) return;
+    setActiveAccessibilityPanel(button.dataset.readbackPanel, {
+      focusTab: true,
+    });
+  });
+}
 if (a11yToggleStepsBtn) {
   a11yToggleStepsBtn.addEventListener("click", function () {
     setAccessibilityStepsCollapsed(!state.accessibility.stepsCollapsed);
@@ -10002,6 +10101,11 @@ function accessibilityAiReviewContext() {
     }),
     readingDirection: state.accessibility.readingDirection || "ltr",
     documentLanguage: String(document.documentElement.lang || "").trim(),
+    // What the tagged order would actually announce, so the AI pass reviews the
+    // same evidence a listener would hear rather than the settings alone.
+    readbackFindings: (
+      (state.accessibility.readback || {}).findings || []
+    ).slice(0, 40),
     reportIssues: (Array.isArray(report.issues) ? report.issues : [])
       .filter(function (issue) {
         return issue.status !== "pass" && issue.status !== "blocked";

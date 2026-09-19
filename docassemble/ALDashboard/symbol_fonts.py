@@ -147,10 +147,47 @@ _OUTLINE_PROPOSALS: Dict[tuple[str, str], SymbolProposal] = {
     ): SymbolProposal("☐", "BALLOT BOX", "rendered-outline"),
 }
 
+# Some symbol fonts ship a ToUnicode map that records the *key you press* to
+# get a glyph rather than what the glyph means. CombiNumerals draws circled
+# numbers but declares the QWERTY row, so a screen reader reads a form's
+# section markers aloud as "q w e r t y u". The declared text is stable across
+# subsets in a way a glyph id is not, so it makes a good key.
+_DECLARED_TEXT_PROPOSALS: Dict[tuple[str, str], SymbolProposal] = {
+    # Verified by rasterizing the embedded outlines: the seven glyphs used on
+    # the Alabama custody petition render as 1 through 7 in circles.
+    ("combinumerals", "q"): SymbolProposal("\u2460", "CIRCLED DIGIT ONE", "rendered"),
+    ("combinumerals", "w"): SymbolProposal("\u2461", "CIRCLED DIGIT TWO", "rendered"),
+    ("combinumerals", "e"): SymbolProposal("\u2462", "CIRCLED DIGIT THREE", "rendered"),
+    ("combinumerals", "r"): SymbolProposal("\u2463", "CIRCLED DIGIT FOUR", "rendered"),
+    ("combinumerals", "t"): SymbolProposal("\u2464", "CIRCLED DIGIT FIVE", "rendered"),
+    ("combinumerals", "y"): SymbolProposal("\u2465", "CIRCLED DIGIT SIX", "rendered"),
+    ("combinumerals", "u"): SymbolProposal("\u2466", "CIRCLED DIGIT SEVEN", "rendered"),
+    # The row continues, but no document here uses these, so they are inferred
+    # from the unbroken run above rather than seen. Marked accordingly.
+    ("combinumerals", "i"): SymbolProposal("\u2467", "CIRCLED DIGIT EIGHT", "inferred"),
+    ("combinumerals", "o"): SymbolProposal("\u2468", "CIRCLED DIGIT NINE", "inferred"),
+    ("combinumerals", "p"): SymbolProposal("\u2469", "CIRCLED NUMBER TEN", "inferred"),
+}
+
+
+def propose_declared_text(font_name: str, declared: str) -> Optional[SymbolProposal]:
+    """Return what a symbol font really means where its own map misleads."""
+    family = canonical_symbol_family(font_name)
+    return _DECLARED_TEXT_PROPOSALS.get((family, str(declared or "").strip()))
+
+
 # Families whose glyphs are decorative or symbolic rather than textual. Used to
 # decide whether to offer the "mark as artifact" path at all.
 SYMBOLIC_FAMILIES = frozenset(
-    {"wingdings", "wingdings2", "wingdings3", "webdings", "symbol", "zapfdingbats"}
+    {
+        "wingdings",
+        "wingdings2",
+        "wingdings3",
+        "webdings",
+        "symbol",
+        "zapfdingbats",
+        "combinumerals",
+    }
 )
 
 

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from docassemble.ALDashboard.symbol_fonts import (
     is_symbolic_family,
     propose_character,
+    propose_declared_text,
     propose_outline_character,
 )
 from docassemble.ALDashboard.standard_font_metrics import standard_14_widths
@@ -2429,7 +2430,14 @@ def _readback_tounicode(mapping):
 
 
 def _readback_pdf(
-    path, *, order, texts=None, tooltips=None, tounicode=None, symbolic=False
+    path,
+    *,
+    order,
+    texts=None,
+    tooltips=None,
+    tounicode=None,
+    symbolic=False,
+    base_font="Helvetica",
 ):
     """Build a one-page PDF and tag its runs in a chosen announcement order.
 
@@ -2445,7 +2453,7 @@ def _readback_pdf(
     font_dict = {
         "/Type": pikepdf.Name("/Font"),
         "/Subtype": pikepdf.Name("/Type1"),
-        "/BaseFont": pikepdf.Name("/Helvetica"),
+        "/BaseFont": pikepdf.Name("/" + base_font),
         # What the real fonts in a Word export declare.
         "/Encoding": pikepdf.Name("/WinAnsiEncoding"),
     }
@@ -2456,7 +2464,7 @@ def _readback_pdf(
             pikepdf.Dictionary(
                 {
                     "/Type": pikepdf.Name("/FontDescriptor"),
-                    "/FontName": pikepdf.Name("/Helvetica"),
+                    "/FontName": pikepdf.Name("/" + base_font),
                     # Bit 3: the font declares its glyphs are symbols.
                     "/Flags": 4,
                 }
@@ -2639,14 +2647,27 @@ class TestScreenReaderReadback(unittest.TestCase):
         )
         self.assertNotIn("A symbol is announced as a letter", self.titles(result))
 
-    def _repair(self, *, texts, decisions=None, tounicode=None):
+    def _repair(
+        self,
+        *,
+        texts,
+        decisions=None,
+        tounicode=None,
+        symbolic=False,
+        base_font="Helvetica",
+    ):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
             source_path = source.name
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
             output_path = output.name
         try:
             _readback_pdf(
-                source_path, order=[0, 1, 2, 3], texts=texts, tounicode=tounicode
+                source_path,
+                order=[0, 1, 2, 3],
+                texts=texts,
+                tounicode=tounicode,
+                symbolic=symbolic,
+                base_font=base_font,
             )
             result = repair_readback_text(source_path, output_path, decisions=decisions)
             return result, analyze_screen_reader_readback(output_path)
@@ -2779,6 +2800,38 @@ class TestScreenReaderReadback(unittest.TestCase):
     def test_distinct_names_are_left_alone(self):
         result, _after = self._rename([("a", "First reason"), ("b", "Second reason")])
         self.assertEqual(result["tooltips_renamed"], 0)
+
+    def test_a_curated_symbol_meaning_is_applied_without_asking(self):
+        """CombiNumerals declares the key you press, not what it draws."""
+        result, after = self._repair(
+            # The other runs use digits, which the table has no entry for, so
+            # the fixture's single font does not rewrite them too.
+            texts=["q", "123", "456", "789"],
+            tounicode={0x71: "q"},
+            symbolic=True,
+            base_font="CELEGI+CombiNumerals",
+        )
+        self.assertEqual(result["actual_text_added"], 1)
+        self.assertEqual(result["applied"][0]["actualText"], "\u2460")
+        self.assertEqual(after["announcements"][0]["text"], "\u2460")
+        # The run that was fixed is no longer reported.
+        self.assertEqual(
+            [
+                finding
+                for finding in after["findings"]
+                if finding.get("announcedIndex") == 0
+            ],
+            [],
+        )
+
+    def test_an_uncurated_symbol_font_still_waits_for_a_person(self):
+        result, _after = self._repair(
+            texts=["z", "123", "456", "789"],
+            tounicode={0x7A: "z"},
+            symbolic=True,
+            base_font="ABCDEF+SomeUnknownDingbat",
+        )
+        self.assertEqual(result["actual_text_added"], 0)
 
     def test_an_untagged_pdf_reports_that_there_is_nothing_to_replay(self):
         import pikepdf

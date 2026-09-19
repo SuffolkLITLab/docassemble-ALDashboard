@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 from .standard_font_metrics import is_standard_14, standard_14_widths
 from .symbol_fonts import (
     canonical_symbol_family,
+    propose_declared_text,
     is_symbolic_family,
     propose_character,
     propose_outline_character,
@@ -3503,6 +3504,51 @@ READBACK_LINE_TOLERANCE = 4.0
 READBACK_LABEL_DISTANCE = 6
 
 
+_GLYPH_SOURCE_CACHE: Dict[int, Any] = {}
+
+
+def _curated_character(
+    font_name: str,
+    font_resources: Any,
+    code: int,
+    mapped: Optional[str],
+    two_byte: bool,
+) -> str:
+    """Return what a symbol really means, where a curated table knows.
+
+    Two sources, both already reviewed by a person: a font whose own map
+    declares the wrong text, and a glyph outline fingerprinted by hand. Returns
+    "" when nothing is curated, which is the common case.
+    """
+    if font_resources is None or font_name not in font_resources:
+        return ""
+    try:
+        pdf_font = font_resources[font_name]
+        base = _safe_pdf_string(pdf_font.get("/BaseFont", "")).lstrip("/")
+        if mapped is not None:
+            proposal = propose_declared_text(base, mapped)
+            return proposal.character if proposal is not None else ""
+        # No character at all: the outline is the only evidence left.
+        target = pdf_font
+        descendants = pdf_font.get("/DescendantFonts")
+        if descendants is not None and len(descendants):
+            target = descendants[0]
+        key = id(target.objgen) if hasattr(target, "objgen") else id(target)
+        if key not in _GLYPH_SOURCE_CACHE:
+            program, _kind = _font_program_bytes(target)
+            _GLYPH_SOURCE_CACHE[key] = _load_glyph_source(program)
+        source = _GLYPH_SOURCE_CACHE[key]
+        if source is None:
+            return ""
+        outline = _glyph_drawn_for_code(source, code, two_byte=two_byte)
+        if not outline:
+            return ""
+        proposal = propose_outline_character(base, str(outline.get("path") or ""))
+        return proposal.character if proposal is not None else ""
+    except Exception:
+        return ""
+
+
 def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
     """Collect each marked-content id's text and where it sits on the page."""
     import pikepdf
@@ -3575,27 +3621,45 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
         if operator in {"Tj", "TJ", "'", '"'} and current is not None:
             decoder = decoder_for(current_font)
             unmapped = 0
+            curated_text = ""
             if decoder is None:
                 text = _shown_instruction_text(instruction)
             else:
                 two_byte, mapping = decoder
                 pieces: List[str] = []
+                curated_pieces: List[str] = []
                 for code in _codes_from_operands(operands, two_byte):
                     mapped = mapping.get(code)
                     if mapped is None and not two_byte and 0x20 <= code < 0x7F:
                         mapped = chr(code)
+                    curated = _curated_character(
+                        current_font, font_resources, code, mapped, two_byte
+                    )
+                    if curated:
+                        curated_pieces.append(curated)
                     if mapped is None:
                         unmapped += 1
                         continue
                     pieces.append(mapped)
+                    if not curated:
+                        curated_pieces.append(mapped)
                 text = "".join(pieces)
+                curated_text = "".join(curated_pieces)
             if not text and not unmapped:
                 continue
             record = runs.setdefault(
                 current,
-                {"text": "", "y": text_y, "x": text_x, "unmapped": 0, "font": ""},
+                {
+                    "text": "",
+                    "curated": "",
+                    "y": text_y,
+                    "x": text_x,
+                    "unmapped": 0,
+                    "font": "",
+                },
             )
             record["text"] += text
+            record["curated"] = str(record.get("curated", "")) + (curated_text or text)
             record["unmapped"] = int(record.get("unmapped", 0)) + unmapped
             if not record.get("font") and font_resources is not None:
                 if current_font in font_resources:
@@ -3664,6 +3728,7 @@ def _readback_sequence(
                 "drawn": (record or {}).get("text", ""),
                 "unmapped": int((record or {}).get("unmapped", 0)),
                 "font": (record or {}).get("font", ""),
+                "curated": (record or {}).get("curated", ""),
                 "symbolic": bool((record or {}).get("symbolic")),
                 "replaced": bool(replacement),
                 "y": (record or {}).get("y"),
@@ -3724,6 +3789,13 @@ _READBACK_SUBSTITUTE_GLYPHS = {
     "\u00a4": "\u2019",
     "\u0092": "\u2019",
 }
+
+
+def _readback_curated_suggestion(item: Mapping[str, Any]) -> str:
+    """The reviewed replacement for a run, when the curated tables know one."""
+    curated = re.sub(r"\s+", " ", str(item.get("curated") or "")).strip()
+    spoken = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
+    return curated if curated and curated != spoken else ""
 
 
 def _readback_text_correction(announced: str) -> Optional[Dict[str, Any]]:
@@ -4067,6 +4139,9 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     for item in spoken:
         if not int(item.get("unmapped", 0)):
             continue
+        # Replacement text already supplies what these glyphs mean.
+        if item.get("replaced"):
+            continue
         font_name = str(item.get("font") or "this font")
         findings.append(
             {
@@ -4087,8 +4162,10 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                 "page": item["page"],
                 "announcedIndex": item["index"],
                 "announced": item.get("spoken", ""),
-                # /ActualText is the fix, but only a person can say what the
-                # symbol means, so no value is suggested.
+                # /ActualText is the fix. A curated outline match supplies the
+                # value; otherwise only a person can say what the symbol means.
+                "suggestion": _readback_curated_suggestion(item),
+                "confident": bool(_readback_curated_suggestion(item)),
                 "remediation": "readback",
             }
         )
@@ -4118,6 +4195,8 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                 "page": item["page"],
                 "announcedIndex": item["index"],
                 "announced": announced,
+                "suggestion": _readback_curated_suggestion(item),
+                "confident": bool(_readback_curated_suggestion(item)),
                 "remediation": "readback",
             }
         )
@@ -4372,7 +4451,17 @@ def repair_readback_text(
                 announced = _readback_spoken_text(
                     item.get("drawn") or item.get("text", "")
                 )
-                correction = _readback_text_correction(announced)
+                curated = _readback_curated_suggestion(item)
+                correction: Optional[Dict[str, Any]] = (
+                    {
+                        "corrected": curated,
+                        "confident": True,
+                        "substitutions": 0,
+                        "controls": 0,
+                    }
+                    if curated
+                    else _readback_text_correction(announced)
+                )
                 index = int(item.get("index", -1))
                 chosen: Optional[str] = None
                 if index in overrides:
@@ -4380,7 +4469,7 @@ def repair_readback_text(
                     if chosen is None:
                         continue
                 elif correction is not None and correction["confident"]:
-                    chosen = correction["corrected"]
+                    chosen = str(correction["corrected"])
                 elif correction is not None:
                     skipped.append(
                         {

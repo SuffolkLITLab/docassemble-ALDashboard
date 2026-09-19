@@ -522,6 +522,14 @@ const a11yApplyReadbackTextBtn = optionalWorkshopElement(
   "a11y-apply-readback-text",
   "button",
 );
+const a11yReadbackNameFixes = optionalWorkshopElement(
+  "a11y-readback-name-fixes",
+);
+const a11yReadbackNameList = optionalWorkshopElement("a11y-readback-name-list");
+const a11yApplyFieldNamesBtn = optionalWorkshopElement(
+  "a11y-apply-field-names",
+  "button",
+);
 const a11yPanelTabs = Array.from(
   a11yPanelNav.querySelectorAll("[data-panel-tab]"),
 );
@@ -2075,6 +2083,36 @@ function renderAccessibilityReadback() {
         escapeHtml(finding.confident ? String(finding.suggestion) : "") +
         '" placeholder="' +
         escapeHtml(String(finding.suggestion)) +
+        '"></div>'
+      );
+    })
+    .join("");
+  // Numbering is offered filled in, because it is always an improvement on two
+  // controls that cannot be told apart; a real name replaces it in place.
+  const nameFixes = findings
+    .filter(function (finding) {
+      return finding.category === "field-names";
+    })
+    .flatMap(function (finding) {
+      return Array.isArray(finding.suggestions) ? finding.suggestions : [];
+    });
+  a11yReadbackNameFixes.classList.toggle("hidden", !nameFixes.length);
+  a11yReadbackNameList.innerHTML = nameFixes
+    .map(function (suggestion) {
+      const inputId =
+        "a11y-readback-name-" +
+        String(suggestion.fieldName || "").replace(/[^A-Za-z0-9_-]+/g, "-");
+      return (
+        '<div class="border rounded p-2"><div class="small text-muted">Field <code>' +
+        escapeHtml(String(suggestion.fieldName || "")) +
+        '</code></div><label class="form-label small mb-1 mt-1" for="' +
+        inputId +
+        '">Announce as</label><input id="' +
+        inputId +
+        '" type="text" class="form-control form-control-sm" data-readback-field="' +
+        escapeHtml(String(suggestion.fieldName || "")) +
+        '" value="' +
+        escapeHtml(String(suggestion.suggested || "")) +
         '"></div>'
       );
     })
@@ -9084,6 +9122,15 @@ function applyDeterministicFieldOrder(direction, options) {
 }
 
 function accessibilityRemediationFeedback(action, result, options) {
+  if (action === "field_names") {
+    return (
+      String(result.tooltips_renamed || 0) +
+      " control" +
+      (Number(result.tooltips_renamed) === 1 ? "" : "s") +
+      " can now be told apart when announced. Numbering says which blank you " +
+      "are in, not what it is for."
+    );
+  }
   if (action === "readback_text") {
     const held = Array.isArray(result.needs_review)
       ? result.needs_review.length
@@ -9244,6 +9291,12 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
       markAccessibilityDraft(
         "metadata",
         String(result.metadata_updates || 0) + " metadata changes applied",
+      );
+    } else if (action === "field_names") {
+      markAccessibilityDraft(
+        "field_tooltips",
+        String(result.tooltips_renamed || 0) +
+          " duplicate control names numbered",
       );
     } else if (action === "readback_text") {
       markAccessibilityDraft(
@@ -9408,6 +9461,33 @@ function initAccessibilityHelpPopovers() {
 }
 initAccessibilityHelpPopovers();
 
+if (a11yApplyFieldNamesBtn) {
+  a11yApplyFieldNamesBtn.addEventListener("click", function () {
+    const decisions = Array.from(
+      a11yReadbackNameList.querySelectorAll("[data-readback-field]"),
+    )
+      .map(function (input) {
+        const value = String(input.value || "").trim();
+        return {
+          fieldName: input.dataset.readbackField,
+          tooltip: value,
+          apply: !!value,
+        };
+      })
+      .filter(function (decision) {
+        return decision.apply;
+      });
+    if (!decisions.length) {
+      showError("Fill in at least one name before applying.");
+      return;
+    }
+    runAccessibilityRemediation("field_names", { decisions: decisions }).catch(
+      function (error) {
+        showError(error.message || String(error));
+      },
+    );
+  });
+}
 if (a11yApplyReadbackTextBtn) {
   a11yApplyReadbackTextBtn.addEventListener("click", function () {
     const decisions = Array.from(

@@ -390,6 +390,18 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('run + "  \\u00d7" + String(count)', self.js)
         self.assertIn('id="a11y-tag-structure-details"', self.html)
 
+    def test_duplicate_control_names_are_numbered_and_still_editable(self):
+        self.assertIn('id="a11y-readback-name-list"', self.html)
+        self.assertIn('id="a11y-apply-field-names"', self.html)
+        self.assertIn("data-readback-field", self.js)
+        self.assertIn('"field_names"', self.js)
+        self.assertIn("def repair_duplicate_field_names", self.api_accessibility)
+        self.assertIn("def _duplicate_field_distinguishers", self.api_accessibility)
+        self.assertIn('"field_names"', self.api)
+        # The UI says plainly what numbering can and cannot do.
+        self.assertIn("not what it is for", self.js)
+        self.assertIn("cannot say what a control is for", self.html)
+
     def test_replacement_text_is_editable_before_it_is_written(self):
         """A correction the reviewer cannot see or change is not a choice."""
         self.assertIn('id="a11y-readback-text-list"', self.html)

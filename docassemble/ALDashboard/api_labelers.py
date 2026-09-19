@@ -3478,6 +3478,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
             apply_unicode_map_decisions,
             create_draft_structure_tree,
             embed_fonts_and_rebuild_unicode,
+            repair_duplicate_field_names,
             repair_readback_text,
             substitute_fonts,
         )
@@ -3493,9 +3494,10 @@ def pdf_labeler_accessibility_remediate() -> Response:
             "unicode_map",
             "substitute_fonts",
             "readback_text",
+            "field_names",
         }:
             raise DashboardAPIValidationError(
-                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, substitute_fonts, or readback_text."
+                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, substitute_fonts, readback_text, or field_names."
             )
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
@@ -3590,7 +3592,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
                     post_data.get("mark_as_tagged"), default=False
                 ),
             )
-        elif action == "readback_text":
+        elif action in {"readback_text", "field_names"}:
             raw_decisions = post_data.get("decisions")
             readback_decisions = (
                 json.loads(raw_decisions)
@@ -3604,9 +3606,12 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 raise DashboardAPIValidationError(
                     "decisions must be a JSON list of objects."
                 )
-            result = repair_readback_text(
-                input_path, output_path, decisions=readback_decisions
+            repair_call = (
+                repair_readback_text
+                if action == "readback_text"
+                else repair_duplicate_field_names
             )
+            result = repair_call(input_path, output_path, decisions=readback_decisions)
         elif action in {"structure", "unicode_map", "substitute_fonts"}:
             key = "operations" if action == "structure" else "decisions"
             raw = post_data.get(key)

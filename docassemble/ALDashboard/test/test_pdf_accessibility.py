@@ -43,6 +43,8 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _font_code_usage,
     _title_from_text_sample,
     analyze_screen_reader_readback,
+    _strip_field_name_distinguisher,
+    repair_duplicate_field_names,
     repair_readback_text,
     _quoted_title_from_finding,
     _simple_font_unicode_cmap,
@@ -2651,6 +2653,67 @@ class TestScreenReaderReadback(unittest.TestCase):
         finally:
             os.remove(source_path)
             os.remove(output_path)
+
+    def _rename(self, tooltips, **kwargs):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            _readback_pdf(source_path, order=[0, 1, 2, 3], tooltips=tooltips)
+            result = repair_duplicate_field_names(source_path, output_path, **kwargs)
+            return result, analyze_screen_reader_readback(output_path)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_controls_that_share_a_name_are_numbered_by_position(self):
+        result, after = self._rename(
+            [("a", "Reason for the request"), ("b", "Reason for the request")]
+        )
+        self.assertEqual(result["tooltips_renamed"], 2)
+        announced = sorted(item["tooltip"] for item in result["applied"])
+        self.assertEqual(
+            announced,
+            [
+                "Reason for the request (option 1 of 2)",
+                "Reason for the request (option 2 of 2)",
+            ],
+        )
+        # The duplicate is genuinely resolved, not merely relabelled.
+        self.assertEqual(
+            [
+                finding
+                for finding in after["findings"]
+                if finding["category"] == "field-names"
+            ],
+            [],
+        )
+
+    def test_renaming_twice_does_not_stack_the_numbering(self):
+        self.assertEqual(
+            _strip_field_name_distinguisher("Notes (continued) (line 1 of 3)"),
+            "Notes",
+        )
+        self.assertEqual(_strip_field_name_distinguisher("Amount (3 of 5)"), "Amount")
+        # An ordinary parenthetical is not a distinguisher.
+        self.assertEqual(
+            _strip_field_name_distinguisher("Name (as it appears)"),
+            "Name (as it appears)",
+        )
+
+    def test_a_reviewer_can_replace_the_numbering_with_a_real_name(self):
+        result, _after = self._rename(
+            [("a", "Reason for the request"), ("b", "Reason for the request")],
+            decisions=[{"fieldName": "a", "tooltip": "Reason you are asking"}],
+        )
+        names = {item["fieldName"]: item["tooltip"] for item in result["applied"]}
+        self.assertEqual(names["a"], "Reason you are asking")
+        self.assertEqual(names["b"], "Reason for the request (option 2 of 2)")
+
+    def test_distinct_names_are_left_alone(self):
+        result, _after = self._rename([("a", "First reason"), ("b", "Second reason")])
+        self.assertEqual(result["tooltips_renamed"], 0)
 
     def test_an_untagged_pdf_reports_that_there_is_nothing_to_replay(self):
         import pikepdf

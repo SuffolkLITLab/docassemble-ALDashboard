@@ -3728,6 +3728,87 @@ def _readback_line_peers(
     return peers
 
 
+def _strip_field_name_distinguisher(name: str) -> str:
+    """Remove a trailing marker so re-running does not stack them up.
+
+    Also drops a bare "(continued)", which the numbering below says better.
+    """
+    text = re.sub(r"\s+", " ", str(name or "")).strip()
+    pattern = (
+        r"\s*\((?:continued|cont\.?|"
+        r"(?:line|row|option|part)?\s*\d+\s+of\s+\d+)\)\s*$"
+    )
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+    return text
+
+
+def _duplicate_field_distinguishers(
+    group: List[Dict[str, Any]], all_fields: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Work out how to tell apart controls that announce the same name.
+
+    Position is the only thing that reliably separates them, so the answer is
+    always "which one of how many" -- but what that number *means* depends on
+    the shape. Continuation lines of one long answer sit alone in a column;
+    repeating records share their row with other fields; options sit beside
+    each other on one row. Naming the right one is the difference between
+    "line 2 of 4" and "row 2 of 3".
+    """
+    placed = [item for item in group if item.get("y") is not None]
+    if len(placed) < 2:
+        return []
+    ordered = sorted(
+        placed,
+        key=lambda item: (
+            item.get("page") or 0,
+            -float(item["y"]),
+            float(item["x"] or 0),
+        ),
+    )
+    rows: List[List[Dict[str, Any]]] = []
+    for item in ordered:
+        for row in rows:
+            same_page = row[0].get("page") == item.get("page")
+            if same_page and abs(float(row[0]["y"]) - float(item["y"])) < 8:
+                row.append(item)
+                break
+        else:
+            rows.append([item])
+    shares_row_with_outsider = any(
+        other.get("page") == item.get("page")
+        and other.get("y") is not None
+        and other.get("name") != item.get("name")
+        and all(other.get("name") != member.get("name") for member in group)
+        and abs(float(other["y"]) - float(item["y"])) < 8
+        for item in ordered
+        for other in all_fields
+    )
+    if any(len(row) > 1 for row in rows):
+        noun = "option"
+    elif shares_row_with_outsider:
+        noun = "row"
+    else:
+        noun = "line"
+    total = len(ordered)
+    return [
+        {
+            "announcedIndex": item["index"],
+            "fieldName": item.get("name", ""),
+            "page": item.get("page"),
+            "current": item.get("text", ""),
+            "suggested": (
+                f"{_strip_field_name_distinguisher(item.get('text', ''))}"
+                f" ({noun} {position} of {total})"
+            ).strip(),
+            "noun": noun,
+        }
+        for position, item in enumerate(ordered, start=1)
+    ]
+
+
 def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     """Replay the tagged reading order and report where it would mislead.
 
@@ -3892,6 +3973,7 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     for announced, group in by_name.items():
         if len(group) < 2:
             continue
+        suggestions = _duplicate_field_distinguishers(group, field_items)
         findings.append(
             {
                 "id": "readback-duplicate-names-"
@@ -3903,12 +3985,20 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                     f"{len(group)} controls all announce \u201c{announced}\u201d, so "
                     "tabbing through them gives no way to tell which blank is "
                     "which."
+                    + (
+                        " Numbering them by position tells them apart, but it "
+                        "cannot say what each one is for: if the shared name is "
+                        "vague, give them real names instead."
+                        if suggestions
+                        else ""
+                    )
                 ),
                 "page": group[0]["page"],
                 "announcedIndex": group[0]["index"],
                 "count": len(group),
                 "fieldNames": [item.get("name", "") for item in group],
-                "remediation": "field_tooltips",
+                "suggestions": suggestions,
+                "remediation": "readback",
             }
         )
 
@@ -3987,6 +4077,128 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
             "findings": len(findings),
             "blocking": sum(1 for f in findings if f["severity"] == "fail"),
         },
+    }
+
+
+def repair_duplicate_field_names(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    *,
+    decisions: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Give controls that announce the same name a way to be told apart.
+
+    Positional numbering is the most an automatic pass can honestly offer: it
+    says which blank you are in, not what it is for. Where the shared name is
+    already descriptive that is the whole fix; where it is vague, this makes
+    the controls distinguishable and leaves the naming to a person.
+    """
+    import pikepdf
+
+    overrides: Dict[str, Optional[str]] = {}
+    for item in decisions or []:
+        if not isinstance(item, Mapping):
+            continue
+        field_name = str(item.get("fieldName") or "")
+        if not field_name:
+            continue
+        apply_flag = item.get("apply", True)
+        if isinstance(apply_flag, str):
+            apply_flag = apply_flag.strip().lower() not in {"false", "0", "no", ""}
+        value = re.sub(r"\s+", " ", str(item.get("tooltip") or "")).strip()
+        overrides[field_name] = value[:500] if apply_flag and value else None
+
+    applied: List[Dict[str, Any]] = []
+    try:
+        with pikepdf.open(input_pdf_path) as pdf:
+            sequence = _readback_sequence(pdf, keep_elements=True)
+            field_items = [item for item in sequence if item["kind"] == "field"]
+            by_name: Dict[str, List[Dict[str, Any]]] = {}
+            for item in field_items:
+                announced = item.get("text") or ""
+                if announced:
+                    by_name.setdefault(announced, []).append(item)
+            planned: Dict[str, str] = {}
+            for group in by_name.values():
+                if len(group) < 2:
+                    continue
+                for suggestion in _duplicate_field_distinguishers(group, field_items):
+                    planned[suggestion["fieldName"]] = suggestion["suggested"]
+            for field_name, suggested in planned.items():
+                chosen = overrides.get(field_name, suggested)
+                if not chosen:
+                    continue
+                target_item: Optional[Dict[str, Any]] = next(
+                    (entry for entry in field_items if entry.get("name") == field_name),
+                    None,
+                )
+                if target_item is None:
+                    continue
+                element = target_item.get("element")
+                if element is not None:
+                    element["/Alt"] = pikepdf.String(chosen)
+                annot_reference = element.get("/K") if element is not None else None
+                annot = (
+                    annot_reference.get("/Obj")
+                    if isinstance(annot_reference, pikepdf.Dictionary)
+                    else None
+                )
+                parent = _named_parent(annot) if annot is not None else None
+                target = parent if parent is not None else annot
+                if target is not None:
+                    target["/TU"] = pikepdf.String(chosen)
+                applied.append(
+                    {
+                        "fieldName": field_name,
+                        "page": target_item.get("page"),
+                        "tooltip": chosen,
+                    }
+                )
+            # Overrides may name fields outside any duplicate group.
+            for field_name, chosen in overrides.items():
+                if not chosen or field_name in planned:
+                    continue
+                target_item = next(
+                    (entry for entry in field_items if entry.get("name") == field_name),
+                    None,
+                )
+                if target_item is None:
+                    continue
+                element = target_item.get("element")
+                if element is not None:
+                    element["/Alt"] = pikepdf.String(chosen)
+                annot_reference = element.get("/K") if element is not None else None
+                annot = (
+                    annot_reference.get("/Obj")
+                    if isinstance(annot_reference, pikepdf.Dictionary)
+                    else None
+                )
+                parent = _named_parent(annot) if annot is not None else None
+                target = parent if parent is not None else annot
+                if target is not None:
+                    target["/TU"] = pikepdf.String(chosen)
+                applied.append(
+                    {
+                        "fieldName": field_name,
+                        "page": target_item.get("page"),
+                        "tooltip": chosen,
+                    }
+                )
+            pdf.save(output_pdf_path)
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Failed to rename duplicate controls: {exc}")
+
+    return {
+        "action": "field_names",
+        "tooltips_renamed": len(applied),
+        "applied": applied[:200],
+        "review_required": True,
+        "warning": (
+            "Numbering tells controls apart; it does not describe them. Where "
+            "the shared name is vague, give each control a real name."
+        ),
     }
 
 

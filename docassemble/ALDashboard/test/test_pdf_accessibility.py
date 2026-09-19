@@ -2438,6 +2438,8 @@ def _readback_pdf(
     tounicode=None,
     symbolic=False,
     base_font="Helvetica",
+    untag=False,
+    image_only=False,
 ):
     """Build a one-page PDF and tag its runs in a chosen announcement order.
 
@@ -2474,18 +2476,32 @@ def _readback_pdf(
     page.obj["/Resources"] = pikepdf.Dictionary(
         {"/Font": pikepdf.Dictionary({"/F1": font})}
     )
+    if image_only:
+        image = pdf.make_stream(b"\x00")
+        image["/Type"] = pikepdf.Name("/XObject")
+        image["/Subtype"] = pikepdf.Name("/Image")
+        image["/Width"] = 1
+        image["/Height"] = 1
+        page.obj["/Resources"]["/XObject"] = pikepdf.Dictionary({"/Im0": image})
+        page.obj["/Contents"] = pdf.make_stream(b"q 400 0 0 400 72 300 cm /Im0 Do Q")
+        runs = []
     body = b"BT /F1 12 Tf\n"
     for index, text in enumerate(runs):
         # Two runs per line, so a torn line is expressible.
         x = 72 + (index % 2) * 200
         y = 700 - (index // 2) * 20
         escaped = text.replace("\\", "").replace("(", "").replace(")", "")
-        body += (
-            f"1 0 0 1 {x} {y} Tm /P <</MCID {index}>> BDC "
-            f"({escaped}) Tj EMC\n".encode("latin-1")
-        )
+        if untag:
+            # Drawn, but never wrapped in marked content.
+            body += f"1 0 0 1 {x} {y} Tm ({escaped}) Tj\n".encode("latin-1")
+        else:
+            body += (
+                f"1 0 0 1 {x} {y} Tm /P <</MCID {index}>> BDC "
+                f"({escaped}) Tj EMC\n".encode("latin-1")
+            )
     body += b"ET"
-    page.obj["/Contents"] = pdf.make_stream(body)
+    if not image_only:
+        page.obj["/Contents"] = pdf.make_stream(body)
 
     struct_root = pdf.make_indirect(
         pikepdf.Dictionary(
@@ -2635,11 +2651,31 @@ class TestScreenReaderReadback(unittest.TestCase):
         """Circled numbers announced as "q w e" is the shape this catches."""
         result = self._run(
             order=[0, 1, 2, 3],
-            texts=["q", "Beta", "Gamma", "Delta"],
+            texts=["q", "123", "456", "789"],
             tounicode={0x71: "q"},
             symbolic=True,
+            base_font="CELEGI+CombiNumerals",
         )
         self.assertIn("A symbol is announced as a letter", self.titles(result))
+
+    def test_a_subset_text_font_flagged_symbolic_is_not_reported(self):
+        """Subset CID text fonts set the symbolic flag as a matter of course."""
+        result = self._run(
+            order=[0, 1, 2, 3],
+            texts=["PETITION FOR JUDGMENT", "Beta", "Gamma", "Delta"],
+            symbolic=True,
+            base_font="CIDFont+F3",
+        )
+        self.assertNotIn("A symbol is announced as a letter", self.titles(result))
+
+    def test_a_page_whose_text_is_entirely_untagged_is_reported(self):
+        """Counting marked content alone cannot see a page with none."""
+        result = self._run(order=[0], untag=True)
+        self.assertIn("None of the page's text is tagged", self.titles(result))
+
+    def test_a_page_that_is_only_a_picture_is_reported(self):
+        result = self._run(order=[], image_only=True)
+        self.assertIn("The page is a picture with no text in it", self.titles(result))
 
     def test_ordinary_text_is_not_mistaken_for_a_symbol(self):
         result = self._run(

@@ -3677,6 +3677,55 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
     return runs
 
 
+def _page_text_census(page: Any) -> Dict[str, int]:
+    """Count the text a page draws, and how much of it is inside a tag.
+
+    Counting only marked content cannot answer "was anything tagged at all",
+    because an untagged page has no marked content to count. Form XObjects are
+    included: plenty of government forms draw their whole body inside one.
+    """
+    import pikepdf
+
+    census = {"total": 0, "marked": 0, "images": 0}
+
+    def count_stream(container: Any) -> None:
+        try:
+            instructions = list(pikepdf.parse_content_stream(container))
+        except Exception:
+            return
+        depth = 0
+        for instruction in instructions:
+            operator = str(instruction.operator)
+            if operator in {"BMC", "BDC"}:
+                depth += 1
+            elif operator == "EMC":
+                depth = max(0, depth - 1)
+            elif operator in {"Tj", "TJ", "'", '"'}:
+                raw = ""
+                for operand in instruction.operands:
+                    if isinstance(operand, pikepdf.String):
+                        raw += str(bytes(operand), "latin-1", "ignore")
+                    elif isinstance(operand, pikepdf.Array):
+                        for piece in operand:
+                            if isinstance(piece, pikepdf.String):
+                                raw += str(bytes(piece), "latin-1", "ignore")
+                if not raw.strip("\x00 \t\r\n"):
+                    continue
+                census["total"] += 1
+                if depth:
+                    census["marked"] += 1
+
+    count_stream(page)
+    resources = page.get("/Resources") if hasattr(page, "get") else None
+    for _path, obj in _walk_resource_xobjects(resources):
+        subtype = _safe_pdf_string(obj.get("/Subtype", ""))
+        if subtype == "/Form":
+            count_stream(obj)
+        elif subtype == "/Image":
+            census["images"] += 1
+    return census
+
+
 def _readback_sequence(
     pdf: Any, *, keep_elements: bool = False
 ) -> List[Dict[str, Any]]:
@@ -3966,8 +4015,8 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                     "findings": [],
                 }
             sequence = _readback_sequence(pdf)
-            tagged_mcids = {(item["page"], item.get("text", "")) for item in sequence}
             page_run_totals = [len(_readback_page_runs(page)) for page in pdf.pages]
+            page_censuses = [_page_text_census(page) for page in pdf.pages]
     except PDFAccessibilityError:
         raise
     except Exception as exc:
@@ -4174,10 +4223,10 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     #     truth: circled numbers announced as "q w e r" is the classic shape.
     for item in text_items:
         announced = item.get("spoken") or ""
-        # The font's own descriptor is the authority here, not its name: a
-        # subset called "CombiNumerals" and one called "Arial" are only
-        # distinguishable by the symbolic flag they set.
-        if not item.get("symbolic") or not announced:
+        # The descriptor's symbolic flag is not enough on its own: subset CID
+        # text fonts set it routinely, and trusting it reported a court form's
+        # own title as a symbol. Only a family known to draw symbols qualifies.
+        if not announced or not is_symbolic_family(str(item.get("font") or "")):
             continue
         if not re.fullmatch(r"[A-Za-z0-9 ]+", announced):
             continue
@@ -4236,9 +4285,46 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     tagged_per_page: Dict[Optional[int], int] = {}
     for item in text_items:
         tagged_per_page[item["page"]] = tagged_per_page.get(item["page"], 0) + 1
-    for page_index, total in enumerate(page_run_totals):
+    for page_index, census in enumerate(page_censuses):
         announced_here = tagged_per_page.get(page_index, 0)
-        if total and announced_here < total:
+        drawn = census["total"]
+        if not drawn:
+            if census["images"]:
+                findings.append(
+                    {
+                        "id": f"readback-image-only-{page_index}",
+                        "severity": "fail",
+                        "category": "reading-order",
+                        "title": "The page is a picture with no text in it",
+                        "detail": (
+                            f"Page {page_index + 1} draws {census['images']} image(s) "
+                            "and no text at all, so there is nothing for a screen "
+                            "reader to announce. Tagging cannot help here: the page "
+                            "needs rebuilding from its source, or running through OCR."
+                        ),
+                        "page": page_index,
+                        "remediation": "draft_structure",
+                    }
+                )
+            continue
+        if not announced_here:
+            findings.append(
+                {
+                    "id": f"readback-nothing-tagged-{page_index}",
+                    "severity": "fail",
+                    "category": "reading-order",
+                    "title": "None of the page's text is tagged",
+                    "detail": (
+                        f"Page {page_index + 1} draws text in {drawn} places and not "
+                        "one of them is reachable from the tag tree, so the whole "
+                        "page is silent while the form controls on it are announced."
+                    ),
+                    "page": page_index,
+                    "remediation": "draft_structure",
+                }
+            )
+            continue
+        if announced_here < page_run_totals[page_index]:
             findings.append(
                 {
                     "id": f"readback-untagged-{page_index}",
@@ -4246,7 +4332,8 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                     "category": "reading-order",
                     "title": "Page content is never announced",
                     "detail": (
-                        f"Page {page_index + 1} draws {total} marked runs but only "
+                        f"Page {page_index + 1} draws "
+                        f"{page_run_totals[page_index]} marked runs but only "
                         f"{announced_here} are reachable from the tag tree, so the "
                         "rest is silent."
                     ),

@@ -2827,6 +2827,46 @@ class TestScreenReaderReadback(unittest.TestCase):
             "Name (as it appears)",
         )
 
+    def test_widgets_sharing_one_field_name_are_each_renamed(self):
+        """Radio kids and repeated widgets share a /T; each still needs a name."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            _readback_pdf(
+                source_path,
+                order=[0, 1, 2, 3],
+                tooltips=[("shared", "Pick one"), ("shared", "Pick one")],
+            )
+            result = repair_duplicate_field_names(source_path, output_path)
+            self.assertEqual(result["tooltips_renamed"], 2)
+            # Two distinct announced positions, two distinct names.
+            self.assertEqual(
+                len({item["announcedIndex"] for item in result["applied"]}), 2
+            )
+            self.assertEqual(len({item["tooltip"] for item in result["applied"]}), 2)
+            with pikepdf.open(output_path) as after:
+                alts = []
+
+                def walk(node):
+                    if isinstance(node, pikepdf.Array):
+                        for kid in node:
+                            walk(kid)
+                    elif isinstance(node, pikepdf.Dictionary):
+                        if "/Alt" in node:
+                            alts.append(str(node["/Alt"]))
+                        if "/K" in node:
+                            walk(node["/K"])
+
+                walk(after.Root.StructTreeRoot.K)
+                self.assertEqual(len(set(alts)), 2)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
     def test_a_reviewer_can_replace_the_numbering_with_a_real_name(self):
         result, _after = self._rename(
             [("a", "Reason for the request"), ("b", "Reason for the request")],
@@ -2887,6 +2927,72 @@ class TestScreenReaderReadback(unittest.TestCase):
             self.assertIn("no tag tree", result["reason"])
         finally:
             os.remove(path)
+
+
+class TestReadbackCoordinateHandling(unittest.TestCase):
+    """Every check downstream is coordinate-driven, so the spots must be right."""
+
+    def test_a_new_text_object_resets_the_text_matrix(self):
+        """BT starts an identity matrix; carrying the old one moved runs."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            path = handle.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            font = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Font"),
+                        "/Subtype": pikepdf.Name("/Type1"),
+                        "/BaseFont": pikepdf.Name("/Helvetica"),
+                        "/Encoding": pikepdf.Name("/WinAnsiEncoding"),
+                    }
+                )
+            )
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {"/Font": pikepdf.Dictionary({"/F1": font})}
+            )
+            # Two text objects, each positioning with a relative Td.
+            page.obj["/Contents"] = pdf.make_stream(
+                b"BT /F1 12 Tf 72 720 Td (first) Tj ET "
+                b"BT /F1 12 Tf 72 700 Td (second) Tj ET"
+            )
+            pdf.save(path)
+            pdf.close()
+            runs = _readback_page_runs_for_test(path)
+            self.assertEqual(sorted(round(run["y"]) for run in runs), [700, 720])
+        finally:
+            os.remove(path)
+
+
+def _readback_page_runs_for_test(path):
+    import pikepdf
+    from docassemble.ALDashboard.pdf_accessibility import _readback_page_runs
+
+    with pikepdf.open(path) as pdf:
+        page = pdf.pages[0]
+        # The fixture marks nothing, so wrap each run to make it collectable.
+        instructions = list(pikepdf.parse_content_stream(page))
+        rebuilt = []
+        mcid = 0
+        for instruction in instructions:
+            if str(instruction.operator) == "BT":
+                rebuilt.append(
+                    pikepdf.ContentStreamInstruction(
+                        [pikepdf.Name("/P"), pikepdf.Dictionary({"/MCID": mcid})],
+                        pikepdf.Operator("BDC"),
+                    )
+                )
+                mcid += 1
+            rebuilt.append(instruction)
+            if str(instruction.operator) == "ET":
+                rebuilt.append(
+                    pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC"))
+                )
+        page["/Contents"] = pdf.make_stream(pikepdf.unparse_content_stream(rebuilt))
+        return list(_readback_page_runs(page).values())
 
 
 class TestNestedFormXObjectTagging(unittest.TestCase):

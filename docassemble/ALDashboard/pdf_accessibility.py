@@ -11,7 +11,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 
-from .standard_font_metrics import is_standard_14, standard_14_widths
+from .standard_font_metrics import (
+    is_standard_14,
+    is_unicode_keyed,
+    standard_14_widths,
+)
 from .symbol_fonts import (
     canonical_symbol_family,
     propose_declared_text,
@@ -147,7 +151,9 @@ def draft_field_tooltips_with_ai(
         tooltip = _clip_tooltip(tooltip)
         if name in allowed_names and tooltip:
             result[name] = tooltip
-    return _distinguish_tooltips(result)
+    # Number by the order the caller supplied the fields, not the order the
+    # model happened to answer in, or "(line 3 of 4)" lands on the top blank.
+    return _distinguish_tooltips(result, order=[str(row["name"]) for row in records])
 
 
 def _clip_tooltip(tooltip: str, limit: int = 64) -> str:
@@ -165,7 +171,9 @@ def _clip_tooltip(tooltip: str, limit: int = 64) -> str:
     return (spaced if len(spaced) >= limit // 2 else clipped).strip(" .,:;-")
 
 
-def _distinguish_tooltips(tooltips: Mapping[str, str]) -> Dict[str, str]:
+def _distinguish_tooltips(
+    tooltips: Mapping[str, str], order: Optional[Iterable[str]] = None
+) -> Dict[str, str]:
     """Make repeated tooltips tell their fields apart.
 
     Continuation lines of one long answer legitimately describe the same thing,
@@ -175,6 +183,14 @@ def _distinguish_tooltips(tooltips: Mapping[str, str]) -> Dict[str, str]:
     counts: Dict[str, int] = {}
     for value in tooltips.values():
         counts[value] = counts.get(value, 0) + 1
+    if order is not None:
+        position = {name: index for index, name in enumerate(order)}
+        tooltips = {
+            name: tooltips[name]
+            for name in sorted(
+                tooltips, key=lambda item: position.get(item, len(position))
+            )
+        }
     seen: Dict[str, int] = {}
     result: Dict[str, str] = {}
     for name, value in tooltips.items():
@@ -1558,8 +1574,13 @@ def _expected_font_widths(pdf_font: Any) -> Tuple[Dict[int, float], str]:
         return expected, "pdf-widths"
     canonical = _canonical_font_name(pdf_font.get("/BaseFont", ""))
     published = standard_14_widths(canonical)
-    if published:
+    if published and is_unicode_keyed(canonical):
         return {code: float(width) for code, width in published.items()}, "standard-14"
+    if published:
+        # ZapfDingbats is keyed by its own built-in encoding, so these widths
+        # cannot be looked up in a candidate's Unicode cmap. Claiming they can
+        # scored every substitute against the ASCII characters at those codes.
+        return {}, "built-in-encoding"
     return {}, ""
 
 
@@ -3607,7 +3628,10 @@ READBACK_LINE_TOLERANCE = 4.0
 READBACK_LABEL_DISTANCE = 6
 
 
-_GLYPH_SOURCE_CACHE: Dict[int, Any] = {}
+# Keyed by (pdf identity, object id). ``objgen`` is only unique within one
+# document, and id() of the tuple it returns is worse than useless: the tuple is
+# temporary, so CPython hands out the same address for every font.
+_GLYPH_SOURCE_CACHE: Dict[Tuple[int, Any], Any] = {}
 
 
 def _curated_character(
@@ -3636,11 +3660,15 @@ def _curated_character(
         descendants = pdf_font.get("/DescendantFonts")
         if descendants is not None and len(descendants):
             target = descendants[0]
-        key = id(target.objgen) if hasattr(target, "objgen") else id(target)
-        if key not in _GLYPH_SOURCE_CACHE:
+        owner = getattr(target, "objgen", None)
+        key = (id(getattr(pdf_font, "_pdf", None) or font_resources), owner)
+        if owner is None or key not in _GLYPH_SOURCE_CACHE:
             program, _kind = _font_program_bytes(target)
-            _GLYPH_SOURCE_CACHE[key] = _load_glyph_source(program)
-        source = _GLYPH_SOURCE_CACHE[key]
+            source = _load_glyph_source(program)
+            if owner is not None:
+                _GLYPH_SOURCE_CACHE[key] = source
+        else:
+            source = _GLYPH_SOURCE_CACHE[key]
         if source is None:
             return ""
         outline = _glyph_drawn_for_code(source, code, two_byte=two_byte)
@@ -3652,7 +3680,9 @@ def _curated_character(
         return ""
 
 
-def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
+def _readback_page_runs(
+    page: Any, *, to_page: Optional[Tuple[float, ...]] = None
+) -> Dict[int, Dict[str, Any]]:
     """Collect each marked-content id's text and where it sits on the page."""
     import pikepdf
 
@@ -3692,6 +3722,11 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
     for instruction in instructions:
         operator = str(instruction.operator)
         operands = list(instruction.operands)
+        if operator == "BT":
+            # A text object starts with an identity text matrix. Carrying the
+            # previous one across put later runs hundreds of points up the page.
+            line_x = line_y = text_x = text_y = 0.0
+            leading = 0.0
         if operator in {"BMC", "BDC"}:
             stack.append(current)
             current = None
@@ -3750,13 +3785,18 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
                 curated_text = "".join(curated_pieces)
             if not text and not unmapped:
                 continue
+            spot_x, spot_y = text_x, text_y
+            if to_page is not None:
+                ma, mb, mc, md, me, mf = to_page
+                spot_x = ma * text_x + mc * text_y + me
+                spot_y = mb * text_x + md * text_y + mf
             record = runs.setdefault(
                 current,
                 {
                     "text": "",
                     "curated": "",
-                    "y": text_y,
-                    "x": text_x,
+                    "y": spot_y,
+                    "x": spot_x,
                     "unmapped": 0,
                     "font": "",
                 },
@@ -3843,12 +3883,18 @@ def _readback_sequence(
     # against the stream it belongs to rather than the page.
     stream_runs: Dict[Any, Dict[int, Dict[str, Any]]] = {}
     for page in pdf.pages:
+        placements = _form_placements(page)
         for _path, obj in _walk_resource_xobjects(page.get("/Resources")):
             if _safe_pdf_string(obj.get("/Subtype", "")) != "/Form":
                 continue
             if obj.objgen in stream_runs:
                 continue
-            stream_runs[obj.objgen] = _readback_page_runs(obj)
+            # Without the form's placement its runs are in its own coordinate
+            # space, and comparing those against page-space runs invents torn
+            # lines and backwards reading order.
+            stream_runs[obj.objgen] = _readback_page_runs(
+                obj, to_page=placements.get(obj.objgen)
+            )
     sequence: List[Dict[str, Any]] = []
 
     def page_of(node: Any) -> Optional[int]:
@@ -4640,6 +4686,24 @@ def ocr_image_only_pages(
                         {"page": page_index, "reason": "The page has no image to read."}
                     )
                     continue
+                # pdftoppm renders with the rotation applied, so the pixel axes
+                # no longer match the MediaBox and every line would land in the
+                # wrong place -- invisibly, because the layer is not drawn.
+                try:
+                    rotation = int(page.get("/Rotate", 0) or 0) % 360
+                except (TypeError, ValueError):
+                    rotation = 0
+                if rotation:
+                    skipped.append(
+                        {
+                            "page": page_index,
+                            "reason": (
+                                f"The page is rotated {rotation} degrees; "
+                                "reading it would place the text wrongly."
+                            ),
+                        }
+                    )
+                    continue
                 words = _ocr_page_words(
                     input_pdf_path,
                     page_index + 1,
@@ -4680,7 +4744,9 @@ def ocr_image_only_pages(
                 widths = standard_14_widths("helvetica") or {}
                 # Render mode 3 draws nothing: the picture already shows these
                 # words, and a second visible copy would be a mess.
-                pieces = ["BT", "3 Tr"]
+                # q/Q: this stream is concatenated onto content whose graphics
+                # state it does not control.
+                pieces = ["q", "BT", "3 Tr"]
                 for word in words:
                     size = max(word["height"] * scale_y, 1.0)
                     natural = (
@@ -4698,6 +4764,7 @@ def ocr_image_only_pages(
                     pieces.append(f"1 0 0 1 {x:.2f} {y:.2f} Tm")
                     pieces.append(f"({_pdf_text_string(word['text'])}) Tj")
                 pieces.append("ET")
+                pieces.append("Q")
                 layer = pdf.make_stream(
                     # The font declares WinAnsiEncoding, which is cp1252; latin-1
                     # would turn every curly apostrophe into a question mark.
@@ -4777,20 +4844,22 @@ def repair_duplicate_field_names(
                 announced = item.get("text") or ""
                 if announced:
                     by_name.setdefault(announced, []).append(item)
-            planned: Dict[str, str] = {}
+            # Keyed by the announced position, not the field name: radio kids
+            # and repeated widgets share one /T, and keying by name kept a
+            # single suggestion and put it on the first widget.
+            planned: Dict[int, Dict[str, Any]] = {}
             for group in by_name.values():
                 if len(group) < 2:
                     continue
                 for suggestion in _duplicate_field_distinguishers(group, field_items):
-                    planned[suggestion["fieldName"]] = suggestion["suggested"]
-            for field_name, suggested in planned.items():
-                chosen = overrides.get(field_name, suggested)
+                    planned[int(suggestion["announcedIndex"])] = suggestion
+            by_index = {int(item["index"]): item for item in field_items}
+            for announced_index, suggestion in planned.items():
+                field_name = str(suggestion.get("fieldName") or "")
+                chosen = overrides.get(field_name, suggestion["suggested"])
                 if not chosen:
                     continue
-                target_item: Optional[Dict[str, Any]] = next(
-                    (entry for entry in field_items if entry.get("name") == field_name),
-                    None,
-                )
+                target_item: Optional[Dict[str, Any]] = by_index.get(announced_index)
                 if target_item is None:
                     continue
                 element = target_item.get("element")
@@ -4809,13 +4878,17 @@ def repair_duplicate_field_names(
                 applied.append(
                     {
                         "fieldName": field_name,
+                        "announcedIndex": announced_index,
                         "page": target_item.get("page"),
                         "tooltip": chosen,
                     }
                 )
+            planned_names = {
+                str(item.get("fieldName") or "") for item in planned.values()
+            }
             # Overrides may name fields outside any duplicate group.
             for field_name, chosen in overrides.items():
-                if not chosen or field_name in planned:
+                if not chosen or field_name in planned_names:
                     continue
                 target_item = next(
                     (entry for entry in field_items if entry.get("name") == field_name),
@@ -6526,7 +6599,20 @@ def create_draft_structure_tree(
                                     }
                                 )
                             )
-                            page_children.append(list_element)
+                            # The list joins the flow where its first item
+                            # sits. Appending it straight to page_children put
+                            # every list ahead of the page's first paragraph.
+                            text_spots.append(_spot)
+                            page_flow.append(
+                                (
+                                    float(len(text_spots) - 1),
+                                    0.0,
+                                    len(page_flow),
+                                    list_element,
+                                )
+                            )
+                        else:
+                            text_spots.append(_spot)
                         element["/P"] = list_element
                         list_element["/K"].append(element)
                         continue
@@ -6543,7 +6629,10 @@ def create_draft_structure_tree(
                         continue
                     subtype = _safe_pdf_string(annot.get("/Subtype", ""))
                     flags = int(annot.get("/F", 0) or 0)
-                    if subtype == "/PrinterMark" or flags & 3:
+                    # Bit 2 is Hidden. Bit 1 only applies to annotation types
+                    # the viewer has no handler for, so a widget carrying it is
+                    # still drawn and focusable and still needs a tag.
+                    if subtype == "/PrinterMark" or flags & 2:
                         continue
                     page_has_annotations = True
                     annot["/StructParent"] = next_struct_parent

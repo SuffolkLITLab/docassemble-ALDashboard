@@ -416,6 +416,17 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("finding.confident ?", self.js)
         self.assertIn("What should be announced here?", self.js)
 
+    def test_a_scanned_page_can_be_offered_to_ocr(self):
+        self.assertIn('id="a11y-run-ocr"', self.html)
+        self.assertIn('id="a11y-readback-ocr"', self.html)
+        self.assertIn('"ocr"', self.js)
+        self.assertIn("readback-image-only", self.js)
+        self.assertIn("def ocr_image_only_pages", self.api_accessibility)
+        self.assertIn('action == "ocr"', self.api)
+        # The page keeps its appearance, and the result must be reviewed.
+        self.assertIn("keeps its current", self.js)
+        self.assertIn("OCR reads pixels and guesses", self.api_accessibility)
+
     def test_the_read_back_simulation_is_shown_and_fed_to_the_ai_pass(self):
         """Evidence a person can inspect, not just a verdict."""
         self.assertIn('id="a11y-panel-readback"', self.html)

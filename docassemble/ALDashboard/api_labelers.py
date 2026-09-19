@@ -3478,6 +3478,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
             apply_unicode_map_decisions,
             create_draft_structure_tree,
             embed_fonts_and_rebuild_unicode,
+            ocr_image_only_pages,
             repair_duplicate_field_names,
             repair_readback_text,
             substitute_fonts,
@@ -3495,9 +3496,10 @@ def pdf_labeler_accessibility_remediate() -> Response:
             "substitute_fonts",
             "readback_text",
             "field_names",
+            "ocr",
         }:
             raise DashboardAPIValidationError(
-                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, substitute_fonts, readback_text, or field_names."
+                "action must be metadata, catalog_flags, draft_structure, fonts, structure, unicode_map, substitute_fonts, readback_text, field_names, or ocr."
             )
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
@@ -3591,6 +3593,12 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 mark_as_tagged=parse_bool(
                     post_data.get("mark_as_tagged"), default=False
                 ),
+            )
+        elif action == "ocr":
+            result = ocr_image_only_pages(
+                input_path,
+                output_path,
+                language=str(post_data.get("language") or "eng")[:12],
             )
         elif action in {"readback_text", "field_names"}:
             raw_decisions = post_data.get("decisions")

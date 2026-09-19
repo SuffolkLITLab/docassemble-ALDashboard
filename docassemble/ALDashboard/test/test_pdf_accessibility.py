@@ -1,5 +1,7 @@
 # do not pre-load
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -34,6 +36,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     review_pdf_accessibility_with_ai,
     embed_fonts_and_rebuild_unicode,
     extract_pdf_field_tooltips,
+    ocr_image_only_pages,
     inspect_pdf_accessibility,
     _artifact_untagged_content,
     _iter_pdf_fonts,
@@ -2884,6 +2887,134 @@ class TestScreenReaderReadback(unittest.TestCase):
             self.assertIn("no tag tree", result["reason"])
         finally:
             os.remove(path)
+
+
+class TestScannedPageOcr(unittest.TestCase):
+    """A page of pixels has nothing to announce until something reads it."""
+
+    def _image_only_pdf(self, path, words):
+        """Draw text, rasterise it, and rebuild it as a picture-only page."""
+        import pikepdf
+
+        with tempfile.TemporaryDirectory() as workspace:
+            source = os.path.join(workspace, "text.pdf")
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            font = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Font"),
+                        "/Subtype": pikepdf.Name("/Type1"),
+                        "/BaseFont": pikepdf.Name("/Helvetica"),
+                    }
+                )
+            )
+            page.obj["/Resources"] = pikepdf.Dictionary(
+                {"/Font": pikepdf.Dictionary({"/F1": font})}
+            )
+            body = b"BT /F1 36 Tf\n"
+            for index, word in enumerate(words):
+                body += f"1 0 0 1 72 {650 - index * 60} Tm ({word}) Tj\n".encode()
+            page.obj["/Contents"] = pdf.make_stream(body + b"ET")
+            pdf.save(source)
+            pdf.close()
+
+            rendered = os.path.join(workspace, "page")
+            subprocess.run(
+                [
+                    "pdftoppm",
+                    "-r",
+                    "150",
+                    "-png",
+                    "-f",
+                    "1",
+                    "-l",
+                    "1",
+                    source,
+                    rendered,
+                ],
+                check=True,
+                timeout=120,
+                capture_output=True,
+            )
+            png = sorted(Path(workspace).glob("page*.png"))[0]
+            raw = png.read_bytes()
+            from PIL import Image
+
+            with Image.open(png) as image:
+                width, height = image.size
+                flat = image.convert("RGB").tobytes()
+
+            out = pikepdf.new()
+            out_page = out.add_blank_page(page_size=(612, 792))
+            stream = out.make_stream(flat)
+            stream["/Type"] = pikepdf.Name("/XObject")
+            stream["/Subtype"] = pikepdf.Name("/Image")
+            stream["/Width"] = width
+            stream["/Height"] = height
+            stream["/ColorSpace"] = pikepdf.Name("/DeviceRGB")
+            stream["/BitsPerComponent"] = 8
+            out_page.obj["/Resources"] = pikepdf.Dictionary(
+                {"/XObject": pikepdf.Dictionary({"/Im0": stream})}
+            )
+            out_page.obj["/Contents"] = out.make_stream(
+                b"q 612 0 0 792 0 0 cm /Im0 Do Q"
+            )
+            out.save(path)
+            out.close()
+            self.assertTrue(raw)
+
+    def test_a_scanned_page_gains_a_text_layer_it_can_be_read_from(self):
+        if not shutil.which("tesseract") or not shutil.which("pdftoppm"):
+            self.skipTest("tesseract and pdftoppm are needed to read a page image.")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            self._image_only_pdf(source_path, ["Petition", "Custody", "Hearing"])
+            before = analyze_screen_reader_readback(source_path)
+            self.assertNotIn(
+                "The page is a picture with no text in it",
+                [finding["title"] for finding in before["findings"]],
+                "fixture has no tag tree, so the readback cannot judge it yet",
+            )
+            result = ocr_image_only_pages(source_path, output_path)
+            self.assertEqual(result["pages_read"], 1)
+            self.assertTrue(result["review_required"])
+            recognised = " ".join(page["sample"] for page in result["pages"]).lower()
+            self.assertIn("petition", recognised)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
+    def test_a_page_that_already_has_text_is_left_alone(self):
+        if not shutil.which("tesseract"):
+            self.skipTest("tesseract is needed to read a page image.")
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            _readback_pdf(source_path, order=[0, 1, 2, 3])
+            result = ocr_image_only_pages(source_path, output_path)
+            self.assertEqual(result["pages_read"], 0)
+            self.assertEqual(
+                result["skipped"][0]["reason"], "The page already has text."
+            )
+            with (
+                pikepdf.open(source_path) as before,
+                pikepdf.open(output_path) as after,
+            ):
+                self.assertEqual(
+                    before.pages[0].Contents.read_bytes(),
+                    after.pages[0].Contents.read_bytes(),
+                )
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
 
 
 class TestSymbolicFontGlyphReview(unittest.TestCase):

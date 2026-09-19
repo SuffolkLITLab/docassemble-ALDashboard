@@ -530,6 +530,8 @@ const a11yApplyFieldNamesBtn = optionalWorkshopElement(
   "a11y-apply-field-names",
   "button",
 );
+const a11yReadbackOcr = optionalWorkshopElement("a11y-readback-ocr");
+const a11yRunOcrBtn = optionalWorkshopElement("a11y-run-ocr", "button");
 const a11yPanelTabs = Array.from(
   a11yPanelNav.querySelectorAll("[data-panel-tab]"),
 );
@@ -2089,6 +2091,12 @@ function renderAccessibilityReadback() {
       );
     })
     .join("");
+  a11yReadbackOcr.classList.toggle(
+    "hidden",
+    !findings.some(function (finding) {
+      return String(finding.id || "").startsWith("readback-image-only");
+    }),
+  );
   // Numbering is offered filled in, because it is always an improvement on two
   // controls that cannot be told apart; a real name replaces it in place.
   const nameFixes = findings
@@ -9124,6 +9132,23 @@ function applyDeterministicFieldOrder(direction, options) {
 }
 
 function accessibilityRemediationFeedback(action, result, options) {
+  if (action === "ocr") {
+    if (!result.pages_read) {
+      return "No page needed OCR, or nothing legible was found.";
+    }
+    const pages = Array.isArray(result.pages) ? result.pages : [];
+    const confidence = pages.length ? pages[0].averageConfidence : 0;
+    return (
+      "Read " +
+      String(result.pages_read) +
+      " page" +
+      (Number(result.pages_read) === 1 ? "" : "s") +
+      " at about " +
+      String(confidence) +
+      "% confidence. Check the text it found, then create tags so it can be " +
+      "announced."
+    );
+  }
   if (action === "field_names") {
     return (
       String(result.tooltips_renamed || 0) +
@@ -9294,6 +9319,12 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
         "metadata",
         String(result.metadata_updates || 0) + " metadata changes applied",
       );
+    } else if (action === "ocr") {
+      markAccessibilityDraft(
+        "readback-ocr",
+        String(result.words_added || 0) +
+          " recognised lines added; review them",
+      );
     } else if (action === "field_names") {
       markAccessibilityDraft(
         "field_tooltips",
@@ -9463,6 +9494,20 @@ function initAccessibilityHelpPopovers() {
 }
 initAccessibilityHelpPopovers();
 
+if (a11yRunOcrBtn) {
+  a11yRunOcrBtn.addEventListener("click", function () {
+    if (
+      !window.confirm(
+        "Run OCR over the pages that have no text? The page keeps its current " +
+          "appearance; recognised text is added invisibly and must be reviewed.",
+      )
+    )
+      return;
+    runAccessibilityRemediation("ocr", {}).catch(function (error) {
+      showError(error.message || String(error));
+    });
+  });
+}
 if (a11yApplyFieldNamesBtn) {
   a11yApplyFieldNamesBtn.addEventListener("click", function () {
     const decisions = Array.from(

@@ -4366,6 +4366,251 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     }
 
 
+def _pdf_text_string(text: str) -> str:
+    """Escape a run for a PDF literal string."""
+    return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _ocr_page_words(
+    pdf_path: str, page_number: int, *, language: str, dpi: int, min_confidence: float
+) -> List[Dict[str, Any]]:
+    """Recognise a rendered page and return confident words with their boxes."""
+    with tempfile.TemporaryDirectory() as workspace:
+        stem = os.path.join(workspace, "page")
+        try:
+            subprocess.run(  # nosec B603 B607
+                [
+                    "pdftoppm",
+                    "-r",
+                    str(dpi),
+                    "-png",
+                    "-f",
+                    str(page_number),
+                    "-l",
+                    str(page_number),
+                    pdf_path,
+                    stem,
+                ],
+                check=True,
+                timeout=180,
+                capture_output=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        rendered = sorted(Path(workspace).glob("page*.png"))
+        if not rendered:
+            return []
+        try:
+            completed = subprocess.run(  # nosec B603 B607
+                ["tesseract", str(rendered[0]), "stdout", "-l", language, "tsv"],
+                check=True,
+                timeout=300,
+                capture_output=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        from PIL import Image  # type: ignore[import-untyped]
+
+        try:
+            with Image.open(rendered[0]) as image:
+                pixel_width, pixel_height = image.size
+        except Exception:
+            return []
+
+    words: List[Dict[str, Any]] = []
+    for line in completed.stdout.decode("utf-8", "replace").splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) < 12:
+            continue
+        text = parts[11].strip()
+        if not text:
+            continue
+        try:
+            confidence = float(parts[10])
+            left, top = float(parts[6]), float(parts[7])
+            width, height = float(parts[8]), float(parts[9])
+            line_key = (parts[2], parts[3], parts[4])
+        except ValueError:
+            continue
+        if confidence < min_confidence or width <= 0 or height <= 0:
+            continue
+        words.append(
+            {
+                "text": text,
+                "line": line_key,
+                "left": left,
+                "top": top,
+                "width": width,
+                "height": height,
+                "confidence": confidence,
+                "pixelWidth": pixel_width,
+                "pixelHeight": pixel_height,
+            }
+        )
+    # One run per line, not per word: tesseract already knows which words share
+    # a line, and a tag tree of single words reads back as scrambled fragments.
+    lines: Dict[Any, List[Dict[str, Any]]] = {}
+    for word in words:
+        lines.setdefault(word["line"], []).append(word)
+    grouped: List[Dict[str, Any]] = []
+    for members in lines.values():
+        members.sort(key=lambda item: item["left"])
+        left = min(item["left"] for item in members)
+        top = min(item["top"] for item in members)
+        right = max(item["left"] + item["width"] for item in members)
+        bottom = max(item["top"] + item["height"] for item in members)
+        grouped.append(
+            {
+                "text": " ".join(item["text"] for item in members),
+                "left": left,
+                "top": top,
+                "width": right - left,
+                "height": bottom - top,
+                "confidence": sum(item["confidence"] for item in members)
+                / len(members),
+                "pixelWidth": pixel_width,
+                "pixelHeight": pixel_height,
+            }
+        )
+    grouped.sort(key=lambda item: (item["top"], item["left"]))
+    return grouped
+
+
+def ocr_image_only_pages(
+    input_pdf_path: str,
+    output_pdf_path: str,
+    *,
+    language: str = "eng",
+    dpi: int = 200,
+    min_confidence: float = 60.0,
+) -> Dict[str, Any]:
+    """Give a scanned page a text layer so there is something to announce.
+
+    Only pages that draw an image and no text at all are touched, so a real
+    text layer is never competed with. The recognised words are drawn in
+    invisible render mode over the picture they came from: the page looks
+    exactly as it did, and the tagger can reach the text on the next pass.
+
+    OCR is a guess about pixels. Every page it touches is reported back with
+    its confidence so a person can read what it decided before trusting it.
+    """
+    import pikepdf
+
+    pages_read: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    try:
+        with pikepdf.open(input_pdf_path) as pdf:
+            for page_index, page in enumerate(pdf.pages):
+                census = _page_text_census(page)
+                if census["total"]:
+                    skipped.append(
+                        {"page": page_index, "reason": "The page already has text."}
+                    )
+                    continue
+                if not census["images"]:
+                    skipped.append(
+                        {"page": page_index, "reason": "The page has no image to read."}
+                    )
+                    continue
+                words = _ocr_page_words(
+                    input_pdf_path,
+                    page_index + 1,
+                    language=language,
+                    dpi=dpi,
+                    min_confidence=min_confidence,
+                )
+                if not words:
+                    skipped.append(
+                        {"page": page_index, "reason": "Nothing legible was found."}
+                    )
+                    continue
+                box = page.mediabox
+                page_width = float(box[2]) - float(box[0])
+                page_height = float(box[3]) - float(box[1])
+                scale_x = page_width / float(words[0]["pixelWidth"])
+                scale_y = page_height / float(words[0]["pixelHeight"])
+                helvetica = pdf.make_indirect(
+                    pikepdf.Dictionary(
+                        {
+                            "/Type": pikepdf.Name("/Font"),
+                            "/Subtype": pikepdf.Name("/Type1"),
+                            "/BaseFont": pikepdf.Name("/Helvetica"),
+                            "/Encoding": pikepdf.Name("/WinAnsiEncoding"),
+                        }
+                    )
+                )
+                resources = page.get("/Resources")
+                if resources is None:
+                    resources = pikepdf.Dictionary()
+                    page["/Resources"] = resources
+                fonts = resources.get("/Font")
+                if fonts is None:
+                    fonts = pikepdf.Dictionary()
+                    resources["/Font"] = fonts
+                font_name = "/DAOCR"
+                fonts[font_name] = helvetica
+                widths = standard_14_widths("helvetica") or {}
+                # Render mode 3 draws nothing: the picture already shows these
+                # words, and a second visible copy would be a mess.
+                pieces = ["BT", "3 Tr"]
+                for word in words:
+                    size = max(word["height"] * scale_y, 1.0)
+                    natural = (
+                        sum(widths.get(ord(ch), 500) for ch in word["text"])
+                        / 1000.0
+                        * size
+                    )
+                    target = word["width"] * scale_x
+                    stretch = (target / natural * 100.0) if natural else 100.0
+                    x = word["left"] * scale_x + float(box[0])
+                    baseline = (word["top"] + word["height"] * 0.82) * scale_y
+                    y = float(box[3]) - baseline
+                    pieces.append(f"{font_name} {size:.2f} Tf")
+                    pieces.append(f"{max(min(stretch, 400.0), 10.0):.1f} Tz")
+                    pieces.append(f"1 0 0 1 {x:.2f} {y:.2f} Tm")
+                    pieces.append(f"({_pdf_text_string(word['text'])}) Tj")
+                pieces.append("ET")
+                layer = pdf.make_stream(
+                    # The font declares WinAnsiEncoding, which is cp1252; latin-1
+                    # would turn every curly apostrophe into a question mark.
+                    ("\n".join(pieces)).encode("cp1252", "replace")
+                )
+                contents = page.get("/Contents")
+                if isinstance(contents, pikepdf.Array):
+                    contents.append(layer)
+                else:
+                    page["/Contents"] = pikepdf.Array([contents, layer])
+                pages_read.append(
+                    {
+                        "page": page_index,
+                        "words": len(words),
+                        "averageConfidence": round(
+                            sum(word["confidence"] for word in words) / len(words), 1
+                        ),
+                        "sample": " ".join(word["text"] for word in words[:24]),
+                    }
+                )
+            pdf.save(output_pdf_path)
+    except PDFAccessibilityError:
+        raise
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Failed to read the page images: {exc}")
+
+    return {
+        "action": "ocr",
+        "pages_read": len(pages_read),
+        "words_added": sum(item["words"] for item in pages_read),
+        "pages": pages_read,
+        "skipped": skipped,
+        "review_required": True,
+        "warning": (
+            "OCR reads pixels and guesses. Read the recognised text before "
+            "trusting it, and tag the page afterwards so the new text is "
+            "reachable."
+        ),
+    }
+
+
 def repair_duplicate_field_names(
     input_pdf_path: str,
     output_pdf_path: str,

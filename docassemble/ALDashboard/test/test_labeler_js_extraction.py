@@ -426,6 +426,20 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('pikepdf.Name("/MCR")', self.api_accessibility)
         self.assertIn('"/Stm": target', self.api_accessibility)
 
+    def test_images_can_be_described_by_a_vision_model_on_request(self):
+        self.assertIn('id="a11y-ai-image-alt"', self.html)
+        self.assertIn("The pictures are sent to the AI only when you choose", self.html)
+        self.assertIn("function draftImageAltTextWithAi", self.js)
+        self.assertIn("/pdf-labeler/api/accessibility-ai-image-alt", self.js)
+        self.assertIn("def pdf_labeler_accessibility_ai_image_alt", self.api)
+        self.assertIn("def describe_images_with_ai", self.api_accessibility)
+        self.assertIn("def render_image_assets", self.api_accessibility)
+        # Gated on auth like every other AI action, and marked as a draft.
+        self.assertIn("a11yAiImageAltBtn.disabled = !aiEnabled", self.js)
+        self.assertIn('altTextSource = "ai"', self.js)
+        # Told to say DECORATIVE rather than invent meaning.
+        self.assertIn("DECORATIVE", self.api_accessibility)
+
     def test_a_scanned_page_can_be_offered_to_ocr(self):
         self.assertIn('id="a11y-run-ocr"', self.html)
         self.assertIn('id="a11y-readback-ocr"', self.html)

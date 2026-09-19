@@ -3747,6 +3747,81 @@ def pdf_labeler_accessibility_ai_tooltips() -> Response:
         )
 
 
+@app.route("/pdf-labeler/api/accessibility-ai-image-alt", methods=["POST"])
+@app.route(
+    f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-image-alt",
+    methods=["POST"],
+)
+@csrf.exempt
+@cross_origin(origins="*", methods=["POST", "HEAD"], automatic_options=True)
+def pdf_labeler_accessibility_ai_image_alt() -> Response:
+    """Describe page images with a vision model, only when explicitly asked.
+
+    The pixels leave the server on this request and on no other, which is why
+    it is its own endpoint behind its own button.
+    """
+    request_id = str(uuid.uuid4())
+    if not _labeler_ai_auth_check():
+        return _ai_auth_fail(request_id)
+    input_path = None
+    try:
+        filename, content, post_data = _read_pdf_labeler_file_request()
+        raw_assets = post_data.get("asset_ids")
+        asset_ids = (
+            json.loads(raw_assets)
+            if isinstance(raw_assets, str) and raw_assets.strip()
+            else raw_assets
+        )
+        if asset_ids is not None and not isinstance(asset_ids, list):
+            raise DashboardAPIValidationError("asset_ids must be a JSON list.")
+        from .pdf_accessibility import describe_images_with_ai, render_image_assets
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
+            tmp_in.write(content)
+            input_path = tmp_in.name
+        previews = render_image_assets(
+            input_path, [str(item) for item in asset_ids] if asset_ids else None
+        )
+        descriptions = describe_images_with_ai(
+            previews,
+            context={"filename": filename},
+            model=str(post_data.get("model") or LABELER_DEFAULT_MODEL),
+        )
+        return jsonify(
+            {
+                "success": True,
+                "request_id": request_id,
+                "data": {
+                    "descriptions": descriptions,
+                    "images_examined": len(previews),
+                    "review_required": True,
+                },
+            }
+        )
+    except DashboardAPIValidationError as exc:
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "validation_error", "message": exc.message},
+            },
+            exc.status_code,
+        )
+    except Exception as exc:
+        log(f"ALDashboard: AI image description failed: {exc}", "error")
+        return jsonify_with_status(
+            {
+                "success": False,
+                "request_id": request_id,
+                "error": {"type": "server_error", "message": str(exc)},
+            },
+            500,
+        )
+    finally:
+        if input_path and os.path.exists(input_path):
+            os.remove(input_path)
+
+
 @app.route("/pdf-labeler/api/accessibility-ai-headings", methods=["POST"])
 @app.route(
     f"{LABELER_BASE_PATH}/pdf-labeler/api/accessibility-ai-headings",

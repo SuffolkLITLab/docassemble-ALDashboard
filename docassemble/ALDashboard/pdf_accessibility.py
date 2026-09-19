@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import re
@@ -200,6 +202,100 @@ def _distinguish_tooltips(
         seen[value] = seen.get(value, 0) + 1
         result[name] = f"{value} (line {seen[value]} of {counts[value]})"
     return result
+
+
+def describe_images_with_ai(
+    previews: Mapping[str, bytes],
+    *,
+    context: Optional[Mapping[str, Any]] = None,
+    model: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Ask a vision model what each supplied image shows.
+
+    One image per call, and a plain sentence back rather than JSON: the content
+    has to be a list of parts to carry a picture, and the JSON path in
+    ``chat_completion`` assumes a string. A small model is enough to say what a
+    court seal or a logo is, so one is chosen when the endpoint offers it.
+
+    Every answer is a draft. The model is told to say DECORATIVE rather than
+    invent meaning, and nothing here writes to the PDF.
+    """
+    from docassemble.ALToolbox.llms import chat_completion
+
+    try:
+        from docassemble.ALToolbox.llms import get_first_small_model
+
+        chosen = model or get_first_small_model()
+    except Exception:
+        chosen = model
+
+    details = context or {}
+    filename = str(details.get("filename") or "")[:160]
+    system_message = (
+        "You describe images from a legal form so a screen reader can announce "
+        "them. Answer with one short sentence of alternative text, at most 160 "
+        "characters, describing what the image conveys to a reader of the form. "
+        "Do not begin with 'image of' or 'picture of'. Do not transcribe long "
+        "passages of text: if the image is a picture of text, say so and give "
+        "the heading it shows. Answer with the single word DECORATIVE, and "
+        "nothing else, when the image carries no information a reader would "
+        "miss -- a rule, a border, a background texture, a spacer. Say only "
+        "what you can see; never guess at a name, a date or a case number."
+    )
+    results: List[Dict[str, Any]] = []
+    for asset_id, png in list(previews.items())[:IMAGE_PREVIEW_LIMIT]:
+        if not png:
+            continue
+        encoded = base64.b64encode(png).decode("ascii")
+        # ALToolbox types a message's content as str. A picture has to arrive as
+        # a list of parts, which is what the endpoint itself expects, so the
+        # shape is built here and cast at the call.
+        conversation: List[Dict[str, Any]] = [
+            {"role": "system", "content": system_message},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"This image appears in {filename or 'a court form'}."
+                            " What is its alternative text?"
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                    },
+                ],
+            },
+        ]
+        try:
+            response = chat_completion(
+                model=chosen,
+                temperature=0,
+                max_output_tokens=200,
+                messages=cast(List[Dict[str, str]], conversation),
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "assetId": asset_id,
+                    "error": f"The model could not describe this image: {exc}",
+                }
+            )
+            continue
+        answer = response if isinstance(response, str) else str(response)
+        answer = re.sub(r"\s+", " ", answer).strip().strip('"')
+        decorative = answer.upper().startswith("DECORATIVE")
+        results.append(
+            {
+                "assetId": asset_id,
+                "decorative": decorative,
+                "altText": "" if decorative else answer[:160],
+                "model": str(chosen or "default"),
+            }
+        )
+    return results
 
 
 def draft_heading_levels_with_ai(
@@ -1329,6 +1425,56 @@ def _extract_image_assets(pdf: Any) -> List[Dict[str, Any]]:
             except Exception:
                 continue
     return assets
+
+
+IMAGE_PREVIEW_PIXELS = 768
+IMAGE_PREVIEW_LIMIT = 40
+
+
+def render_image_assets(
+    pdf_path: str,
+    asset_ids: Optional[Iterable[str]] = None,
+    *,
+    max_pixels: int = IMAGE_PREVIEW_PIXELS,
+) -> Dict[str, bytes]:
+    """Render each image asset to a small PNG.
+
+    Downscaled deliberately: the point is to let something look at the picture,
+    not to ship the original. Images too small to carry meaning are skipped, so
+    a hairline rule drawn as a 1x3 bitmap never reaches a model.
+    """
+    import pikepdf
+    from PIL import Image  # type: ignore[import-untyped]
+
+    wanted = set(asset_ids) if asset_ids is not None else None
+    previews: Dict[str, bytes] = {}
+    try:
+        with pikepdf.open(pdf_path) as pdf:
+            for page_index, page in enumerate(pdf.pages):
+                resources = page.get("/Resources") if hasattr(page, "get") else None
+                for resource_path, obj in _walk_resource_xobjects(resources):
+                    if len(previews) >= IMAGE_PREVIEW_LIMIT:
+                        return previews
+                    if _safe_pdf_string(obj.get("/Subtype", "")) != "/Image":
+                        continue
+                    asset_id = f"p{page_index + 1}:{resource_path}"
+                    if wanted is not None and asset_id not in wanted:
+                        continue
+                    try:
+                        width = int(obj.get("/Width", 0) or 0)
+                        height = int(obj.get("/Height", 0) or 0)
+                        if width < 16 or height < 16:
+                            continue
+                        image = pikepdf.PdfImage(obj).as_pil_image()
+                        image.thumbnail((max_pixels, max_pixels))
+                        buffer = io.BytesIO()
+                        image.convert("RGB").save(buffer, format="PNG", optimize=True)
+                        previews[asset_id] = buffer.getvalue()
+                    except Exception:
+                        continue
+    except Exception as exc:
+        raise PDFAccessibilityError(f"Failed to render the images: {exc}")
+    return previews
 
 
 def _font_descriptor(font: Any) -> Optional[Any]:

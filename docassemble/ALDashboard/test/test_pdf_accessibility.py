@@ -1,4 +1,5 @@
 # do not pre-load
+import io
 import os
 import shutil
 import subprocess
@@ -32,6 +33,8 @@ from docassemble.ALDashboard.pdf_accessibility import (
     build_default_field_order,
     create_draft_structure_tree,
     default_pdf_field_tooltip,
+    render_image_assets,
+    describe_images_with_ai,
     draft_field_tooltips_with_ai,
     review_pdf_accessibility_with_ai,
     embed_fonts_and_rebuild_unicode,
@@ -3082,6 +3085,116 @@ class TestNestedFormXObjectTagging(unittest.TestCase):
             "None of the page's text is tagged",
             [finding["title"] for finding in readback["findings"]],
         )
+
+
+class TestImageDescriptionWithAi(unittest.TestCase):
+    """Pixels leave the server only here, and the answer is only a draft."""
+
+    def _image_pdf(self, path, *, width=64, height=64):
+        import pikepdf
+
+        pdf = pikepdf.new()
+        page = pdf.add_blank_page(page_size=(612, 792))
+        stream = pdf.make_stream(bytes([200, 40, 40] * width * height))
+        stream["/Type"] = pikepdf.Name("/XObject")
+        stream["/Subtype"] = pikepdf.Name("/Image")
+        stream["/Width"] = width
+        stream["/Height"] = height
+        stream["/ColorSpace"] = pikepdf.Name("/DeviceRGB")
+        stream["/BitsPerComponent"] = 8
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            {"/XObject": pikepdf.Dictionary({"/Im0": stream})}
+        )
+        page.obj["/Contents"] = pdf.make_stream(b"q 100 0 0 100 40 600 cm /Im0 Do Q")
+        pdf.save(path)
+        pdf.close()
+
+    def test_images_are_rendered_small_and_tiny_ones_are_skipped(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            path = handle.name
+        try:
+            self._image_pdf(path, width=400, height=400)
+            previews = render_image_assets(path, max_pixels=64)
+            self.assertEqual(list(previews), ["p1:Im0"])
+            from PIL import Image
+
+            with Image.open(io.BytesIO(previews["p1:Im0"])) as rendered:
+                self.assertLessEqual(max(rendered.size), 64)
+        finally:
+            os.remove(path)
+
+    def test_a_hairline_image_is_never_sent(self):
+        """A 2px rule carries nothing; it should not cost a model call."""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            path = handle.name
+        try:
+            self._image_pdf(path, width=2, height=40)
+            self.assertEqual(render_image_assets(path), {})
+        finally:
+            os.remove(path)
+
+    def test_the_picture_is_sent_and_the_answer_becomes_a_draft(self):
+        with (
+            patch(
+                "docassemble.ALToolbox.llms.chat_completion",
+                return_value="  Seal of the Commonwealth of Massachusetts.  ",
+            ) as completion,
+            patch(
+                "docassemble.ALToolbox.llms.get_first_small_model",
+                return_value="a-small-model",
+            ),
+        ):
+            result = describe_images_with_ai(
+                {"p1:Im0": b"fake-png"}, context={"filename": "209A.pdf"}
+            )
+        self.assertEqual(
+            result,
+            [
+                {
+                    "assetId": "p1:Im0",
+                    "decorative": False,
+                    "altText": "Seal of the Commonwealth of Massachusetts.",
+                    "model": "a-small-model",
+                }
+            ],
+        )
+        messages = completion.call_args.kwargs["messages"]
+        parts = messages[1]["content"]
+        self.assertEqual([part["type"] for part in parts], ["text", "image_url"])
+        self.assertTrue(
+            parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
+        )
+        # JSON mode assumes string content, which cannot carry a picture.
+        self.assertNotIn("json_mode", completion.call_args.kwargs)
+        # A small model is enough to say what a seal is.
+        self.assertEqual(completion.call_args.kwargs["model"], "a-small-model")
+
+    def test_decorative_is_reported_rather_than_invented(self):
+        with (
+            patch(
+                "docassemble.ALToolbox.llms.chat_completion", return_value="DECORATIVE"
+            ),
+            patch(
+                "docassemble.ALToolbox.llms.get_first_small_model", return_value="small"
+            ),
+        ):
+            result = describe_images_with_ai({"p1:Im0": b"x"})
+        self.assertTrue(result[0]["decorative"])
+        self.assertEqual(result[0]["altText"], "")
+
+    def test_a_model_failure_is_reported_per_image(self):
+        with (
+            patch(
+                "docassemble.ALToolbox.llms.chat_completion",
+                side_effect=RuntimeError("no vision support"),
+            ),
+            patch(
+                "docassemble.ALToolbox.llms.get_first_small_model", return_value="small"
+            ),
+        ):
+            result = describe_images_with_ai({"p1:Im0": b"x", "p1:Im1": b"y"})
+        self.assertEqual(len(result), 2)
+        self.assertIn("no vision support", result[0]["error"])
 
 
 class TestScannedPageOcr(unittest.TestCase):

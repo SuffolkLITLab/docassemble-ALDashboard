@@ -465,6 +465,10 @@ const a11yFontUnicodeList = optionalWorkshopElement("a11y-font-unicode-list");
 const a11yFontResult = optionalWorkshopElement("a11y-font-result");
 const a11yAiTooltipsBtn = optionalWorkshopElement("a11y-ai-tooltips", "button");
 const a11yAiHeadingsBtn = optionalWorkshopElement("a11y-ai-headings", "button");
+const a11yAiImageAltBtn = optionalWorkshopElement(
+  "a11y-ai-image-alt",
+  "button",
+);
 const a11yHeadingsApproveAllBtn = optionalWorkshopElement(
   "a11y-headings-approve-all",
   "button",
@@ -1605,6 +1609,11 @@ function renderAccessibilityImages() {
       "</div>" +
       '<div class="small text-muted mb-1">Asset ID: ' +
       escapeHtml(String(imageAsset.assetId || "")) +
+      (imageAsset.altTextSource === "ai"
+        ? imageAsset.decorative
+          ? ' <span class="badge text-bg-secondary" title="The model saw nothing a reader would miss. Tag it as an artifact rather than giving it alternative text.">AI: looks decorative</span>'
+          : ' <span class="badge text-bg-warning" title="Drafted by the AI from the picture. Read it before export.">AI draft</span>'
+        : "") +
       "</div>" +
       '<input type="text" class="form-control form-control-sm" data-a11y-action="image-alt" data-asset-id="' +
       escapeHtml(String(imageAsset.assetId || "")) +
@@ -4349,6 +4358,7 @@ function updateAiUiState() {
   }
   if (a11yAiTooltipsBtn) a11yAiTooltipsBtn.disabled = !aiEnabled;
   if (a11yAiHeadingsBtn) a11yAiHeadingsBtn.disabled = !aiEnabled;
+  if (a11yAiImageAltBtn) a11yAiImageAltBtn.disabled = !aiEnabled;
   if (a11yAutoFixBtn) a11yAutoFixBtn.disabled = !aiEnabled;
   if (!aiEnabled) {
     aiAuthNotice.classList.remove("hidden");
@@ -9934,6 +9944,13 @@ async function applyAiHeadingDraft() {
   return decisions.length;
 }
 
+if (a11yAiImageAltBtn) {
+  a11yAiImageAltBtn.addEventListener("click", function () {
+    draftImageAltTextWithAi().catch(function (error) {
+      showError(error.message || String(error));
+    });
+  });
+}
 a11yAiHeadingsBtn.addEventListener("click", async function () {
   showLoading("Drafting heading decisions with AI…");
   try {
@@ -10252,6 +10269,83 @@ function accessibilityContentDecisionPayload() {
       roleReviewed: !!decision.reviewed,
     };
   });
+}
+
+// The only place a page image leaves the browser, and only on this click.
+async function draftImageAltTextWithAi() {
+  const assets = state.accessibility.images.filter(function (image) {
+    return image && image.assetId;
+  });
+  if (!assets.length) {
+    showError("This PDF has no page images to describe.");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  formData.append(
+    "asset_ids",
+    JSON.stringify(
+      assets.map(function (image) {
+        return String(image.assetId);
+      }),
+    ),
+  );
+  formData.append("model", state.model || "");
+  showLoading("Asking the AI what each image shows\u2026");
+  try {
+    const response = await fetch(
+      apiUrl("/pdf-labeler/api/accessibility-ai-image-alt"),
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      },
+    );
+    const payload = await parseApiResponse(response);
+    const descriptions = (payload.data && payload.data.descriptions) || [];
+    let drafted = 0;
+    let decorative = 0;
+    descriptions.forEach(function (item) {
+      const image = state.accessibility.images.find(function (candidate) {
+        return String(candidate.assetId || "") === String(item.assetId || "");
+      });
+      if (!image || item.error) return;
+      if (item.decorative) {
+        image.decorative = true;
+        image.altTextSource = "ai";
+        decorative += 1;
+        return;
+      }
+      if (!item.altText) return;
+      image.altText = String(item.altText);
+      image.altTextSource = "ai";
+      drafted += 1;
+    });
+    if (drafted || decorative) {
+      markAccessibilityDraft(
+        "figures",
+        String(drafted) +
+          " AI image descriptions and " +
+          String(decorative) +
+          " marked decorative; review each one",
+      );
+      setDirty(true);
+    }
+    renderAccessibilityImages();
+    renderAccessibilityReport();
+    showSuccess(
+      "AI described " +
+        String(drafted) +
+        " image" +
+        (drafted === 1 ? "" : "s") +
+        " and called " +
+        String(decorative) +
+        " decorative. Read each one: the model cannot know what the form means.",
+      9000,
+    );
+  } finally {
+    hideLoading();
+  }
 }
 
 function accessibilityAiReviewContext() {
@@ -11263,6 +11357,9 @@ a11yImageList.addEventListener("input", function (event) {
   });
   if (!imageAsset) return;
   imageAsset.altText = String(target.value || "");
+  // Typed over: the reviewer owns this value now, not the model.
+  imageAsset.altTextSource = "manual";
+  imageAsset.decorative = false;
   markAccessibilityDraft(
     "figure-alt",
     "Raw image alternative-text drafts edited; link them to Figure tags",

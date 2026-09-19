@@ -411,8 +411,10 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("Announce instead", self.js)
         self.assertIn("def repair_readback_text", self.api_accessibility)
         self.assertIn('"readback_text"', self.api)
-        # Only the unambiguous case is filled in for the reviewer.
-        self.assertIn('finding.confident ? String(finding.suggestion) : ""', self.js)
+        # Only the unambiguous case is filled in for the reviewer; a symbol
+        # nobody can decode for them gets an empty box and a prompt.
+        self.assertIn("finding.confident ?", self.js)
+        self.assertIn("What should be announced here?", self.js)
 
     def test_the_read_back_simulation_is_shown_and_fed_to_the_ai_pass(self):
         """Evidence a person can inspect, not just a verdict."""

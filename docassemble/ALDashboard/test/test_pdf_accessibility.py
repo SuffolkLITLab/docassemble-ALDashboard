@@ -2414,7 +2414,23 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def _readback_pdf(path, *, order, texts=None, tooltips=None):
+def _readback_tounicode(mapping):
+    """Build a minimal ToUnicode CMap for the given code -> text mapping."""
+    entries = "".join(
+        f"<{code:02X}> <{''.join(f'{ord(ch):04X}' for ch in text)}>\n"
+        for code, text in mapping.items()
+    )
+    return (
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+        "1 begincodespacerange <00> <FF> endcodespacerange\n"
+        f"{len(mapping)} beginbfchar\n{entries}endbfchar\n"
+        "endcmap CMapName currentdict /CMap defineresource pop end end"
+    ).encode("latin-1")
+
+
+def _readback_pdf(
+    path, *, order, texts=None, tooltips=None, tounicode=None, symbolic=False
+):
     """Build a one-page PDF and tag its runs in a chosen announcement order.
 
     ``order`` lists run indexes in the order the tag tree should announce them,
@@ -2426,15 +2442,27 @@ def _readback_pdf(path, *, order, texts=None, tooltips=None):
     runs = texts or ["Alpha one", "Beta two", "Gamma three", "Delta four"]
     pdf = pikepdf.new()
     page = pdf.add_blank_page(page_size=(612, 792))
-    font = pdf.make_indirect(
-        pikepdf.Dictionary(
-            {
-                "/Type": pikepdf.Name("/Font"),
-                "/Subtype": pikepdf.Name("/Type1"),
-                "/BaseFont": pikepdf.Name("/Helvetica"),
-            }
+    font_dict = {
+        "/Type": pikepdf.Name("/Font"),
+        "/Subtype": pikepdf.Name("/Type1"),
+        "/BaseFont": pikepdf.Name("/Helvetica"),
+        # What the real fonts in a Word export declare.
+        "/Encoding": pikepdf.Name("/WinAnsiEncoding"),
+    }
+    if tounicode is not None:
+        font_dict["/ToUnicode"] = pdf.make_stream(_readback_tounicode(tounicode))
+    if symbolic:
+        font_dict["/FontDescriptor"] = pdf.make_indirect(
+            pikepdf.Dictionary(
+                {
+                    "/Type": pikepdf.Name("/FontDescriptor"),
+                    "/FontName": pikepdf.Name("/Helvetica"),
+                    # Bit 3: the font declares its glyphs are symbols.
+                    "/Flags": 4,
+                }
+            )
         )
-    )
+    font = pdf.make_indirect(pikepdf.Dictionary(font_dict))
     page.obj["/Resources"] = pikepdf.Dictionary(
         {"/Font": pikepdf.Dictionary({"/F1": font})}
     )
@@ -2563,28 +2591,63 @@ class TestScreenReaderReadback(unittest.TestCase):
         )
         self.assertIn("Several controls announce the same name", self.titles(result))
 
-    def test_a_symbol_standing_in_for_punctuation_mid_word_is_flagged(self):
-        # 0x92 is the Windows-1252 right single quote; read as a raw byte it is
-        # the control character that turns up in place of the apostrophe.
+    def test_text_is_decoded_the_way_a_conforming_extractor_would(self):
+        """Byte 0x92 is a right single quote here, not damage to report."""
         result = self._run(
             order=[0, 1, 2, 3], texts=["Mother\x92s information", "B", "C", "D"]
         )
-        titles = self.titles(result)
-        self.assertIn("Text would be spoken as something it does not say", titles)
+        self.assertEqual(
+            result["announcements"][0]["text"], "Mother\u2019s information"
+        )
+        self.assertEqual(result["findings"], [])
+
+    def test_a_character_map_that_really_says_trademark_is_flagged(self):
+        """The finding belongs to the mapping, not to the raw bytes."""
+        result = self._run(
+            order=[0, 1, 2, 3],
+            texts=["AZB", "Beta", "Gamma", "Delta"],
+            tounicode={0x41: "A", 0x5A: "\u2122", 0x42: "B"},
+        )
         finding = next(
             item
             for item in result["findings"]
             if item["title"] == "Text would be spoken as something it does not say"
         )
-        self.assertEqual(finding["suggestion"], "Mother\u2019s information")
+        self.assertEqual(finding["suggestion"], "A\u2019B")
 
-    def _repair(self, *, texts, decisions=None):
+    def test_a_glyph_with_no_character_behind_it_is_flagged(self):
+        result = self._run(
+            order=[0, 1, 2, 3],
+            texts=["A\x01B", "Beta", "Gamma", "Delta"],
+            tounicode={0x41: "A", 0x42: "B"},
+        )
+        self.assertIn("Content on the page is never spoken", self.titles(result))
+
+    def test_a_symbol_font_that_claims_to_spell_words_is_flagged(self):
+        """Circled numbers announced as "q w e" is the shape this catches."""
+        result = self._run(
+            order=[0, 1, 2, 3],
+            texts=["q", "Beta", "Gamma", "Delta"],
+            tounicode={0x71: "q"},
+            symbolic=True,
+        )
+        self.assertIn("A symbol is announced as a letter", self.titles(result))
+
+    def test_ordinary_text_is_not_mistaken_for_a_symbol(self):
+        result = self._run(
+            order=[0, 1, 2, 3], texts=["Case Number", "Beta", "Gamma", "Delta"]
+        )
+        self.assertNotIn("A symbol is announced as a letter", self.titles(result))
+
+    def _repair(self, *, texts, decisions=None, tounicode=None):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
             source_path = source.name
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
             output_path = output.name
         try:
-            _readback_pdf(source_path, order=[0, 1, 2, 3], texts=texts)
+            _readback_pdf(
+                source_path, order=[0, 1, 2, 3], texts=texts, tounicode=tounicode
+            )
             result = repair_readback_text(source_path, output_path, decisions=decisions)
             return result, analyze_screen_reader_readback(output_path)
         finally:
@@ -2594,12 +2657,11 @@ class TestScreenReaderReadback(unittest.TestCase):
     def test_replacement_text_is_written_for_the_unambiguous_case(self):
         """A stand-in glyph between letters cannot be what the author wrote."""
         result, after = self._repair(
-            texts=["Mother\x92s information", "Beta", "Gamma", "Delta"]
+            texts=["AZB", "Beta", "Gamma", "Delta"],
+            tounicode={0x41: "A", 0x5A: "\u2122", 0x42: "B"},
         )
         self.assertEqual(result["actual_text_added"], 1)
-        self.assertEqual(
-            result["applied"][0]["actualText"], "Mother\u2019s information"
-        )
+        self.assertEqual(result["applied"][0]["actualText"], "A\u2019B")
         # The replay honours /ActualText, so the finding is genuinely gone.
         self.assertEqual(
             [
@@ -2609,10 +2671,13 @@ class TestScreenReaderReadback(unittest.TestCase):
             ],
             [],
         )
-        self.assertEqual(after["announcements"][0]["text"], "Mother\u2019s information")
+        self.assertEqual(after["announcements"][0]["text"], "A\u2019B")
 
     def test_a_control_character_alone_waits_for_a_person(self):
-        result, after = self._repair(texts=["\x00Yes", "Beta", "Gamma", "Delta"])
+        result, after = self._repair(
+            texts=["\x01Yes", "Beta", "Gamma", "Delta"],
+            tounicode={0x01: "\x01", 0x59: "Y", 0x65: "e", 0x73: "s"},
+        )
         self.assertEqual(result["actual_text_added"], 0)
         self.assertEqual(len(result["needs_review"]), 1)
         self.assertEqual(result["needs_review"][0]["suggestion"], "Yes")
@@ -2643,7 +2708,7 @@ class TestScreenReaderReadback(unittest.TestCase):
             _readback_pdf(
                 source_path,
                 order=[0, 1, 2, 3],
-                texts=["Mother\x92s information", "B", "C", "D"],
+                texts=["AZB", "B", "C", "D"],
             )
             with pikepdf.open(source_path) as before:
                 drawn = before.pages[0].Contents.read_bytes()

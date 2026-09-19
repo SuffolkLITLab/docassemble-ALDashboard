@@ -2064,7 +2064,7 @@ function renderAccessibilityReadback() {
   // Every correction is editable before it is written: the confident ones are
   // filled in, the rest start blank so nothing is changed without a decision.
   const textFixes = findings.filter(function (finding) {
-    return finding.category === "text-encoding" && finding.suggestion;
+    return finding.category === "text-encoding";
   });
   a11yReadbackTextFixes.classList.toggle("hidden", !textFixes.length);
   a11yReadbackTextList.innerHTML = textFixes
@@ -2080,9 +2080,11 @@ function renderAccessibilityReadback() {
         '" type="text" class="form-control form-control-sm" data-readback-index="' +
         String(finding.announcedIndex) +
         '" value="' +
-        escapeHtml(finding.confident ? String(finding.suggestion) : "") +
+        escapeHtml(finding.confident ? String(finding.suggestion || "") : "") +
         '" placeholder="' +
-        escapeHtml(String(finding.suggestion)) +
+        escapeHtml(
+          String(finding.suggestion || "What should be announced here?"),
+        ) +
         '"></div>'
       );
     })

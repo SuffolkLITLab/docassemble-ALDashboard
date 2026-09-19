@@ -3512,8 +3512,32 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
         instructions = list(pikepdf.parse_content_stream(page))
     except Exception:
         return runs
+    # Decode the way a conforming extractor does: two-byte codes for Identity
+    # CID fonts, then /ToUnicode, then the simple font's own encoding. Reading
+    # the raw operand bytes instead invents both control characters and
+    # punctuation that is not there.
+    resources = page.get("/Resources") if hasattr(page, "get") else None
+    font_resources = resources.get("/Font") if resources is not None else None
+    decoders: Dict[str, Optional[Tuple[bool, Dict[int, str]]]] = {}
+
+    def decoder_for(name: str) -> Optional[Tuple[bool, Dict[int, str]]]:
+        if name in decoders:
+            return decoders[name]
+        found: Optional[Tuple[bool, Dict[int, str]]] = None
+        if font_resources is not None and name in font_resources:
+            pdf_font = font_resources[name]
+            two_byte = _is_two_byte_font(pdf_font)
+            mapping = dict(_to_unicode_mappings(pdf_font))
+            if not two_byte:
+                for code, character in _simple_font_characters(pdf_font).items():
+                    mapping.setdefault(code, character)
+            found = (two_byte, mapping)
+        decoders[name] = found
+        return found
+
     current: Optional[int] = None
     stack: List[Optional[int]] = []
+    current_font = ""
     line_x = line_y = text_x = text_y = 0.0
     leading = 0.0
     for instruction in instructions:
@@ -3546,12 +3570,46 @@ def _readback_page_runs(page: Any) -> Dict[int, Dict[str, Any]]:
                 text_x, text_y = line_x, line_y
         except (TypeError, ValueError):
             pass
+        if operator == "Tf" and operands:
+            current_font = str(operands[0])
         if operator in {"Tj", "TJ", "'", '"'} and current is not None:
-            text = _shown_instruction_text(instruction)
-            if not text:
+            decoder = decoder_for(current_font)
+            unmapped = 0
+            if decoder is None:
+                text = _shown_instruction_text(instruction)
+            else:
+                two_byte, mapping = decoder
+                pieces: List[str] = []
+                for code in _codes_from_operands(operands, two_byte):
+                    mapped = mapping.get(code)
+                    if mapped is None and not two_byte and 0x20 <= code < 0x7F:
+                        mapped = chr(code)
+                    if mapped is None:
+                        unmapped += 1
+                        continue
+                    pieces.append(mapped)
+                text = "".join(pieces)
+            if not text and not unmapped:
                 continue
-            record = runs.setdefault(current, {"text": "", "y": text_y, "x": text_x})
+            record = runs.setdefault(
+                current,
+                {"text": "", "y": text_y, "x": text_x, "unmapped": 0, "font": ""},
+            )
             record["text"] += text
+            record["unmapped"] = int(record.get("unmapped", 0)) + unmapped
+            if not record.get("font") and font_resources is not None:
+                if current_font in font_resources:
+                    pdf_font = font_resources[current_font]
+                    record["font"] = _safe_pdf_string(
+                        pdf_font.get("/BaseFont", "")
+                    ).lstrip("/")
+                    # Bit 3 of /Flags: the font says its own glyphs are symbols.
+                    descriptor = _font_descriptor(pdf_font)
+                    flags = descriptor.get("/Flags", 0) if descriptor is not None else 0
+                    try:
+                        record["symbolic"] = bool(int(flags) & 4)
+                    except (TypeError, ValueError):
+                        record["symbolic"] = False
     return runs
 
 
@@ -3604,6 +3662,9 @@ def _readback_sequence(
                 "page": page_index,
                 "text": replacement or (record or {}).get("text", ""),
                 "drawn": (record or {}).get("text", ""),
+                "unmapped": int((record or {}).get("unmapped", 0)),
+                "font": (record or {}).get("font", ""),
+                "symbolic": bool((record or {}).get("symbolic")),
                 "replaced": bool(replacement),
                 "y": (record or {}).get("y"),
                 "x": (record or {}).get("x"),
@@ -4002,7 +4063,66 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
             }
         )
 
-    # 5. Characters that would be spoken as something the author never wrote.
+    # 5a. Glyphs with no usable character behind them: silence, not speech.
+    for item in spoken:
+        if not int(item.get("unmapped", 0)):
+            continue
+        font_name = str(item.get("font") or "this font")
+        findings.append(
+            {
+                "id": f"readback-unmappable-{item['index']}",
+                "severity": "fail",
+                "category": "text-encoding",
+                "title": "Content on the page is never spoken",
+                "detail": (
+                    f"{item['unmapped']} glyph(s) drawn in {font_name} have no "
+                    "character behind them, so a screen reader announces nothing "
+                    "where the page shows something."
+                    + (
+                        f" The rest of the run reads \u201c{item['spoken'][:40]}\u201d."
+                        if item.get("spoken")
+                        else ""
+                    )
+                ),
+                "page": item["page"],
+                "announcedIndex": item["index"],
+                "announced": item.get("spoken", ""),
+                # /ActualText is the fix, but only a person can say what the
+                # symbol means, so no value is suggested.
+                "remediation": "readback",
+            }
+        )
+
+    # 5b. A symbol font that claims to spell ordinary words is not telling the
+    #     truth: circled numbers announced as "q w e r" is the classic shape.
+    for item in text_items:
+        announced = item.get("spoken") or ""
+        # The font's own descriptor is the authority here, not its name: a
+        # subset called "CombiNumerals" and one called "Arial" are only
+        # distinguishable by the symbolic flag they set.
+        if not item.get("symbolic") or not announced:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9 ]+", announced):
+            continue
+        findings.append(
+            {
+                "id": f"readback-symbol-as-text-{item['index']}",
+                "severity": "fail",
+                "category": "text-encoding",
+                "title": "A symbol is announced as a letter",
+                "detail": (
+                    f"{item.get('font')} draws symbols, but its character map "
+                    f"says this run reads \u201c{announced[:40]}\u201d. A listener "
+                    "hears those letters in place of whatever the symbol means."
+                ),
+                "page": item["page"],
+                "announcedIndex": item["index"],
+                "announced": announced,
+                "remediation": "readback",
+            }
+        )
+
+    # 5c. Characters that would be spoken as something the author never wrote.
     for item in text_items + field_items:
         announced = item.get("spoken") or item.get("text") or ""
         correction = _readback_text_correction(announced)

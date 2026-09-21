@@ -1166,6 +1166,43 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             os.remove(source_path)
             os.remove(output_path)
 
+    def test_a_dangling_null_annotation_reference_does_not_crash_inspection(self):
+        """A real-world PDF can carry a null entry in /Annots (a stale/broken
+        reference some prior tool left behind). Heading-exclusion geometry
+        walks /Annots directly and must not assume every entry is a
+        dictionary."""
+        import pikepdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
+            source_path = source.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as output:
+            output_path = output.name
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            widget = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    {
+                        "/Type": pikepdf.Name("/Annot"),
+                        "/Subtype": pikepdf.Name("/Widget"),
+                        "/FT": pikepdf.Name("/Btn"),
+                        "/T": pikepdf.String("checkbox1"),
+                        "/Rect": pikepdf.Array([0, 0, 20, 20]),
+                    }
+                )
+            )
+            page["/Annots"] = pikepdf.Array([None, widget])
+            pdf.save(source_path)
+            pdf.close()
+
+            # Neither the read-only inspection path nor the structure drafter
+            # should raise on the dangling null reference.
+            inspect_pdf_accessibility(source_path)
+            create_draft_structure_tree(source_path, output_path)
+        finally:
+            os.remove(source_path)
+            os.remove(output_path)
+
     def test_draft_structure_matches_multiline_heading_in_one_text_block(self):
         import pikepdf
 

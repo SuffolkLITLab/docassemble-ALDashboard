@@ -1415,6 +1415,8 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
     widgets = []
     for page_index, page in enumerate(pdf.pages):
         for index, annot in enumerate(cast(Iterable[Any], page.get("/Annots") or [])):
+            if annot is None or not hasattr(annot, "get"):
+                continue
             subtype = _safe_pdf_string(annot.get("/Subtype", "")).lstrip("/")
             if subtype == "Widget":
                 parent = _named_parent(annot)
@@ -6365,6 +6367,8 @@ def _heading_exclusion_boxes(pdf_path: str) -> Dict[int, List[Dict[str, float]]]
                 })
 
             for annot in page.get("/Annots", []):
+                if annot is None or not hasattr(annot, "get"):
+                    continue
                 parent = _named_parent(annot)
                 kind = annot.get("/FT", parent.get("/FT") if parent is not None else None)
                 if str(kind) == "/Btn" and annot.get("/Rect") is not None:

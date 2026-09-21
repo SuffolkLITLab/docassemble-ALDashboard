@@ -2587,6 +2587,36 @@ def _readback_pdf(
 class TestScreenReaderReadback(unittest.TestCase):
     """The read-back simulation states properties, not known bugs."""
 
+    def test_array_content_references_keep_owner_and_order(self):
+        import pikepdf
+        from docassemble.ALDashboard.pdf_accessibility import _readback_sequence
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "references.pdf")
+            _readback_pdf(path, order=[0, 1], tooltips=[("name", "Your name")])
+            with pikepdf.open(path) as pdf:
+                elements = pdf.Root.StructTreeRoot.K[0].K
+                baseline = _readback_sequence(pdf)
+                for element in elements:
+                    element.K = pikepdf.Array([element.K])
+                self.assertEqual(_readback_sequence(pdf), baseline)
+
+                owner = elements[0]
+                nested = elements[1]
+                owner.K = pikepdf.Array([
+                    0,
+                    pikepdf.Dictionary(Type=pikepdf.Name.MCR, MCID=1, Pg=pdf.pages[0].obj),
+                    nested,
+                ])
+                pdf.Root.StructTreeRoot.K[0].K = pikepdf.Array([owner, elements[2]])
+                sequence = _readback_sequence(pdf, keep_elements=True)
+                self.assertEqual([item["text"] for item in sequence],
+                                 ["Alpha one", "Beta two", "Beta two", "Your name"])
+                self.assertEqual([item["role"] for item in sequence], ["P", "P", "P", "Form"])
+                self.assertEqual(sequence[1]["element"], owner)
+                self.assertEqual(sequence[2]["element"], nested)
+                self.assertEqual([item["page"] for item in sequence], [0, 0, 0, 0])
+
     def _run(self, **kwargs):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
             path = handle.name

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -79,7 +80,9 @@ def default_pdf_field_tooltip(field_name: Any) -> str:
     raw = str(field_name or "").strip()
     if not raw:
         return "Field"
-    normalized = raw.replace("_", " ")
+    normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", raw)
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized)
+    normalized = normalized.replace("_", " ")
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized or "Field"
 
@@ -317,6 +320,9 @@ def draft_heading_levels_with_ai(
                 "page": int(candidate.get("pageIndex", 0)) + 1,
                 "text": str(candidate.get("text") or "")[:300],
                 "fontSize": candidate.get("fontSize"),
+                "box": {key: candidate.get("box", {}).get(key)
+                        for key in ("x", "y", "width", "height")}
+                       if isinstance(candidate.get("box"), Mapping) else {},
                 "heuristicTag": str(candidate.get("suggestedTag") or "H2"),
             }
         )
@@ -332,7 +338,10 @@ def draft_heading_levels_with_ai(
                     "Classify possible PDF headings. Use document semantics, not font size alone. "
                     "For every candidate return candidateId, isHeading, suggestedTag (H1-H6), "
                     "and a short reason. Preserve candidateId exactly. Form labels, instructions, "
-                    "question markers, and running headers are usually not headings. Return JSON "
+                    "question markers, and running headers are usually not headings. Use page and normalized "
+                    "box geometry to consider nearby same-column candidates together, including sentence-ending "
+                    "fragments of bold instructions and narrow sidebar titles. Do not classify each wrapped "
+                    "line as an independent section merely because it is bold. Return JSON "
                     "with a decisions array. This is a review draft, not a final accessibility decision."
                 ),
             },
@@ -517,7 +526,23 @@ def review_pdf_accessibility_with_ai(
                 "title": str(item.get("title") or "")[:160],
                 "detail": str(item.get("detail") or "")[:400],
                 "severity": str(item.get("severity") or "")[:20],
-                "page": item.get("page"),
+                "page": scalar(item.get("page")),
+                "id": str(item.get("id") or "")[:160],
+                "category": str(item.get("category") or "")[:80],
+                "confidence": str(item.get("confidence") or "")[:30],
+                "announcedIndex": scalar(item.get("announcedIndex")),
+                "review": {
+                    "task": str(item.get("review", {}).get("task") or "")[:100],
+                    "assetId": str(item.get("review", {}).get("assetId") or "")[:120],
+                    "requiresImagePreview": bool(item.get("review", {}).get("requiresImagePreview")),
+                    "coordinateSystem": str(item.get("review", {}).get("coordinateSystem") or "")[:80],
+                    "items": [
+                        {key: (str(run.get(key) or "")[:400] if key in {"text", "role"} else scalar(run.get(key)))
+                         for key in ("index", "role", "text", "page", "x", "y", "rotation")}
+                        for run in item.get("review", {}).get("items", [])[:16]
+                        if isinstance(run, Mapping)
+                    ] if isinstance(item.get("review", {}).get("items"), list) else [],
+                } if isinstance(item.get("review"), Mapping) else {},
             }
             for item in (
                 cast(List[Any], context.get("readbackFindings"))
@@ -552,10 +577,15 @@ def review_pdf_accessibility_with_ai(
                     "invent image content when no pixels or reliable existing description were supplied. "
                     "readbackFindings is a deterministic replay of the tag tree in the order assistive "
                     "technology announces it, compared against where the same content sits on the page. Treat "
-                    "it as observed evidence, not a guess: where it reports a torn line, a control announced "
+                    "observed facts separately from findings marked confidence=heuristic: those identify "
+                    "possible semantic/layout defects for you to assess, not proven errors. Use review.items "
+                    "text, roles, indices and page coordinates to explain a concrete grouping or ordering "
+                    "proposal; do not invent missing text. Image coverage findings require preview before "
+                    "deciding Figure versus Artifact; alt text alone does not tag the drawing. Where it "
+                    "reports a torn line, a control announced "
                     "away from its label, or text that would be spoken as something it does not say, say what "
                     "a listener would actually hear and which step fixes it. Do not repeat an entry verbatim "
-                    "and do not contradict it. "
+                    "and explain uncertainty when the supplied evidence cannot settle it. "
                     "Return only genuine findings; do not restate a passing check merely to recommend generic "
                     "validation. An empty findings array means the supplied choices look reasonable. Each finding "
                     "needs id, category, severity (warning or info), title, explanation, and a change whenever the "
@@ -3522,7 +3552,26 @@ def _artifact_untagged_content(pdf: Any) -> int:
             elif depth:
                 rewritten.append(instruction)
             else:
-                pending.append(instruction)
+                # A one/two-pixel hairline bitmap is a rule, not an illustration.
+                # Wrap only its invocation, never an entire run containing Do.
+                resources = container.get("/Resources")
+                objects = resources.get("/XObject") if resources is not None else None
+                operands = list(instruction.operands)
+                obj = (objects.get(operands[0]) if operator == "Do" and operands
+                       and objects is not None else None)
+                dimensions = ([int(obj.get("/Width", 0)), int(obj.get("/Height", 0))]
+                              if obj is not None and str(obj.get("/Subtype")) == "/Image" else [0, 0])
+                if 1 <= min(dimensions) <= 2 and 8 <= max(dimensions) <= 16:
+                    flush()
+                    rewritten.extend([
+                        pikepdf.ContentStreamInstruction([pikepdf.Name("/Artifact")], pikepdf.Operator("BMC")),
+                        instruction,
+                        pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC")),
+                    ])
+                    stream_runs_wrapped += 1
+                    runs_wrapped += 1
+                else:
+                    pending.append(instruction)
         flush()
         if not stream_runs_wrapped:
             return
@@ -3826,6 +3875,55 @@ def _curated_character(
         return ""
 
 
+def _text_run_geometry(
+    instructions: List[Any], to_page: Optional[Tuple[float, ...]] = None,
+) -> Dict[int, Dict[str, float]]:
+    """Resolve text-line origins through text and graphics matrices.
+
+    Td/TD/T* translate in text space, not page space. Glyph advances within
+    one show operation are deliberately not estimated.
+    """
+    identity = (1., 0., 0., 1., 0., 0.)
+    ctm = identity
+    line = identity
+    leading = 0.
+    stack = []
+    result = {}
+    for index, instruction in enumerate(instructions):
+        op, args = str(instruction.operator), list(instruction.operands)
+        try:
+            if op == "q":
+                stack.append(ctm)
+            elif op == "Q":
+                ctm = stack.pop() if stack else identity
+            elif op == "cm":
+                ctm = _compose_matrix(tuple(float(v) for v in args), ctm)
+            elif op == "BT":
+                line = identity
+            elif op == "Tm":
+                line = tuple(float(v) for v in args)
+            elif op == "TL":
+                leading = float(args[0])
+            elif op in {"Td", "TD"}:
+                dx, dy = (float(v) for v in args)
+                if op == "TD":
+                    leading = -dy
+                line = _compose_matrix((1., 0., 0., 1., dx, dy), line)
+            elif op in {"T*", "'", '"'}:
+                line = _compose_matrix((1., 0., 0., 1., 0., -leading), line)
+            if op in {"Tj", "TJ", "'", '"'}:
+                matrix = _compose_matrix(line, ctm)
+                if to_page is not None:
+                    matrix = _compose_matrix(matrix, to_page)
+                result[index] = {
+                    "x": matrix[4], "y": matrix[5],
+                    "rotation": round(math.degrees(math.atan2(matrix[1], matrix[0])), 1),
+                }
+        except (TypeError, ValueError, IndexError):
+            continue
+    return result
+
+
 def _readback_page_runs(
     page: Any, *, to_page: Optional[Tuple[float, ...]] = None
 ) -> Dict[int, Dict[str, Any]]:
@@ -3863,16 +3961,10 @@ def _readback_page_runs(
     current: Optional[int] = None
     stack: List[Optional[int]] = []
     current_font = ""
-    line_x = line_y = text_x = text_y = 0.0
-    leading = 0.0
-    for instruction in instructions:
+    geometry = _text_run_geometry(instructions, to_page)
+    for instruction_index, instruction in enumerate(instructions):
         operator = str(instruction.operator)
         operands = list(instruction.operands)
-        if operator == "BT":
-            # A text object starts with an identity text matrix. Carrying the
-            # previous one across put later runs hundreds of points up the page.
-            line_x = line_y = text_x = text_y = 0.0
-            leading = 0.0
         if operator in {"BMC", "BDC"}:
             stack.append(current)
             current = None
@@ -3883,23 +3975,6 @@ def _readback_page_runs(
                     current = None
         elif operator == "EMC":
             current = stack.pop() if stack else None
-        try:
-            if operator == "Tm" and len(operands) == 6:
-                line_x, line_y = float(operands[4]), float(operands[5])
-                text_x, text_y = line_x, line_y
-            elif operator in {"Td", "TD"} and len(operands) == 2:
-                if operator == "TD":
-                    leading = -float(operands[1])
-                line_x += float(operands[0])
-                line_y += float(operands[1])
-                text_x, text_y = line_x, line_y
-            elif operator == "TL" and operands:
-                leading = float(operands[0])
-            elif operator in {"T*", "'", '"'}:
-                line_y -= leading
-                text_x, text_y = line_x, line_y
-        except (TypeError, ValueError):
-            pass
         if operator == "Tf" and operands:
             current_font = str(operands[0])
         if operator in {"Tj", "TJ", "'", '"'} and current is not None:
@@ -3931,11 +4006,8 @@ def _readback_page_runs(
                 curated_text = "".join(curated_pieces)
             if not text and not unmapped:
                 continue
-            spot_x, spot_y = text_x, text_y
-            if to_page is not None:
-                ma, mb, mc, md, me, mf = to_page
-                spot_x = ma * text_x + mc * text_y + me
-                spot_y = mb * text_x + md * text_y + mf
+            spot = geometry.get(instruction_index, {})
+            spot_x, spot_y = spot.get("x", 0), spot.get("y", 0)
             record = runs.setdefault(
                 current,
                 {
@@ -3943,6 +4015,7 @@ def _readback_page_runs(
                     "curated": "",
                     "y": spot_y,
                     "x": spot_x,
+                    "rotation": spot.get("rotation", 0),
                     "unmapped": 0,
                     "font": "",
                 },
@@ -4063,7 +4136,20 @@ def _readback_sequence(
             visit(node.get("/K"), page_index)
             return
         role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
-        kids = node.get("/K")
+        visit_content(node.get("/K"), node, role, page_index)
+
+    def visit_content(
+        kids: Any, node: Any, role: str, page_index: Optional[int]
+    ) -> None:
+        # Content references belong to their structure element even when /K
+        # is an array mixing references and nested structure elements.
+        if isinstance(kids, pikepdf.Array):
+            for child in kids:
+                visit_content(child, node, role, page_index)
+            return
+        reference_page = page_of(kids)
+        if reference_page is not None:
+            page_index = reference_page
         stream_key = None
         if isinstance(kids, pikepdf.Dictionary) and (
             _safe_pdf_string(kids.get("/Type", "")).lstrip("/") == "MCR"
@@ -4092,6 +4178,7 @@ def _readback_sequence(
             entry: Dict[str, Any] = {
                 "kind": "text",
                 "role": role,
+                "structureId": str(node.objgen),
                 "page": page_index,
                 "text": replacement or (record or {}).get("text", ""),
                 "drawn": (record or {}).get("text", ""),
@@ -4102,6 +4189,7 @@ def _readback_sequence(
                 "replaced": bool(replacement),
                 "y": (record or {}).get("y"),
                 "x": (record or {}).get("x"),
+                "rotation": (record or {}).get("rotation", 0),
             }
             if keep_elements:
                 entry["element"] = node
@@ -4252,9 +4340,9 @@ def _duplicate_field_distinguishers(
 ) -> List[Dict[str, Any]]:
     """Work out how to tell apart controls that announce the same name.
 
-    Position is the only thing that reliably separates them, so the answer is
-    always "which one of how many" -- but what that number *means* depends on
-    the shape. Continuation lines of one long answer sit alone in a column;
+    Geometry and repeated field-name patterns establish related controls.
+    The suggestion is only "which one of how many"; what that number means
+    depends on the shape. Continuation lines of one long answer sit alone in a column;
     repeating records share their row with other fields; options sit beside
     each other on one row. Naming the right one is the difference between
     "line 2 of 4" and "row 2 of 3".
@@ -4270,6 +4358,42 @@ def _duplicate_field_distinguishers(
             float(item["x"] or 0),
         ),
     )
+    # Reject isolated members, not the whole group. Array indices and repeated
+    # record attributes are evidence even when records span columns or pages.
+    def patterns(item: Dict[str, Any]) -> set[str]:
+        name = str(item.get("name") or "")
+        name = re.sub(r"__\d+$", "", name)
+        keys = set()
+        if re.search(r"\d", name):
+            keys.add("array:" + re.sub(r"\d+", "#", name))
+        attribute = re.match(r"^[a-zA-Z_]+\d+_(.+)$", name)
+        if attribute:
+            keys.add("attribute:" + re.sub(r"\d+", "#", attribute[1]))
+        return keys
+
+    def related(first: Dict[str, Any], second: Dict[str, Any]) -> bool:
+        if patterns(first) & patterns(second):
+            return True
+        if first.get("page") != second.get("page"):
+            return False
+        dx = abs(float(first.get("x") or 0) - float(second.get("x") or 0))
+        dy = abs(float(first["y"]) - float(second["y"]))
+        return (dy < 8 and dx <= 360) or (dy <= 72 and dx <= 12)
+
+    generic_options = {
+        "other", "yes", "no", "not receiving this service", "by handing it to them",
+    }
+    eligible = [
+        item for item in ordered
+        if _strip_field_name_distinguisher(item.get("text", "")).casefold().rstrip(".,:;")
+        not in generic_options
+    ]
+    ordered = [
+        item for item in eligible
+        if any(other is not item and related(item, other) for other in eligible)
+    ]
+    if len(ordered) < 2:
+        return []
     rows: List[List[Dict[str, Any]]] = []
     for item in ordered:
         for row in rows:
@@ -4294,6 +4418,12 @@ def _duplicate_field_distinguishers(
         noun = "row"
     else:
         noun = "line"
+    def base_text(item: Dict[str, Any]) -> str:
+        value = _strip_field_name_distinguisher(item.get("text", ""))
+        if value.casefold() in {"", "undefined", "null", "none"}:
+            return default_pdf_field_tooltip(item.get("name"))
+        return value
+
     total = len(ordered)
     return [
         {
@@ -4302,13 +4432,274 @@ def _duplicate_field_distinguishers(
             "page": item.get("page"),
             "current": item.get("text", ""),
             "suggested": (
-                f"{_strip_field_name_distinguisher(item.get('text', ''))}"
+                f"{base_text(item)}"
                 f" ({noun} {position} of {total})"
             ).strip(),
             "noun": noun,
         }
         for position, item in enumerate(ordered, start=1)
     ]
+
+
+def _heading_outline_findings(sequence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Flag outline gaps and possible wraps; these are review heuristics."""
+    findings: List[Dict[str, Any]] = []
+    previous = None
+    seen = set()
+    for item in sequence:
+        role = str(item.get("role", ""))
+        if not re.fullmatch(r"H[1-6]", role):
+            continue
+        identity = item.get("structureId", item["index"])
+        if identity in seen:
+            continue
+        seen.add(identity)
+        level = int(role[1])
+        previous_level = int(previous["role"][1]) if previous else 0
+        issue = None
+        if level > previous_level + 1:
+            issue = ("level-gap", "Heading outline skips a level",
+                     f"{role} follows {previous['role'] if previous else 'the start of the document'}.")
+        elif (
+            previous and previous.get("page") == item.get("page")
+            and item["index"] == previous["index"] + 1
+            and all(entry.get(key) is not None for entry in (previous, item) for key in ("x", "y"))
+            and 0 < float(previous["y"]) - float(item["y"]) <= 24
+            and abs(float(previous["x"]) - float(item["x"])) <= 18
+        ):
+            issue = ("possible-wrap", "Adjacent headings may be one wrapped heading",
+                     "Review these adjacent headings against the page; a title or bold paragraph may have been split at a line wrap.")
+        if issue:
+            code, title, detail = issue
+            findings.append({
+                "id": f"readback-heading-{code}-{item['index']}",
+                "severity": "fail" if code == "level-gap" else "warning",
+                "confidence": "observed" if code == "level-gap" else "heuristic",
+                "category": "heading-outline", "title": title, "detail": detail,
+                "page": item.get("page"), "announcedIndex": item["index"],
+                "remediation": "draft_structure",
+            })
+        previous = item
+    return findings
+
+
+def _review_run_context(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bounded evidence for an AI/reviewer; coordinates are PDF page points."""
+    return [
+        {key: item.get(key) for key in
+         ("index", "role", "text", "page", "x", "y", "rotation")}
+        for item in items[:16]
+    ]
+
+
+def _layout_review_findings(sequence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Identify semantic/layout ambiguities without pretending to resolve them."""
+    findings: List[Dict[str, Any]] = []
+    texts = [item for item in sequence if item["kind"] == "text"
+             and item.get("text") and item.get("x") is not None and item.get("y") is not None]
+    by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for item in texts:
+        by_page.setdefault(item["page"], []).append(item)
+
+    def emit(code: str, title: str, detail: str, items: List[Dict[str, Any]], task: str) -> None:
+        first = items[0]
+        findings.append({
+            "id": f"readback-{code}-{first['index']}", "severity": "warning",
+            "category": "heading-outline" if code.startswith("heading") else "reading-order",
+            "title": title, "detail": detail, "page": first["page"],
+            "announcedIndex": first["index"], "confidence": "heuristic",
+            "remediation": "draft_structure",
+            "review": {"task": task, "coordinateSystem": "PDF points, bottom-left origin",
+                       "items": _review_run_context(items)},
+        })
+
+    for page_items in by_page.values():
+        # Some sidebars are upright glyphs stacked vertically, not rotated Tm.
+        letters = [i for i in page_items if len(i["text"].strip()) == 1
+                   and i["text"].strip().isalpha()]
+        vertical = []
+        used_letters = set()
+        for first in letters:
+            if first["index"] in used_letters:
+                continue
+            column = sorted([i for i in letters if abs(float(i["x"]) - float(first["x"])) <= 3],
+                            key=lambda i: -float(i["y"]))
+            groups: List[List[Dict[str, Any]]] = []
+            for item in column:
+                if not groups or not (0 < float(groups[-1][-1]["y"]) - float(item["y"]) <= 20):
+                    groups.append([])
+                groups[-1].append(item)
+            for group in groups:
+                if len(group) < 5 or any(i["index"] in used_letters for i in group):
+                    continue
+                used_letters.update(i["index"] for i in group)
+                vertical.extend(group)
+                excerpt = "".join(i["text"] for i in group).strip()
+                emit("vertical-letters", "A vertical sidebar is announced letter by letter",
+                     f"Stacked glyphs read {excerpt!r}. Group the sidebar and move it outside main "
+                     "paragraph sentences; verify word spacing and meaning before setting replacement text.",
+                     group, "group_vertical_letters_and_review_order")
+        rotated = [item for item in page_items if abs(float(item.get("rotation") or 0)) > 15]
+        if rotated:
+            first, last = min(i["index"] for i in rotated), max(i["index"] for i in rotated)
+            interleaved = [i for i in page_items if first < i["index"] < last and i not in rotated]
+            emit("rotated-text", "Rotated text needs a separate reading-order review",
+                 f"{len(rotated)} rotated text run(s); {len(interleaved)} other run(s) occur between them. "
+                 "Read the sidebar as a unit, without inserting it into a main-column sentence. "
+                 "Verify the visual direction before combining individual letters.",
+                 sorted(rotated + interleaved[:3], key=lambda i: i["index"]),
+                 "group_rotated_text_and_review_order")
+
+        # Same-column neighbours may be separated in the tag tree by another
+        # column. Group spatially, not by consecutive announcement indices.
+        candidates = [i for i in page_items if len(i["text"]) <= 180
+                      and i not in rotated and i not in vertical]
+        visited = set()
+        for heading in candidates:
+            if not re.fullmatch(r"H[1-6]", str(heading.get("role"))) or heading["index"] in visited:
+                continue
+            group = [heading]
+            for item in group:
+                for other in candidates:
+                    if other in group:
+                        continue
+                    if (item.get("font") == other.get("font")
+                        and abs(float(item["x"]) - float(other["x"])) <= 24
+                        and 0 < abs(float(item["y"]) - float(other["y"])) <= 24):
+                        group.append(other)
+                        if len(group) >= 16:
+                            break
+                if len(group) >= 16:
+                    break
+            visited.update(i["index"] for i in group)
+            group.sort(key=lambda i: (-float(i["y"]), float(i["x"])))
+            if len(group) >= 2 and len({i.get("structureId", i["index"]) for i in group}) >= 2:
+                excerpt = " ".join(i["text"] for i in group)[:350]
+                emit("heading-fragments", "A heading or bold paragraph may be fragmented",
+                     f"Nearby same-column, same-font runs include heading tags: {excerpt!r}. "
+                     "Decide whether these are one heading, separate sections, or paragraph text. "
+                     "Sentence punctuation alone does not establish a heading boundary.",
+                     group, "merge_heading_or_demote_paragraph")
+            elif len(heading["text"]) >= 120 or heading["text"].strip().casefold().rstrip(".,:") in {"yes", "no"}:
+                emit("heading-semantics", "Heading text may be instructions or a form option",
+                     f"Review the heading {heading['text'][:300]!r} against its surrounding question or paragraph.",
+                     [heading], "review_heading_role")
+
+        # A short wrapped column label split by another column is ambiguous:
+        # row-wise traversal is valid for data rows but breaks stacked headers.
+        flagged = set()
+        flagged_bands: List[float] = []
+        for position, first in enumerate(page_items):
+            if (len(first["text"]) > 90 or first in rotated or first in vertical
+                or any(abs(float(first["y"]) - band) < 48 for band in flagged_bands)
+                or not re.search(r"[A-Za-z]{3}", first["text"])):
+                continue
+            for next_position in range(position + 2, min(position + 20, len(page_items))):
+                last = page_items[next_position]
+                if (len(last["text"]) > 90 or last in rotated
+                    or not re.search(r"[A-Za-z]{3}", last["text"])
+                    or not (0 < float(first["y"]) - float(last["y"]) <= 16)
+                    or abs(float(first["x"]) - float(last["x"])) > 18):
+                    continue
+                middle = [i for i in page_items[position+1:next_position]
+                          if abs(float(i["x"]) - float(first["x"])) > 60
+                          and abs(float(i["y"]) - float(first["y"])) <= 36
+                          and any(
+                              abs(float(following["x"]) - float(i["x"])) <= 18
+                              and 0 < float(i["y"]) - float(following["y"]) <= 16
+                              and re.search(r"[A-Za-z]{3}", following["text"])
+                              for following in page_items[next_position+1:next_position+13]
+                          )]
+                if not middle or first["index"] in flagged:
+                    continue
+                items = [first] + middle[:8] + [last]
+                flagged.update(i["index"] for i in items)
+                flagged_bands.append(float(first["y"]))
+                emit("column-wrap", "Wrapped column text is interleaved with another column",
+                     "The tag order switches columns before finishing nearby text in the first column. "
+                     "Check whether these are multiline table headers or sidebars; if so, group each "
+                     "header before ordering the columns. Do not reorder genuine table data rows blindly.",
+                     items, "review_column_header_order")
+                break
+    return findings
+
+
+def _unmarked_image_findings(pdf: Any) -> List[Dict[str, Any]]:
+    """Inspect actual image invocations, including inherited Form tagging.
+
+    Resource presence and /Alt alone do not establish content coverage.
+    Classification as meaningful/decorative remains a review decision.
+    """
+    import pikepdf
+
+    uncovered: Dict[str, Dict[str, Any]] = {}
+    for page_index, page in enumerate(pdf.pages):
+        def walk(container: Any, prefix: str, inherited: bool, ancestors: set[str]) -> None:
+            resources = container.get("/Resources")
+            xobjects = resources.get("/XObject") if resources is not None else None
+            covered = inherited
+            stack = []
+            try:
+                instructions = pikepdf.parse_content_stream(container)
+            except Exception:
+                return
+            for args, operator in instructions:
+                op = str(operator)
+                if op in {"BMC", "BDC"}:
+                    stack.append(covered)
+                    covered = covered or bool(args and str(args[0]) == "/Artifact") or bool(
+                        op == "BDC" and len(args) > 1
+                        and hasattr(args[1], "get") and args[1].get("/MCID") is not None
+                    )
+                elif op == "EMC":
+                    covered = stack.pop() if stack else inherited
+                elif op == "Do" and args and xobjects is not None and args[0] in xobjects:
+                    obj = xobjects[args[0]]
+                    path = (prefix + "/" if prefix else "") + str(args[0]).lstrip("/")
+                    identity = _pdf_object_identity(obj, path)
+                    if str(obj.get("/Subtype")) == "/Form" and identity not in ancestors:
+                        walk(obj, path, covered, ancestors | {identity})
+                    elif str(obj.get("/Subtype")) == "/Image" and not covered:
+                        asset_id = f"p{page_index + 1}:{path}"
+                        record = uncovered.setdefault(asset_id, {
+                            "assetId": asset_id, "page": page_index, "count": 0,
+                            "width": int(obj.get("/Width", 0)), "height": int(obj.get("/Height", 0)),
+                        })
+                        record["count"] += 1
+        walk(page, "", False, set())
+    return [{
+        "id": "readback-unmarked-image-" + asset["assetId"],
+        "severity": "fail", "category": "image-coverage",
+        "title": "Drawn image is neither marked content nor an artifact",
+        "detail": f"{asset['assetId']} is drawn {asset['count']} time(s) outside marked content. "
+                  "Inspect the image: tag meaningful content as a Figure with an appropriate description, "
+                  "or explicitly mark a decorative image as Artifact. Small size alone is not proof.",
+        "page": asset["page"], "assetId": asset["assetId"],
+        "confidence": "observed", "remediation": "figures",
+        "review": {"task": "classify_and_tag_image", "assetId": asset["assetId"],
+                   "width": asset["width"], "height": asset["height"],
+                   "requiresImagePreview": True},
+    } for asset in uncovered.values()]
+
+
+def _select_readback_review_findings(
+    findings: List[Dict[str, Any]], limit: int = 40,
+) -> List[Dict[str, Any]]:
+    """Give each page/problem family evidence before repeating one region."""
+    buckets: Dict[Tuple[Any, str], List[Dict[str, Any]]] = {}
+    for finding in findings:
+        key = (finding.get("page"), str(finding.get("review", {}).get("task")
+                                       or finding.get("category") or "other"))
+        buckets.setdefault(key, []).append(finding)
+    selected = []
+    depth = 0
+    while len(selected) < limit:
+        layer = [bucket[depth] for bucket in buckets.values() if len(bucket) > depth]
+        if not layer:
+            break
+        selected.extend(layer[:limit-len(selected)])
+        depth += 1
+    return selected
 
 
 def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
@@ -4335,6 +4726,7 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
                     "findings": [],
                 }
             sequence = _readback_sequence(pdf)
+            findings.extend(_unmarked_image_findings(pdf))
             page_run_totals = [len(_readback_page_runs(page)) for page in pdf.pages]
             page_censuses = [_page_text_census(page) for page in pdf.pages]
     except PDFAccessibilityError:
@@ -4348,6 +4740,9 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
     ]
     text_items = [item for item in spoken if item["kind"] == "text" and item["spoken"]]
     field_items = [item for item in spoken if item["kind"] == "field"]
+
+    findings.extend(_heading_outline_findings(spoken))
+    findings.extend(_layout_review_findings(spoken))
 
     # 1. A run announced away from the rest of its own line. This is the general
     #    form of a sentence losing a word to somewhere else in the document.
@@ -4676,6 +5071,7 @@ def analyze_screen_reader_readback(pdf_path: str) -> Dict[str, Any]:
             for item in spoken
         ],
         "findings": findings[:200],
+        "reviewFindings": _select_readback_review_findings(findings),
         "summary": {
             "announced": len(spoken),
             "textRuns": len(text_items),
@@ -5569,9 +5965,31 @@ def _visual_lines_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
                 tolerance = max(2.5, min(anchor["size"], fragment["size"]) * 0.22)
                 group_right = max(item["left"] + item["width"] for item in group)
                 maximum_gap = max(12.0, min(anchor["size"], fragment["size"]) * 1.25)
+                numbered_prefix = (
+                    len(group) == 1
+                    and re.fullmatch(r"\d{1,3}[.)]", anchor["text"].strip()) is not None
+                    and fragment["bold"]
+                    and fragment["left"] <= group_right + fragment["size"] * 2.5
+                )
+                preceding_number = (
+                    re.fullmatch(r"\d{1,3}[.)]", fragment["text"].strip()) is not None
+                    and anchor["bold"]
+                    and 0 <= anchor["left"] - fragment["left"] - fragment["width"]
+                    <= anchor["size"] * 2.5
+                )
+                same_style = (
+                    anchor["family"] == fragment["family"]
+                    and anchor["bold"] == fragment["bold"]
+                    and abs(anchor["size"] - fragment["size"]) <= 0.5
+                    and fragment["left"] <= group_right + min(maximum_gap, fragment["size"] * 0.6)
+                )
                 if (
                     abs(anchor["top"] - fragment["top"]) <= tolerance
-                    and fragment["left"] <= group_right + maximum_gap
+                    and (
+                        preceding_number
+                        or (fragment["left"] >= group_right - tolerance
+                            and (numbered_prefix or same_style))
+                    )
                 ):
                     matching = group
                     break
@@ -5660,6 +6078,40 @@ def _content_blocks_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
     return blocks[:2000]
 
 
+def _merge_heading_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Join close, aligned, same-style wraps before judging prominence."""
+    merged: List[Dict[str, Any]] = []
+    for original in lines:
+        line = dict(original)
+        previous = merged[-1] if merged else None
+        if previous is not None:
+            gap = line["top"] - (previous["top"] + previous["height"])
+            aligned = (
+                abs(line["left"] - previous["left"]) <= line["fontSize"]
+                or abs((line["left"] + line["right"]) -
+                       (previous["left"] + previous["right"])) <= line["fontSize"] * 2
+            )
+            if (
+                line["pageIndex"] == previous["pageIndex"]
+                and line["fontFamily"] == previous["fontFamily"]
+                and abs(line["fontSize"] - previous["fontSize"]) <= 0.5
+                and abs(line["boldRatio"] - previous["boldRatio"]) <= 0.2
+                and 0 <= gap <= line["fontSize"] * 0.45
+                and aligned
+                and not re.match(r"^\s*\d+[.)]\s", line["text"])
+                and not re.search(r"[.:;!?]$", previous["text"])
+            ):
+                previous["text"] += " " + line["text"]
+                previous["height"] = line["top"] + line["height"] - previous["top"]
+                previous["left"] = min(previous["left"], line["left"])
+                previous["right"] = max(previous["right"], line["right"])
+                previous["weight"] += line["weight"]
+                previous["lineCount"] = previous.get("lineCount", 1) + 1
+                continue
+        merged.append(line)
+    return merged
+
+
 def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
     """Infer conservative heading candidates from pdftohtml's visual XML."""
     lines = _visual_lines_from_xml(root)
@@ -5673,6 +6125,7 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
     if body_size <= 0:
         return []
 
+    lines = _merge_heading_lines(lines)
     running_occurrences: Dict[str, List[Dict[str, Any]]] = {}
     for line in lines:
         height = line["pageHeight"]
@@ -5698,9 +6151,13 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
         )
         if (
             len(value) > 180
+            or (line.get("lineCount", 1) > 2 and len(value.split()) > 18)
+            or value.strip().casefold().rstrip(":") in {
+                "allowed", "denied", "division", "in the interests of", "docket no.", "yes", "no"
+            }
             or _is_heading_marker(value)
             or looks_like_form_code
-            or (is_running and line is not repeated[0])
+            or (is_running and line["pageIndex"] != repeated[0]["pageIndex"])
         ):
             continue
         # A repeated running title may be a genuine document title on page one.
@@ -5771,6 +6228,86 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
     return candidates[:250]
 
 
+def _heading_exclusion_boxes(pdf_path: str) -> Dict[int, List[Dict[str, float]]]:
+    """Locate button labels and stroked rectangular enclosures in page space.
+
+    Poppler XML has no widget or path information. Only use geometry we can
+    resolve: rotated pages and nested form paths remain for manual review.
+    """
+    import pikepdf
+
+    result: Dict[int, List[Dict[str, float]]] = {}
+    with pikepdf.open(pdf_path) as pdf:
+        for page_index, page in enumerate(pdf.pages):
+            if int(page.get("/Rotate", 0)) % 360:
+                continue
+            bounds = [float(v) for v in page.get("/CropBox", page.MediaBox)]
+            x0, y0, x1, y1 = bounds
+            width, height = x1 - x0, y1 - y0
+            if width <= 0 or height <= 0:
+                continue
+            boxes = result.setdefault(page_index, [])
+
+            def add(rect: List[float], margin: float = 0) -> None:
+                left, bottom, right, top = rect
+                boxes.append({
+                    "x": (left - x0 - margin) / width,
+                    "y": (y1 - top - margin) / height,
+                    "width": (right - left + 2 * margin) / width,
+                    "height": (top - bottom + 2 * margin) / height,
+                    "button": bool(margin),
+                })
+
+            for annot in page.get("/Annots", []):
+                parent = _named_parent(annot)
+                kind = annot.get("/FT", parent.get("/FT") if parent is not None else None)
+                if str(kind) == "/Btn" and annot.get("/Rect") is not None:
+                    add([float(v) for v in annot.Rect], 6)
+
+            matrix = (1., 0., 0., 1., 0., 0.)
+            stack = []
+            rectangles = []
+            for operands, operator in pikepdf.parse_content_stream(page):
+                op = str(operator)
+                if op == "q":
+                    stack.append(matrix)
+                elif op == "Q":
+                    matrix = stack.pop() if stack else (1., 0., 0., 1., 0., 0.)
+                elif op == "cm":
+                    matrix = _compose_matrix(tuple(float(v) for v in operands), matrix)
+                elif op == "re":
+                    x, y, w, h = (float(v) for v in operands)
+                    a, b, c, d, e, f = matrix
+                    if b == 0 and c == 0:
+                        xs, ys = [a*x+e, a*(x+w)+e], [d*y+f, d*(y+h)+f]
+                        rectangles.append([min(xs), min(ys), max(xs), max(ys)])
+                elif op in {"S", "s", "B", "B*", "b", "b*", "f", "F", "f*", "n"}:
+                    if op in {"S", "s", "B", "B*", "b", "b*"}:
+                        for rect in rectangles:
+                            # Ignore page frames and tiny checkbox outlines.
+                            if 40 < rect[2]-rect[0] < width * .95 and 20 < rect[3]-rect[1] < height * .35:
+                                add(rect)
+                    rectangles = []
+    return result
+
+
+def _heading_overlaps_exclusion(heading: Dict[str, Any], box: Dict[str, float]) -> bool:
+    h = heading["box"]
+    if box.get("button"):
+        # Labels can extend well beyond the button; compare the near edge.
+        return (
+            h["y"] < box["y"] + box["height"]
+            and h["y"] + h["height"] > box["y"]
+            and min(abs(h["x"] - box["x"] - box["width"]),
+                    abs(h["x"] + h["width"] - box["x"])) < .025
+        )
+    return (
+        h["x"] >= box["x"] and h["y"] >= box["y"]
+        and h["x"] + h["width"] <= box["x"] + box["width"]
+        and h["y"] + h["height"] <= box["y"] + box["height"]
+    )
+
+
 def _visual_content_analysis(
     pdf_path: str,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -5790,6 +6327,38 @@ def _visual_content_analysis(
             return [], []
     root = tree.getroot()
     headings = _heading_candidates_from_xml(root)
+    exclusions = _heading_exclusion_boxes(pdf_path)
+    visual_lines = _visual_lines_from_xml(root)
+    page_max_sizes: Dict[int, float] = {}
+    for line in visual_lines:
+        if not _is_heading_marker(line["text"]):
+            page = line["pageIndex"]
+            page_max_sizes[page] = max(page_max_sizes.get(page, 0), line["fontSize"])
+    # A border alone does not distinguish a notice from a title's table cell.
+    # Preserve enclosures containing the page's largest-font text.
+    for page, boxes in exclusions.items():
+        largest = [
+            {"box": {
+                "x": line["left"] / line["pageWidth"],
+                "y": line["top"] / line["pageHeight"],
+                "width": (line["right"] - line["left"]) / line["pageWidth"],
+                "height": line["height"] / line["pageHeight"],
+            }}
+            for line in visual_lines
+            if line["pageIndex"] == page
+            and line["fontSize"] >= page_max_sizes.get(page, 0)
+            and line["pageWidth"] and line["pageHeight"]
+            and not _is_heading_marker(line["text"])
+        ]
+        exclusions[page] = [
+            box for box in boxes if box.get("button")
+            or not any(_heading_overlaps_exclusion(line, box) for line in largest)
+        ]
+    headings = [
+        heading for heading in headings
+        if not any(_heading_overlaps_exclusion(heading, box)
+                   for box in exclusions.get(heading["pageIndex"], []))
+    ]
     blocks = _content_blocks_from_xml(root)
     heading_by_position = {
         ":".join(str(item.get("candidateId") or "").split(":")[:3]): item
@@ -5966,6 +6535,10 @@ def apply_pdf_accessibility_settings(
                             continue
                         field_name = _safe_pdf_string(parent.get("/T", ""))
                         if not field_name:
+                            continue
+                        explicit = str(tooltip_map.get(field_name, "")).strip()
+                        existing = _widget_tooltip(annot, parent).strip()
+                        if not explicit and existing:
                             continue
                         tooltip = _field_name_to_tooltip(
                             field_name,
@@ -6296,21 +6869,22 @@ def create_draft_structure_tree(
                             and _safe_pdf_string(operands[0]).lstrip("/") == "Artifact"
                         )
 
-                    for instruction in instructions:
+                    geometry = _text_run_geometry(instructions, to_page)
+                    text_start = 0
+                    for instruction_index, instruction in enumerate(instructions):
                         operator = str(instruction.operator)
                         if operator == "BT" and not inside_text:
                             inside_text = True
                             text_block_is_artifact = any(artifact_stack)
                             text_block = [instruction]
+                            text_start = instruction_index
                             continue
                         if inside_text:
                             text_block.append(instruction)
                             if operator != "ET":
                                 continue
 
-                            if text_block_is_artifact or any(
-                                starts_artifact(item) for item in text_block
-                            ):
+                            if text_block_is_artifact:
                                 rewritten.extend(text_block)
                             else:
                                 raw_groups: List[List[int]] = []
@@ -6320,41 +6894,25 @@ def create_draft_structure_tree(
                                 # sits. Reading order is a question about the page,
                                 # and answering it from content-stream position is
                                 # what tore sentences apart.
-                                text_x = text_y = 0.0
-                                line_x = line_y = 0.0
-                                leading = 0.0
+                                run_artifacts: List[bool] = []
                                 for block_index, block_instruction in enumerate(
                                     text_block[1:-1], start=1
                                 ):
                                     block_operator = str(block_instruction.operator)
                                     block_operands = list(block_instruction.operands)
-                                    try:
-                                        if (
-                                            block_operator == "Tm"
-                                            and len(block_operands) == 6
-                                        ):
-                                            line_x = float(block_operands[4])
-                                            line_y = float(block_operands[5])
-                                            text_x, text_y = line_x, line_y
-                                        elif (
-                                            block_operator in {"Td", "TD"}
-                                            and len(block_operands) == 2
-                                        ):
-                                            if block_operator == "TD":
-                                                leading = -float(block_operands[1])
-                                            line_x += float(block_operands[0])
-                                            line_y += float(block_operands[1])
-                                            text_x, text_y = line_x, line_y
-                                        elif block_operator == "TL" and block_operands:
-                                            leading = float(block_operands[0])
-                                        elif block_operator == "T*":
-                                            line_y -= leading
-                                            text_x, text_y = line_x, line_y
-                                        elif block_operator in {"'", '"'}:
-                                            line_y -= leading
-                                            text_x, text_y = line_x, line_y
-                                    except (TypeError, ValueError):
-                                        pass
+                                    # An artifact run does not make the rest of
+                                    # this BT/ET object decorative. Keep groups
+                                    # within marked-content boundaries.
+                                    if block_operator in {"BMC", "BDC", "EMC"}:
+                                        if current_group:
+                                            raw_groups.append(current_group)
+                                            current_group = []
+                                        if block_operator == "EMC":
+                                            if run_artifacts:
+                                                run_artifacts.pop()
+                                        else:
+                                            run_artifacts.append(starts_artifact(block_instruction))
+                                        continue
                                     if block_operator in {"Td", "TD", "Tm", "T*"}:
                                         if current_group:
                                             raw_groups.append(current_group)
@@ -6363,19 +6921,15 @@ def create_draft_structure_tree(
                                         raw_groups.append(current_group)
                                         current_group = []
                                     if block_operator in {"Tj", "TJ", "'", '"'}:
+                                        if any(run_artifacts):
+                                            continue
                                         if _shown_instruction_text(
                                             block_instruction
                                         ).strip():
                                             if not current_group:
-                                                spot_y, spot_x = text_y, text_x
-                                                if to_page is not None:
-                                                    ma, mb, mc, md, me, mf = to_page
-                                                    spot_x = (
-                                                        ma * text_x + mc * text_y + me
-                                                    )
-                                                    spot_y = (
-                                                        mb * text_x + md * text_y + mf
-                                                    )
+                                                position = geometry.get(text_start + block_index, {})
+                                                spot_x = position.get("x", 0.)
+                                                spot_y = position.get("y", 0.)
                                                 group_spots.append((spot_y, spot_x))
                                             current_group.append(block_index)
                                 if current_group:

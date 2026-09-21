@@ -3198,6 +3198,30 @@ class TestImageDescriptionWithAi(unittest.TestCase):
         self.assertNotIn("json_mode", completion.call_args.kwargs)
         # A small model is enough to say what a seal is.
         self.assertEqual(completion.call_args.kwargs["model"], "a-small-model")
+        # A reasoning model can spend its whole output budget on hidden
+        # reasoning tokens and return nothing; the defaults here leave room
+        # for the visible answer on a fast, low-effort classification task.
+        self.assertEqual(completion.call_args.kwargs["max_output_tokens"], 600)
+        self.assertEqual(completion.call_args.kwargs["reasoning_effort"], "minimal")
+
+    def test_the_token_budget_and_reasoning_effort_can_be_tuned_per_model(self):
+        with (
+            patch(
+                "docassemble.ALToolbox.llms.chat_completion",
+                return_value="Seal.",
+            ) as completion,
+            patch(
+                "docassemble.ALToolbox.llms.get_first_small_model",
+                return_value="a-small-model",
+            ),
+        ):
+            describe_images_with_ai(
+                {"p1:Im0": b"fake-png"},
+                max_output_tokens=1200,
+                reasoning_effort="high",
+            )
+        self.assertEqual(completion.call_args.kwargs["max_output_tokens"], 1200)
+        self.assertEqual(completion.call_args.kwargs["reasoning_effort"], "high")
 
     def test_decorative_is_reported_rather_than_invented(self):
         with (

@@ -12,7 +12,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Tuple, cast
 
 from .standard_font_metrics import (
     is_standard_14,
@@ -212,6 +212,8 @@ def describe_images_with_ai(
     *,
     context: Optional[Mapping[str, Any]] = None,
     model: Optional[str] = None,
+    max_output_tokens: int = 600,
+    reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = "minimal",
 ) -> List[Dict[str, Any]]:
     """Ask a vision model what each supplied image shows.
 
@@ -222,6 +224,15 @@ def describe_images_with_ai(
 
     Every answer is a draft. The model is told to say DECORATIVE rather than
     invent meaning, and nothing here writes to the PDF.
+
+    ``max_output_tokens`` and ``reasoning_effort`` are exposed because a
+    reasoning-capable model spends part of that budget on hidden reasoning
+    tokens before it ever writes the visible answer: a small budget can come
+    back empty (``finish_reason == "length"``) with nothing to show for it.
+    The defaults here favor a fast, low-effort classification since this task
+    needs a one-sentence description, not real reasoning, but a caller can
+    raise the budget or effort per model when a particular deployment needs
+    it.
     """
     from docassemble.ALToolbox.llms import chat_completion
 
@@ -276,7 +287,8 @@ def describe_images_with_ai(
             response = chat_completion(
                 model=chosen,
                 temperature=0,
-                max_output_tokens=200,
+                max_output_tokens=max_output_tokens,
+                reasoning_effort=reasoning_effort,
                 messages=cast(List[Dict[str, str]], conversation),
             )
         except Exception as exc:

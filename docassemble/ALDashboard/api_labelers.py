@@ -3776,6 +3776,31 @@ def pdf_labeler_accessibility_ai_image_alt() -> Response:
             raise DashboardAPIValidationError("asset_ids must be a JSON list.")
         from .pdf_accessibility import describe_images_with_ai, render_image_assets
 
+        # Left unset, describe_images_with_ai's own defaults apply. A caller
+        # only needs these when a particular model's reasoning overhead eats
+        # into a small output budget and comes back empty.
+        image_ai_kwargs: Dict[str, Any] = {}
+        raw_max_output_tokens = post_data.get("max_output_tokens")
+        if raw_max_output_tokens not in (None, ""):
+            try:
+                parsed_max_output_tokens = int(raw_max_output_tokens)
+            except (TypeError, ValueError):
+                raise DashboardAPIValidationError(
+                    "max_output_tokens must be an integer."
+                )
+            if not (16 <= parsed_max_output_tokens <= 4000):
+                raise DashboardAPIValidationError(
+                    "max_output_tokens must be between 16 and 4000."
+                )
+            image_ai_kwargs["max_output_tokens"] = parsed_max_output_tokens
+        raw_reasoning_effort = post_data.get("reasoning_effort")
+        if raw_reasoning_effort not in (None, ""):
+            if raw_reasoning_effort not in {"minimal", "low", "medium", "high"}:
+                raise DashboardAPIValidationError(
+                    "reasoning_effort must be one of minimal, low, medium, or high."
+                )
+            image_ai_kwargs["reasoning_effort"] = raw_reasoning_effort
+
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_in:
             tmp_in.write(content)
             input_path = tmp_in.name
@@ -3786,6 +3811,7 @@ def pdf_labeler_accessibility_ai_image_alt() -> Response:
             previews,
             context={"filename": filename},
             model=str(post_data.get("model") or LABELER_DEFAULT_MODEL),
+            **image_ai_kwargs,
         )
         return jsonify(
             {

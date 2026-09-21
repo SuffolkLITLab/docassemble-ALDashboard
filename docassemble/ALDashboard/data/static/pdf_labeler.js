@@ -3557,7 +3557,8 @@ function updateAccessibilityMetadataFromInputs() {
   };
 }
 
-async function inspectAccessibilityData(forceRefresh) {
+async function inspectAccessibilityData(forceRefresh, options) {
+  const preserveDrafts = !!(options && options.preserveAccessibilityDrafts);
   if (!state.pdfBytes) return;
   if (state.accessibility.inspected && !forceRefresh) return;
   const formData = new FormData();
@@ -3597,8 +3598,9 @@ async function inspectAccessibilityData(forceRefresh) {
     });
     if (!matched) return;
     if (
-      !String(matched.tooltip || "").trim() ||
-      serverField.has_custom_tooltip
+      !preserveDrafts &&
+      (!String(matched.tooltip || "").trim() ||
+        serverField.has_custom_tooltip)
     ) {
       matched.tooltip = String(
         serverField.tooltip || defaultTooltipFromFieldName(matched.name),
@@ -3614,7 +3616,7 @@ async function inspectAccessibilityData(forceRefresh) {
         return String(name || "");
       })
     : [];
-  if (serverOrder.length) {
+  if (serverOrder.length && !preserveDrafts) {
     const byName = new Map();
     state.fields.forEach(function (field) {
       byName.set(String(field.name || ""), field.id);
@@ -9265,7 +9267,7 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
       preserveAccessibilityDrafts: true,
     });
     await refreshPdfDocumentFromState();
-    await inspectAccessibilityData(true);
+    await inspectAccessibilityData(true, { preserveAccessibilityDrafts: true });
     renderAccessibilityModal();
     setDirty(true);
     const result = payload.data.remediation_result || {};
@@ -10405,7 +10407,9 @@ function accessibilityAiReviewContext() {
     // What the tagged order would actually announce, so the AI pass reviews the
     // same evidence a listener would hear rather than the settings alone.
     readbackFindings: (
-      (state.accessibility.readback || {}).findings || []
+      (state.accessibility.readback || {}).reviewFindings ||
+      (state.accessibility.readback || {}).findings ||
+      []
     ).slice(0, 40),
     reportIssues: (Array.isArray(report.issues) ? report.issues : [])
       .filter(function (issue) {

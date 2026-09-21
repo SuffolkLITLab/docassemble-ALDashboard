@@ -323,7 +323,7 @@ def draft_heading_levels_with_ai(
     allowed_ids: set[str] = set()
     for candidate in candidates:
         candidate_id = str(candidate.get("candidateId") or "").strip()
-        if not candidate_id:
+        if not candidate_id or candidate_id in allowed_ids:
             continue
         allowed_ids.add(candidate_id)
         records.append(
@@ -349,7 +349,9 @@ def draft_heading_levels_with_ai(
                 "content": (
                     "Classify possible PDF headings. Use document semantics, not font size alone. "
                     "For every candidate return candidateId, isHeading, suggestedTag (H1-H6), "
-                    "and a short reason. Preserve candidateId exactly. Form labels, instructions, "
+                    "and a short reason. Return every supplied candidateId exactly once, including "
+                    "rejected candidates with isHeading=false; never omit a rejection. isHeading must "
+                    "be a JSON boolean. Preserve candidateId exactly. Form labels, instructions, "
                     "question markers, and running headers are usually not headings. Use page and normalized "
                     "box geometry to consider nearby same-column candidates together, including sentence-ending "
                     "fragments of bold instructions and narrow sidebar titles. Do not classify each wrapped "
@@ -365,22 +367,48 @@ def draft_heading_levels_with_ai(
     if isinstance(response, str):
         response = json.loads(response)
     rows = response.get("decisions", []) if isinstance(response, dict) else []
-    decisions = []
-    for row in rows:
+    by_id: Dict[str, Dict[str, Any]] = {}
+    invalid_ids: set[str] = set()
+    for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
         candidate_id = str(row.get("candidateId") or "")
-        tag = str(row.get("suggestedTag") or "H2").upper()
-        if candidate_id not in allowed_ids or not re.fullmatch(r"H[1-6]", tag):
+        if candidate_id not in allowed_ids:
             continue
-        decisions.append(
-            {
+        tag = str(row.get("suggestedTag") or "H2").upper()
+        if (not isinstance(row.get("isHeading"), bool)
+            or not re.fullmatch(r"H[1-6]", tag)
+            or (row.get("isHeading") is True and not row.get("suggestedTag"))):
+            invalid_ids.add(candidate_id)
+            continue
+        decision = {
+            "candidateId": candidate_id,
+            "isHeading": row["isHeading"],
+            "suggestedTag": tag,
+            "reason": str(row.get("reason") or "")[:240],
+        }
+        previous = by_id.get(candidate_id)
+        if previous and any(previous[key] != decision[key] for key in ("isHeading", "suggestedTag")):
+            invalid_ids.add(candidate_id)
+        by_id.setdefault(candidate_id, decision)
+    decisions = []
+    for record in records:
+        candidate_id = record["candidateId"]
+        if candidate_id in by_id and candidate_id not in invalid_ids:
+            decisions.append(by_id[candidate_id])
+        else:
+            tag = str(record["heuristicTag"]).upper()
+            decisions.append({
                 "candidateId": candidate_id,
-                "isHeading": bool(row.get("isHeading")),
-                "suggestedTag": tag,
-                "reason": str(row.get("reason") or "")[:240],
-            }
-        )
+                "isHeading": False,
+                "suggestedTag": tag if re.fullmatch(r"H[1-6]", tag) else "H2",
+                "reason": (
+                    "The model returned an invalid or conflicting decision; not approved automatically. Review this candidate."
+                    if candidate_id in invalid_ids else
+                    "The model omitted this candidate; not approved automatically. Review this candidate."
+                ),
+                "decisionSource": "fallback",
+            })
     return decisions
 
 
@@ -409,35 +437,61 @@ def _title_from_text_sample(sample: str) -> str:
     return ""
 
 
-def _quoted_title_from_finding(text: str, current_title: str) -> str:
-    """Take the title a finding quotes when no heading candidate is available.
-
-    These findings almost always name their replacement outright -- "the H1 is
-    'First Petition for Child Custody'" -- so the value the reviewer is being
-    promised is right there in the prose. The document's own title is quoted too,
-    and is skipped, as is anything that reads like a filename.
-    """
-    source = str(text or "")
-    current = re.sub(r"\s+", " ", str(current_title or "")).strip().casefold()
-    # Each quote style is matched to its own partner so an apostrophe inside a
-    # word ("the document's heading") cannot open a quotation.
+def _title_recommendations(
+    text: str, current_title: str, known_titles: Iterable[str] = (),
+) -> List[str]:
+    """Extract titles actually recommended in prose, not arbitrary quotations."""
     patterns = (
-        r'"([^"]{4,120})"',
-        "\u201c([^\u201d]{4,120})\u201d",
-        "\u2018([^\u2019]{4,120})\u2019",
-        r"(?:(?<=\s)|^)'([^']{4,120})'(?=[\s.,;:)!?]|$)",
+        r'"([^"]{4,160})"', r"“([^”]{4,160})”", r"‘([^’]{4,160})’",
+        r"(?:(?<=\s)|^)'([^']{4,160})'(?=[\s.,;:)!?]|$)",
     )
-    for pattern in patterns:
-        for quoted in re.findall(pattern, source):
-            candidate = re.sub(r"\s+", " ", quoted).strip()
-            if not candidate or candidate.casefold() == current:
-                continue
-            if not re.search(r"[A-Za-z]{2}", candidate):
-                continue
-            if re.search(r"\.(pdf|docx?|rtf|odt)$", candidate, re.IGNORECASE):
-                continue
-            return candidate
-    return ""
+    matches = [(m.start(), m.end(), m[1]) for pattern in patterns for m in re.finditer(pattern, text)]
+    # Unquoted recommendations can be resolved against supplied document text.
+    for known in known_titles:
+        if len(known.strip()) < 4:
+            continue
+        matches.extend((m.start(), m.end(), m[0]) for m in re.finditer(re.escape(known), text, re.I))
+    recommendations: List[str] = []
+    for start, end, value in sorted(matches):
+        value = re.sub(r"\s+", " ", value).strip()
+        if (not re.search(r"[A-Za-z]{2}", value)
+            or re.search(r"\.(pdf|docx?|rtf|odt)$", value, re.I)):
+            continue
+        before = text[max(0, start-180):start].rstrip("\"'“‘ ") + " "
+        after = text[end:end+100].lstrip("\"'”’ ")
+        cue = re.search(
+            r"(?:\b(?:use|prefer)\s+(?:the\s+title\s+)?|"
+            r"\b(?:heading|h1|(?:document|metadata|actual|correct)\s+title)"
+            r"[^.!?]{0,70}\b(?:is|reads|to)|"
+            r"\b(?:replace|change|set)\b[^.!?]{0,100}\b(?:with|to))\s*[:=]?\s*$",
+            before, re.I,
+        )
+        follows = re.match(
+            r"\s*(?:(?:and\s+)?should be used as (?:the )?(?:metadata |document )?title|"
+            r"is (?:the )?(?:actual|correct|recommended) (?:document |metadata )?title)",
+            after, re.I,
+        )
+        if not (cue or follows):
+            continue
+        command = bool(cue and re.match(r"\b(?:use|prefer|replace|change|set)\b", cue[0], re.I))
+        if (re.search(r"\b(?:current(?:ly)?|stored|existing)\b[^.!?]{0,80}$", before, re.I)
+            and not command and not follows):
+            continue
+        if cue and re.search(r"\b(?:not|never|avoid)\b", before[max(0, cue.start()-12):], re.I):
+            continue
+        # The current title is allowed here: a recommendation to keep it must
+        # prevent a contradictory fallback to a different heading.
+        if value.casefold() not in {v.casefold() for v in recommendations}:
+            recommendations.append(value)
+    return recommendations
+
+
+def _quoted_title_from_finding(text: str, current_title: str) -> str:
+    """Return one unambiguous proposed title, excluding the current value."""
+    recommendations = _title_recommendations(text, current_title)
+    current = re.sub(r"\s+", " ", current_title).strip().casefold()
+    return (recommendations[0] if len(recommendations) == 1
+            and recommendations[0].casefold() != current else "")
 
 
 def review_pdf_accessibility_with_ai(
@@ -605,6 +659,11 @@ def review_pdf_accessibility_with_ai(
                     "propose a metadata language change using the inferred BCP 47 value. A filename-like, generic, "
                     "or misleading title MUST propose a metadata title change using the real approved H1 or best "
                     "document heading. Do not downgrade these safe metadata corrections to manual-review prose. "
+                    "A document-title finding must concern document metadata, not a field or table column "
+                    "whose name contains Title. When proposing a title, name the exact same replacement "
+                    "in both the explanation and change.value. Do not choose the first H1 merely because "
+                    "it occurs first; it may be letterhead. If title evidence conflicts, leave the finding "
+                    "advisory instead of attaching a contradictory change. "
                     "A change must be one of: metadata with target language/title/"
                     "author/subject and a string value; field_tooltip with a supplied fieldId target and short "
                     "label value; image_alt_text with a supplied assetId target and string "
@@ -701,6 +760,29 @@ def review_pdf_accessibility_with_ai(
             (str(row.get("category") or ""), title, explanation)
         ).casefold()
 
+        category = str(row.get("category") or "").casefold()
+        # Finding prose contains field names and table captions. Those are not
+        # metadata intent, even when they contain whole words such as "title".
+        def metadata_intent(target: str) -> bool:
+            if target == "title" and re.search(r"\bviewer\b|DisplayDocTitle", title, re.I):
+                return False
+            if category in {f"document-{target}", f"document_{target}", target}:
+                return True
+            if category != "metadata":
+                return False
+            return bool(
+                re.search(rf"\b{target}\b", title, re.I)
+                and re.search(r"\b(?:document|metadata|pdf|stored|current)\b", title, re.I)
+            )
+
+        known_titles = [
+            str(item.get("text") or "").strip() for item in headings
+            if str(item.get("status") or "") != "rejected"
+        ] + str(context.get("textSample") or "").splitlines()
+        recommendations = _title_recommendations(
+            ". ".join((title, explanation)), current_title, known_titles
+        ) if metadata_intent("title") else []
+
         def usable_change(candidate: Any) -> Optional[Dict[str, Any]]:
             """Return an allow-listed, normalized change, or None."""
             if not isinstance(candidate, Mapping):
@@ -754,7 +836,7 @@ def review_pdf_accessibility_with_ai(
         # that did not survive the allow-list -- a near-miss like target "locale"
         # used to leave the reviewer with a confident suggestion and no button.
         change = usable_change(row.get("change"))
-        if change is None and "language" in finding_text:
+        if change is None and metadata_intent("language"):
             inferred_language = next(
                 (
                     language
@@ -778,14 +860,15 @@ def review_pdf_accessibility_with_ai(
         # Not an elif: a finding that mentions both must still get its title fix.
         if (
             change is None
-            and "title" in finding_text
+            and metadata_intent("title")
             # A DisplayDocTitle finding is about a viewer flag, not the text.
             and "viewer" not in finding_text
         ):
-            # Headings stay authoritative; the quoted prose is the fallback for
-            # when a re-inspection left us without one.
-            proposed_title = title_candidate or _quoted_title_from_finding(
-                " ".join((title, explanation)), current_title
+            # A named recommendation wins over a generic first-heading guess.
+            # Multiple recommendations are ambiguous and must stay advisory.
+            proposed_title = (
+                recommendations[0] if len(recommendations) == 1
+                else "" if recommendations else title_candidate
             )
             if proposed_title and proposed_title != current_title:
                 change = usable_change(
@@ -795,6 +878,17 @@ def review_pdf_accessibility_with_ai(
                         "value": proposed_title,
                     }
                 )
+        if change is not None and change["kind"] == "metadata" and change["target"] in {"title", "language"}:
+            target = change["target"]
+            if not metadata_intent(target):
+                change = None
+            elif target == "title" and recommendations:
+                if (len(recommendations) != 1
+                    or change["value"].casefold() != recommendations[0].casefold()):
+                    change = None
+                    finding["changeRejectedReason"] = "The proposed title conflicts with the finding's recommendation."
+            if change is not None and target == "title" and change["value"].casefold() == current_title.casefold():
+                change = None
         if change is not None:
             finding["change"] = change
         findings.append(finding)

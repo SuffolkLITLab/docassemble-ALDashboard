@@ -175,3 +175,61 @@ def test_recommendation_grammar_does_not_revert_to_first_heading(explanation):
         "explanation": explanation,
     })
     assert finding["change"]["value"] == TITLE
+
+
+def test_duplicate_field_suggestions_and_their_evidence_reach_the_model():
+    """The AI pass can only improve on a weak draft if it can see one."""
+    inputs = {
+        "metadata": {"title": "draft.pdf"},
+        "textSample": TITLE,
+        "headings": [],
+        "fields": [{"fieldId": "application_date", "name": "application_date", "tooltip": "application date"}],
+        "readbackFindings": [
+            {
+                "id": "readback-duplicate-names-date",
+                "category": "field-names",
+                "title": "Several controls announce the same name",
+                "detail": "3 controls all announce nothing distinguishing.",
+                "severity": "fail",
+                "suggestions": [
+                    {
+                        "fieldName": "application_date", "current": "",
+                        "suggested": "application date (line 1 of 3)",
+                        "distinguisherSource": "position",
+                    },
+                ],
+            },
+        ],
+    }
+    with patch(
+        "docassemble.ALToolbox.llms.chat_completion", return_value={"findings": []}
+    ) as completion:
+        review_pdf_accessibility_with_ai(inputs)
+    sent = completion.call_args.kwargs["messages"][1]["content"]
+    assert '"evidenceSource": "position"' in sent
+    assert '"drafted": "application date (line 1 of 3)"' in sent
+    assert '"fieldId": "application_date"' in sent
+
+
+def test_ai_can_replace_a_weak_positional_draft_with_a_field_tooltip_change():
+    finding = review(
+        {
+            "category": "field-names", "title": "Several controls announce the same name",
+            "explanation": "application_date is really the filing date; give it a real label.",
+            "change": {"kind": "field_tooltip", "target": "application_date", "value": "Filing date"},
+        },
+        fields=[{"fieldId": "application_date", "name": "application_date", "tooltip": "application date"}],
+        readbackFindings=[
+            {
+                "id": "readback-duplicate-names-date", "category": "field-names",
+                "title": "Several controls announce the same name", "severity": "fail",
+                "suggestions": [
+                    {"fieldName": "application_date", "current": "", "distinguisherSource": "position",
+                     "suggested": "application date (line 1 of 3)"},
+                ],
+            },
+        ],
+    )
+    assert finding["change"] == {
+        "kind": "field_tooltip", "target": "application_date", "value": "Filing date",
+    }

@@ -53,6 +53,7 @@ def test_placeholder_and_unrelated_duplicate_controls():
     assert _duplicate_field_distinguishers(fields, fields) == []
     for item in fields:
         item["text"] = "Name"
+    fields[1]["name"] = "unrelated_control"
     fields[1]["y"] = 10
     assert _duplicate_field_distinguishers(fields, fields) == []
 
@@ -98,7 +99,12 @@ def test_duplicate_group_keeps_array_records_and_rejects_middle_outlier():
     ]
     suggestions = _duplicate_field_distinguishers(fields, fields)
     assert [s["announcedIndex"] for s in suggestions] == [0, 2]
-    assert all("of 2)" in s["suggested"] for s in suggestions)
+    # The naming convention's own role+index ("Guardian 1"/"Guardian 2") is
+    # real evidence of purpose; it wins over a bare position number.
+    assert {s["suggested"] for s in suggestions} == {
+        "Guardian 1 — Print Name", "Guardian 2 — Print Name",
+    }
+    assert all(s["distinguisherSource"] == "name_convention" for s in suggestions)
 
 
 def test_duplicate_group_keeps_local_members_on_either_side_of_outlier():
@@ -116,6 +122,39 @@ def test_generic_option_phrase_is_not_numbered_across_questions():
         for i, name in enumerate(["patient_education_none", "patient_vocational_none"])
     ]
     assert _duplicate_field_distinguishers(fields, fields) == []
+
+
+def test_generic_label_does_not_veto_array_evidence():
+    fields = [dict(index=i, name=f"owner{i+1}_no", text="no", page=i,
+                   x=20, y=600-i*300) for i in range(2)]
+    assert len(_duplicate_field_distinguishers(fields, fields)) == 2
+
+
+def test_distant_signature_block_attributes_do_not_need_numeric_names():
+    for label in ("Date", "Signature"):
+        fields = [dict(index=i, name=f"{person}_{label.lower()}", text=label,
+                       page=0, x=20+i*300, y=600-i*300)
+                  for i, person in enumerate(("applicant", "witness"))]
+        assert len(_duplicate_field_distinguishers(fields, fields)) == 2
+
+
+def test_single_letter_placeholder_does_not_group_unrelated_fields():
+    fields = [dict(index=i, name=name, text="a", page=0, x=20, y=600-i*20)
+              for i, name in enumerate(("county", "court", "plaintiff", "docket", "defendant"))]
+    assert _duplicate_field_distinguishers(fields, fields) == []
+
+
+def test_inline_fragments_and_blanks_are_not_column_starts():
+    from docassemble.ALDashboard.pdf_accessibility import _layout_review_findings
+    sequence = [
+        _layout_run(0, "The applicant", 20, 700),
+        _layout_run(1, "________", 80, 700),
+        _layout_run(2, "requests", 130, 700),
+        _layout_run(3, "the following", 20, 688),
+        _layout_run(4, "________", 80, 688),
+        _layout_run(5, "relief.", 130, 688),
+    ]
+    assert not any("column-wrap" in f["id"] for f in _layout_review_findings(sequence))
 
 
 def test_section_numerals_join_across_fonts_gaps_and_baseline_rounding():

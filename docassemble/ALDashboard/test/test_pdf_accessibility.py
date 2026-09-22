@@ -3373,10 +3373,10 @@ class TestScannedPageOcr(unittest.TestCase):
         try:
             self._image_only_pdf(source_path, ["Petition", "Custody", "Hearing"])
             before = analyze_screen_reader_readback(source_path)
-            self.assertNotIn(
+            self.assertIn(
                 "The page is a picture with no text in it",
                 [finding["title"] for finding in before["findings"]],
-                "fixture has no tag tree, so the readback cannot judge it yet",
+                "painted-content detection must work even before a tag tree exists",
             )
             result = ocr_image_only_pages(source_path, output_path)
             self.assertEqual(result["pages_read"], 1)

@@ -514,6 +514,7 @@ const a11yProgressValue = optionalWorkshopElement(
 const a11yProgressNote = optionalWorkshopElement("a11y-progress-note");
 const a11yReadbackSummary = optionalWorkshopElement("a11y-readback-summary");
 const a11yReadbackFindings = optionalWorkshopElement("a11y-readback-findings");
+const a11yReadbackHeadingNav = optionalWorkshopElement("a11y-readback-heading-nav", "select");
 const a11yReadbackTranscript = optionalWorkshopElement(
   "a11y-readback-transcript",
   "ol",
@@ -2011,9 +2012,68 @@ function setAccessibilityStepsCollapsed(collapsed) {
 // the workflow. Blocked checks are excluded: nothing here can resolve them.
 // The replay is evidence, so show both the verdicts and the transcript they
 // came from: a reviewer who disagrees needs to see what was actually heard.
+function screenReaderPreviewMarkup(announcements, findings) {
+  const issues = new Map();
+  findings.forEach(function (finding) {
+    if (finding.announcedIndex == null) return;
+    const index = Number(finding.announcedIndex);
+    if (!issues.has(index)) issues.set(index, []);
+    issues.get(index).push(String(finding.title || "Review this item"));
+  });
+  return announcements.map(function (item, position) {
+    const role = String(item.role || "");
+    const heading = /^H[1-6]$/.test(role);
+    const field = item.kind === "field" && role !== "Link";
+    const label = heading ? "Heading " + role.slice(1)
+      : field ? "Form control" : ({P: "Paragraph", Figure: "Figure", Link: "Link",
+        LI: "List item", TH: "Table header", TD: "Table cell"})[role] || role || "Content";
+    const page = item.page == null ? "Page unknown" : "Page " + String(Number(item.page) + 1);
+    const warnings = issues.get(Number(item.index)) || [];
+    return '<li id="a11y-reader-item-' + position + '" tabindex="-1" class="a11y-reader-item' +
+      (heading ? " is-heading is-heading-" + role.slice(1) : "") +
+      (field ? " a11y-readback-field" : "") + '">' +
+      '<div class="a11y-reader-meta"><span class="a11y-reader-role">' + escapeHtml(label) +
+      '</span><span>' + escapeHtml(page) + ' · ' + String(position + 1) + '</span></div>' +
+      '<div class="a11y-reader-text">' + escapeHtml(String(item.text || "(No announced text)")) + '</div>' +
+      (field && item.name ? '<div class="small text-muted mt-1">Field: ' + escapeHtml(String(item.name)) + '</div>' : '') +
+      warnings.map(function (warning) {
+        return '<div class="a11y-reader-warning">Review: ' + escapeHtml(warning) + '</div>';
+      }).join("") + '</li>';
+  }).join("");
+}
+
+function renderScreenReaderPreview(readback) {
+  const announcements = readback.available && Array.isArray(readback.announcements)
+    ? readback.announcements : [];
+  const headings = announcements.map(function (item, position) { return {item, position}; })
+    .filter(function (entry) { return /^H[1-6]$/.test(String(entry.item.role)); });
+  a11yReadbackHeadingNav.disabled = !headings.length;
+  a11yReadbackHeadingNav.innerHTML = '<option value="">' +
+    (headings.length ? "Choose a heading…" : "No tagged headings") + '</option>' +
+    headings.map(function (entry) {
+      return '<option value="' + entry.position + '">' + escapeHtml(entry.item.role + " — " +
+        String(entry.item.text || "(No announced text)")) + '</option>';
+    }).join("");
+  a11yReadbackTranscript.innerHTML = announcements.length
+    ? screenReaderPreviewMarkup(announcements, readback.findings || [])
+    : '<li class="text-muted">' + escapeHtml(readback.reason ||
+      "No tagged content is available to preview. Create tags, then inspect the reading order.") + '</li>';
+}
+
+a11yReadbackHeadingNav.addEventListener("change", function () {
+  const position = a11yReadbackHeadingNav.value;
+  if (!/^\d+$/.test(position)) return;
+  const item = document.getElementById("a11y-reader-item-" + position);
+  if (item) {
+    item.focus({ preventScroll: true });
+    item.scrollIntoView({ block: "nearest" });
+  }
+});
+
 function renderAccessibilityReadback() {
   if (!a11yReadbackSummary) return;
   const readback = state.accessibility.readback || {};
+  renderScreenReaderPreview(readback);
   const findings = Array.isArray(readback.findings) ? readback.findings : [];
   const announcements = Array.isArray(readback.announcements)
     ? readback.announcements
@@ -2024,7 +2084,6 @@ function renderAccessibilityReadback() {
       readback.reason ||
       "Create tags first; there is no reading order to replay yet.";
     a11yReadbackFindings.innerHTML = "";
-    a11yReadbackTranscript.innerHTML = "";
     return;
   }
   const blocking = findings.filter(function (finding) {
@@ -2138,20 +2197,7 @@ function renderAccessibilityReadback() {
       );
     })
     .join("");
-  a11yReadbackTranscript.innerHTML = announcements
-    .slice(0, 400)
-    .map(function (item) {
-      const isField = item.kind === "field";
-      return (
-        '<li class="' +
-        (isField ? "a11y-readback-field" : "") +
-        '">' +
-        (isField ? "<em>form control:</em> " : "") +
-        escapeHtml(String(item.text || item.name || "(silent)")) +
-        "</li>"
-      );
-    })
-    .join("");
+
 }
 
 function renderAccessibilityProgress(issues) {

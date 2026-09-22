@@ -595,6 +595,13 @@
                             <section id="a11y-panel-readback" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-readback" hidden>
                                 <h3 class="h6 fw-semibold mb-2">Read-back simulation<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Read-back simulation" data-bs-content="Replays the tag tree in the order assistive technology announces it and compares that against where the same content sits on the page. It is not a conformance check: it reports what a listener would actually hear, so you can fix the places where the two disagree." aria-label="About the read-back simulation">?</button></h3>
                                 <div id="a11y-readback-summary" class="alert small py-2" role="status"></div>
+                                <details id="a11y-readback-transcript-details" class="a11y-reader-preview mb-3" open>
+                                    <summary class="fw-semibold">Screen reader preview</summary>
+                                    <p class="small text-muted mt-2">Read the text and control labels in PDF tag order. Role labels show which items are headings, paragraphs, or controls. Compare this preview with the PDF: untagged content may be missing here. Actual screen readers can announce things differently.</p>
+                                    <label for="a11y-readback-heading-nav" class="form-label small">Jump to a heading</label>
+                                    <select id="a11y-readback-heading-nav" class="form-select form-select-sm mb-2" aria-controls="a11y-readback-transcript"></select>
+                                    <ol id="a11y-readback-transcript" class="a11y-readback-transcript" tabindex="0" aria-label="PDF content in tag reading order"></ol>
+                                </details>
                                 <div id="a11y-readback-findings" class="vstack gap-2 mb-3"></div>
                                 <div id="a11y-readback-text-fixes" class="hidden mb-3">
                                     <h4 class="h6">Replacement text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Replacement text" data-bs-content="Writes /ActualText so assistive technology announces the wording below instead of the glyphs on the page. The page itself is not redrawn. Edit any line before applying, or clear it to leave that run alone." aria-label="About replacement text">?</button></h4>
@@ -611,10 +618,6 @@
                                     <div id="a11y-readback-name-list" class="vstack gap-2 mb-2"></div>
                                     <button id="a11y-apply-field-names" class="btn btn-primary btn-sm">Apply these names</button>
                                 </div>
-                                <details id="a11y-readback-transcript-details" class="small">
-                                    <summary>What a screen reader would announce, in order</summary>
-                                    <ol id="a11y-readback-transcript" class="a11y-readback-transcript mt-2"></ol>
-                                </details>
                             </section>
                             <section id="a11y-panel-figures" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-figures" hidden>
                                 <div class="d-flex align-items-center justify-content-between mb-2">

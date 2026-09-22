@@ -270,3 +270,40 @@ test('failed persistence stops AI feedback before another review can use stale e
   assert.equal(requests, 1);
   assert.equal(context.state.accessibility.aiReview.running, false);
 });
+
+test('author preview preserves tag order, roles, pages, silent labels, and all items', () => {
+  const escapeHtml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const context = vm.createContext({escapeHtml});
+  loadFunction(context, 'screenReaderPreviewMarkup');
+  const items = [
+    {index: 0, role: 'H2', page: 1, text: '<Heading>'},
+    {index: 1, role: 'Form', kind: 'field', page: 0, text: '', name: 'internal_name'},
+    ...Array.from({length: 410}, (_, index) => ({index: index + 2, role: 'P', page: 0, text: `Paragraph ${index}`})),
+  ];
+  const html = context.screenReaderPreviewMarkup(items, [{announcedIndex: 0, title: '<Missing H1>'}]);
+  assert.ok(html.indexOf('Heading 2') < html.indexOf('Form control'));
+  assert.ok(html.indexOf('Page 2') < html.indexOf('Page 1'));
+  assert.match(html, /&lt;Heading&gt;/);
+  assert.match(html, /Review: &lt;Missing H1&gt;/);
+  assert.match(html, /\(No announced text\)/);
+  assert.match(html, /Field: internal_name/);
+  assert.match(html, /Paragraph 409/);
+  assert.equal((html.match(/<li /g) || []).length, 412);
+});
+
+test('preview heading navigation reflects only tagged headings and resets for untagged PDFs', () => {
+  const context = vm.createContext({
+    escapeHtml: value => String(value),
+    a11yReadbackHeadingNav: {}, a11yReadbackTranscript: {},
+    screenReaderPreviewMarkup: () => 'preview',
+  });
+  loadFunction(context, 'renderScreenReaderPreview');
+  context.renderScreenReaderPreview({available: true, announcements: [{role: 'P', text: 'Body'}, {role: 'H1', text: 'Title'}]});
+  assert.equal(context.a11yReadbackHeadingNav.disabled, false);
+  assert.match(context.a11yReadbackHeadingNav.innerHTML, /value="1">H1 — Title/);
+  assert.doesNotMatch(context.a11yReadbackHeadingNav.innerHTML, /Body/);
+  context.renderScreenReaderPreview({available: false, reason: 'No tag tree'});
+  assert.equal(context.a11yReadbackHeadingNav.disabled, true);
+  assert.match(context.a11yReadbackTranscript.innerHTML, /No tag tree/);
+  assert.doesNotMatch(context.a11yReadbackHeadingNav.innerHTML, /Title/);
+});

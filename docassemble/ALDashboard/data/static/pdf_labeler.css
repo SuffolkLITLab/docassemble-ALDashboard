@@ -1423,10 +1423,21 @@
 .a11y-glyph-row { background: #fff; }
 
 .a11y-readback-transcript {
-    max-height: 22rem;
+    max-height: 65vh;
     overflow-y: auto;
-    padding-left: 1.4rem;
-    font-size: 0.82rem;
+    padding: 0.75rem;
+    list-style: none;
+    background: #f4f6f8;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.4rem;
 }
-.a11y-readback-transcript li { margin-bottom: 0.15rem; }
-.a11y-readback-field { color: #0a58ca; }
+.a11y-readback-transcript .a11y-reader-item { margin-bottom: 0.65rem; padding: 0.8rem 1rem; background: #fff; border-left: 3px solid #94a3b8; }
+.a11y-reader-item:focus { outline: 3px solid #0a58ca; outline-offset: 2px; }
+.a11y-reader-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; color: #475569; font-size: 0.75rem; }
+.a11y-reader-role { font-weight: 700; }
+.a11y-reader-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; color: #182b3e; }
+.a11y-reader-item.is-heading { border-left-color: #6741a5; }
+.a11y-reader-item.is-heading .a11y-reader-text { font-size: 1.15rem; font-weight: 650; }
+.a11y-reader-item.is-heading-1 .a11y-reader-text { font-size: 1.35rem; }
+.a11y-reader-item.a11y-readback-field { border-left-color: #0a58ca; background: #f0f6ff; }
+.a11y-reader-warning { color: #754600; background: #fff4d6; padding: 0.4rem 0.6rem; margin-top: 0.5rem; font-size: 0.8rem; }

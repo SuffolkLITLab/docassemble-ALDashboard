@@ -3533,6 +3533,13 @@ def pdf_labeler_accessibility_remediate() -> Response:
             )
             if not isinstance(field_order, list):
                 raise DashboardAPIValidationError("field_order must be a JSON list.")
+            image_alt_text = _parse_optional_json_field(
+                post_data.get("image_alt_text"), field_name="image_alt_text"
+            )
+            if image_alt_text is None:
+                image_alt_text = {}
+            if not isinstance(image_alt_text, dict):
+                raise DashboardAPIValidationError("image_alt_text must be a JSON object.")
             mark_as_tagged = None
             if action == "catalog_flags" and "marked" in post_data:
                 mark_as_tagged = parse_bool(post_data.get("marked"), default=False)
@@ -3543,6 +3550,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
                     str(key): str(value) for key, value in field_tooltips.items()
                 },
                 field_order=[str(value) for value in field_order],
+                image_alt_text={str(key): str(value) for key, value in image_alt_text.items()},
                 metadata=metadata,
                 auto_fill_missing_tooltips=False,
                 mark_as_tagged=mark_as_tagged,

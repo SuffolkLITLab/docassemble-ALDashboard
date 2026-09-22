@@ -3559,6 +3559,38 @@ function updateAccessibilityMetadataFromInputs() {
   };
 }
 
+// Font repairs can move extracted bounds without changing the visible text.
+// Transfer reviews only for an unambiguous nearby occurrence on the same page.
+function remapAccessibilityDecisions(previous, current, decisions, idKey) {
+  const result = {};
+  const nearby = function (a, b) {
+    return (
+      a.pageIndex === b.pageIndex && a.text === b.text &&
+      a.box && b.box && Math.abs(a.box.x - b.box.x) < 0.02 &&
+      Math.abs(a.box.y - b.box.y) < 0.02
+    );
+  };
+  current.forEach(function (item) {
+    const id = String(item[idKey] || "");
+    if (decisions[id]) {
+      result[id] = decisions[id];
+      return;
+    }
+    const matches = previous.filter(function (old) {
+      return nearby(old, item);
+    });
+    if (matches.length !== 1) return;
+    const old = matches[0];
+    const targets = current.filter(function (other) {
+      return nearby(old, other);
+    });
+    if (targets.length !== 1) return;
+    const decision = decisions[String(old[idKey] || "")];
+    if (decision) result[id] = decision;
+  });
+  return result;
+}
+
 async function inspectAccessibilityData(forceRefresh, options) {
   const preserveDrafts = !!(options && options.preserveAccessibilityDrafts);
   if (!state.pdfBytes) return;
@@ -3632,13 +3664,22 @@ async function inspectAccessibilityData(forceRefresh, options) {
     state.accessibility.fieldOrder = orderedIds;
   }
 
+  const imageDrafts = new Map(
+    (preserveDrafts ? state.accessibility.images || [] : []).map(function (item) {
+      return [String(item.assetId || ""), item];
+    }),
+  );
   state.accessibility.images = Array.isArray(payload.data.images)
     ? payload.data.images.map(function (item) {
         return {
           assetId: String(item.assetId || ""),
           pageIndex: Number(item.pageIndex || 0),
           name: String(item.name || ""),
-          altText: String(item.altText || ""),
+          altText: imageDrafts.has(String(item.assetId || ""))
+            ? imageDrafts.get(String(item.assetId)).altText
+            : String(item.altText || ""),
+          altTextSource: (imageDrafts.get(String(item.assetId)) || {}).altTextSource,
+          decorative: !!(imageDrafts.get(String(item.assetId)) || {}).decorative,
           width: Number(item.width || 0),
           height: Number(item.height || 0),
         };
@@ -3653,6 +3694,18 @@ async function inspectAccessibilityData(forceRefresh, options) {
   };
   state.accessibility.report = payload.data.report || null;
   state.accessibility.readback = payload.data.readback || null;
+  state.accessibility.headingDecisions = remapAccessibilityDecisions(
+    state.accessibility.headingCandidates || [],
+    Array.isArray(payload.data.heading_candidates) ? payload.data.heading_candidates : [],
+    state.accessibility.headingDecisions,
+    "candidateId",
+  );
+  state.accessibility.contentDecisions = remapAccessibilityDecisions(
+    state.accessibility.contentBlocks || [],
+    Array.isArray(payload.data.content_blocks) ? payload.data.content_blocks : [],
+    state.accessibility.contentDecisions,
+    "blockId",
+  );
   state.accessibility.headingCandidates = Array.isArray(
     payload.data.heading_candidates,
   )
@@ -5243,7 +5296,7 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
     state.fileName = fileName;
   }
   state.accessibility.inspected = false;
-  state.accessibility.images = [];
+  if (!settings.preserveAccessibilityDrafts) state.accessibility.images = [];
   state.accessibility.tagStructure = null;
   state.accessibility.structureEditor = {
     tables: [],
@@ -5252,8 +5305,10 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
     widgets: [],
   };
   state.accessibility.report = null;
-  state.accessibility.headingCandidates = [];
-  state.accessibility.contentBlocks = [];
+  if (!settings.preserveAccessibilityDrafts) {
+    state.accessibility.headingCandidates = [];
+    state.accessibility.contentBlocks = [];
+  }
   state.accessibility.glyphReview = null;
   state.accessibility.glyphDecisions = {};
   state.accessibility.glyphRendered = {};
@@ -10921,11 +10976,18 @@ async function runAiAccessibilityReview(options) {
   try {
     for (let pass = 0; pass < passes; pass += 1) {
       const findings = await requestAiAccessibilityReview();
+      if (pass > 0) {
+        for (let index = history.length - 1; index >= 0; index -= 1) {
+          if (history[index].status === "pending") history.splice(index, 1);
+        }
+      }
       let applied = 0;
       findings.forEach(function (finding) {
         if (applyDrafts && applyAiAccessibilityFinding(finding)) applied += 1;
         history.push(finding);
       });
+      // Refresh the PDF and its readback before asking for another review.
+      if (applied && settings.persistDrafts) await settings.persistDrafts();
       if (!applyDrafts || !applied) break;
     }
     state.accessibility.aiReview.findings = history;
@@ -10941,14 +11003,15 @@ async function runAiAccessibilityReview(options) {
 function unresolvedAiAccessibilityFindings(findings) {
   const byId = new Map();
   (findings || []).forEach(function (finding) {
-    if (finding.status !== "pending") return;
     const key = String(
       finding.id ||
         String(finding.category || "") + ":" + String(finding.title || ""),
     );
     byId.set(key, finding);
   });
-  return Array.from(byId.values());
+  return Array.from(byId.values()).filter(function (finding) {
+    return finding.status === "pending";
+  });
 }
 
 // The summary is long, and it sits above the workspace. Lead with one line, put
@@ -11091,11 +11154,49 @@ function draftMissingDocumentLanguage() {
 
 function remainingAccessibilityIssues() {
   const report = state.accessibility.report || {};
-  return (Array.isArray(report.issues) ? report.issues : []).filter(
+  const issues = (Array.isArray(report.issues) ? report.issues : []).filter(
     function (issue) {
       return issue.status !== "pass" && issue.status !== "blocked";
     },
   );
+  const ids = new Set(issues.map(function (issue) { return issue.id; }));
+  ((state.accessibility.readback || {}).findings || []).forEach(function (finding) {
+    if (!ids.has(finding.id)) {
+      issues.push(finding);
+      ids.add(finding.id);
+    }
+  });
+  return issues;
+}
+
+async function persistAccessibilityAutoFixDrafts(finalize) {
+  const imageAltText = {};
+  state.accessibility.images.forEach(function (image) {
+    if (image.assetId) imageAltText[image.assetId] = String(image.altText || "");
+  });
+  await runAccessibilityRemediation("metadata", {
+    metadata: state.accessibility.metadata,
+    field_tooltips: accessibilityTooltipPayload(),
+    field_order: accessibilityFieldOrderPayload(),
+    image_alt_text: imageAltText,
+    display_doc_title: true,
+    set_structure_tab_order: !!finalize,
+    // Only classify leftovers after this workflow has created their tags.
+    mark_untagged_as_artifacts: !!(finalize && state.accessibility.structureDrafted),
+  }, { quiet: true });
+  if (!finalize || !state.accessibility.tagStructure ||
+      !state.accessibility.tagStructure.present) return;
+  for (const action of ["readback_text", "field_names"]) {
+    const findings = (state.accessibility.readback || {}).findings || [];
+    if (findings.some(function (finding) {
+      return action === "field_names"
+        ? finding.category === "field-names" && (finding.suggestions || []).length
+        : finding.suggestion && finding.confident;
+    })) {
+      // Omit overrides to use the same concrete defaults shown in the workshop.
+      await runAccessibilityRemediation(action, {}, { quiet: true });
+    }
+  }
 }
 
 async function runAccessibilityAutoFix() {
@@ -11110,7 +11211,7 @@ async function runAccessibilityAutoFix() {
   const originalLanguage = state.accessibility.metadata.language;
   showLoading("Drafting accessibility fixes with AI…");
   const summary = {
-    nearbyTooltips: draftTooltipsFromNearbyText({ quiet: true }),
+    nearbyTooltips: 0,
     aiTooltips: 0,
     aiHeadings: 0,
     structureCreated: false,
@@ -11122,43 +11223,8 @@ async function runAccessibilityAutoFix() {
     aiReviewFindings: 0,
   };
   applyDeterministicFieldOrder("ltr", { quiet: true });
-  if (state.fields.length) {
-    summary.aiTooltips = await applyAiTooltipDraft();
-  }
-
-  const hadTagTree = !!(
-    state.accessibility.tagStructure && state.accessibility.tagStructure.present
-  );
-  if (!hadTagTree && state.accessibility.headingCandidates.length) {
-    summary.aiHeadings = await applyAiHeadingDraft();
-    state.accessibility.headingReviewSavedSignature = headingReviewSignature();
-    updateHeadingReviewDirty();
-    renderHeadingReviewStatus();
-  }
-
-  const aiReviewFindings = await runAiAccessibilityReview({
-    applyDrafts: true,
-  });
-  summary.aiReviewFindings = aiReviewFindings.length;
-  summary.draftedLanguage =
-    state.accessibility.metadata.language !== originalLanguage
-      ? state.accessibility.metadata.language
-      : draftMissingDocumentLanguage();
-  summary.draftedTitle = draftFilenameLikeDocumentTitle();
-
-  await runAccessibilityRemediation(
-    "metadata",
-    {
-      metadata: state.accessibility.metadata,
-      field_tooltips: accessibilityTooltipPayload(),
-      field_order: accessibilityFieldOrderPayload(),
-      display_doc_title: true,
-      set_structure_tab_order: false,
-      mark_untagged_as_artifacts: true,
-    },
-    { quiet: true },
-  );
-
+  // Font embedding can change Poppler's bounds and therefore candidate IDs.
+  // Classify the refreshed candidates that tag creation will actually use.
   const fontResult = await runAccessibilityRemediation(
     "fonts",
     {
@@ -11180,6 +11246,34 @@ async function runAccessibilityAutoFix() {
     ? fontResult.unicode_unresolved.length
     : 0;
 
+  summary.nearbyTooltips = draftTooltipsFromNearbyText({ quiet: true });
+  if (state.fields.length) {
+    summary.aiTooltips = await applyAiTooltipDraft();
+  }
+
+  const hadTagTree = !!(
+    state.accessibility.tagStructure && state.accessibility.tagStructure.present
+  );
+  if (!hadTagTree && state.accessibility.headingCandidates.length) {
+    summary.aiHeadings = await applyAiHeadingDraft();
+    state.accessibility.headingReviewSavedSignature = headingReviewSignature();
+    updateHeadingReviewDirty();
+    renderHeadingReviewStatus();
+  }
+
+  const aiReviewFindings = await runAiAccessibilityReview({
+    applyDrafts: true,
+    persistDrafts: function () { return persistAccessibilityAutoFixDrafts(false); },
+  });
+  summary.aiReviewFindings = aiReviewFindings.length;
+  summary.draftedLanguage =
+    state.accessibility.metadata.language !== originalLanguage
+      ? state.accessibility.metadata.language
+      : draftMissingDocumentLanguage();
+  summary.draftedTitle = draftFilenameLikeDocumentTitle();
+
+  await persistAccessibilityAutoFixDrafts(false);
+
   const hasTagTree = !!(
     state.accessibility.tagStructure && state.accessibility.tagStructure.present
   );
@@ -11198,22 +11292,12 @@ async function runAccessibilityAutoFix() {
     summary.structureCreated = true;
   }
 
+  await persistAccessibilityAutoFixDrafts(true);
   const finalAiFindings = await runAiAccessibilityReview({
     applyDrafts: true,
     preserveHistory: false,
+    persistDrafts: function () { return persistAccessibilityAutoFixDrafts(true); },
   });
-  await runAccessibilityRemediation(
-    "metadata",
-    {
-      metadata: state.accessibility.metadata,
-      field_tooltips: accessibilityTooltipPayload(),
-      field_order: accessibilityFieldOrderPayload(),
-      display_doc_title: true,
-      set_structure_tab_order: true,
-      mark_untagged_as_artifacts: true,
-    },
-    { quiet: true },
-  );
   state.accessibility.aiReview.findings =
     unresolvedAiAccessibilityFindings(finalAiFindings);
   state.accessibility.aiReview.lastSignature = accessibilityAiReviewSignature();

@@ -109,7 +109,9 @@ def test_placeholder_and_unrelated_duplicate_controls():
         item["text"] = "Name"
     fields[1]["name"] = "unrelated_control"
     fields[1]["y"] = 10
-    assert _duplicate_field_distinguishers(fields, fields) == []
+    suggestions = _duplicate_field_distinguishers(fields, fields)
+    assert len(suggestions) == 2
+    assert len({item["suggested"] for item in suggestions}) == 2
 
 
 def test_outline_checks_ignore_multiple_runs_in_same_heading():
@@ -152,13 +154,18 @@ def test_duplicate_group_keeps_array_records_and_rejects_middle_outlier():
         dict(index=2, name="guardian2_name_full", text="Print Name", page=2, x=200, y=200),
     ]
     suggestions = _duplicate_field_distinguishers(fields, fields)
-    assert [s["announcedIndex"] for s in suggestions] == [0, 2]
+    assert [s["announcedIndex"] for s in suggestions] == [0, 2, 1]
     # The naming convention's own role+index ("Guardian 1"/"Guardian 2") is
     # real evidence of purpose; it wins over a bare position number.
-    assert {s["suggested"] for s in suggestions} == {
+    assert {s["suggested"] for s in suggestions if s["announcedIndex"] != 1} == {
         "Guardian 1 — Print Name", "Guardian 2 — Print Name",
     }
-    assert all(s["distinguisherSource"] == "name_convention" for s in suggestions)
+    assert all(
+        s["distinguisherSource"] == "name_convention"
+        for s in suggestions
+        if s["announcedIndex"] != 1
+    )
+    assert suggestions[-1]["suggested"] == "Print Name (line 2 of 3)"
 
 
 def test_duplicate_group_keeps_local_members_on_either_side_of_outlier():
@@ -167,7 +174,18 @@ def test_duplicate_group_keeps_local_members_on_either_side_of_outlier():
         dict(index=1, name="outlier", text="Notes", page=0, x=400, y=590),
         dict(index=2, name="b", text="Notes", page=0, x=20, y=580),
     ]
-    assert [s["announcedIndex"] for s in _duplicate_field_distinguishers(fields, fields)] == [0, 2]
+    assert {s["announcedIndex"] for s in _duplicate_field_distinguishers(fields, fields)} == {0, 1, 2}
+
+
+def test_component_row_outsider_changes_only_that_components_noun():
+    fields = [
+        dict(kind="field", index=0, name="guardian1_name", text="Name", page=0, x=20, y=600),
+        dict(kind="field", index=1, name="unrelated", text="Name", page=0, x=500, y=600),
+        dict(kind="field", index=2, name="guardian2_name", text="Name", page=1, x=20, y=600),
+    ]
+    suggestions = _duplicate_field_distinguishers(fields, fields)
+    related = [item for item in suggestions if item["announcedIndex"] in {0, 2}]
+    assert {item["noun"] for item in related} == {"row"}
 
 
 def test_generic_option_phrase_is_not_numbered_across_questions():
@@ -415,6 +433,26 @@ def test_bare_yes_no_are_not_automatic_headings():
         <text top="120" left="100" width="20" height="12" font="1">No</text>
       </page></pdf2xml>""")
     assert _heading_candidates_from_xml(root) == []
+
+
+def test_only_first_identity_of_running_title_survives_on_its_first_page():
+    root = ET.fromstring("""<pdf2xml>
+      <fontspec id="0" size="12" family="Arial"/>
+      <fontspec id="1" size="18" family="Arial Bold"/>
+      <page width="612" height="792">
+        <text top="20" left="100" width="400" height="18" font="1">Annual Guardianship Status Report</text>
+        <text top="70" left="100" width="400" height="18" font="1">Annual Guardianship Status Report</text>
+        <text top="200" left="20" width="560" height="12" font="0">Ordinary body text supplies the dominant size used throughout this form.</text>
+      </page>
+      <page width="612" height="792">
+        <text top="20" left="100" width="400" height="18" font="1">Annual Guardianship Status Report</text>
+        <text top="200" left="20" width="560" height="12" font="0">More ordinary body text supplies the dominant size on the next page.</text>
+      </page>
+    </pdf2xml>""")
+    headings = _heading_candidates_from_xml(root)
+    assert [item["text"] for item in headings].count(
+        "Annual Guardianship Status Report"
+    ) == 1
 
 
 def test_image_coverage_tracks_draws_artifacts_and_nested_forms():

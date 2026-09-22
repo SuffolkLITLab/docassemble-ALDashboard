@@ -1452,7 +1452,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     }
                 )
             )
-            page.obj["/Annots"] = pikepdf.Array([link, note, widget])
+            page.obj["/Annots"] = pikepdf.Array([None, link, note, widget])
             struct_root = pdf.make_indirect(
                 pikepdf.Dictionary({"/Type": pikepdf.Name("/StructTreeRoot")})
             )
@@ -1560,6 +1560,19 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     output_path,
                     [{"action": "set_annotation_contents", "contents": "Wrong target"}],
                 )
+            with self.assertRaises(PDFAccessibilityError):
+                apply_manual_structure_repairs(
+                    source_path,
+                    output_path,
+                    [
+                        {
+                            "action": "set_annotation_contents",
+                            "pageIndex": 0,
+                            "index": 0,
+                            "contents": "Dangling target",
+                        }
+                    ],
+                )
             result = apply_manual_structure_repairs(
                 source_path,
                 output_path,
@@ -1579,25 +1592,25 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                     {
                         "action": "set_annotation_contents",
                         "pageIndex": 0,
-                        "index": 0,
+                        "index": 1,
                         "contents": "Court website",
                     },
                     {
                         "action": "tag_annotation",
                         "pageIndex": 0,
-                        "index": 0,
+                        "index": 1,
                         "role": "Link",
                     },
                     {
                         "action": "tag_annotation",
                         "pageIndex": 0,
-                        "index": 1,
+                        "index": 2,
                         "role": "Annot",
                     },
                     {
                         "action": "set_widget_description",
                         "pageIndex": 0,
-                        "index": 2,
+                        "index": 3,
                         "description": "Request a hearing",
                     },
                 ],

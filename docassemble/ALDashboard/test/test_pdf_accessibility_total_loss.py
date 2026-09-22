@@ -108,6 +108,15 @@ def test_vector_only_page_is_flagged_before_and_after_artifact_drafting(tmp_path
         assert census["vector_paints"] == 30
 
 
+def test_text_showing_operators_are_not_counted_as_vector_paints(tmp_path):
+    source = tmp_path / "text.pdf"
+    encoded_pdf(source)
+    with pikepdf.open(source) as pdf:
+        census = _page_text_census(pdf.pages[0])
+    assert census["total"] > 0
+    assert census["vector_paints"] == 0
+
+
 def test_ocr_vector_page_adds_invisible_text_and_keeps_drawn_content(tmp_path):
     source, output, tagged = tmp_path/"outlines.pdf", tmp_path/"ocr.pdf", tmp_path/"tagged.pdf"
     vector_pdf(source)

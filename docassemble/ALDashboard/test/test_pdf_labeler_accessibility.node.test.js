@@ -20,7 +20,10 @@ for (const preserve of [false, true]) {
       state, FormData: class { append() {} }, getPdfFileForRequests() {},
       apiUrl: x => x, fetch: async () => ({}),
       parseApiResponse: async () => ({success: true, data: {
-        fields: [{name: 'first', tooltip: 'Existing PDF tooltip', has_custom_tooltip: true}],
+        fields: [
+          {name: 'first', tooltip: 'Existing PDF tooltip', has_custom_tooltip: true},
+          {name: 'second', tooltip: 'second', has_custom_tooltip: false},
+        ],
         field_order: ['first', 'second'], readback: {announcements: ['refreshed']},
       }}),
       defaultTooltipFromFieldName: x => x, contentDecision() {}, headingDecision() {},
@@ -29,6 +32,7 @@ for (const preserve of [false, true]) {
     vm.runInContext(inspection, context);
     await context.inspectAccessibilityData(true, {preserveAccessibilityDrafts: preserve});
     assert.equal(state.fields[0].tooltip, preserve ? 'Pending edit' : 'Existing PDF tooltip');
+    assert.equal(state.fields[1].tooltip, 'second');
     assert.deepEqual(Array.from(state.accessibility.fieldOrder), preserve ? ['b', 'a'] : ['a', 'b']);
     assert.equal(state.accessibility.readback.announcements[0], 'refreshed');
   });
@@ -72,18 +76,31 @@ test('repaired tooltips survive export while unrelated drafts stay intact', () =
   const state = {
     fields: [
       {id: 'a', name: 'signature', pageIndex: 0, tooltip: 'Old signature'},
-      {id: 'b', name: 'signature', pageIndex: 1, tooltip: 'Pending on another page'},
+      {id: 'b', name: 'signature', pageIndex: 0, tooltip: 'Pending same-name widget'},
       {id: 'c', name: 'address', pageIndex: 0, tooltip: 'Pending address'},
     ],
-    accessibility: {enabled: true, fieldOrder: ['c', 'a', 'b'], images: [], metadata: {}},
+    accessibility: {
+      enabled: true, fieldOrder: ['c', 'a', 'b'], images: [], metadata: {},
+      readback: {announcements: [
+        {index: 4, kind: 'field', name: 'signature', page: 0},
+        {index: 9, kind: 'field', name: 'signature', page: 0},
+      ]},
+    },
   };
   const context = vm.createContext({state, defaultTooltipFromFieldName: x => x});
   vm.runInContext(source.slice(source.indexOf('function mergeRemediatedTooltips('), source.indexOf('async function runAccessibilityRemediation(')), context);
   vm.runInContext(source.slice(source.indexOf('function buildAccessibilityPayload('), source.indexOf('function invalidateBulkRenamePreview(')), context);
-  context.mergeRemediatedTooltips({tooltip_updates: [{fieldName: 'signature', page: 0, tooltip: 'Applicant signature'}]});
+  context.mergeRemediatedTooltips({tooltip_updates: [{fieldName: 'signature', page: 0, announcedIndex: 9, tooltip: 'Co-applicant signature'}]});
   const exported = context.buildAccessibilityPayload(new Map([['a', 'signature'], ['b', 'signature__1'], ['c', 'address']]));
-  assert.equal(exported.field_tooltips.signature, 'Applicant signature');
-  assert.equal(exported.field_tooltips.signature__1, 'Pending on another page');
+  assert.equal(exported.field_tooltips.signature, 'Old signature');
+  assert.equal(exported.field_tooltips.signature__1, 'Co-applicant signature');
   assert.equal(exported.field_tooltips.address, 'Pending address');
   assert.deepEqual(Array.from(exported.field_order), ['address', 'signature', 'signature__1']);
+});
+
+test('browser tooltip defaults mirror camel-case server defaults', () => {
+  const context = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf('function defaultTooltipFromFieldName('), source.indexOf('\nfunction sortedFieldIdsByDefaultOrder(')), context);
+  assert.equal(context.defaultTooltipFromFieldName('HadFelonyYes'), 'Had Felony Yes');
+  assert.equal(context.defaultTooltipFromFieldName('SSNNumber_otherValue'), 'SSN Number other Value');
 });

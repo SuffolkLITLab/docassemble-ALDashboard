@@ -800,9 +800,17 @@ def review_pdf_accessibility_with_ai(
                 return True
             if category != "metadata":
                 return False
-            return bool(
-                re.search(rf"\b{target}\b", title, re.I)
-                and re.search(r"\b(?:document|metadata|pdf|stored|current)\b", title, re.I)
+            if not re.search(rf"\b{target}\b", title, re.I):
+                return False
+            # A metadata-category finding may simply say "Title missing" or
+            # "Language invalid". Keep field/control labels from being
+            # mistaken for document metadata when the target is their noun.
+            return not bool(
+                re.search(
+                    rf"\b{target}\b\s+(?:field|control|column|cell|button|payee)\b",
+                    title,
+                    re.I,
+                )
             )
 
         known_titles = [
@@ -3584,6 +3592,7 @@ _CONTENT_PAINT_OPERATORS = {
     "sh",
 }
 _DRAFT_ARTIFACT_OPERATORS = _CONTENT_PAINT_OPERATORS - {"Do", "sh"}
+_VECTOR_PAINT_OPERATORS = _DRAFT_ARTIFACT_OPERATORS - {"Tj", "TJ", "'", '"'}
 
 
 def _shown_instruction_text(instruction: Any) -> str:
@@ -4287,7 +4296,7 @@ def _page_text_census(page: Any) -> Dict[str, int]:
             operator, operands = str(instruction.operator), list(instruction.operands)
             if operator in {"m", "l", "c", "v", "y", "h", "re"}:
                 path_segments += 1
-            elif operator in _DRAFT_ARTIFACT_OPERATORS:
+            elif operator in _VECTOR_PAINT_OPERATORS:
                 census["vector_paints"] += 1
                 census["vector_segments"] += path_segments
                 path_segments = 0
@@ -4813,9 +4822,22 @@ def _duplicate_field_distinguishers(
         components.append(component)
 
     all_field_items = [item for item in all_items if item.get("kind") == "field"]
+    globally_ordered = sorted(
+        placed,
+        key=lambda item: (
+            item.get("page") or 0,
+            -float(item["y"]),
+            float(item.get("x") or 0),
+        ),
+    )
+    global_positions = {
+        id(item): position for position, item in enumerate(globally_ordered, start=1)
+    }
     suggestions: List[Dict[str, Any]] = []
     for component in components:
-        if len(component) < 2:
+        # Weak option words reused by unrelated questions do not become one
+        # semantic group merely because they announce the same word.
+        if len(component) == 1 and has_weak_text(component[0]):
             continue
         ordered = sorted(
             component,
@@ -4838,7 +4860,7 @@ def _duplicate_field_distinguishers(
             other.get("page") == item.get("page")
             and other.get("y") is not None
             and other.get("name") != item.get("name")
-            and all(other.get("name") != member.get("name") for member in group)
+            and all(other.get("name") != member.get("name") for member in component)
             and abs(float(other["y"]) - float(item["y"])) < 8
             for item in ordered
             for other in all_field_items
@@ -4856,14 +4878,19 @@ def _duplicate_field_distinguishers(
                 return default_pdf_field_tooltip(item.get("name"))
             return value
 
-        total = len(ordered)
+        total = len(ordered) if len(ordered) > 1 else len(globally_ordered)
         # Real context can still collide -- two rows can share one printed
         # label, or two records the same naming-convention role -- and a
         # collision defeats the entire point, so anything that is not
         # uniquely its own text within this component still earns the
         # position suffix.
         drafts = []
-        for position, item in enumerate(ordered, start=1):
+        for local_position, item in enumerate(ordered, start=1):
+            position = (
+                local_position
+                if len(ordered) > 1
+                else global_positions[id(item)]
+            )
             context, source = _distinguishing_context(item, all_items)
             base = base_text(item)
             if context and context.casefold() not in base.casefold() and base.casefold() not in context.casefold():
@@ -6668,7 +6695,7 @@ def _heading_candidates_from_xml(root: ET.Element) -> List[Dict[str, Any]]:
             }
             or _is_heading_marker(value)
             or looks_like_form_code
-            or (is_running and line["pageIndex"] != repeated[0]["pageIndex"])
+            or (is_running and line is not repeated[0])
         ):
             continue
         # A repeated running title may be a genuine document title on page one.
@@ -8172,6 +8199,8 @@ def apply_manual_structure_repairs(
                         if page_index < 0 or annot_index < 0:
                             raise ValueError("Annotation indexes must be nonnegative.")
                         annot = pdf.pages[page_index]["/Annots"][annot_index]
+                        if annot is None or not hasattr(annot, "get"):
+                            raise ValueError("Annotation reference is null.")
                     except (IndexError, KeyError, TypeError, ValueError) as exc:
                         raise PDFAccessibilityError(
                             "The annotation list changed; refresh and retry."

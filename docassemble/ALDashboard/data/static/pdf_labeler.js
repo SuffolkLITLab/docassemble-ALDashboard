@@ -1428,6 +1428,8 @@ function getDisplayedFields() {
 
 function defaultTooltipFromFieldName(name) {
   const normalized = String(name || "")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/_/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -2103,7 +2105,7 @@ function renderAccessibilityReadback() {
   a11yReadbackOcr.classList.toggle(
     "hidden",
     !findings.some(function (finding) {
-      return String(finding.id || "").startsWith("readback-image-only");
+      return /^readback-(?:image|vector)-only/.test(String(finding.id || ""));
     }),
   );
   // Numbering is offered filled in, because it is always an improvement on two
@@ -3598,9 +3600,8 @@ async function inspectAccessibilityData(forceRefresh, options) {
     });
     if (!matched) return;
     if (
-      !preserveDrafts &&
-      (!String(matched.tooltip || "").trim() ||
-        serverField.has_custom_tooltip)
+      !String(matched.tooltip || "").trim() ||
+      (!preserveDrafts && serverField.has_custom_tooltip)
     ) {
       matched.tooltip = String(
         serverField.tooltip || defaultTooltipFromFieldName(matched.name),
@@ -9237,14 +9238,38 @@ function accessibilityRemediationFeedback(action, result, options) {
 
 function mergeRemediatedTooltips(result) {
   const updates = Array.isArray(result.tooltip_updates) ? result.tooltip_updates : [];
+  const announcements = Array.isArray(
+    (state.accessibility.readback || {}).announcements,
+  )
+    ? state.accessibility.readback.announcements
+    : [];
   updates.forEach(function (update) {
     if (!update.fieldName) return;
-    state.fields.forEach(function (field) {
-      if (String(field.name || "") !== String(update.fieldName || "")) return;
-      if (update.page != null && Number(field.pageIndex) !== Number(update.page)) return;
-      field.tooltip = String(update.tooltip || "");
-      field.tooltipSource = "pdf";
+    const candidates = state.fields.filter(function (field) {
+      return (
+        String(field.name || "") === String(update.fieldName || "") &&
+        (update.page == null || Number(field.pageIndex) === Number(update.page))
+      );
     });
+    let target = candidates.length === 1 ? candidates[0] : null;
+    if (update.announcedIndex != null && candidates.length > 1) {
+      const matchingAnnouncements = announcements.filter(function (item) {
+        return (
+          item.kind === "field" &&
+          String(item.name || "") === String(update.fieldName || "") &&
+          (update.page == null || Number(item.page) === Number(update.page))
+        );
+      });
+      const occurrence = matchingAnnouncements.findIndex(function (item) {
+        return Number(item.index) === Number(update.announcedIndex);
+      });
+      if (occurrence >= 0 && occurrence < candidates.length) {
+        target = candidates[occurrence];
+      }
+    }
+    if (!target) return;
+    target.tooltip = String(update.tooltip || "");
+    target.tooltipSource = "pdf";
   });
 }
 

@@ -160,6 +160,17 @@ def test_metadata_category_alone_does_not_make_a_field_name_document_metadata():
     assert "change" not in finding
 
 
+@pytest.mark.parametrize("target", ["title", "language"])
+def test_concise_metadata_findings_still_trigger_repairs(target):
+    context = {"documentLanguage": "en-US"} if target == "language" else {}
+    finding = review({
+        "category": "metadata",
+        "title": f"{target.title()} missing",
+        "explanation": "The stored value needs correction.",
+    }, **context)
+    assert finding["change"]["target"] == target
+
+
 def test_positive_heading_without_level_is_not_approved():
     assert heading_decisions([{"candidateId": "title", "isHeading": True}])[0]["isHeading"] is False
 

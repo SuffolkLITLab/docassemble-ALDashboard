@@ -444,7 +444,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn('id="a11y-run-ocr"', self.html)
         self.assertIn('id="a11y-readback-ocr"', self.html)
         self.assertIn('"ocr"', self.js)
-        self.assertIn("readback-image-only", self.js)
+        self.assertIn("readback-(?:image|vector)-only", self.js)
         self.assertIn("def ocr_image_only_pages", self.api_accessibility)
         self.assertIn('action == "ocr"', self.api)
         # The page keeps its appearance, and the result must be reviewed.

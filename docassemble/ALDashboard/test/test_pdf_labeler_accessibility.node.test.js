@@ -34,7 +34,56 @@ for (const preserve of [false, true]) {
   });
 }
 
+for (const preserve of [false, true]) {
+  test(`loading PDF resets document-specific certification state: ${preserve}`, () => {
+    const state = {
+      fileName: 'old.pdf',
+      accessibility: {marked: true, readback: {announcements: ['old document']}},
+    };
+    const context = vm.createContext({
+      state,
+      File: class {},
+      clonePdfBytes: value => value,
+      hideAccessibilityAutoFixStatus() {},
+    });
+    const sync = source.slice(
+      source.indexOf('function updateRequestPdfFile('),
+      source.indexOf('\nasync function refreshPdfDocumentFromState('),
+    );
+    vm.runInContext(sync, context);
+    context.syncPdfState([2], 'new.pdf', undefined, {
+      preserveAccessibilityDrafts: preserve,
+    });
+    assert.equal(state.accessibility.marked, preserve);
+    assert.equal(
+      state.accessibility.readback && state.accessibility.readback.announcements[0],
+      preserve ? 'old document' : null,
+    );
+  });
+}
+
 test('remediation inspection requests draft preservation', () => {
   const remediation = source.slice(source.indexOf('async function runAccessibilityRemediation('));
   assert.match(remediation, /await inspectAccessibilityData\(true, \{ preserveAccessibilityDrafts: true \}\)/);
+  assert.ok(remediation.indexOf('mergeRemediatedTooltips(result)') < remediation.indexOf('await refreshPdfDocumentFromState()'));
+});
+
+test('repaired tooltips survive export while unrelated drafts stay intact', () => {
+  const state = {
+    fields: [
+      {id: 'a', name: 'signature', pageIndex: 0, tooltip: 'Old signature'},
+      {id: 'b', name: 'signature', pageIndex: 1, tooltip: 'Pending on another page'},
+      {id: 'c', name: 'address', pageIndex: 0, tooltip: 'Pending address'},
+    ],
+    accessibility: {enabled: true, fieldOrder: ['c', 'a', 'b'], images: [], metadata: {}},
+  };
+  const context = vm.createContext({state, defaultTooltipFromFieldName: x => x});
+  vm.runInContext(source.slice(source.indexOf('function mergeRemediatedTooltips('), source.indexOf('async function runAccessibilityRemediation(')), context);
+  vm.runInContext(source.slice(source.indexOf('function buildAccessibilityPayload('), source.indexOf('function invalidateBulkRenamePreview(')), context);
+  context.mergeRemediatedTooltips({tooltip_updates: [{fieldName: 'signature', page: 0, tooltip: 'Applicant signature'}]});
+  const exported = context.buildAccessibilityPayload(new Map([['a', 'signature'], ['b', 'signature__1'], ['c', 'address']]));
+  assert.equal(exported.field_tooltips.signature, 'Applicant signature');
+  assert.equal(exported.field_tooltips.signature__1, 'Pending on another page');
+  assert.equal(exported.field_tooltips.address, 'Pending address');
+  assert.deepEqual(Array.from(exported.field_order), ['address', 'signature', 'signature__1']);
 });

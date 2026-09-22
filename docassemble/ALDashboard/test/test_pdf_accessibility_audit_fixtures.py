@@ -67,6 +67,27 @@ def test_housing_placeholder_does_not_group_caption_fields(tmp_path):
     })
 
 
+def test_care_and_custody_tooltips_reject_merged_captions_and_section_markers(tmp_path):
+    source = fixture_path("repos/docassemble-MA209AProtectiveOrder/docassemble/"
+                          "MA209AProtectiveOrder/data/templates/"
+                          "209A_affidavit_disclosing_care_or_custody_proceedings.pdf")
+    draft, repaired = str(tmp_path / "draft.pdf"), str(tmp_path / "repaired.pdf")
+    create_draft_structure_tree(source, draft, overwrite=True)
+    result = repair_duplicate_field_names(draft, repaired)
+    tooltips = {item["fieldName"]: item["tooltip"] for item in result["applied"]}
+    assert tooltips["other_case_1_court"] == "Court [1] (row 1 of 3)"
+    assert tooltips["other_case_2_court"] == "Court [1] (row 2 of 3)"
+    assert tooltips["child2_address_street"] == "Child 2 — Street Address"
+    with pikepdf.open(draft) as before, pikepdf.open(repaired) as after:
+        before_items, after_items = _readback_sequence(before), _readback_sequence(after)
+        assert [i["name"] for i in before_items if i["kind"] == "field"] == [
+            i["name"] for i in after_items if i["kind"] == "field"
+        ]
+        assert [i["text"] for i in before_items if i["kind"] == "text"] == [
+            i["text"] for i in after_items if i["kind"] == "text"
+        ]
+
+
 @pytest.mark.parametrize("name,expect_columns", [
     ("docassemble-MAHousingTRO__Housing_Temporary_Restraining_Order.pdf", False),
     ("docassemble-MAPetitionToSealEviction__petition_to_seal_eviction.pdf", False),

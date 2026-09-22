@@ -3883,7 +3883,9 @@ def _compose_matrix(
     )
 
 
-def _form_placements(page: Any) -> Dict[Any, Tuple[float, ...]]:
+def _form_placements(
+    page: Any, document_draws: Optional[Dict[Any, int]] = None
+) -> Dict[Any, Tuple[float, ...]]:
     """Find where each Form XObject lands on the page, however deeply nested.
 
     A form draws in its own coordinates, so text inside two different forms
@@ -3891,6 +3893,8 @@ def _form_placements(page: Any) -> Dict[Any, Tuple[float, ...]]:
     space. Forms nest -- one government form here wraps its whole body in a
     chain of them -- so the transform accumulates down the chain. A form drawn
     more than once is dropped: there is then no single answer to where it is.
+    When supplied, ``document_draws`` also accumulates every draw so callers
+    can reject forms shared by otherwise unambiguous pages.
     """
     import pikepdf
 
@@ -3967,6 +3971,9 @@ def _form_placements(page: Any) -> Dict[Any, Tuple[float, ...]]:
         0,
         (),
     )
+    if document_draws is not None:
+        for key, count in draws.items():
+            document_draws[key] = document_draws.get(key, 0) + count
     return {key: matrix for key, matrix in placements.items() if draws.get(key) == 1}
 
 
@@ -4606,22 +4613,41 @@ def _nearby_row_label(item: Dict[str, Any], all_items: List[Dict[str, Any]]) -> 
     if item.get("y") is None or item.get("x") is None:
         return ""
     best_text = ""
-    best_dx: Optional[float] = None
+    best_rank: Optional[Tuple[float, int, str, str]] = None
     for other in all_items:
         if other is item or other.get("kind") != "text":
             continue
-        if other.get("page") != item.get("page") or other.get("y") is None:
+        if (other.get("page") != item.get("page")
+            or other.get("y") is None or other.get("x") is None):
             continue
         if abs(float(other["y"]) - float(item["y"])) >= 8:
             continue
-        dx = float(item["x"]) - float(other.get("x") or 0)
+        dx = float(item["x"]) - float(other["x"])
         if dx <= 0:
+            continue
+        # Preserve the evidence that normalization would erase: a single
+        # tagged run may contain several column captions separated by padding.
+        # Without per-segment geometry, none is a safe row-label inference.
+        raw_values = [str(other.get(key) or "").strip() for key in ("drawn", "text", "spoken")]
+        if any(re.search(r"\S\s{3,}\S|[\r\n\t]", raw) for raw in raw_values):
             continue
         text = re.sub(r"\s+", " ", str(other.get("spoken") or other.get("text") or "")).strip(" :._-")
         if len(text) < 3 or len(text) > 60 or not re.search(r"[A-Za-z]{2}", text):
             continue
-        if best_dx is None or dx < best_dx:
-            best_dx, best_text = dx, text
+        # Standalone structural markers (including a marker whose identifier
+        # was drawn in a separate run) describe the page, not the blank. Keep
+        # substantive labels such as "Section 8 benefits" or "Page count".
+        if re.fullmatch(
+            r"(?:section|part|chapter|page|paragraph)"
+            r"(?:\s+\(?(?:\d+(?:\.\d+)*[a-z]?|[a-z]|[ivxlcdm]+)\)?\.?)?",
+            text, re.IGNORECASE,
+        ):
+            continue
+        # At identical positions prefer a concise label, with lexical ordering
+        # as the final tie-break so tag-tree traversal order cannot decide it.
+        rank = (dx, len(text), text.casefold(), text)
+        if best_rank is None or rank < best_rank:
+            best_rank, best_text = rank, text
     return best_text
 
 
@@ -5763,8 +5789,8 @@ def ocr_image_only_pages(
                 widths = standard_14_widths("helvetica") or {}
                 # Render mode 3 draws nothing: the picture already shows these
                 # words, and a second visible copy would be a mess.
-                # q/Q: this stream is concatenated onto content whose graphics
-                # state it does not control.
+                # Original content is isolated below so this layer starts in
+                # the page's default graphics state, including CTM and clip.
                 pieces = ["q", "BT", "3 Tr"]
                 for word in words:
                     size = max(word["height"] * scale_y, 1.0)
@@ -5790,10 +5816,13 @@ def ocr_image_only_pages(
                     ("\n".join(pieces)).encode("cp1252", "replace")
                 )
                 contents = page.get("/Contents")
-                if isinstance(contents, pikepdf.Array):
-                    contents.append(layer)
-                else:
-                    page["/Contents"] = pikepdf.Array([contents, layer] if contents is not None else [layer])
+                original = list(contents) if isinstance(contents, pikepdf.Array) else (
+                    [contents] if contents is not None else []
+                )
+                page["/Contents"] = pikepdf.Array([
+                    pdf.make_stream(b"q\n"), *original,
+                    pdf.make_stream(b"\nQ\n"), layer,
+                ])
                 pages_read.append(
                     {
                         "page": page_index,
@@ -5948,6 +5977,8 @@ def repair_duplicate_field_names(
         "action": "field_names",
         "tooltips_renamed": len(applied),
         "applied": applied[:200],
+        # Complete synchronization data; the human-facing summary is bounded.
+        "tooltip_updates": applied,
         "review_required": True,
         "warning": (
             "Numbering tells controls apart; it does not describe them. Where "
@@ -7285,6 +7316,10 @@ def create_draft_structure_tree(
             heading_levels_normalized = 0
             manual_artifact_count = 0
             previous_heading_level = 0
+            document_form_draws: Dict[Any, int] = {}
+            form_placements_by_page = [
+                _form_placements(page, document_form_draws) for page in pdf.pages
+            ]
             for page_index, page in enumerate(pdf.pages):
                 page["/StructParents"] = page_index
                 page_part = pdf.make_indirect(
@@ -7672,7 +7707,7 @@ def create_draft_structure_tree(
                 # that name the stream they live in. A form drawn more than
                 # once could not say which copy an MCID belongs to, so those
                 # are left alone.
-                placements = _form_placements(page)
+                placements = form_placements_by_page[page_index]
                 form_order: List[Tuple[str, Any]] = []
                 seen_forms: set = set()
                 for form_path, form_obj in _walk_resource_xobjects(
@@ -7681,7 +7716,11 @@ def create_draft_structure_tree(
                     if _safe_pdf_string(form_obj.get("/Subtype", "")) != "/Form":
                         continue
                     key = form_obj.objgen
-                    if key in seen_forms or key not in placements:
+                    if (
+                        key in seen_forms
+                        or key not in placements
+                        or document_form_draws.get(key) != 1
+                    ):
                         continue
                     seen_forms.add(key)
                     form_order.append((form_path, form_obj))
@@ -8010,6 +8049,7 @@ def apply_manual_structure_repairs(
                 "annotation_descriptions_changed": 0,
                 "widget_descriptions_changed": 0,
             }
+            tooltip_updates = []
             parent_tree = struct_root.get("/ParentTree")
             number_entries = (
                 _number_tree_entries(parent_tree) if parent_tree is not None else {}
@@ -8161,6 +8201,11 @@ def apply_manual_structure_repairs(
                         ):
                             form_element["/Alt"] = pikepdf.String(description[:1000])
                         counts["widget_descriptions_changed"] += 1
+                        tooltip_updates.append({
+                            "fieldName": _safe_pdf_string(field.get("/T", "")),
+                            "page": page_index,
+                            "tooltip": description[:1000],
+                        })
                     elif action == "set_annotation_contents":
                         contents = str(operation.get("contents") or "").strip()
                         if contents:
@@ -8226,6 +8271,7 @@ def apply_manual_structure_repairs(
         return {
             "action": "structure",
             **counts,
+            "tooltip_updates": tooltip_updates,
             "review_required": True,
             "warning": "Manual structure edits were applied. Review the resulting tree and validate with veraPDF and assistive technology.",
         }

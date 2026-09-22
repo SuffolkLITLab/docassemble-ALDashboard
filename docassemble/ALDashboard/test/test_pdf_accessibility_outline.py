@@ -2,9 +2,12 @@
 import xml.etree.ElementTree as ET
 
 import pikepdf
+import pytest
 
 from docassemble.ALDashboard.pdf_accessibility import (
     _duplicate_field_distinguishers,
+    _distinguishing_context,
+    _nearby_row_label,
     _heading_candidates_from_xml,
     _heading_exclusion_boxes,
     _heading_outline_findings,
@@ -16,6 +19,57 @@ from docassemble.ALDashboard.pdf_accessibility import (
 def test_pascal_case_and_acronym_tooltips():
     assert default_pdf_field_tooltip("HadFelonyYes") == "Had Felony Yes"
     assert default_pdf_field_tooltip("SSNNumber_otherValue") == "SSN Number other Value"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("raw_key", ["text", "drawn"])
+def test_merged_caption_row_cannot_win_a_geometric_tie(reverse, raw_key):
+    fields = [dict(kind="field", index=i+10, name=f"other_case_{i+1}_court",
+                   text="Court [1]", page=0, x=138, y=326.16-i*13)
+              for i in range(2)]
+    merged = dict(kind="text", index=0, page=0, x=74.88, y=329.494,
+                  text="Letter of Child Court Docket No.", spoken="Letter of Child Court Docket No.")
+    merged[raw_key] = "   Letter of Child            Court         Docket No.   "
+    child = dict(kind="text", index=1, page=0, x=74.88, y=318.694, text="CHILD   ")
+    labels = [merged, child]
+    if reverse:
+        labels.reverse()
+    assert _nearby_row_label(fields[0], labels) == "CHILD"
+    suggestions = _duplicate_field_distinguishers(fields, labels + fields)
+    assert len(suggestions) == 2
+    assert all(s["distinguisherSource"] == "position" for s in suggestions)
+    assert all("Letter of Child" not in s["suggested"] for s in suggestions)
+    assert _nearby_row_label(fields[0], [merged]) == ""
+
+
+@pytest.mark.parametrize("marker", ["Section ", "Section 8", "Section C", "Chapter II", "Page 2"])
+def test_page_marker_defers_to_record_context_or_a_real_label(marker):
+    fields = [dict(kind="field", index=i+10, name=f"child{i+1}_address_street",
+                   text="Street Address", page=1, x=157.44, y=700-i*117.04)
+              for i in range(2)]
+    label = dict(kind="text", index=0, role="H4", page=1, x=49.087, y=582.023, text=marker)
+    assert _distinguishing_context(fields[1], [label]) == ("Child 2", "name_convention")
+    suggestions = _duplicate_field_distinguishers(fields, [label] + fields)
+    assert suggestions[1]["suggested"] == "Child 2 — Street Address"
+    assert suggestions[1]["distinguisherSource"] == "name_convention"
+    real_label = dict(label, index=1, role="P", x=30, text="Mailing address")
+    assert _nearby_row_label(fields[1], [label, real_label]) == "Mailing address"
+
+
+@pytest.mark.parametrize("text", ["  Savings   ", "Section 8 benefits", "Page count", "529 Plan"])
+def test_row_label_keeps_padding_and_meaningful_numbered_labels(text):
+    field = dict(page=0, x=150, y=600)
+    label = dict(kind="text", page=0, x=30, y=600, text=text)
+    assert _nearby_row_label(field, [label]) == text.strip()
+
+
+def test_row_label_ties_are_independent_of_traversal_order():
+    field = dict(page=0, x=150, y=600)
+    labels = [dict(kind="text", page=0, x=30, y=600, text=text)
+              for text in ("Amount due", "Savings", "Balance")]
+    assert _nearby_row_label(field, labels) == "Balance"
+    assert _nearby_row_label(field, list(reversed(labels))) == "Balance"
+    assert _nearby_row_label(field, [dict(labels[0], x=None)]) == ""
 
 
 def test_wrapped_title_and_separate_cells():
@@ -249,7 +303,7 @@ def test_auto_fill_preserves_parent_and_widget_tooltips(tmp_path):
         field_tooltips={"FullName": "Reviewed name"},
     )
     with pikepdf.open(output) as updated:
-        assert all(str(a.TU) == "Reviewed name" for a in updated.pages[0].Annots[:2])
+        assert all(str(a.TU) == "Reviewed name" for a in list(updated.pages[0].Annots)[:2])
 
 
 def test_artifact_inside_text_object_does_not_hide_following_title(tmp_path):

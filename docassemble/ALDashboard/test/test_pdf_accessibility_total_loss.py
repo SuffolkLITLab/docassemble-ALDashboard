@@ -119,8 +119,8 @@ def test_ocr_vector_page_adds_invisible_text_and_keeps_drawn_content(tmp_path):
     assert result["pages_read"] == 1
     assert result["pages"][0]["sourceContent"] == "vector"
     with pikepdf.open(source) as before, pikepdf.open(output) as after:
-        assert before.pages[0].Contents.read_bytes() == after.pages[0].Contents[0].read_bytes()
-        assert b"3 Tr" in after.pages[0].Contents[1].read_bytes()
+        assert before.pages[0].Contents.read_bytes() == after.pages[0].Contents[1].read_bytes()
+        assert b"3 Tr" in after.pages[0].Contents[-1].read_bytes()
     create_draft_structure_tree(str(output), str(tagged))
     report = analyze_screen_reader_readback(str(tagged), heading_candidates=[])
     assert any(i["text"] == "Petition" for i in report["announcements"])
@@ -135,6 +135,30 @@ def test_blank_page_with_unused_vector_resource_is_not_ocr_candidate(tmp_path):
     ocr.assert_not_called()
     assert result["pages_read"] == 0
     assert analyze_screen_reader_readback(str(output), heading_candidates=[])["findings"] == []
+
+
+@pytest.mark.parametrize("array_contents", [False, True])
+def test_ocr_layer_does_not_inherit_original_transform_or_clip(tmp_path, array_contents):
+    import shutil
+    import subprocess
+
+    if not shutil.which("pdftotext"):
+        pytest.skip("Poppler required")
+    source, output = tmp_path / "transformed.pdf", tmp_path / "ocr.pdf"
+    vector_pdf(source)
+    with pikepdf.open(source, allow_overwriting_input=True) as pdf:
+        original = pdf.pages[0].Contents.read_bytes() + b" 2 0 0 2 0 0 cm 0 0 10 10 re W n"
+        stream = pdf.make_stream(original)
+        pdf.pages[0].Contents = pikepdf.Array([stream]) if array_contents else stream
+        pdf.save(source)
+    words = [dict(text="Petition", left=20, top=20, width=80, height=14,
+                  pixelWidth=612, pixelHeight=792, confidence=96)]
+    with patch("docassemble.ALDashboard.pdf_accessibility._ocr_page_words", return_value=words):
+        result = ocr_image_only_pages(str(source), str(output))
+    assert result["pages_read"] == 1
+    assert "Petition" in subprocess.check_output(["pdftotext", str(output), "-"], text=True)
+    with pikepdf.open(output) as pdf:
+        assert pdf.pages[0].Contents[1].read_bytes() == original
 
 
 def test_failed_ocr_cannot_make_vector_page_report_clean(tmp_path):

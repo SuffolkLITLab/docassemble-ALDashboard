@@ -5259,6 +5259,8 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
   state.accessibility.substituteOptions = null;
   state.accessibility.substituteChoices = {};
   if (!settings.preserveAccessibilityDrafts) {
+    state.accessibility.marked = false;
+    state.accessibility.readback = null;
     state.accessibility.fontRemediation = null;
     hideAccessibilityAutoFixStatus();
     state.accessibility.draftRemediations = {};
@@ -9233,6 +9235,19 @@ function accessibilityRemediationFeedback(action, result, options) {
   return "Accessibility remediation finished and the report was refreshed.";
 }
 
+function mergeRemediatedTooltips(result) {
+  const updates = Array.isArray(result.tooltip_updates) ? result.tooltip_updates : [];
+  updates.forEach(function (update) {
+    if (!update.fieldName) return;
+    state.fields.forEach(function (field) {
+      if (String(field.name || "") !== String(update.fieldName || "")) return;
+      if (update.page != null && Number(field.pageIndex) !== Number(update.page)) return;
+      field.tooltip = String(update.tooltip || "");
+      field.tooltipSource = "pdf";
+    });
+  });
+}
+
 async function runAccessibilityRemediation(action, options, clientOptions) {
   const clientSettings = clientOptions || {};
   const formData = new FormData();
@@ -9266,11 +9281,12 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
     syncPdfState(bytes, payload.data.filename || state.fileName, undefined, {
       preserveAccessibilityDrafts: true,
     });
+    const result = payload.data.remediation_result || {};
+    mergeRemediatedTooltips(result);
     await refreshPdfDocumentFromState();
     await inspectAccessibilityData(true, { preserveAccessibilityDrafts: true });
     renderAccessibilityModal();
     setDirty(true);
-    const result = payload.data.remediation_result || {};
     if (action === "fonts") {
       state.accessibility.fontRemediation = result;
       const fontChanges =

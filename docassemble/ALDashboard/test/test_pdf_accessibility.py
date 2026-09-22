@@ -1448,6 +1448,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
                         "/Subtype": pikepdf.Name("/Widget"),
                         "/FT": pikepdf.Name("/Btn"),
                         "/Rect": pikepdf.Array([90, 10, 110, 30]),
+                        "/T": pikepdf.String("request_hearing"),
                     }
                 )
             )
@@ -1606,6 +1607,10 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             self.assertEqual(result["figure_alts_changed"], 1)
             self.assertEqual(result["annotations_tagged"], 2)
             self.assertEqual(result["widget_descriptions_changed"], 1)
+            self.assertEqual(len(result["tooltip_updates"]), 1)
+            self.assertEqual(result["tooltip_updates"][0]["tooltip"], "Request a hearing")
+            self.assertEqual(result["tooltip_updates"][0]["page"], 0)
+            self.assertEqual(result["tooltip_updates"][0]["fieldName"], "request_hearing")
             after = inspect_pdf_accessibility(output_path)
             table_after = after["structure_editor"]["tables"][0]
             self.assertEqual(
@@ -2883,6 +2888,7 @@ class TestScreenReaderReadback(unittest.TestCase):
         )
         self.assertEqual(result["tooltips_renamed"], 2)
         announced = sorted(item["tooltip"] for item in result["applied"])
+        self.assertEqual(result["tooltip_updates"], result["applied"])
         self.assertEqual(
             announced,
             [
@@ -3083,7 +3089,9 @@ def _readback_page_runs_for_test(path):
 class TestNestedFormXObjectTagging(unittest.TestCase):
     """Plenty of government forms draw their whole body inside a form."""
 
-    def _nested_form_pdf(self, path, *, depth=2, repeat_form=False):
+    def _nested_form_pdf(
+        self, path, *, depth=2, repeat_form=False, share_across_pages=False
+    ):
         """A page whose text lives inside a chain of Form XObjects."""
         import pikepdf
 
@@ -3127,6 +3135,12 @@ class TestNestedFormXObjectTagging(unittest.TestCase):
         if repeat_form:
             body += b" q 1 0 0 1 0 400 cm /Fm0 Do Q"
         page.obj["/Contents"] = pdf.make_stream(body)
+        if share_across_pages:
+            second_page = pdf.add_blank_page(page_size=(612, 792))
+            second_page.obj["/Resources"] = pikepdf.Dictionary(
+                {"/XObject": pikepdf.Dictionary({"/Fm0": current})}
+            )
+            second_page.obj["/Contents"] = pdf.make_stream(body)
         pdf.save(path)
         pdf.close()
 
@@ -3166,6 +3180,19 @@ class TestNestedFormXObjectTagging(unittest.TestCase):
         self.assertIn(
             "None of the page's text is tagged",
             [finding["title"] for finding in readback["findings"]],
+        )
+
+    def test_a_form_shared_by_pages_is_left_alone(self):
+        """One shared stream cannot carry page-specific structure parents."""
+        result, readback = self._tag(depth=2, share_across_pages=True)
+        self.assertEqual(result["form_xobjects_tagged"], 0)
+        self.assertEqual(result["text_blocks_tagged"], 0)
+        self.assertEqual(
+            sum(
+                finding["title"] == "None of the page's text is tagged"
+                for finding in readback["findings"]
+            ),
+            2,
         )
 
 

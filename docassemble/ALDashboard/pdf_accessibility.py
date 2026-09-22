@@ -5344,24 +5344,37 @@ def analyze_screen_reader_readback(
     # 4. Controls a listener cannot tell apart.
     by_name: Dict[str, List[Dict[str, Any]]] = {}
     for field in field_items:
-        announced = field.get("text") or ""
-        if announced:
-            by_name.setdefault(announced, []).append(field)
+        # A blank announcement is the worst case for this check, not an
+        # exemption from it: a control with no name at all still needs the
+        # connected-components evidence below to find its repeating record.
+        by_name.setdefault(field.get("text") or "", []).append(field)
     for announced, group in by_name.items():
         if len(group) < 2:
             continue
         suggestions = _duplicate_field_distinguishers(group, spoken)
+        blank = not announced
         findings.append(
             {
                 "id": "readback-duplicate-names-"
-                + re.sub(r"[^a-z0-9]+", "-", announced.lower())[:40],
+                + (re.sub(r"[^a-z0-9]+", "-", announced.lower())[:40] or "blank"),
                 "severity": "fail",
                 "category": "field-names",
-                "title": "Several controls announce the same name",
+                "title": (
+                    "Several controls announce no name at all" if blank
+                    else "Several controls announce the same name"
+                ),
                 "detail": (
-                    f"{len(group)} controls all announce \u201c{announced}\u201d, so "
-                    "tabbing through them gives no way to tell which blank is "
-                    "which."
+                    (
+                        f"{len(group)} controls have no announced name at all, so "
+                        "tabbing through them says nothing about which blank is "
+                        "which."
+                        if blank
+                        else (
+                            f"{len(group)} controls all announce \u201c{announced}\u201d, so "
+                            "tabbing through them gives no way to tell which blank is "
+                            "which."
+                        )
+                    )
                     + (
                         " Numbering them by position tells them apart, but it "
                         "cannot say what each one is for: if the shared name is "
@@ -5848,9 +5861,11 @@ def repair_duplicate_field_names(
             field_items = [item for item in sequence if item["kind"] == "field"]
             by_name: Dict[str, List[Dict[str, Any]]] = {}
             for item in field_items:
-                announced = item.get("text") or ""
-                if announced:
-                    by_name.setdefault(announced, []).append(item)
+                # A blank announcement is not "no name to compare" -- it is
+                # the worst case, a control with no name at all, and the one
+                # that most needs the connected-components evidence below to
+                # find its actual repeating record.
+                by_name.setdefault(item.get("text") or "", []).append(item)
             # Keyed by the announced position, not the field name: radio kids
             # and repeated widgets share one /T, and keying by name kept a
             # single suggestion and put it on the first widget.

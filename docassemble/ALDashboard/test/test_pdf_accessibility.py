@@ -2862,6 +2862,21 @@ class TestScreenReaderReadback(unittest.TestCase):
             os.remove(source_path)
             os.remove(output_path)
 
+    def test_controls_with_no_announced_name_are_still_disambiguated(self):
+        """A blank /TU is the worst case for this check, not an exemption from
+        it: it is the field that most needs a real name, not a signal to skip
+        it entirely."""
+        result, _after = self._rename(
+            [("guardian1_signature", ""), ("guardian2_signature", "")]
+        )
+        self.assertEqual(result["tooltips_renamed"], 2)
+        tooltips = {item["fieldName"]: item["tooltip"] for item in result["applied"]}
+        self.assertIn("guardian1", tooltips["guardian1_signature"].lower())
+        self.assertIn("guardian2", tooltips["guardian2_signature"].lower())
+        self.assertNotEqual(
+            tooltips["guardian1_signature"], tooltips["guardian2_signature"]
+        )
+
     def test_controls_that_share_a_name_are_numbered_by_position(self):
         result, after = self._rename(
             [("a", "Reason for the request"), ("b", "Reason for the request")]

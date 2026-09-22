@@ -243,7 +243,7 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         system_prompt = completion.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Preserve a reasonable existing value", system_prompt)
         self.assertIn("BCP 47 language", system_prompt)
-        self.assertIn("never propose changing MarkInfo", system_prompt)
+        self.assertIn("repairs MarkInfo without asserting PDF/UA", system_prompt)
 
     def test_h1_title_finding_is_actionable_without_the_word_metadata(self):
         """A prose-only suggestion still has to be applicable in one click."""

@@ -244,3 +244,48 @@ def test_ai_can_replace_a_weak_positional_draft_with_a_field_tooltip_change():
     assert finding["change"] == {
         "kind": "field_tooltip", "target": "application_date", "value": "Filing date",
     }
+
+
+def test_language_recommendation_applies_regional_tag_even_when_en_is_present():
+    finding = review({
+        'category': 'metadata', 'title': 'Document language metadata is unspecific',
+        'explanation': 'The Alabama form uses U.S. English. Use en-US for this form.',
+    }, metadata={'language': 'en'})
+    assert finding['change'] == {'kind': 'metadata', 'target': 'language', 'value': 'en-US'}
+
+
+@pytest.mark.parametrize('category', ['heading-outline', 'reading-order', 'document-declaration'])
+def test_structural_findings_with_readback_evidence_offer_default_repair(category):
+    finding = review({
+        'category': category, 'title': 'Tags need repair',
+        'explanation': 'Controls are separated from their labels and headings are missing.',
+    }, readbackFindings=[{'id': 'readback-detached-fields', 'category': 'reading-order'}])
+    assert finding['change'] == {'kind': 'repair_structure', 'target': 'document', 'value': 'visual'}
+
+
+@pytest.mark.parametrize('order,valid', [(['b', 'a'], True), (['a'], False), (['a', 'a'], False), (['a', 'unknown'], False)])
+def test_ai_order_must_cover_the_supplied_page_without_duplicates(order, valid):
+    finding = review({
+        'category': 'reading-order', 'title': 'Finish the left column before the right',
+        'explanation': 'Read the two columns as logical groups.',
+        'change': {'kind': 'content_order', 'target': '1', 'value': order},
+    }, contentBlocks=[{'blockId': 'a', 'page': 1, 'text': 'A'}, {'blockId': 'b', 'page': 1, 'text': 'B'}])
+    assert ('change' in finding) == valid
+    if valid:
+        assert finding['change']['value'] == order
+
+
+def test_heading_edit_requires_real_candidate_and_supported_level():
+    context = {'headings': [{'candidateId': 'title', 'text': TITLE}]}
+    for target, value, valid in [('title', 'H1', True), ('title', 'P', True), ('missing', 'H1', False), ('title', 'H9', False)]:
+        finding = review({'category': 'heading-outline', 'title': 'Correct the title role',
+                          'explanation': 'Use the appropriate heading level.',
+                          'change': {'kind': 'heading', 'target': target, 'value': value}}, **context)
+        assert ('change' in finding) == valid
+
+
+def test_declaration_mismatch_has_a_default_flag_repair():
+    finding = review({'category': 'document-declaration', 'title': 'Tagging flag is inconsistent',
+                      'explanation': 'The MarkInfo entry needs to match the tag tree.'},
+                     reportIssues=[{'id':'mark-info', 'status':'fail'}])
+    assert finding['change'] == {'kind':'declaration', 'target':'document', 'value':'repair'}

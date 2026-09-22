@@ -343,7 +343,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
         self.assertIn("await applyAiTooltipDraft()", self.js)
         self.assertIn("await applyAiHeadingDraft()", self.js)
         self.assertIn("mark_as_tagged: false", self.js)
-        self.assertIn("Auto-fix never enables it", self.html)
+        self.assertIn("Auto-fix repairs tagging flags but never declares PDF/UA conformance", self.html)
         self.assertIn("Only after checking all fixes", self.js)
         self.assertIn("function draftMissingDocumentLanguage", self.js)
         self.assertIn("document.documentElement.lang", self.js)
@@ -381,7 +381,7 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
             self.html,
         )
         self.assertIn("A tag tree must describe the real document", self.html)
-        self.assertIn("Auto-fix never enables it", self.html)
+        self.assertIn("Auto-fix repairs tagging flags but never declares PDF/UA conformance", self.html)
 
     def test_the_tag_tree_preview_collapses_repeated_siblings(self):
         """A form has dozens of identical /Form nodes; listing each says nothing."""

@@ -46,8 +46,8 @@ ACCESSIBILITY_REMEDIATIONS: Dict[str, Dict[str, Any]] = {
     },
     "catalog_flags": {
         "label": "Accessibility flags",
-        "kind": "manual",
-        "description": "Set MarkInfo.Marked only after the tag tree is meaningful.",
+        "kind": "automatic",
+        "description": "Reconcile MarkInfo with the tag tree without asserting PDF/UA conformance.",
     },
     "draft_structure": {
         "label": "Draft tag structure",
@@ -568,6 +568,20 @@ def review_pdf_accessibility_with_ai(
     ][:250]
     allowed_fields = {str(item.get("fieldId") or "") for item in fields}
     allowed_images = {str(item.get("assetId") or "") for item in images}
+    raw_blocks = context.get("contentBlocks")
+    blocks = [
+        {"blockId": str(item["blockId"])[:120], "page": scalar(item.get("page")),
+         "text": str(item.get("text") or "")[:500], "role": str(item.get("role") or "")[:10],
+         "order": scalar(item.get("order")),
+         "box": {key: scalar(item.get("box", {}).get(key)) for key in ("x", "y", "width", "height")}
+             if isinstance(item.get("box"), Mapping) else {}}
+        for item in (raw_blocks if isinstance(raw_blocks, list) else [])
+        if isinstance(item, Mapping) and item.get("blockId")
+    ][:1000]
+    blocks_by_page: Dict[str, set[str]] = {}
+    for block in blocks:
+        blocks_by_page.setdefault(str(block.get("page")), set()).add(str(block["blockId"]))
+    heading_ids = {str(item["candidateId"]) for item in headings}
     prompt_context = {
         "filename": str(context.get("filename") or "")[:300],
         "metadata": {
@@ -576,6 +590,7 @@ def review_pdf_accessibility_with_ai(
         "textSample": str(context.get("textSample") or "")[:16000],
         "fields": fields,
         "headings": headings,
+        "contentBlocks": blocks,
         "images": images,
         "readingDirection": str(context.get("readingDirection") or "ltr"),
         "reportIssues": [
@@ -662,7 +677,8 @@ def review_pdf_accessibility_with_ai(
                     "document's actual BCP 47 language from the text sample instead of assuming en-US. Review "
                     "field labels, heading decisions, image-alt drafts, reading direction, report failures, "
                     "semantic structure, fonts, tables, figures, links, and annotations. Do not claim that a "
-                    "PDF is conformant and never propose changing MarkInfo or the PDF/UA declaration. Do not "
+                    "PDF is conformant. Propose declaration with target document and value repair for "
+                    "inconsistent tagging flags or stale declarations; this repairs MarkInfo without asserting PDF/UA. Do not "
                     "invent image content when no pixels or reliable existing description were supplied. "
                     "readbackFindings is a deterministic replay of the tag tree in the order assistive "
                     "technology announces it, compared against where the same content sits on the page. Treat "
@@ -698,8 +714,17 @@ def review_pdf_accessibility_with_ai(
                     "author/subject and a string value; field_tooltip with a supplied fieldId target and short "
                     "label value; image_alt_text with a supplied assetId target and string "
                     "value only when supported by supplied evidence; or reading_direction with target document "
-                    "and value ltr/rtl/ttb. Use a finding without change for anything requiring visual or manual "
-                    "inspection. Return JSON with a findings array."
+                    "and value ltr/rtl/ttb; heading with a supplied candidateId target and H1-H6 or P value; "
+                    "content_order with a page number string target and a value array containing EVERY supplied "
+                    "blockId on that page exactly once, ordered by logical groups (finish a column or section "
+                    "before the adjacent column when appropriate); repair_structure with target document and "
+                    "value visual to rebuild defective tags and interleave controls with their nearby labels. "
+                    "Use heading and content_order to refine the automatic draft; these are applied by default "
+                    "and remain reviewable. Missing headings and detached controls MUST carry a structural change. "
+                    "When a declaration finding also reports defective tags, propose repair_structure; "
+                    "otherwise propose declaration repair. Specify en-US when the text supports US English, even if en exists. "
+                    "Use a finding without change only when the supplied evidence cannot support a concrete correction. "
+                    "Return JSON with a findings array."
                 ),
             },
             {"role": "user", "content": json.dumps(prompt_context, ensure_ascii=False)},
@@ -842,8 +867,18 @@ def review_pdf_accessibility_with_ai(
                     )
                 )
             )
+            valid_order = (
+                kind == "content_order" and target in blocks_by_page
+                and isinstance(value, list) and all(isinstance(v, str) for v in value)
+                and len(value) == len(set(value)) and set(value) == blocks_by_page[target]
+            )
             valid = (
                 valid_metadata
+                or valid_order
+                or (kind == "heading" and target in heading_ids and isinstance(value, str)
+                    and bool(re.fullmatch(r"H[1-6]|P", value)))
+                or (kind == "repair_structure" and target == "document" and value == "visual")
+                or (kind == "declaration" and target == "document" and value == "repair")
                 or (
                     kind == "field_tooltip"
                     and target in allowed_fields
@@ -866,6 +901,8 @@ def review_pdf_accessibility_with_ai(
                 return None
             if isinstance(value, str):
                 value = re.sub(r"\s+", " ", value).strip()[:500]
+            elif isinstance(value, list):
+                value = list(value)
             else:
                 value = dict(value)
             return {"kind": kind, "target": target, "value": value}
@@ -875,7 +912,8 @@ def review_pdf_accessibility_with_ai(
         # used to leave the reviewer with a confident suggestion and no button.
         change = usable_change(row.get("change"))
         if change is None and metadata_intent("language"):
-            inferred_language = next(
+            locale_matches = re.findall(r"\b[a-z]{2,3}-[A-Z]{2}\b", explanation)
+            inferred_language = locale_matches[0] if len(set(locale_matches)) == 1 else next(
                 (
                     language
                     for language_name, language in language_names
@@ -927,6 +965,20 @@ def review_pdf_accessibility_with_ai(
                     finding["changeRejectedReason"] = "The proposed title conflicts with the finding's recommendation."
             if change is not None and target == "title" and change["value"].casefold() == current_title.casefold():
                 change = None
+        structural_findings = prompt_context["readbackFindings"]
+        if change is None and category in {"heading-outline", "reading-order", "document-declaration"}:
+            actionable = any(
+                item["id"].startswith(("readback-heading-coverage-", "readback-detached-fields", "readback-split-line-"))
+                or item["review"].get("task") in {"review_column_order", "review_wrapped_columns", "review_column_header_order"}
+                for item in structural_findings
+            )
+            if actionable:
+                change = usable_change({"kind": "repair_structure", "target": "document", "value": "visual"})
+        if change is None and category == "document-declaration" and any(
+            item["id"] == "mark-info" and item["status"] == "fail"
+            for item in prompt_context["reportIssues"]
+        ):
+            change = {"kind": "declaration", "target": "document", "value": "repair"}
         if change is not None:
             finding["change"] = change
         findings.append(finding)
@@ -1297,7 +1349,7 @@ def _parent_tree_entries(struct_root: Any) -> Dict[int, Any]:
 
 
 def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
-    """Sort sibling Form elements while preserving every non-Form position."""
+    """Sort control-only groups without separating interleaved labels/controls."""
     import pikepdf
 
     struct_root = root.get("/StructTreeRoot") if root is not None else None
@@ -1311,6 +1363,15 @@ def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
         kids = node.get("/K") if hasattr(node, "get") else None
         if isinstance(kids, pikepdf.Array):
             values = list(kids)
+            # A tag-order draft already placed controls alongside their labels.
+            # Applying field/tab metadata must not shuffle them between those
+            # labels, especially after a reviewer chooses column-wise order.
+            if any(hasattr(child, "get") and child.get("/S") is not None
+                   and str(child.get("/S")) not in {"/Form", "/Link", "/Annot"}
+                   for child in values):
+                for child in _structure_children(node):
+                    walk(child)
+                return
             slots = [
                 index
                 for index, child in enumerate(values)
@@ -6284,10 +6345,10 @@ def build_accessibility_report(
         _issue(
             "mark-info",
             "6.2.1",
-            "Document declares tagged PDF/UA-1",
-            0 if _mark_info_marked(root) and _pdfua_part(pdf) == "1" else 1,
+            "Tagged-document flag matches the structure tree",
+            0 if _mark_info_marked(root) and structure_tree_present else 1,
             "catalog_flags",
-            description="Set the tagged flag and PDF/UA-1 XMP identifier only after review and external validation.",
+            description="Repair the tagging flag after creating tags. The PDF/UA conformance identifier is a separate declaration.",
         ),
         structure_tree_issue,
         _issue(
@@ -6937,6 +6998,7 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
                 "field_order": field_order,
                 "images": _extract_image_assets(pdf),
                 "tag_structure": _extract_struct_tree_summary(pdf.Root),
+                "pdfua_declared": _mark_info_marked(pdf.Root) and _pdfua_part(pdf) == "1",
                 "structure_editor": structure_editor,
                 "report": build_accessibility_report(pdf, structure_editor),
                 "heading_candidates": heading_candidates,
@@ -6995,6 +7057,7 @@ def apply_pdf_accessibility_settings(
     set_structure_tab_order: bool = False,
     mark_as_tagged: Optional[bool] = None,
     mark_untagged_as_artifacts: bool = False,
+    repair_declaration: bool = False,
 ) -> Dict[str, Any]:
     """Apply basic PDF accessibility metadata in place.
 
@@ -7060,6 +7123,18 @@ def apply_pdf_accessibility_settings(
                     pdf.Root["/MarkInfo"] = mark_info
                 mark_info["/Marked"] = bool(mark_as_tagged)
                 pdfua_declared = _set_pdfua_identifier(pdf, bool(mark_as_tagged))
+
+            if repair_declaration and mark_as_tagged is None:
+                has_tags = bool(_extract_struct_tree_summary(pdf.Root).get("present"))
+                was_marked = _mark_info_marked(pdf.Root)
+                mark_info = pdf.Root.get("/MarkInfo")
+                if not isinstance(mark_info, pikepdf.Dictionary):
+                    mark_info = pikepdf.Dictionary()
+                    pdf.Root["/MarkInfo"] = mark_info
+                mark_info["/Marked"] = has_tags
+                # Repair a stale assertion; adding tags is not certification.
+                if not has_tags or not was_marked:
+                    _set_pdfua_identifier(pdf, False)
 
             # Update tooltips by walking widget annotations.
             for page in pdf.pages:
@@ -7231,6 +7306,17 @@ def _annotation_description(annot: Any) -> str:
     return f"{subtype or 'PDF'} annotation"
 
 
+def _field_anchor_index(spots: List[Tuple[float, float]], top: float, left: float) -> int:
+    """Find the field's nearby label in the chosen (possibly column) text order."""
+    preceding = [(index, y, x) for index, (y, x) in enumerate(spots)
+                 if y > top + 2 or (y > top - 6 and x <= left)]
+    if preceding:
+        # Use the actual index of the geometrically preceding run, not the
+        # number of runs above it: those differ after a reviewed column reorder.
+        return min(preceding, key=lambda item: (item[1], -item[2]))[0]
+    return -1
+
+
 def create_draft_structure_tree(
     input_pdf_path: str,
     output_pdf_path: str,
@@ -7309,6 +7395,7 @@ def create_draft_structure_tree(
                 "role": role,
                 "order": order,
                 "role_reviewed": bool(item.get("roleReviewed", False)),
+                "order_reviewed": bool(item.get("orderReviewed", True)),
             }
 
         with pikepdf.open(output_pdf_path, allow_overwriting_input=True) as pdf:
@@ -7594,7 +7681,8 @@ def create_draft_structure_tree(
                                     if content_decision is not None:
                                         if content_decision["role_reviewed"]:
                                             tag_name = str(content_decision["role"])
-                                        block_order = int(content_decision["order"])
+                                        if content_decision["order_reviewed"]:
+                                            block_order = int(content_decision["order"])
                                     groups.append((group, tag_name, block_order, spot))
 
                                 starts: Dict[int, Tuple[int, str]] = {}
@@ -7912,14 +8000,10 @@ def create_draft_structure_tree(
                         left = min(float(rect[0]), float(rect[2]))
                     except (TypeError, ValueError, IndexError):
                         top, left = 0.0, 0.0
-                    preceding = sum(
-                        1
-                        for spot in text_spots
-                        if spot[0] > top + 2 or (spot[0] > top - 6 and spot[1] <= left)
-                    )
+                    anchor = _field_anchor_index(text_spots, top, left)
                     page_flow.append(
                         (
-                            float(preceding) - 0.5,
+                            float(anchor) + 0.5,
                             left,
                             len(page_flow),
                             structure_element,

@@ -3554,6 +3554,7 @@ def pdf_labeler_accessibility_remediate() -> Response:
                 metadata=metadata,
                 auto_fill_missing_tooltips=False,
                 mark_as_tagged=mark_as_tagged,
+                repair_declaration=parse_bool(post_data.get("repair_declaration"), default=False),
                 set_display_doc_title=parse_bool(
                     post_data.get("display_doc_title"), default=True
                 ),

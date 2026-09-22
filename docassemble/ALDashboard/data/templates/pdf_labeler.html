@@ -424,6 +424,7 @@
                         <span id="a11y-summary" class="small text-muted" aria-live="polite">Inspecting document&#8230;</span>
                         <div class="a11y-action-group" role="group" aria-label="Draft helpers">
                             <button id="a11y-auto-fix" class="btn btn-sm btn-warning" title="Runs deterministic drafts, AI field and heading helpers, and a bounded AI reasonableness feedback loop">Auto-fix draft (uses AI)</button>
+                            <button id="a11y-undo-auto-fix" class="btn btn-sm btn-outline-secondary" disabled title="Restore the PDF and editor settings from before the last automatic operation, including any later edits">Undo automatic fixes</button>
                             <button id="a11y-ai-review" class="btn btn-sm btn-outline-warning" title="Uses the configured AI to review the current accessibility choices without certifying the PDF">AI final check</button>
                             <button id="a11y-refresh-report" class="btn btn-sm btn-outline-secondary">Re-run report</button>
                         </div>
@@ -569,7 +570,7 @@
                                 <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                                     <button id="a11y-draft-structure" class="btn btn-outline-primary btn-sm">Create tags from approved draft</button>
                                     <button id="a11y-toggle-marked" class="btn btn-outline-secondary btn-sm">Declare tagged PDF/UA-1</button>
-                                    <button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-html="true" data-bs-title="Declaring PDF/UA-1" data-bs-content="Setting &lt;code&gt;MarkInfo.Marked=true&lt;/code&gt; and the PDF/UA-1 XMP identifier is a declaration, not an automated fix. Click it only after reviewing every draft change and completing external validation. Auto-fix never enables it." aria-label="About declaring PDF/UA-1">?</button>
+                                    <button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-html="true" data-bs-title="Declaring PDF/UA-1" data-bs-content="Setting &lt;code&gt;MarkInfo.Marked=true&lt;/code&gt; and the PDF/UA-1 XMP identifier is a declaration, not an automated fix. Click it only after reviewing every draft change and completing external validation. Auto-fix repairs tagging flags but never declares PDF/UA conformance." aria-label="About declaring PDF/UA-1">?</button>
                                 </div>
                                 <details id="a11y-tag-structure-details" class="small mb-3">
                                     <summary>Tag tree</summary>

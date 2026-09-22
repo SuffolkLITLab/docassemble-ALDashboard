@@ -64,6 +64,9 @@
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2"></circle><path d="M12 7v5"></path><path d="M8 12h8"></path><path d="M10 12l-2 8"></path><path d="M14 12l2 8"></path></svg>
                         Accessibility
                     </button>
+                    <button id="accessibility-preview-btn" type="button" class="btn btn-outline-light btn-sm" disabled title="Preview accessibility" aria-label="Preview accessibility">
+                        <svg class="icon-16" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    </button>
                     <div class="toolbar-divider"></div>
                     <button id="auto-detect-btn" class="btn btn-outline-warning btn-sm" disabled>
                         <svg class="icon-16 me-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
@@ -470,24 +473,24 @@
                                 <span class="a11y-panel-tab-label">Tags &amp; headings</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
-                                <button type="button" role="tab" id="a11y-tab-readback" class="a11y-panel-tab" data-panel-tab="readback" aria-controls="a11y-panel-readback" aria-selected="false" tabindex="-1" title="What the tagged order would announce">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">5</span>
-                                <span class="a11y-panel-tab-label">Read-back</span>
-                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
-                                </button>
                                 <button type="button" role="tab" id="a11y-tab-figures" class="a11y-panel-tab" data-panel-tab="figures" aria-controls="a11y-panel-figures" aria-selected="false" tabindex="-1" title="Alternative text and decorative images">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">6</span>
+                                <span class="a11y-panel-tab-step" aria-hidden="true">5</span>
                                 <span class="a11y-panel-tab-label">Images</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
                                 <button type="button" role="tab" id="a11y-tab-structure" class="a11y-panel-tab" data-panel-tab="structure" aria-controls="a11y-panel-structure" aria-selected="false" tabindex="-1" title="Table roles, link and annotation text">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">7</span>
+                                <span class="a11y-panel-tab-step" aria-hidden="true">6</span>
                                 <span class="a11y-panel-tab-label">Tables &amp; links</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
                                 <button type="button" role="tab" id="a11y-tab-fonts" class="a11y-panel-tab" data-panel-tab="fonts" aria-controls="a11y-panel-fonts" aria-selected="false" tabindex="-1" title="Embedding, Unicode maps, glyph review">
-                                <span class="a11y-panel-tab-step" aria-hidden="true">8</span>
+                                <span class="a11y-panel-tab-step" aria-hidden="true">7</span>
                                 <span class="a11y-panel-tab-label">Fonts &amp; text</span>
+                                <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
+                                </button>
+                                <button type="button" role="tab" id="a11y-tab-readback" class="a11y-panel-tab" data-panel-tab="readback" aria-controls="a11y-panel-readback" aria-selected="false" tabindex="-1" title="What the tagged order would announce">
+                                <span class="a11y-panel-tab-step" aria-hidden="true">8</span>
+                                <span class="a11y-panel-tab-label">Preview accessibility</span>
                                 <span class="a11y-panel-tab-badge hidden" data-panel-badge></span>
                                 </button>
                         </div>
@@ -592,33 +595,6 @@
                                     </div>
                                 </div>
                             </section>
-                            <section id="a11y-panel-readback" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-readback" hidden>
-                                <h3 class="h6 fw-semibold mb-2">Read-back simulation<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Read-back simulation" data-bs-content="Replays the tag tree in the order assistive technology announces it and compares that against where the same content sits on the page. It is not a conformance check: it reports what a listener would actually hear, so you can fix the places where the two disagree." aria-label="About the read-back simulation">?</button></h3>
-                                <div id="a11y-readback-summary" class="alert small py-2" role="status"></div>
-                                <details id="a11y-readback-transcript-details" class="a11y-reader-preview mb-3" open>
-                                    <summary class="fw-semibold">Screen reader preview</summary>
-                                    <p class="small text-muted mt-2">Read the text and control labels in PDF tag order. Role labels show which items are headings, paragraphs, or controls. Compare this preview with the PDF: untagged content may be missing here. Actual screen readers can announce things differently.</p>
-                                    <label for="a11y-readback-heading-nav" class="form-label small">Jump to a heading</label>
-                                    <select id="a11y-readback-heading-nav" class="form-select form-select-sm mb-2" aria-controls="a11y-readback-transcript"></select>
-                                    <ol id="a11y-readback-transcript" class="a11y-readback-transcript" tabindex="0" aria-label="PDF content in tag reading order"></ol>
-                                </details>
-                                <div id="a11y-readback-findings" class="vstack gap-2 mb-3"></div>
-                                <div id="a11y-readback-text-fixes" class="hidden mb-3">
-                                    <h4 class="h6">Replacement text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Replacement text" data-bs-content="Writes /ActualText so assistive technology announces the wording below instead of the glyphs on the page. The page itself is not redrawn. Edit any line before applying, or clear it to leave that run alone." aria-label="About replacement text">?</button></h4>
-                                    <div id="a11y-readback-text-list" class="vstack gap-2 mb-2"></div>
-                                    <button id="a11y-apply-readback-text" class="btn btn-primary btn-sm">Apply replacement text</button>
-                                </div>
-                                <div id="a11y-readback-ocr" class="hidden mb-3">
-                                    <h4 class="h6">Pages with no text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Reading a scanned page" data-bs-content="Runs the server&#8217;s OCR over pages that draw a picture and no text, and adds what it recognises as an invisible text layer. The page still looks exactly the same. OCR reads pixels and guesses, so read what it decided before trusting it, then create tags so the new text is reachable." aria-label="About reading a scanned page">?</button></h4>
-                                    <p class="small text-muted mb-2">These pages have no text for a screen reader to announce. OCR can add some, and you should read what it finds.</p>
-                                    <button id="a11y-run-ocr" class="btn btn-primary btn-sm">Read the page images (OCR)</button>
-                                </div>
-                                <div id="a11y-readback-name-fixes" class="hidden mb-3">
-                                    <h4 class="h6">Telling controls apart<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Telling controls apart" data-bs-content="Controls that announce the same name are numbered by their position on the page, so a listener knows which blank they are in. Numbering cannot say what a control is for: where the shared name is vague, replace it with a real name here." aria-label="About telling controls apart">?</button></h4>
-                                    <div id="a11y-readback-name-list" class="vstack gap-2 mb-2"></div>
-                                    <button id="a11y-apply-field-names" class="btn btn-primary btn-sm">Apply these names</button>
-                                </div>
-                            </section>
                             <section id="a11y-panel-figures" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-figures" hidden>
                                 <div class="d-flex align-items-center justify-content-between mb-2">
                                     <h3 class="h6 fw-semibold mb-0">Image Alternative Text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Image alternative text" data-bs-content="Classify meaningful figures and decorative images. Alternative text must live on the corresponding Figure structure element; raw image metadata is retained only as a draft until structure is linked." aria-label="About image alternative text">?</button></h3>
@@ -687,6 +663,33 @@
                                     </div>
                                 </div>
                                 <div id="a11y-font-result" class="hidden alert small mt-3 mb-0" role="status" tabindex="-1"></div>
+                            </section>
+                            <section id="a11y-panel-readback" class="a11y-panel" role="tabpanel" aria-labelledby="a11y-tab-readback" hidden>
+                                <h3 class="h6 fw-semibold mb-2">Preview accessibility<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Preview accessibility" data-bs-content="Replays the tag tree in the order assistive technology announces it and compares that against where the same content sits on the page. It is not a conformance check: it reports what a listener would actually hear, so you can fix the places where the two disagree." aria-label="About previewing accessibility">?</button></h3>
+                                <div id="a11y-readback-summary" class="alert small py-2" role="status"></div>
+                                <details id="a11y-readback-transcript-details" class="a11y-reader-preview mb-3" open>
+                                    <summary class="fw-semibold">Screen reader preview</summary>
+                                    <p class="small text-muted mt-2">Read the text and control labels in PDF tag order. Role labels show which items are headings, paragraphs, or controls. Compare this preview with the PDF: untagged content may be missing here. Actual screen readers can announce things differently.</p>
+                                    <label for="a11y-readback-heading-nav" class="form-label small">Jump to a heading</label>
+                                    <select id="a11y-readback-heading-nav" class="form-select form-select-sm mb-2" aria-controls="a11y-readback-transcript"></select>
+                                    <ol id="a11y-readback-transcript" class="a11y-readback-transcript" tabindex="0" aria-label="PDF content in tag reading order"></ol>
+                                </details>
+                                <div id="a11y-readback-findings" class="vstack gap-2 mb-3"></div>
+                                <div id="a11y-readback-text-fixes" class="hidden mb-3">
+                                    <h4 class="h6">Replacement text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Replacement text" data-bs-content="Writes /ActualText so assistive technology announces the wording below instead of the glyphs on the page. The page itself is not redrawn. Edit any line before applying, or clear it to leave that run alone." aria-label="About replacement text">?</button></h4>
+                                    <div id="a11y-readback-text-list" class="vstack gap-2 mb-2"></div>
+                                    <button id="a11y-apply-readback-text" class="btn btn-primary btn-sm">Apply replacement text</button>
+                                </div>
+                                <div id="a11y-readback-ocr" class="hidden mb-3">
+                                    <h4 class="h6">Pages with no text<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Reading a scanned page" data-bs-content="Runs the server&#8217;s OCR over pages that draw a picture and no text, and adds what it recognises as an invisible text layer. The page still looks exactly the same. OCR reads pixels and guesses, so read what it decided before trusting it, then create tags so the new text is reachable." aria-label="About reading a scanned page">?</button></h4>
+                                    <p class="small text-muted mb-2">These pages have no text for a screen reader to announce. OCR can add some, and you should read what it finds.</p>
+                                    <button id="a11y-run-ocr" class="btn btn-primary btn-sm">Read the page images (OCR)</button>
+                                </div>
+                                <div id="a11y-readback-name-fixes" class="hidden mb-3">
+                                    <h4 class="h6">Telling controls apart<button type="button" class="a11y-help" data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="bottom" data-bs-title="Telling controls apart" data-bs-content="Controls that announce the same name are numbered by their position on the page, so a listener knows which blank they are in. Numbering cannot say what a control is for: where the shared name is vague, replace it with a real name here." aria-label="About telling controls apart">?</button></h4>
+                                    <div id="a11y-readback-name-list" class="vstack gap-2 mb-2"></div>
+                                    <button id="a11y-apply-field-names" class="btn btn-primary btn-sm">Apply these names</button>
+                                </div>
                             </section>
                         </div>
                     </div>

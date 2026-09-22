@@ -356,6 +356,7 @@ const repairStatus = document.getElementById("repair-status");
 const repairStatusText = document.getElementById("repair-status-text");
 const utilitiesBtn = document.getElementById("utilities-btn");
 const accessibilityBtn = document.getElementById("accessibility-btn");
+const accessibilityPreviewBtn = document.getElementById("accessibility-preview-btn");
 const previewBtn = document.getElementById("preview-btn");
 const accessibilityModal = document.getElementById("accessibility-modal");
 const closeAccessibilityBtn = document.getElementById("close-accessibility");
@@ -1342,6 +1343,7 @@ function updateFieldCount() {
   }
   previewBtn.disabled = !state.pdfBytes || totalCount === 0;
   accessibilityBtn.disabled = !state.pdfBytes;
+  accessibilityPreviewBtn.disabled = !state.pdfBytes;
   managePagesBtn.disabled = !state.pdfBytes;
   if (!state.pdfBytes || totalCount === 0) {
     state.previewMode = false;
@@ -9553,13 +9555,26 @@ async function runAccessibilityRemediation(action, options, clientOptions) {
   }
 }
 
-accessibilityBtn.addEventListener("click", async function () {
+async function openAccessibilityWorkshop(panelName) {
   if (!state.pdfBytes) return;
   await inspectAccessibilityData(false).catch(function () {
     showError("Could not inspect accessibility metadata for this PDF.");
   });
   renderAccessibilityModal();
   accessibilityModal.classList.remove("hidden");
+  if (panelName) {
+    setActiveAccessibilityPanel(panelName, { focusTab: true });
+    if (panelName === "readback") {
+      document.getElementById("a11y-readback-transcript-details").open = true;
+    }
+  }
+}
+
+accessibilityBtn.addEventListener("click", function () {
+  openAccessibilityWorkshop();
+});
+accessibilityPreviewBtn.addEventListener("click", function () {
+  openAccessibilityWorkshop("readback");
 });
 
 function closeAccessibilityWorkshop() {

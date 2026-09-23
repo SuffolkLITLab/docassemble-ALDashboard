@@ -193,7 +193,7 @@ for (const existingTree of [false, true, "broken"]) {
     }};
     const context = vm.createContext({
       state, saveAccessibilityAutoFixSnapshot() {}, updateAccessibilityMetadataFromInputs() {}, showLoading() {},
-      draftTooltipsFromNearbyText: () => 0, applyDeterministicFieldOrder() {},
+      draftTooltipsFromNearbyText: () => 0, applyDeterministicFieldOrder() {}, renderAccessibilityOrderList() {},
       applyAiTooltipDraft: async () => 1, applyAiHeadingDraft: async () => 1,
       headingDecision: () => ({status: 'approved'}),
     headingReviewSignature: () => '', updateHeadingReviewDirty() {}, renderHeadingReviewStatus() {},
@@ -248,7 +248,7 @@ for (const existingTree of [false, true, "broken"]) {
       },
     });
     for (const name of ['persistAccessibilityAutoFixDrafts', 'runAccessibilityAutoFix', 'runAiAccessibilityReview']) loadFunction(context, name, true);
-    for (const name of ['unresolvedAiAccessibilityFindings', 'remainingAccessibilityIssues']) loadFunction(context, name);
+    for (const name of ['aiAccessibilityFindingKey', 'unresolvedAiAccessibilityFindings', 'remainingAccessibilityIssues']) loadFunction(context, name);
     await context.runAccessibilityAutoFix();
     assert.equal(reviews, 4);
     assert.equal(calls.filter(([action]) => action === 'draft_structure').length, existingTree === true ? 0 : 1);
@@ -268,10 +268,44 @@ test('failed persistence stops AI feedback before another review can use stale e
     requestAiAccessibilityReview: async () => { requests += 1; return [{status: 'pending'}]; },
     applyAiAccessibilityFinding: () => true,
   });
+  loadFunction(context, 'aiAccessibilityFindingKey');
   loadFunction(context, 'runAiAccessibilityReview', true);
   await assert.rejects(context.runAiAccessibilityReview({applyDrafts: true, persistDrafts: async () => { throw new Error('write failed'); }}), /write failed/);
   assert.equal(requests, 1);
   assert.equal(context.state.accessibility.aiReview.running, false);
+});
+
+test('a repeated AI check replaces pending findings and keeps settled ones settled', async () => {
+  const context = vm.createContext({
+    state: {auth: {aiEnabled: true}, accessibility: {aiReview: {findings: [
+      {id: 'a', status: 'pending'}, {id: 'b', status: 'ignored'}, {id: 'c', status: 'accepted'},
+    ]}}},
+    setAiReviewExpanded() {}, renderAiAccessibilityReview() {}, accessibilityAiReviewSignature: () => 'sig',
+    requestAiAccessibilityReview: async () => ['a', 'b', 'd'].map(id => ({id, status: 'pending'})),
+    applyAiAccessibilityFinding: () => false,
+  });
+  loadFunction(context, 'aiAccessibilityFindingKey');
+  loadFunction(context, 'runAiAccessibilityReview', true);
+  for (let run = 0; run < 2; run += 1) {
+    await context.runAiAccessibilityReview({applyDrafts: true, preserveHistory: true});
+  }
+  const listed = context.state.accessibility.aiReview.findings.map(f => `${f.id}:${f.status}`);
+  assert.deepEqual(listed.sort(), ['a:pending', 'b:ignored', 'c:accepted', 'd:pending']);
+});
+
+test('moving one content block sends the whole page order as reviewed', () => {
+  const blocks = ['title', 'intro', 'body', 'end'].map(blockId => ({blockId, pageIndex: 0}));
+  const decisions = {};
+  const context = vm.createContext({
+    state: {accessibility: {contentBlocks: blocks, contentDecisions: decisions, selectedContentBlockId: 'body'}},
+    markAccessibilityDraft() {}, setDirty() {}, renderContentEditor() {}, renderHeadingReviewStatus() {},
+  });
+  loadFunction(context, 'contentDecision');
+  loadFunction(context, 'moveSelectedContent');
+  context.moveSelectedContent(-1);
+  const ordered = blocks.slice().sort((a, b) => decisions[a.blockId].order - decisions[b.blockId].order);
+  assert.deepEqual(ordered.map(block => block.blockId), ['title', 'body', 'intro', 'end']);
+  assert.ok(blocks.every(block => decisions[block.blockId].orderReviewed));
 });
 
 test('author preview preserves tag order, roles, pages, silent labels, and all items', () => {

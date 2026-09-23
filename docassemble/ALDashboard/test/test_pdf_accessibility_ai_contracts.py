@@ -254,6 +254,14 @@ def test_language_recommendation_applies_regional_tag_even_when_en_is_present():
     assert finding['change'] == {'kind': 'metadata', 'target': 'language', 'value': 'en-US'}
 
 
+
+def test_language_inference_ignores_hyphenated_words_that_look_like_tags():
+    finding = review({
+        'category': 'metadata', 'title': 'Document language is missing',
+        'explanation': 'Language missing; the text uses non-US spelling.',
+    }, metadata={'language': ''})
+    assert (finding.get('change') or {}).get('value') != 'non-US'
+
 @pytest.mark.parametrize('category', ['heading-outline', 'reading-order', 'document-declaration'])
 def test_structural_findings_with_readback_evidence_offer_default_repair(category):
     finding = review({

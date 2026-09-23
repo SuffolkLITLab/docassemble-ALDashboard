@@ -200,6 +200,9 @@ const state = {
   accessibility: {
     enabled: true,
     fieldOrder: [],
+    // Fields whose place in the tagged PDF is set by the label they follow in
+    // the reading order, not by this list. Reported after the last save.
+    structureOrderAnchored: 0,
     metadata: {
       language: "",
       title: "",
@@ -1562,6 +1565,21 @@ function renderAccessibilityOrderList() {
     return;
   }
   const fragment = document.createDocumentFragment();
+  const anchored = Number(state.accessibility.structureOrderAnchored || 0);
+  if (anchored > 0) {
+    const note = document.createElement("div");
+    note.className = "small text-muted";
+    note.setAttribute("role", "note");
+    note.textContent =
+      String(anchored) +
+      (anchored === 1 ? " field follows its label" : " fields follow their labels") +
+      " in the reading order, so keyboard users reach " +
+      (anchored === 1 ? "it" : "them") +
+      " there rather than at the position shown here. To move " +
+      (anchored === 1 ? "it" : "them") +
+      ", change the reading order of the text.";
+    fragment.appendChild(note);
+  }
   state.accessibility.fieldOrder.forEach(function (fieldId, index) {
     const field = state.fields.find(function (candidate) {
       return candidate.id === fieldId;
@@ -5366,6 +5384,7 @@ function syncPdfState(pdfBytes, fileName, originalFile, options) {
     state.accessibility.structureDrafted = false;
     state.accessibility.needsStructureRepair = false;
     state.accessibility.needsDeclarationRepair = false;
+    state.accessibility.structureOrderAnchored = 0;
     state.accessibility.autoFixSnapshot = null;
     document.getElementById("a11y-undo-auto-fix").disabled = true;
     state.accessibility.headingDecisions = {};
@@ -9610,7 +9629,7 @@ a11yAiReviewToggleBtn.addEventListener("click", function () {
 a11yAiReviewApplyAllBtn.addEventListener("click", async function () {
   saveAccessibilityAutoFixSnapshot();
   state.accessibility.aiReview.findings.forEach(applyAiAccessibilityFinding);
-  try { await persistAccessibilityAutoFixDrafts(true); } catch (error) { showError(error.message || String(error)); }
+  try { await persistAccessibilityAutoFixDrafts(false); } catch (error) { showError(error.message || String(error)); }
   renderAiAccessibilityReview();
 });
 a11yAiReviewFindings.addEventListener("click", async function (event) {
@@ -9627,10 +9646,10 @@ a11yAiReviewFindings.addEventListener("click", async function (event) {
   } else if (button.dataset.aiReviewAction === "apply") {
     saveAccessibilityAutoFixSnapshot();
     applyAiAccessibilityFinding(finding);
-    try { await persistAccessibilityAutoFixDrafts(true); } catch (error) { showError(error.message || String(error)); }
+    try { await persistAccessibilityAutoFixDrafts(false); } catch (error) { showError(error.message || String(error)); }
   } else if (button.dataset.aiReviewAction === "ignore") {
     ignoreAiAccessibilityFinding(finding);
-    try { await persistAccessibilityAutoFixDrafts(true); } catch (error) { showError(error.message || String(error)); }
+    try { await persistAccessibilityAutoFixDrafts(false); } catch (error) { showError(error.message || String(error)); }
   } else if (button.dataset.aiReviewAction === "review") {
     finding.status = "reviewed";
   }
@@ -9994,13 +10013,16 @@ function moveSelectedContent(direction) {
   const index = pageBlocks.indexOf(selected);
   const other = pageBlocks[index + direction];
   if (!other) return;
-  const selectedDecision = contentDecision(selected);
-  const otherDecision = contentDecision(other);
-  const previousOrder = selectedDecision.order;
-  selectedDecision.order = otherDecision.order;
-  otherDecision.order = previousOrder;
-  selectedDecision.orderReviewed = true;
-  otherDecision.orderReviewed = true;
+  pageBlocks[index] = other;
+  pageBlocks[index + direction] = selected;
+  // The whole page's order is what the reviewer is looking at, so send all
+  // of it. Marking only the swapped pair left the rest to a server fallback
+  // that could move the top of the page to the end.
+  pageBlocks.forEach(function (block, position) {
+    const decision = contentDecision(block);
+    decision.order = position;
+    decision.orderReviewed = true;
+  });
   markAccessibilityDraft(
     "draft_structure",
     "Visual content roles or reading order reviewed",
@@ -11093,13 +11115,21 @@ async function runAiAccessibilityReview(options) {
   try {
     for (let pass = 0; pass < passes; pass += 1) {
       const findings = await requestAiAccessibilityReview();
-      if (pass > 0) {
-        for (let index = history.length - 1; index >= 0; index -= 1) {
-          if (history[index].status === "pending") history.splice(index, 1);
-        }
+      // A fresh review replaces every finding still pending, and does not
+      // reopen one the reviewer already ignored or marked reviewed.
+      for (let index = history.length - 1; index >= 0; index -= 1) {
+        if (history[index].status === "pending") history.splice(index, 1);
       }
+      const settled = new Set(
+        history
+          .filter(function (finding) {
+            return finding.status === "ignored" || finding.status === "reviewed";
+          })
+          .map(aiAccessibilityFindingKey),
+      );
       let applied = 0;
       findings.forEach(function (finding) {
+        if (settled.has(aiAccessibilityFindingKey(finding))) return;
         if (applyDrafts && applyAiAccessibilityFinding(finding)) applied += 1;
         history.push(finding);
       });
@@ -11118,14 +11148,17 @@ async function runAiAccessibilityReview(options) {
   }
 }
 
+function aiAccessibilityFindingKey(finding) {
+  return String(
+    finding.id ||
+      String(finding.category || "") + ":" + String(finding.title || ""),
+  );
+}
+
 function unresolvedAiAccessibilityFindings(findings) {
   const byId = new Map();
   (findings || []).forEach(function (finding) {
-    const key = String(
-      finding.id ||
-        String(finding.category || "") + ":" + String(finding.title || ""),
-    );
-    byId.set(key, finding);
+    byId.set(aiAccessibilityFindingKey(finding), finding);
   });
   return Array.from(byId.values()).filter(function (finding) {
     return finding.status === "pending";
@@ -11331,7 +11364,7 @@ async function persistAccessibilityAutoFixDrafts(finalize) {
   state.accessibility.images.forEach(function (image) {
     if (image.assetId) imageAltText[image.assetId] = String(image.altText || "");
   });
-  await runAccessibilityRemediation("metadata", {
+  const metadataResult = await runAccessibilityRemediation("metadata", {
     metadata: state.accessibility.metadata,
     field_tooltips: accessibilityTooltipPayload(),
     field_order: accessibilityFieldOrderPayload(),
@@ -11343,6 +11376,12 @@ async function persistAccessibilityAutoFixDrafts(finalize) {
     mark_untagged_as_artifacts: !!(finalize && state.accessibility.structureDrafted),
   }, { quiet: true });
   state.accessibility.needsDeclarationRepair = false;
+  if (finalize) {
+    state.accessibility.structureOrderAnchored = Number(
+      (metadataResult || {}).structure_order_anchored || 0,
+    );
+    renderAccessibilityOrderList();
+  }
   if (!finalize || !state.accessibility.tagStructure ||
       !state.accessibility.tagStructure.present) return;
   for (const action of ["readback_text", "field_names"]) {

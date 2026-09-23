@@ -495,6 +495,30 @@ def _quoted_title_from_finding(text: str, current_title: str) -> str:
             and recommendations[0].casefold() != current else "")
 
 
+# ISO 639-1 primary language subtags. A regional tag pulled out of AI prose
+# must start with one of these, so words like "non-US" are not taken as a
+# language.
+_ISO_639_1_CODES = frozenset(
+    (
+        "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az", "ba",
+        "be", "bg", "bh", "bi", "bm", "bn", "bo", "br", "bs", "ca", "ce", "ch", "co",
+        "cr", "cs", "cu", "cv", "cy", "da", "de", "dv", "dz", "ee", "el", "en", "eo",
+        "es", "et", "eu", "fa", "ff", "fi", "fj", "fo", "fr", "fy", "ga", "gd", "gl",
+        "gn", "gu", "gv", "ha", "he", "hi", "ho", "hr", "ht", "hu", "hy", "hz", "ia",
+        "id", "ie", "ig", "ii", "ik", "io", "is", "it", "iu", "ja", "jv", "ka", "kg",
+        "ki", "kj", "kk", "kl", "km", "kn", "ko", "kr", "ks", "ku", "kv", "kw", "ky",
+        "la", "lb", "lg", "li", "ln", "lo", "lt", "lu", "lv", "mg", "mh", "mi", "mk",
+        "ml", "mn", "mr", "ms", "mt", "my", "na", "nb", "nd", "ne", "ng", "nl", "nn",
+        "no", "nr", "nv", "ny", "oc", "oj", "om", "or", "os", "pa", "pi", "pl", "ps",
+        "pt", "qu", "rm", "rn", "ro", "ru", "rw", "sa", "sc", "sd", "se", "sg", "si",
+        "sk", "sl", "sm", "sn", "so", "sq", "sr", "ss", "st", "su", "sv", "sw", "ta",
+        "te", "tg", "th", "ti", "tk", "tl", "tn", "to", "tr", "ts", "tt", "tw", "ty",
+        "ug", "uk", "ur", "uz", "ve", "vi", "vo", "wa", "wo", "xh", "yi", "yo", "za",
+        "zh", "zu",
+    )
+)
+
+
 def review_pdf_accessibility_with_ai(
     context: Mapping[str, Any], *, model: Optional[str] = None
 ) -> List[Dict[str, Any]]:
@@ -912,7 +936,11 @@ def review_pdf_accessibility_with_ai(
         # used to leave the reviewer with a confident suggestion and no button.
         change = usable_change(row.get("change"))
         if change is None and metadata_intent("language"):
-            locale_matches = re.findall(r"\b[a-z]{2,3}-[A-Z]{2}\b", explanation)
+            locale_matches = [
+                match
+                for match in re.findall(r"\b[a-z]{2}-[A-Z]{2}\b", explanation)
+                if match.split("-")[0] in _ISO_639_1_CODES
+            ]
             inferred_language = locale_matches[0] if len(set(locale_matches)) == 1 else next(
                 (
                     language
@@ -1348,53 +1376,70 @@ def _parent_tree_entries(struct_root: Any) -> Dict[int, Any]:
     return entries
 
 
-def _reorder_structure_form_elements(root: Any, ordered: List[str]) -> int:
-    """Sort control-only groups without separating interleaved labels/controls."""
+def _reorder_structure_form_elements(
+    root: Any, ordered: List[str]
+) -> Tuple[int, int]:
+    """Apply the requested field order to Form elements in the tag tree.
+
+    Only consecutive Form siblings are sorted. A Form that follows a label
+    in the reading order stays with that label: moving it would announce the
+    control away from the words that introduce it. Returns how many Forms
+    moved, and how many still sit out of the requested order because a label
+    anchors them, so the caller can tell the reviewer that the reading order,
+    not the field list, decides where those land.
+    """
     import pikepdf
 
     struct_root = root.get("/StructTreeRoot") if root is not None else None
     if struct_root is None:
-        return 0
+        return 0, 0
     order_index = {name: index for index, name in enumerate(ordered)}
     moved = 0
+    final_names: List[str] = []
+
+    def is_form(child: Any) -> bool:
+        return hasattr(child, "get") and _safe_pdf_string(child.get("/S", "")) == "/Form"
 
     def walk(node: Any) -> None:
         nonlocal moved
         kids = node.get("/K") if hasattr(node, "get") else None
         if isinstance(kids, pikepdf.Array):
             values = list(kids)
-            # A tag-order draft already placed controls alongside their labels.
-            # Applying field/tab metadata must not shuffle them between those
-            # labels, especially after a reviewer chooses column-wise order.
-            if any(hasattr(child, "get") and child.get("/S") is not None
-                   and str(child.get("/S")) not in {"/Form", "/Link", "/Annot"}
-                   for child in values):
-                for child in _structure_children(node):
-                    walk(child)
-                return
-            slots = [
-                index
-                for index, child in enumerate(values)
-                if hasattr(child, "get")
-                and _safe_pdf_string(child.get("/S", "")) == "/Form"
-            ]
-            forms = [values[index] for index in slots]
-            sorted_forms = sorted(
-                forms,
-                key=lambda form: order_index.get(
-                    _structure_form_field_name(form), len(order_index)
-                ),
-            )
-            moved += sum(
-                1 for before, after in zip(forms, sorted_forms) if before is not after
-            )
-            for slot, form in zip(slots, sorted_forms):
-                kids[slot] = form
+            index = 0
+            while index < len(values):
+                if not is_form(values[index]):
+                    index += 1
+                    continue
+                run_end = index
+                while run_end < len(values) and is_form(values[run_end]):
+                    run_end += 1
+                forms = values[index:run_end]
+                sorted_forms = sorted(
+                    forms,
+                    key=lambda form: order_index.get(
+                        _structure_form_field_name(form), len(order_index)
+                    ),
+                )
+                for offset, form in enumerate(sorted_forms):
+                    if form is not forms[offset]:
+                        moved += 1
+                    kids[index + offset] = form
+                index = run_end
+        if is_form(node):
+            final_names.append(_structure_form_field_name(node))
         for child in _structure_children(node):
             walk(child)
 
     walk(struct_root)
-    return moved
+    present = set(final_names)
+    requested = [name for name in ordered if name in present]
+    # A radio group or repeated field has several Form elements; its first
+    # one is where a keyboard user reaches it.
+    in_structure = [name for name in dict.fromkeys(final_names) if name in order_index]
+    anchored = sum(
+        1 for want, have in zip(requested, in_structure) if want != have
+    )
+    return moved, anchored
 
 
 def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
@@ -7078,6 +7123,7 @@ def apply_pdf_accessibility_settings(
         metadata_updates = 0
         tab_order_updates = 0
         structure_order_updates = 0
+        structure_order_anchored = 0
         form_alt_updates = 0
         form_object_updates = 0
         content_artifact_runs = 0
@@ -7249,9 +7295,10 @@ def apply_pdf_accessibility_settings(
                             page["/Tabs"] = pikepdf.Name("/S")
                             tab_order_updates += 1
                     if ordered:
-                        structure_order_updates = _reorder_structure_form_elements(
-                            pdf.Root, ordered
-                        )
+                        (
+                            structure_order_updates,
+                            structure_order_anchored,
+                        ) = _reorder_structure_form_elements(pdf.Root, ordered)
 
             # Update image alt text when IDs are provided.
             if image_alt_map:
@@ -7282,6 +7329,7 @@ def apply_pdf_accessibility_settings(
             "metadata_updates": metadata_updates,
             "tab_order_updates": tab_order_updates,
             "structure_order_updates": structure_order_updates,
+            "structure_order_anchored": structure_order_anchored,
             "form_alt_updates": form_alt_updates,
             "form_object_updates": form_object_updates,
             "content_artifact_runs": content_artifact_runs,
@@ -7307,14 +7355,26 @@ def _annotation_description(annot: Any) -> str:
 
 
 def _field_anchor_index(spots: List[Tuple[float, float]], top: float, left: float) -> int:
-    """Find the field's nearby label in the chosen (possibly column) text order."""
-    preceding = [(index, y, x) for index, (y, x) in enumerate(spots)
-                 if y > top + 2 or (y > top - 6 and x <= left)]
-    if preceding:
-        # Use the actual index of the geometrically preceding run, not the
-        # number of runs above it: those differ after a reviewed column reorder.
-        return min(preceding, key=lambda item: (item[1], -item[2]))[0]
-    return -1
+    """Find the field's nearby label in the chosen (possibly column) text order.
+
+    Returns the index of the run that best introduces the field, or -1. Runs
+    above the field are scored by vertical gap plus horizontal offset, so a
+    label in the field's own column beats a slightly closer line in another
+    column. A run on the field's own line, to its left, is the likeliest label.
+    """
+    best: Optional[Tuple[float, int]] = None
+    for index, (y, x) in enumerate(spots):
+        if y > top + 2:
+            score = (y - top) + 0.5 * abs(x - left)
+        elif y > top - 6 and x <= left:
+            score = 0.25 * (left - x)
+        else:
+            continue
+        # The actual index, not a count of runs above: those differ after a
+        # reviewed column reorder.
+        if best is None or score < best[0]:
+            best = (score, index)
+    return best[1] if best is not None else -1
 
 
 def create_draft_structure_tree(
@@ -7871,18 +7931,19 @@ def create_draft_structure_tree(
                 # A reviewed block order wins where the reviewer set one; runs
                 # they never saw fall in by position rather than by a separate
                 # numbering that used to interleave them into other paragraphs.
+                # Runs above the first reviewed block stay ahead of it.
                 reviewed = [item[0] for item in text_children if item[0] is not None]
                 if reviewed:
-                    fallback = float(max(reviewed)) + 1.0
+                    fallback = float(min(reviewed)) - 1.0
                     resolved: List[Any] = []
-                    last_order = -1.0
+                    last_order: Optional[float] = None
                     for entry in sorted(
                         text_children, key=lambda row: (-row[1][0], row[1][1])
                     ):
                         if entry[0] is not None:
                             last_order = float(entry[0])
                         resolved.append(
-                            (last_order if last_order >= 0 else fallback, entry)
+                            (fallback if last_order is None else last_order, entry)
                         )
                     ordered_text = [
                         item

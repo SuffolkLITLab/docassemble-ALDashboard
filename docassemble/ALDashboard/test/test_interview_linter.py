@@ -4,6 +4,7 @@ from unittest.mock import patch
 import tempfile
 import os
 
+from docassemble.ALDashboard import interview_linter
 from docassemble.ALDashboard.interview_linter import (
     get_all_text,
     get_misspelled_words,
@@ -181,6 +182,41 @@ question: Hello
 
 
 class TestInterviewLinterStyleDelegation(unittest.TestCase):
+    def test_style_llm_credentials_come_from_open_ai_config(self):
+        config = {
+            "open ai": {
+                "key": "sk-config",
+                "base url": "https://llm.example.com/v1",
+                "default model": "small-model",
+            }
+        }
+        with (
+            patch(
+                "docassemble.ALDashboard.interview_linter.get_config",
+                side_effect=lambda key, default=None: config.get(key, default),
+            ),
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            os.environ.pop("OPENAI_API_KEY", None)
+            options = interview_linter._dayaml_runtime_options(include_style_llm=True)
+        self.assertEqual(options.style_openai_api_key, "sk-config")
+        self.assertEqual(options.style_openai_base_url, "https://llm.example.com/v1")
+        self.assertEqual(options.style_openai_model, "small-model")
+
+    def test_style_llm_credentials_accept_legacy_openai_api_key(self):
+        config = {"openai api key": "sk-legacy"}
+        with (
+            patch(
+                "docassemble.ALDashboard.interview_linter.get_config",
+                side_effect=lambda key, default=None: config.get(key, default),
+            ),
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            os.environ.pop("OPENAI_API_KEY", None)
+            options = interview_linter._dayaml_runtime_options(include_style_llm=True)
+        self.assertEqual(options.style_openai_api_key, "sk-legacy")
+        self.assertIsNone(options.style_openai_base_url)
+
     @patch("docassemble.ALDashboard.interview_linter._collect_dayamlchecker_findings")
     def test_ai_style_checks_are_delegated_to_dayamlchecker(self, mock_collect):
         mock_collect.side_effect = [[FakeDAYamlFinding()], []]

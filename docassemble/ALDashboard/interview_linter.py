@@ -46,6 +46,13 @@ try:
 except Exception:
     user_info = None  # type: ignore
 
+try:
+    from docassemble.base.util import get_config
+except Exception:
+
+    def get_config(key: str, default: Any = None) -> Any:  # type: ignore
+        return default
+
 
 def _resolve_current_user_id() -> Optional[int]:
     try:
@@ -585,11 +592,45 @@ def _dayaml_runtime_options(
 ) -> Any:
     if _DAYamlRuntimeOptions is None:
         return None
+    llm_settings = _style_llm_settings() if include_style_llm else {}
     return _DAYamlRuntimeOptions(
         accessibility_error_on_widgets=frozenset({"combobox"}),
         style_enabled=include_style or include_style_llm,
         style_include_llm=include_style_llm,
+        style_openai_api_key=llm_settings.get("style_openai_api_key"),
+        style_openai_base_url=llm_settings.get("style_openai_base_url"),
+        style_openai_model=llm_settings.get("style_openai_model"),
     )
+
+
+def _style_llm_settings() -> Dict[str, Optional[str]]:
+    """Read the OpenAI-compatible credentials from the docassemble Configuration.
+
+    dayamlchecker only looks at its own flags and the OPENAI_* environment
+    variables, so a server configured the docassemble way (an ``open ai:``
+    block, or the older top-level ``openai api key``) would otherwise report a
+    missing API key. The precedence matches docassemble.ALToolbox.llms: an
+    OPENAI_API_KEY in the environment wins, then ``open ai: key``, then
+    ``openai api key``.
+    """
+    open_ai_config = get_config("open ai", {}) or {}
+    if not isinstance(open_ai_config, Mapping):
+        open_ai_config = {}
+    api_key = None
+    if not os.getenv("OPENAI_API_KEY"):
+        api_key = open_ai_config.get("key") or get_config("openai api key")
+    base_url = open_ai_config.get("base url") or get_config("openai base url")
+    model = (
+        open_ai_config.get("default small model")
+        or get_config("openai default small model")
+        or open_ai_config.get("default model")
+        or get_config("openai default model")
+    )
+    return {
+        "style_openai_api_key": _stringify(api_key) or None,
+        "style_openai_base_url": _stringify(base_url) or None,
+        "style_openai_model": _stringify(model) or None,
+    }
 
 
 def _collect_dayamlchecker_findings(

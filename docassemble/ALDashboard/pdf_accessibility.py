@@ -4521,17 +4521,20 @@ def _readback_sequence(
         visit_content(node.get("/K"), node, role, page_index)
 
     def visit_content(
-        kids: Any, node: Any, role: str, page_index: Optional[int]
+        kids: Any, node: Any, role: str, page_index: Optional[int],
+        container: Any = None, child_index: Optional[int] = None,
     ) -> None:
         # Content references belong to their structure element even when /K
         # is an array mixing references and nested structure elements.
         if isinstance(kids, pikepdf.Array):
-            for child in kids:
-                visit_content(child, node, role, page_index)
+            for index, child in enumerate(kids):
+                visit_content(child, node, role, page_index, kids, index)
             return
+        content_reference = kids
         reference_page = page_of(kids)
         if reference_page is not None:
             page_index = reference_page
+        content_source = pdf.pages[page_index].obj if page_index is not None else None
         stream_key = None
         if isinstance(kids, pikepdf.Dictionary) and (
             _safe_pdf_string(kids.get("/Type", "")).lstrip("/") == "MCR"
@@ -4539,6 +4542,7 @@ def _readback_sequence(
             source = kids.get("/Stm")
             if source is not None:
                 stream_key = source.objgen
+                content_source = source
             raw_mcid = kids.get("/MCID")
             try:
                 kids = int(raw_mcid)  # type: ignore[arg-type,assignment]
@@ -4575,6 +4579,11 @@ def _readback_sequence(
             }
             if keep_elements:
                 entry["element"] = node
+                entry["content_reference"] = content_reference
+                entry["content_source"] = content_source
+                entry["content_container"] = container
+                entry["content_index"] = child_index
+                entry["mcid"] = kids
             sequence.append(entry)
             return
         if isinstance(kids, pikepdf.Dictionary) and (
@@ -4607,6 +4616,7 @@ def _readback_sequence(
             }
             if keep_elements:
                 field_entry["element"] = node
+                field_entry["annotation"] = annot
             sequence.append(field_entry)
             return
         if kids is not None:
@@ -6049,12 +6059,7 @@ def repair_duplicate_field_names(
                 element = target_item.get("element")
                 if element is not None:
                     element["/Alt"] = pikepdf.String(chosen)
-                annot_reference = element.get("/K") if element is not None else None
-                annot = (
-                    annot_reference.get("/Obj")
-                    if isinstance(annot_reference, pikepdf.Dictionary)
-                    else None
-                )
+                annot = target_item.get("annotation")
                 parent = _named_parent(annot) if annot is not None else None
                 target = parent if parent is not None else annot
                 if target is not None:
@@ -6083,12 +6088,7 @@ def repair_duplicate_field_names(
                 element = target_item.get("element")
                 if element is not None:
                     element["/Alt"] = pikepdf.String(chosen)
-                annot_reference = element.get("/K") if element is not None else None
-                annot = (
-                    annot_reference.get("/Obj")
-                    if isinstance(annot_reference, pikepdf.Dictionary)
-                    else None
-                )
+                annot = target_item.get("annotation")
                 parent = _named_parent(annot) if annot is not None else None
                 target = parent if parent is not None else annot
                 if target is not None:
@@ -6201,6 +6201,27 @@ def repair_readback_text(
                     continue
                 else:
                     continue
+                container = item.get("content_container")
+                if container is not None:
+                    # /ActualText replaces the whole element. Isolate this
+                    # reference so sibling MCIDs and nested tags stay audible.
+                    span = pdf.make_indirect(pikepdf.Dictionary({
+                        "/Type": pikepdf.Name("/StructElem"),
+                        "/S": pikepdf.Name("/Span"),
+                        "/P": element,
+                        "/K": item["content_reference"],
+                    }))
+                    if item.get("page") is not None:
+                        span["/Pg"] = pdf.pages[item["page"]].obj
+                    container[item["content_index"]] = span
+                    source = item.get("content_source")
+                    parent_key = source.get("/StructParents") if source is not None else None
+                    if parent_key is not None:
+                        parents = _parent_tree_entries(pdf.Root.StructTreeRoot).get(int(parent_key))
+                        mcid = item["mcid"]
+                        if isinstance(parents, pikepdf.Array) and 0 <= mcid < len(parents):
+                            parents[mcid] = span
+                    element = span
                 element["/ActualText"] = pikepdf.String(chosen)
                 applied.append(
                     {
@@ -8456,7 +8477,7 @@ def apply_manual_structure_repairs(
 
 
 def _repair_embedded_cidsets(pdf: Any) -> List[str]:
-    """Rebuild subset CIDSet streams from embedded TrueType glyph counts."""
+    """Rebuild subset CIDSets only when CIDs are explicitly glyph indices."""
     import io
 
     from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
@@ -8470,6 +8491,13 @@ def _repair_embedded_cidsets(pdf: Any) -> List[str]:
         if not descendants:
             continue
         descendant = descendants[0]
+        if (
+            _safe_pdf_string(descendant.get("/Subtype", "")) != "/CIDFontType2"
+            or _safe_pdf_string(descendant.get("/CIDToGIDMap", "")) != "/Identity"
+        ):
+            # A stream maps arbitrary CIDs to glyph IDs; glyph counts alone
+            # cannot reconstruct that CIDSet. Preserve the existing declaration.
+            continue
         identity = _pdf_object_identity(descendant, resource)
         if identity in seen:
             continue

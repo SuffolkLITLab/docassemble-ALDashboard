@@ -46,6 +46,7 @@ from docassemble.ALDashboard.pdf_accessibility import (
     _content_blocks_from_xml,
     _heading_candidates_from_xml,
     _repair_embedded_cidsets,
+    _readback_sequence,
     _repair_identity_cid_to_gid_maps,
     _font_code_usage,
     _title_from_text_sample,
@@ -2182,6 +2183,18 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
             {"/Font": pikepdf.Dictionary({"/F1": type_zero})}
         )
 
+        # A nonidentity map has CID 100 mapped to glyph 1. Preserve its
+        # correct CIDSet instead of substituting the glyph-index bitmap.
+        correct = b"\x80" + b"\x00" * 11 + b"\x08"
+        descriptor["/CIDSet"] = pdf.make_stream(correct)
+        descendant["/CIDToGIDMap"] = pdf.make_stream(b"\x00\x00" * 100 + b"\x00\x01")
+        self.assertEqual(_repair_embedded_cidsets(pdf), [])
+        self.assertEqual(descriptor.CIDSet.read_bytes(), correct)
+        del descendant["/CIDToGIDMap"]
+        self.assertEqual(_repair_embedded_cidsets(pdf), [])
+        self.assertEqual(descriptor.CIDSet.read_bytes(), correct)
+
+        descendant["/CIDToGIDMap"] = pikepdf.Name("/Identity")
         repaired = _repair_embedded_cidsets(pdf)
 
         self.assertEqual(repaired, ["p1/F1"])
@@ -4502,3 +4515,79 @@ class TestFontSubstitution(unittest.TestCase):
         finally:
             os.remove(source_path)
             os.remove(output_path)
+
+
+class TestRepairContentReferences(unittest.TestCase):
+    def test_replacement_preserves_sibling_runs_and_parent_tree(self):
+        import pikepdf
+
+        for use_mcr in (False, True):
+            for decisions in (None, [
+                {"announcedIndex": 1, "actualText": "Keep going."},
+                {"announcedIndex": 2, "actualText": "Unchanged", "apply": False},
+            ]):
+                with self.subTest(mcr=use_mcr, decisions=decisions), tempfile.TemporaryDirectory() as tmp:
+                    source, output = os.path.join(tmp, "source.pdf"), os.path.join(tmp, "out.pdf")
+                    _readback_pdf(source, order=[0, 1, 2, 3],
+                                  texts=["First sentence.", "Don\x99t stop.", "Won\x99t stop.", "Last sentence."])
+                    with pikepdf.open(source, allow_overwriting_input=True) as pdf:
+                        document = pdf.Root.StructTreeRoot.K[0]
+                        paragraph = document.K[0]
+                        nested = document.K[3]
+                        nested["/P"] = paragraph
+                        refs = [pikepdf.Dictionary(Type=pikepdf.Name.MCR, MCID=i, Pg=pdf.pages[0].obj)
+                                if use_mcr else i for i in range(3)]
+                        paragraph["/K"] = pikepdf.Array([*refs, nested])
+                        document["/K"] = pikepdf.Array([paragraph])
+                        pdf.pages[0]["/StructParents"] = 0
+                        pdf.Root.StructTreeRoot["/ParentTree"] = pikepdf.Dictionary(
+                            Nums=pikepdf.Array([0, pikepdf.Array([paragraph, paragraph, paragraph, nested])]))
+                        drawn = pdf.pages[0].Contents.read_bytes()
+                        pdf.save(source)
+                    result = repair_readback_text(source, output, decisions=decisions)
+                    self.assertEqual(result["actual_text_added"], 2 if decisions is None else 1)
+                    with pikepdf.open(output) as pdf:
+                        sequence = _readback_sequence(pdf)
+                        self.assertEqual([item["text"] for item in sequence], [
+                            "First sentence.", "Don’t stop." if decisions is None else "Keep going.",
+                            "Won’t stop." if decisions is None else "Won™t stop.", "Last sentence."])
+                        paragraph = pdf.Root.StructTreeRoot.K[0].K[0]
+                        self.assertNotIn("/ActualText", paragraph)
+                        self.assertEqual(paragraph.K[1].P.objgen, paragraph.objgen)
+                        self.assertEqual(pdf.Root.StructTreeRoot.ParentTree.Nums[1][1].objgen,
+                                         paragraph.K[1].objgen)
+                        self.assertEqual(pdf.pages[0].Contents.read_bytes(), drawn)
+                    second = os.path.join(tmp, "second.pdf")
+                    repair_readback_text(output, second, decisions=[
+                        {"announcedIndex": 2, "apply": False}])
+                    with pikepdf.open(second) as pdf:
+                        self.assertEqual([item["text"] for item in _readback_sequence(pdf)],
+                                         [item["text"] for item in sequence])
+
+    def test_array_objr_tooltips_survive_metadata_sync(self):
+        import pikepdf
+        from docassemble.ALDashboard.pdf_accessibility import _sync_structure_form_alt_text
+
+        for decisions in (None, [{"fieldName": "a", "tooltip": "Reviewed name"}]):
+            with self.subTest(decisions=decisions), tempfile.TemporaryDirectory() as tmp:
+                source, output = os.path.join(tmp, "source.pdf"), os.path.join(tmp, "out.pdf")
+                # Different names exercise the override outside a duplicate group.
+                tooltips = [("a", "Reason"), ("b", "Reason" if decisions is None else "Other")]
+                _readback_pdf(source, order=[0], tooltips=tooltips)
+                with pikepdf.open(source, allow_overwriting_input=True) as pdf:
+                    for element in pdf.Root.StructTreeRoot.K[0].K:
+                        if element.S == "/Form":
+                            element["/K"] = pikepdf.Array([element.K])
+                    pdf.save(source)
+                result = repair_duplicate_field_names(source, output, decisions=decisions)
+                self.assertEqual(result["tooltips_renamed"], 2 if decisions is None else 1)
+                with pikepdf.open(output) as pdf:
+                    updates = {item["fieldName"]: item["tooltip"] for item in result["tooltip_updates"]}
+                    for widget in pdf.pages[0].Annots:
+                        if str(widget.T) in updates:
+                            self.assertEqual(str(widget.TU), updates[str(widget.T)])
+                    self.assertEqual(_sync_structure_form_alt_text(pdf.Root), 0)
+                    fields = [item for item in _readback_sequence(pdf) if item["kind"] == "field"]
+                    for item in fields:
+                        if item["name"] in updates:
+                            self.assertEqual(item["text"], updates[item["name"]])

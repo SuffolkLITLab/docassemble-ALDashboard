@@ -1177,6 +1177,21 @@ function getOverlayForPage(pageIndex) {
   );
 }
 
+const loadingOperations = new Set();
+
+async function withLoadingOperation(message, operation) {
+  const token = {};
+  loadingOperations.add(token);
+  showLoading(message);
+  try {
+    return await operation();
+  } finally {
+    loadingOperations.delete(token);
+    hideLoading();
+    if (!loadingOperations.size) showPdfWorkspace();
+  }
+}
+
 function showLoading(message) {
   loadingMessage.textContent = message;
   pdfEmpty.classList.add("hidden");
@@ -1185,7 +1200,10 @@ function showLoading(message) {
 }
 
 function hideLoading() {
+  // A nested repair finishing does not finish the enclosing AI workflow.
+  if (loadingOperations.size) return;
   pdfLoading.classList.add("hidden");
+  loadingMessage.textContent = "";
 }
 
 function showPdfWorkspace() {
@@ -9609,12 +9627,15 @@ a11yExportBtn.addEventListener("click", function () {
   void exportPdf();
 });
 a11yAiReviewBtn.addEventListener("click", async function () {
+  if (state.accessibility.autoFixRunning || state.accessibility.aiReview.running) return;
   updateAccessibilityMetadataFromInputs();
   setAiReviewExpanded(true);
   try {
     saveAccessibilityAutoFixSnapshot();
-    await runAiAccessibilityReview({ applyDrafts: true, preserveHistory: true,
-      persistDrafts: function () { return persistAccessibilityAutoFixDrafts(true); } });
+    await withLoadingOperation("Checking and applying AI accessibility fixes…", async function () {
+      await runAiAccessibilityReview({ applyDrafts: true, preserveHistory: true,
+        persistDrafts: function () { return persistAccessibilityAutoFixDrafts(true); } });
+    });
     showSuccess(
       "AI final check finished. Review each finding; this does not certify the PDF.",
       7000,
@@ -10790,7 +10811,7 @@ function renderAiAccessibilityReview() {
   });
   document.getElementById("a11y-undo-auto-fix").disabled =
     !state.accessibility.autoFixSnapshot || review.running || !!state.accessibility.autoFixRunning;
-  a11yAiReviewBtn.disabled = !state.auth.aiEnabled || review.running;
+  a11yAiReviewBtn.disabled = !state.auth.aiEnabled || review.running || !!state.accessibility.autoFixRunning;
   a11yAiReviewBtn.textContent = review.running
     ? "AI check running…"
     : "AI final check";
@@ -11544,6 +11565,7 @@ async function runAccessibilityAutoFix() {
 
 if (a11yAutoFixBtn) {
   a11yAutoFixBtn.addEventListener("click", async function () {
+    if (state.accessibility.autoFixRunning || state.accessibility.aiReview.running) return;
     state.accessibility.autoFixRunning = true;
     a11yAutoFixBtn.disabled = true;
     a11yAutoFixBtn.textContent = "Auto-fix running…";
@@ -11552,7 +11574,7 @@ if (a11yAutoFixBtn) {
       false,
     );
     try {
-      await runAccessibilityAutoFix();
+      await withLoadingOperation("Drafting accessibility fixes with AI…", runAccessibilityAutoFix);
     } catch (error) {
       showAccessibilityAutoFixStatus(
         "Auto-fix stopped before completing every step. Earlier draft changes may still have been applied and must be reviewed. PDF/UA conformance was not certified. " +
@@ -11562,6 +11584,7 @@ if (a11yAutoFixBtn) {
       showError(error.message || String(error));
     } finally {
       state.accessibility.autoFixRunning = false;
+      renderAiAccessibilityReview();
       document.getElementById("a11y-undo-auto-fix").disabled = !state.accessibility.autoFixSnapshot;
       a11yAutoFixBtn.textContent = "Auto-fix draft (uses AI)";
       a11yAutoFixBtn.disabled = !state.auth.aiEnabled;

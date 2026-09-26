@@ -423,3 +423,63 @@ test('standalone structural finding classifies pending headings before rebuildin
   await context.persistAccessibilityAutoFixDrafts(false);
   assert.deepEqual(calls,['classify','draft_structure','metadata']);
 });
+
+for (const fails of [false, true]) {
+  test(`AI workflow keeps progress through nested repairs and clears it on ${fails ? 'failure' : 'completion'}`, async () => {
+    const element = () => {
+      const classes = new Set(['hidden']);
+      return {textContent: '', classList: {
+        add: value => classes.add(value), remove: value => classes.delete(value),
+        contains: value => classes.has(value),
+      }};
+    };
+    const pdfLoading = element();
+    const loadingMessage = element();
+    let finish;
+    const waiting = new Promise(resolve => { finish = resolve; });
+    let restoreCount = 0;
+    let handler;
+    let runs = 0;
+    const state = {auth: {aiEnabled: true}, accessibility: {aiReview: {running: false}}};
+    const context = vm.createContext({
+      state, pdfLoading, loadingMessage, pdfEmpty: element(), pdfPages: element(),
+      showPdfWorkspace: () => { restoreCount += 1; },
+      a11yAutoFixBtn: {addEventListener: (name, callback) => { handler = callback; }},
+      document: {getElementById: () => ({})},
+      showAccessibilityAutoFixStatus() {}, renderAiAccessibilityReview() {}, showError() {},
+      runAccessibilityAutoFix: async () => {
+        runs += 1;
+        context.showLoading('Applying a repair');
+        context.hideLoading();
+        // The next AI response may take minutes, after a nested repair ended.
+        await waiting;
+        if (fails) throw new Error('AI request failed');
+        context.showLoading('Applying the final repair');
+        context.hideLoading();
+      },
+    });
+    vm.runInContext(source.slice(source.indexOf('const loadingOperations ='), source.indexOf('function showPdfWorkspace()')), context);
+    vm.runInContext(source.slice(source.indexOf('if (a11yAutoFixBtn) {\n  a11yAutoFixBtn.addEventListener'), source.indexOf('\n[a11yMetaLanguage,')), context);
+    const running = handler();
+    assert.equal(pdfLoading.classList.contains('hidden'), false);
+    assert.equal(state.accessibility.autoFixRunning, true);
+    await handler();
+    assert.equal(runs, 1, 'a second click must not start another workflow');
+    finish();
+    await running;
+    assert.equal(pdfLoading.classList.contains('hidden'), true);
+    assert.equal(loadingMessage.textContent, '');
+    assert.equal(state.accessibility.autoFixRunning, false);
+    assert.equal(restoreCount, 1);
+
+    // Section navigation after completion cannot revive progress or start work.
+    const tabs = ['fonts', 'metadata'].map(panelTab => ({dataset: {panelTab}, setAttribute() {}}));
+    context.a11yPanelTabs = tabs;
+    context.document.querySelector = () => ({scrollTop: 0});
+    vm.runInContext(source.slice(source.indexOf('function accessibilityPanelNameFor('), source.indexOf('function setAccessibilityReportCollapsed(')), context);
+    context.setActiveAccessibilityPanel('fonts');
+    context.setActiveAccessibilityPanel('metadata');
+    assert.equal(pdfLoading.classList.contains('hidden'), true);
+    assert.equal(runs, 1);
+  });
+}

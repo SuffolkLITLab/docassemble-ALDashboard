@@ -1,0 +1,485 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(path.join(__dirname, '../data/static/pdf_labeler.js'), 'utf8');
+const inspection = source.slice(source.indexOf('function remapAccessibilityDecisions('), source.indexOf('\nfunction buildAccessibilityPayload('));
+
+test('font repair preserves reviewed headings and blocks when extraction coordinates change', async () => {
+  const old = {candidateId: 'p1:295:43', blockId: 'old', text: '1. Party Information', pageIndex: 0, box: {x: 0.047, y: 0.248}};
+  const fresh = {...old, candidateId: 'p1:292:43', blockId: 'new', box: {...old.box, y: 0.246}};
+  const decision = {status: 'approved', tag: 'H2', source: 'manual'};
+  const blockDecision = {role: 'H2', reviewed: true, order: 2};
+  const state = {pdfBytes: [1], fields: [], accessibility: {
+    metadata: {}, fieldOrder: [], headingCandidates: [old], contentBlocks: [old],
+    headingDecisions: {[old.candidateId]: decision}, contentDecisions: {old: blockDecision},
+  }};
+  const context = vm.createContext({
+    state, FormData: class { append() {} }, getPdfFileForRequests() {}, apiUrl: x => x,
+    fetch: async () => ({}), parseApiResponse: async () => ({success: true, data: {
+      heading_candidates: [fresh], content_blocks: [fresh],
+    }}), contentDecision() {}, headingDecision() {}, refreshAccessibilityFromFields() {},
+  });
+  vm.runInContext(inspection, context);
+  await context.inspectAccessibilityData(true, {preserveAccessibilityDrafts: true});
+  assert.deepEqual(state.accessibility.headingDecisions[fresh.candidateId], decision);
+  assert.deepEqual(state.accessibility.contentDecisions.new, blockDecision);
+  assert.equal(state.accessibility.headingDecisions[old.candidateId], undefined);
+  // A repeated label must never inherit another occurrence's approval.
+  const ambiguous = context.remapAccessibilityDecisions([old, {...old, candidateId: 'other'}], [fresh], {[old.candidateId]: decision}, 'candidateId');
+  assert.equal(Object.keys(ambiguous).length, 0);
+});
+
+test('auto-fix sends approvals for the post-font-repair candidates to tag creation', async () => {
+  const stop = new Error('tag creation reached');
+  const state = {pdfBytes: [1], auth: {aiEnabled: true}, fields: [], accessibility: {
+    metadata: {}, images: [], headingCandidates: [{candidateId: 'before-fonts'}], headingDecisions: {},
+  }};
+  let sent;
+  const context = vm.createContext({
+    state, saveAccessibilityAutoFixSnapshot() {}, updateAccessibilityMetadataFromInputs() {}, showLoading() {},
+    draftTooltipsFromNearbyText: () => 0, applyDeterministicFieldOrder() {},
+    applyAiHeadingDraft: async () => {
+      const id = state.accessibility.headingCandidates[0].candidateId;
+      state.accessibility.headingDecisions[id] = {status: 'approved', tag: 'H1'};
+      return 1;
+    },
+    headingDecision: () => ({status: 'approved'}),
+    headingReviewSignature: () => '', updateHeadingReviewDirty() {}, renderHeadingReviewStatus() {},
+    runAiAccessibilityReview: async () => [], draftMissingDocumentLanguage: () => '',
+    draftFilenameLikeDocumentTitle: () => '', accessibilityTooltipPayload: () => ({}),
+    accessibilityFieldOrderPayload: () => [], accessibilityContentDecisionPayload: () => [],
+    accessibilityHeadingDecisionPayload: () => Object.entries(state.accessibility.headingDecisions).map(([candidateId, decision]) => ({candidateId, ...decision})),
+    runAccessibilityRemediation: async (action, options) => {
+      if (action === 'fonts') {
+        state.accessibility.headingCandidates = [{candidateId: 'after-fonts'}];
+        state.accessibility.headingDecisions = {};
+      }
+      if (action === 'draft_structure') { sent = options.heading_decisions; throw stop; }
+      return {};
+    },
+  });
+  const start = source.indexOf('async function persistAccessibilityAutoFixDrafts(');
+  const end = source.indexOf('\n}', source.indexOf('async function runAccessibilityAutoFix()')) + 2;
+  vm.runInContext(source.slice(start, end), context);
+  await assert.rejects(context.runAccessibilityAutoFix(), error => error === stop);
+  assert.deepEqual(sent, [{candidateId: 'after-fonts', status: 'approved', tag: 'H1'}]);
+});
+
+for (const preserve of [false, true]) {
+  test(`inspection preserves workshop drafts: ${preserve}`, async () => {
+    const state = {
+      pdfBytes: [1],
+      fields: [{id: 'a', name: 'first', tooltip: 'Pending edit'}, {id: 'b', name: 'second', tooltip: ''}],
+      accessibility: {
+        metadata: {}, fieldOrder: ['b', 'a'], contentDecisions: {}, headingDecisions: {},
+        images: [{assetId: 'p1:Im1', altText: 'Pending image edit', decorative: true}],
+      },
+    };
+    const context = vm.createContext({
+      state, FormData: class { append() {} }, getPdfFileForRequests() {},
+      apiUrl: x => x, fetch: async () => ({}),
+      parseApiResponse: async () => ({success: true, data: {
+        fields: [
+          {name: 'first', tooltip: 'Existing PDF tooltip', has_custom_tooltip: true},
+          {name: 'second', tooltip: 'second', has_custom_tooltip: false},
+        ],
+        images: [{assetId: 'p1:Im1', altText: 'Existing PDF alt'}],
+        field_order: ['first', 'second'], readback: {announcements: ['refreshed']},
+      }}),
+      defaultTooltipFromFieldName: x => x, contentDecision() {}, headingDecision() {},
+      refreshAccessibilityFromFields() {},
+    });
+    vm.runInContext(inspection, context);
+    await context.inspectAccessibilityData(true, {preserveAccessibilityDrafts: preserve});
+    assert.equal(state.accessibility.images[0].altText, preserve ? 'Pending image edit' : 'Existing PDF alt');
+    assert.equal(state.accessibility.images[0].decorative, preserve);
+    assert.equal(state.fields[0].tooltip, preserve ? 'Pending edit' : 'Existing PDF tooltip');
+    assert.equal(state.fields[1].tooltip, 'second');
+    assert.deepEqual(Array.from(state.accessibility.fieldOrder), preserve ? ['b', 'a'] : ['a', 'b']);
+    assert.equal(state.accessibility.readback.announcements[0], 'refreshed');
+  });
+}
+
+for (const preserve of [false, true]) {
+  test(`loading PDF resets document-specific certification state: ${preserve}`, () => {
+    const state = {
+      fileName: 'old.pdf',
+      accessibility: {marked: true, readback: {announcements: ['old document']},
+        headingCandidates: ['heading'], contentBlocks: ['block']},
+    };
+    const context = vm.createContext({
+      state,
+      File: class {},
+      clonePdfBytes: value => value,
+      hideAccessibilityAutoFixStatus() {},
+      document: {getElementById: () => ({})},
+    });
+    const sync = source.slice(
+      source.indexOf('function updateRequestPdfFile('),
+      source.indexOf('\nasync function refreshPdfDocumentFromState('),
+    );
+    vm.runInContext(sync, context);
+    context.syncPdfState([2], 'new.pdf', undefined, {
+      preserveAccessibilityDrafts: preserve,
+    });
+    assert.equal(state.accessibility.marked, preserve);
+    assert.equal(state.accessibility.headingCandidates.length, preserve ? 1 : 0);
+    assert.equal(state.accessibility.contentBlocks.length, preserve ? 1 : 0);
+    assert.equal(
+      state.accessibility.readback && state.accessibility.readback.announcements[0],
+      preserve ? 'old document' : null,
+    );
+  });
+}
+
+test('remediation inspection requests draft preservation', () => {
+  const remediation = source.slice(source.indexOf('async function runAccessibilityRemediation('));
+  assert.match(remediation, /await inspectAccessibilityData\(true, \{ preserveAccessibilityDrafts: true \}\)/);
+  assert.ok(remediation.indexOf('mergeRemediatedTooltips(result)') < remediation.indexOf('await refreshPdfDocumentFromState()'));
+});
+
+test('repaired tooltips survive export while unrelated drafts stay intact', () => {
+  const state = {
+    fields: [
+      {id: 'a', name: 'signature', pageIndex: 0, tooltip: 'Old signature'},
+      {id: 'b', name: 'signature', pageIndex: 0, tooltip: 'Pending same-name widget'},
+      {id: 'c', name: 'address', pageIndex: 0, tooltip: 'Pending address'},
+    ],
+    accessibility: {
+      enabled: true, fieldOrder: ['c', 'a', 'b'], images: [], metadata: {},
+      readback: {announcements: [
+        {index: 4, kind: 'field', name: 'signature', page: 0},
+        {index: 9, kind: 'field', name: 'signature', page: 0},
+      ]},
+    },
+  };
+  const context = vm.createContext({state, defaultTooltipFromFieldName: x => x});
+  vm.runInContext(source.slice(source.indexOf('function mergeRemediatedTooltips('), source.indexOf('async function runAccessibilityRemediation(')), context);
+  vm.runInContext(source.slice(source.indexOf('function buildAccessibilityPayload('), source.indexOf('function invalidateBulkRenamePreview(')), context);
+  context.mergeRemediatedTooltips({tooltip_updates: [{fieldName: 'signature', page: 0, announcedIndex: 9, tooltip: 'Co-applicant signature'}]});
+  const exported = context.buildAccessibilityPayload(new Map([['a', 'signature'], ['b', 'signature__1'], ['c', 'address']]));
+  assert.equal(exported.field_tooltips.signature, 'Old signature');
+  assert.equal(exported.field_tooltips.signature__1, 'Co-applicant signature');
+  assert.equal(exported.field_tooltips.address, 'Pending address');
+  assert.deepEqual(Array.from(exported.field_order), ['address', 'signature', 'signature__1']);
+});
+
+test('browser tooltip defaults mirror camel-case server defaults', () => {
+  const context = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf('function defaultTooltipFromFieldName('), source.indexOf('\nfunction sortedFieldIdsByDefaultOrder(')), context);
+  assert.equal(context.defaultTooltipFromFieldName('HadFelonyYes'), 'Had Felony Yes');
+  assert.equal(context.defaultTooltipFromFieldName('SSNNumber_otherValue'), 'SSN Number other Value');
+});
+
+function loadFunction(context, name, async = false) {
+  const start = source.indexOf(`${async ? 'async ' : ''}function ${name}(`);
+  const end = source.indexOf('\n}', start) + 2;
+  vm.runInContext(source.slice(start, end), context);
+}
+
+for (const existingTree of [false, true, "broken"]) {
+  test(`one auto-fix run persists every supported proposal and refreshes readback (existing tree: ${existingTree})`, async () => {
+    const calls = [];
+    let stored = {};
+    let reviews = 0;
+    const state = {pdfBytes: [1], auth: {aiEnabled: true}, fields: [{id: 'f', tooltip: 'Old'}], accessibility: {
+      metadata: {title: 'Old', language: 'en'}, images: [{assetId: 'p1:Im1', altText: ''}],
+      headingCandidates: [{candidateId: 'h'}], headingDecisions: {}, fieldOrder: ['f'],
+      tagStructure: {present: existingTree}, aiReview: {findings: []},
+      readback: {findings: existingTree === "broken" ? [{id: "readback-detached-fields"}] : []}, report: {issues: []},
+    }};
+    const context = vm.createContext({
+      state, saveAccessibilityAutoFixSnapshot() {}, updateAccessibilityMetadataFromInputs() {}, showLoading() {},
+      draftTooltipsFromNearbyText: () => 0, applyDeterministicFieldOrder() {}, renderAccessibilityOrderList() {},
+      applyAiTooltipDraft: async () => 1, applyAiHeadingDraft: async () => 1,
+      headingDecision: () => ({status: 'approved'}),
+    headingReviewSignature: () => '', updateHeadingReviewDirty() {}, renderHeadingReviewStatus() {},
+      draftMissingDocumentLanguage: () => '', draftFilenameLikeDocumentTitle: () => '',
+      accessibilityTooltipPayload: () => ({field: state.fields[0].tooltip}),
+      accessibilityFieldOrderPayload: () => state.accessibility.fieldOrder,
+      accessibilityContentDecisionPayload: () => [], accessibilityHeadingDecisionPayload: () => [],
+      setAiReviewExpanded() {}, renderAiAccessibilityReview() {}, accessibilityAiReviewSignature: () => '',
+      setDirty() {}, hideToasts() {}, showAccessibilityAutoFixStatus() {}, renderAccessibilityModal() {},
+      requestAiAccessibilityReview: async () => {
+        reviews += 1;
+        if (reviews === 2) {
+          assert.equal(stored.metadata.title, 'New title');
+          assert.equal(stored.image_alt_text['p1:Im1'], 'Court seal');
+          assert.equal(stored.field_tooltips.field, 'New label');
+          assert.deepEqual(stored.field_order, ['rtl-field']);
+        }
+        if (reviews === 3) {
+          assert.ok(calls.some(([action]) => action === 'readback_text'));
+          assert.ok(calls.some(([action]) => action === 'field_names'));
+          assert.equal(state.accessibility.readback.findings.length, 0);
+        }
+        if (reviews === 1 || reviews === 3) return [{status: 'pending', change: {}}];
+        return [];
+      },
+      applyAiAccessibilityFinding: finding => {
+        state.accessibility.metadata.title = 'New title';
+        state.accessibility.images[0].altText = 'Court seal';
+        state.fields[0].tooltip = 'New label';
+        state.accessibility.fieldOrder = ['rtl-field'];
+        finding.status = 'accepted';
+        return true;
+      },
+      runAccessibilityRemediation: async (action, options) => {
+        calls.push([action, structuredClone(options)]);
+        if (action === 'metadata') {
+          stored = structuredClone(options);
+          if (options.set_structure_tab_order && !calls.some(([a]) => a === 'field_names')) {
+            state.accessibility.readback.findings = [
+              {id: 'text', suggestion: 'Correct text', confident: true},
+              {id: 'names', category: 'field-names', suggestions: [{suggested: 'Name 1'}]},
+            ];
+          }
+        }
+        if (action === 'draft_structure') {
+          state.accessibility.tagStructure.present = true;
+          state.accessibility.structureDrafted = true;
+        }
+        if (action === 'readback_text') state.accessibility.readback.findings.shift();
+        if (action === 'field_names') state.accessibility.readback.findings = [];
+        return {};
+      },
+    });
+    for (const name of ['persistAccessibilityAutoFixDrafts', 'runAccessibilityAutoFix', 'runAiAccessibilityReview']) loadFunction(context, name, true);
+    for (const name of ['aiAccessibilityFindingKey', 'unresolvedAiAccessibilityFindings', 'remainingAccessibilityIssues']) loadFunction(context, name);
+    await context.runAccessibilityAutoFix();
+    assert.equal(reviews, 4);
+    assert.equal(calls.filter(([action]) => action === 'draft_structure').length, existingTree === true ? 0 : 1);
+    assert.equal(calls.at(-1)[0], 'metadata');
+    assert.equal(stored.image_alt_text['p1:Im1'], 'Court seal');
+    assert.equal(stored.mark_untagged_as_artifacts, existingTree !== true);
+    assert.ok(state.accessibility.aiReview.findings.every(f => f.status === "accepted"));
+    assert.ok(calls.every(([, options]) => !options.marked && !options.mark_as_tagged));
+  });
+}
+
+test('failed persistence stops AI feedback before another review can use stale evidence', async () => {
+  let requests = 0;
+  const context = vm.createContext({
+    state: {auth: {aiEnabled: true}, accessibility: {aiReview: {findings: []}}},
+    setAiReviewExpanded() {}, renderAiAccessibilityReview() {},
+    requestAiAccessibilityReview: async () => { requests += 1; return [{status: 'pending'}]; },
+    applyAiAccessibilityFinding: () => true,
+  });
+  loadFunction(context, 'aiAccessibilityFindingKey');
+  loadFunction(context, 'runAiAccessibilityReview', true);
+  await assert.rejects(context.runAiAccessibilityReview({applyDrafts: true, persistDrafts: async () => { throw new Error('write failed'); }}), /write failed/);
+  assert.equal(requests, 1);
+  assert.equal(context.state.accessibility.aiReview.running, false);
+});
+
+test('a repeated AI check replaces pending findings and keeps settled ones settled', async () => {
+  const context = vm.createContext({
+    state: {auth: {aiEnabled: true}, accessibility: {aiReview: {findings: [
+      {id: 'a', status: 'pending'}, {id: 'b', status: 'ignored'}, {id: 'c', status: 'accepted'},
+    ]}}},
+    setAiReviewExpanded() {}, renderAiAccessibilityReview() {}, accessibilityAiReviewSignature: () => 'sig',
+    requestAiAccessibilityReview: async () => ['a', 'b', 'd'].map(id => ({id, status: 'pending'})),
+    applyAiAccessibilityFinding: () => false,
+  });
+  loadFunction(context, 'aiAccessibilityFindingKey');
+  loadFunction(context, 'runAiAccessibilityReview', true);
+  for (let run = 0; run < 2; run += 1) {
+    await context.runAiAccessibilityReview({applyDrafts: true, preserveHistory: true});
+  }
+  const listed = context.state.accessibility.aiReview.findings.map(f => `${f.id}:${f.status}`);
+  assert.deepEqual(listed.sort(), ['a:pending', 'b:ignored', 'c:accepted', 'd:pending']);
+});
+
+test('moving one content block sends the whole page order as reviewed', () => {
+  const blocks = ['title', 'intro', 'body', 'end'].map(blockId => ({blockId, pageIndex: 0}));
+  const decisions = {};
+  const context = vm.createContext({
+    state: {accessibility: {contentBlocks: blocks, contentDecisions: decisions, selectedContentBlockId: 'body'}},
+    markAccessibilityDraft() {}, setDirty() {}, renderContentEditor() {}, renderHeadingReviewStatus() {},
+  });
+  loadFunction(context, 'contentDecision');
+  loadFunction(context, 'moveSelectedContent');
+  context.moveSelectedContent(-1);
+  const ordered = blocks.slice().sort((a, b) => decisions[a.blockId].order - decisions[b.blockId].order);
+  assert.deepEqual(ordered.map(block => block.blockId), ['title', 'body', 'intro', 'end']);
+  assert.ok(blocks.every(block => decisions[block.blockId].orderReviewed));
+});
+
+test('author preview preserves tag order, roles, pages, silent labels, and all items', () => {
+  const escapeHtml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const context = vm.createContext({escapeHtml});
+  loadFunction(context, 'screenReaderPreviewMarkup');
+  const items = [
+    {index: 0, role: 'H2', page: 1, text: '<Heading>'},
+    {index: 1, role: 'Form', kind: 'field', page: 0, text: '', name: 'internal_name'},
+    ...Array.from({length: 410}, (_, index) => ({index: index + 2, role: 'P', page: 0, text: `Paragraph ${index}`})),
+  ];
+  const html = context.screenReaderPreviewMarkup(items, [{announcedIndex: 0, title: '<Missing H1>'}]);
+  assert.ok(html.indexOf('Heading 2') < html.indexOf('Form control'));
+  assert.ok(html.indexOf('Page 2') < html.indexOf('Page 1'));
+  assert.match(html, /&lt;Heading&gt;/);
+  assert.match(html, /Review: &lt;Missing H1&gt;/);
+  assert.match(html, /\(No announced text\)/);
+  assert.match(html, /Field: internal_name/);
+  assert.match(html, /Paragraph 409/);
+  assert.equal((html.match(/<li /g) || []).length, 412);
+});
+
+test('preview heading navigation reflects only tagged headings and resets for untagged PDFs', () => {
+  const context = vm.createContext({
+    escapeHtml: value => String(value),
+    a11yReadbackHeadingNav: {}, a11yReadbackTranscript: {},
+    screenReaderPreviewMarkup: () => 'preview',
+  });
+  loadFunction(context, 'renderScreenReaderPreview');
+  context.renderScreenReaderPreview({available: true, announcements: [{role: 'P', text: 'Body'}, {role: 'H1', text: 'Title'}]});
+  assert.equal(context.a11yReadbackHeadingNav.disabled, false);
+  assert.match(context.a11yReadbackHeadingNav.innerHTML, /value="1">H1 — Title/);
+  assert.doesNotMatch(context.a11yReadbackHeadingNav.innerHTML, /Body/);
+  context.renderScreenReaderPreview({available: false, reason: 'No tag tree'});
+  assert.equal(context.a11yReadbackHeadingNav.disabled, true);
+  assert.match(context.a11yReadbackTranscript.innerHTML, /No tag tree/);
+  assert.doesNotMatch(context.a11yReadbackHeadingNav.innerHTML, /Title/);
+});
+
+test('heading and column refinements apply as one rebuild and remain overridable', async () => {
+  const state = {accessibility: {headingCandidates: [{candidateId:'h'}],
+    headingDecisions: {h: {status:'approved',tag:'H2'}},
+    contentBlocks: [{blockId:'a',pageIndex:0},{blockId:'b',pageIndex:0}],
+    contentDecisions: {a:{order:0},b:{order:1}}, images: [], metadata:{}}};
+  const calls = [];
+  const context = vm.createContext({state, setDirty() {},
+    headingDecision: c => state.accessibility.headingDecisions[c.candidateId],
+    contentDecision: b => state.accessibility.contentDecisions[b.blockId],
+    setHeadingDecision: (id,value) => {state.accessibility.headingDecisions[id] = value;},
+    accessibilityHeadingDecisionPayload: () => state.accessibility.headingDecisions,
+    accessibilityContentDecisionPayload: () => state.accessibility.contentDecisions,
+    accessibilityTooltipPayload: () => ({}), accessibilityFieldOrderPayload: () => [],
+    runAccessibilityRemediation: async (action, options) => {calls.push([action,structuredClone(options)]);return {};},
+  });
+  loadFunction(context,'applyAiAccessibilityFinding');
+  loadFunction(context,'ignoreAiAccessibilityFinding');
+  loadFunction(context,'persistAccessibilityAutoFixDrafts',true);
+  const heading = {status:'pending',change:{kind:'heading',target:'h',value:'H1'}};
+  const order = {status:'pending',change:{kind:'content_order',target:'1',value:['b','a']}};
+  assert.equal(context.applyAiAccessibilityFinding(heading),true);
+  assert.equal(context.applyAiAccessibilityFinding(order),true);
+  await context.persistAccessibilityAutoFixDrafts(false);
+  assert.equal(calls[0][0],'draft_structure');
+  assert.equal(calls[0][1].overwrite,true);
+  assert.equal(calls[0][1].heading_decisions.h.tag,'H1');
+  assert.equal(calls[0][1].content_decisions.b.order,0);
+  assert.equal(calls[0][1].content_decisions.b.orderReviewed,true);
+  assert.equal(calls.filter(([action]) => action === 'draft_structure').length,1);
+  context.ignoreAiAccessibilityFinding(heading);
+  context.ignoreAiAccessibilityFinding(order);
+  await context.persistAccessibilityAutoFixDrafts(false);
+  assert.equal(state.accessibility.headingDecisions.h.tag,'H2');
+  assert.equal(state.accessibility.contentDecisions.a.order,0);
+  assert.equal(calls.filter(([action]) => action === 'draft_structure').length,2);
+});
+
+test('Undo automatic fixes restores PDF bytes, fields, and decisions together', async () => {
+  let undo;
+  const button = {disabled:true,addEventListener: (event, handler) => {undo=handler;}};
+  const state = {pdfBytes:new Uint8Array([1,2]),fileName:'before.pdf',fields:[{name:'original'}],
+    accessibility:{metadata:{language:'en'},headingDecisions:{h:{tag:'H2'}}}};
+  const context = vm.createContext({state,document:{getElementById:()=>button},
+    clonePdfBytes: bytes => bytes.slice(),
+    syncPdfState: (bytes,name) => {state.pdfBytes=bytes;state.fileName=name;},
+    refreshPdfDocumentFromState: async()=>{},inspectAccessibilityData:async()=>{},
+    renderAccessibilityModal(){},setDirty(){},showError(error){throw new Error(error);},
+  });
+  vm.runInContext(source.slice(source.indexOf('function saveAccessibilityAutoFixSnapshot('),
+    source.indexOf('async function persistAccessibilityAutoFixDrafts(')),context);
+  context.saveAccessibilityAutoFixSnapshot();
+  state.pdfBytes[0]=9;state.fileName='after.pdf';state.fields[0].name='changed';
+  state.accessibility.metadata.language='en-US';state.accessibility.headingDecisions.h.tag='H1';
+  await undo();
+  assert.deepEqual(Array.from(state.pdfBytes),[1,2]);
+  assert.equal(state.fileName,'before.pdf');assert.equal(state.fields[0].name,'original');
+  assert.equal(state.accessibility.metadata.language,'en');
+  assert.equal(state.accessibility.headingDecisions.h.tag,'H2');
+  assert.equal(button.disabled,true);
+});
+
+test('standalone structural finding classifies pending headings before rebuilding', async () => {
+  const decision = {status:'pending',tag:'H1'};
+  const calls = [];
+  const state = {accessibility:{needsStructureRepair:true,headingCandidates:[{candidateId:'h'}],images:[],metadata:{}}};
+  const context = vm.createContext({state,headingDecision:()=>decision,
+    applyAiHeadingDraft:async options=>{assert.equal(options.onlyPending,true);decision.status='approved';calls.push('classify');},
+    accessibilityHeadingDecisionPayload:()=>[{candidateId:'h',...decision}],
+    accessibilityContentDecisionPayload:()=>[],accessibilityTooltipPayload:()=>({}),accessibilityFieldOrderPayload:()=>[],
+    runAccessibilityRemediation:async(action,options)=>{
+      if(action==='draft_structure')assert.equal(options.heading_decisions[0].status,'approved');
+      calls.push(action);return {};
+    },
+  });
+  loadFunction(context,'persistAccessibilityAutoFixDrafts',true);
+  await context.persistAccessibilityAutoFixDrafts(false);
+  assert.deepEqual(calls,['classify','draft_structure','metadata']);
+});
+
+for (const fails of [false, true]) {
+  test(`AI workflow keeps progress through nested repairs and clears it on ${fails ? 'failure' : 'completion'}`, async () => {
+    const element = () => {
+      const classes = new Set(['hidden']);
+      return {textContent: '', classList: {
+        add: value => classes.add(value), remove: value => classes.delete(value),
+        contains: value => classes.has(value),
+      }};
+    };
+    const pdfLoading = element();
+    const loadingMessage = element();
+    let finish;
+    const waiting = new Promise(resolve => { finish = resolve; });
+    let restoreCount = 0;
+    let handler;
+    let runs = 0;
+    const state = {auth: {aiEnabled: true}, accessibility: {aiReview: {running: false}}};
+    const context = vm.createContext({
+      state, pdfLoading, loadingMessage, pdfEmpty: element(), pdfPages: element(),
+      showPdfWorkspace: () => { restoreCount += 1; },
+      a11yAutoFixBtn: {addEventListener: (name, callback) => { handler = callback; }},
+      document: {getElementById: () => ({})},
+      showAccessibilityAutoFixStatus() {}, renderAiAccessibilityReview() {}, showError() {},
+      runAccessibilityAutoFix: async () => {
+        runs += 1;
+        context.showLoading('Applying a repair');
+        context.hideLoading();
+        // The next AI response may take minutes, after a nested repair ended.
+        await waiting;
+        if (fails) throw new Error('AI request failed');
+        context.showLoading('Applying the final repair');
+        context.hideLoading();
+      },
+    });
+    vm.runInContext(source.slice(source.indexOf('const loadingOperations ='), source.indexOf('function showPdfWorkspace()')), context);
+    vm.runInContext(source.slice(source.indexOf('if (a11yAutoFixBtn) {\n  a11yAutoFixBtn.addEventListener'), source.indexOf('\n[a11yMetaLanguage,')), context);
+    const running = handler();
+    assert.equal(pdfLoading.classList.contains('hidden'), false);
+    assert.equal(state.accessibility.autoFixRunning, true);
+    await handler();
+    assert.equal(runs, 1, 'a second click must not start another workflow');
+    finish();
+    await running;
+    assert.equal(pdfLoading.classList.contains('hidden'), true);
+    assert.equal(loadingMessage.textContent, '');
+    assert.equal(state.accessibility.autoFixRunning, false);
+    assert.equal(restoreCount, 1);
+
+    // Section navigation after completion cannot revive progress or start work.
+    const tabs = ['fonts', 'metadata'].map(panelTab => ({dataset: {panelTab}, setAttribute() {}}));
+    context.a11yPanelTabs = tabs;
+    context.document.querySelector = () => ({scrollTop: 0});
+    vm.runInContext(source.slice(source.indexOf('function accessibilityPanelNameFor('), source.indexOf('function setAccessibilityReportCollapsed(')), context);
+    context.setActiveAccessibilityPanel('fonts');
+    context.setActiveAccessibilityPanel('metadata');
+    assert.equal(pdfLoading.classList.contains('hidden'), true);
+    assert.equal(runs, 1);
+  });
+}

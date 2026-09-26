@@ -7,6 +7,8 @@ interface Window {
   DocxLabelerPreviewUtils?: any;
   PDFLib?: any;
   JSZip?: any;
+  // Loaded from the CDN for popovers; absent if that script fails.
+  bootstrap?: any;
 }
 
 declare const mammoth: Record<string, any>;

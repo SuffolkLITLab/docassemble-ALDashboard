@@ -407,6 +407,545 @@
     border-color: #114a8b !important;
     box-shadow: 0 0 0 2px rgba(17, 74, 139, 0.12);
 }
+.a11y-workshop {
+    position: fixed;
+    inset: 0;
+    z-index: 1070;
+    background: #eef2f7;
+    overflow: hidden;
+}
+.a11y-workshop-shell {
+    height: 100dvh;
+    max-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+/* Everything but the working area keeps its own height, so a long banner can
+   never squeeze the panels off a laptop screen. */
+.a11y-workshop-shell > *:not(.a11y-workshop-layout):not(.a11y-ai-review) {
+    flex: 0 0 auto;
+}
+/* The findings pane is the one banner allowed to give ground when a short
+   screen cannot seat everything, down to its own floor. */
+.a11y-workshop-shell > .a11y-ai-review {
+    flex: 0 1 auto;
+}
+.a11y-auto-fix-status {
+    max-height: min(12rem, 24vh);
+    overflow: auto;
+    padding: 0.55rem 0.8rem;
+    font-size: 0.85rem;
+}
+.a11y-auto-fix-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+}
+.a11y-auto-fix-headline {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.a11y-auto-fix-details {
+    margin: 0.5rem 0 0;
+    padding-left: 1.15rem;
+    font-size: 0.82rem;
+}
+.a11y-workshop-header {
+    min-height: 4.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1.25rem;
+    border-bottom: 1px solid #ccd6e3;
+    background: #fff;
+}
+.a11y-workshop-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+}
+.a11y-workshop-title > .btn {
+    white-space: nowrap;
+}
+.a11y-workshop-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+.a11y-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid #ccd6e3;
+}
+.a11y-workshop-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 1.25rem;
+    border-top: 1px solid #ccd6e3;
+    background: #fff;
+}
+.a11y-certification-bar {
+    flex: 1 1 22rem;
+    min-width: 0;
+    padding: 0.5rem 0.85rem;
+    border: 1px solid #9ec5fe;
+    border-radius: 0.6rem;
+    background: #e7f1ff;
+}
+.a11y-ai-review {
+    padding: 0.75rem 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.6rem;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+.a11y-ai-review-body {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+}
+/* The list sets the section's height rather than a share of the viewport, so
+   there is always room for one open finding plus a couple of summary lines --
+   and the reviewer can drag the bottom edge for more or less. */
+#a11y-ai-review-findings {
+    height: 17rem;
+    min-height: 8rem;
+    max-height: 70vh;
+    resize: vertical;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 0.25rem;
+}
+.a11y-ai-review.is-collapsed {
+    min-height: 0;
+    flex-basis: auto;
+}
+.a11y-ai-review.is-collapsed .a11y-ai-review-body {
+    display: none;
+}
+.a11y-ai-review-finding.is-resolved {
+    opacity: 0.72;
+}
+/* A <summary> loses its disclosure marker as soon as its display is changed,
+   so the chevron below is a real element rather than a ::marker. */
+.a11y-ai-review-summary {
+    display: grid;
+    grid-template-columns: auto auto minmax(10rem, 1fr) minmax(8rem, auto);
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    cursor: pointer;
+    list-style: none;
+}
+.a11y-ai-review-summary::-webkit-details-marker {
+    display: none;
+}
+.a11y-ai-review-chevron {
+    display: inline-block;
+    width: 0.75rem;
+    color: #6c757d;
+    font-size: 0.7rem;
+    line-height: 1;
+    transition: transform 0.12s ease-in-out;
+}
+.a11y-ai-review-finding[open] > .a11y-ai-review-summary .a11y-ai-review-chevron {
+    transform: rotate(90deg);
+}
+.a11y-ai-review-status-badge {
+    max-width: 13rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.a11y-ai-review-change {
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.a11y-ai-review-detail {
+    padding: 0 0.75rem 0.65rem 2rem;
+}
+.a11y-ai-review-values {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.15rem 0.6rem;
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
+}
+.a11y-ai-review-values dt {
+    color: #57657f;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.a11y-ai-review-values dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+    .a11y-ai-review-summary {
+        grid-template-columns: auto auto 1fr;
+    }
+    .a11y-ai-review-change {
+        grid-column: 2 / -1;
+        max-width: none;
+    }
+}
+.a11y-workshop-layout {
+    display: grid;
+    grid-template-columns: 14.5rem minmax(17rem, 21rem) minmax(0, 1fr);
+    min-height: 12rem;
+    flex: 1;
+}
+.a11y-workshop-layout.is-steps-collapsed {
+    grid-template-columns: 3rem minmax(17rem, 21rem) minmax(0, 1fr);
+}
+.a11y-workshop-layout.is-report-collapsed.is-steps-collapsed {
+    grid-template-columns: 3rem 2.9rem minmax(0, 1fr);
+}
+.a11y-workshop-report {
+    overflow: auto;
+    padding: 1rem;
+    border-right: 1px solid #ccd6e3;
+    background: #f8fafc;
+}
+/* A small "?" that parks first-run explanation out of the way. */
+.a11y-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    padding: 0;
+    margin-left: 0.35rem;
+    border: 1px solid #b6c2d3;
+    border-radius: 50%;
+    background: #fff;
+    color: #4a5b74;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: middle;
+}
+.a11y-help:hover,
+.a11y-help:focus-visible {
+    border-color: #0a58ca;
+    background: #eef5ff;
+    color: #0a58ca;
+}
+.popover {
+    max-width: 24rem;
+}
+.a11y-report-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    margin-bottom: 0.35rem;
+    padding: 0.25rem 0.35rem;
+    border: 1px solid transparent;
+    border-radius: 0.4rem;
+    background: transparent;
+    color: #33415c;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-align: left;
+}
+.a11y-report-toggle:hover,
+.a11y-report-toggle:focus-visible {
+    border-color: #ccd6e3;
+    background: #fff;
+}
+.a11y-report-toggle-icon {
+    color: #57657f;
+    font-size: 1rem;
+    line-height: 1;
+}
+/* Collapsed, the rail keeps just enough width to bring it back. */
+.a11y-workshop-layout.is-report-collapsed {
+    grid-template-columns: 14.5rem 2.9rem minmax(0, 1fr);
+}
+.a11y-workshop-layout.is-report-collapsed .a11y-workshop-report {
+    padding: 0.6rem 0.3rem;
+    overflow: hidden;
+}
+.a11y-workshop-layout.is-report-collapsed .a11y-report-body,
+.a11y-workshop-layout.is-report-collapsed .a11y-report-toggle-label {
+    display: none;
+}
+.a11y-workshop-layout.is-report-collapsed .a11y-report-toggle {
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.35rem 0.1rem;
+}
+.a11y-workshop-content {
+    overflow: auto;
+    padding: 1.5rem;
+}
+.a11y-step-nav {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid #ccd6e3;
+    background: #f2f6fb;
+}
+.a11y-step-nav-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    padding: 0.6rem 0.75rem 0.4rem;
+}
+.a11y-step-nav-title {
+    color: #57657f;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.a11y-step-nav-collapse {
+    flex: 0 0 auto;
+    padding: 0 0.3rem;
+    border: 1px solid transparent;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: #57657f;
+    line-height: 1.1;
+}
+.a11y-step-nav-collapse:hover,
+.a11y-step-nav-collapse:focus-visible {
+    border-color: #ccd6e3;
+    background: #fff;
+}
+.a11y-step-nav-list {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 0.5rem 0.5rem;
+}
+.a11y-panel-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: #33415c;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: left;
+}
+.a11y-panel-tab:hover {
+    background: #e4ecf7;
+}
+.a11y-panel-tab[aria-selected="true"] {
+    background: #0a58ca;
+    color: #fff;
+}
+.a11y-panel-tab-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    background: #dbe4f0;
+    color: #4a5b74;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+.a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-step {
+    background: rgba(255, 255, 255, 0.24);
+    color: #fff;
+}
+.a11y-panel-tab-label {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.a11y-panel-tab-badge {
+    flex: 0 0 auto;
+    min-width: 1.2rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 2rem;
+    background: #b42318;
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-align: center;
+}
+.a11y-panel-tab-badge[data-tone="warning"] { background: #8a5200; }
+.a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-badge {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+/* Collapsed: numbers only, still the full workflow at a glance. */
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-title,
+.a11y-workshop-layout.is-steps-collapsed .a11y-panel-tab-label,
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-foot {
+    display: none;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-head {
+    justify-content: center;
+    padding: 0.6rem 0.2rem 0.4rem;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-panel-tab {
+    justify-content: center;
+    padding: 0.45rem 0.2rem;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-step-nav-list {
+    padding: 0 0.25rem 0.5rem;
+}
+.a11y-workshop-layout.is-steps-collapsed .a11y-panel-tab-badge {
+    position: absolute;
+    margin: -1rem 0 0 1.2rem;
+    min-width: 1rem;
+    padding: 0 0.2rem;
+    font-size: 0.6rem;
+}
+.a11y-step-nav-foot {
+    padding: 0.5rem 0.75rem 0.7rem;
+    border-top: 1px solid #dde5ef;
+}
+.a11y-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.4rem;
+    margin-bottom: 0.3rem;
+}
+.a11y-progress-label {
+    color: #57657f;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.a11y-progress-value {
+    color: #17324d;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+.a11y-progress-track {
+    height: 0.4rem;
+    border-radius: 2rem;
+    background: #dbe4f0;
+    overflow: hidden;
+}
+.a11y-progress-bar {
+    height: 100%;
+    width: 0;
+    border-radius: 2rem;
+    background: #17823b;
+    transition: width 0.2s ease-in-out;
+}
+.a11y-progress-note {
+    margin-top: 0.3rem;
+    color: #57657f;
+    font-size: 0.68rem;
+}
+.a11y-panel[hidden] {
+    display: none;
+}
+.a11y-panel {
+    max-width: 58rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.75rem;
+    border: 1px solid #dde5ef;
+    border-radius: 0.9rem;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(17, 36, 64, 0.06);
+}
+.a11y-panel > h3:first-child {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #eef2f7;
+    font-size: 1.05rem;
+}
+.a11y-panel h4 {
+    margin-top: 1.5rem;
+    font-size: 0.92rem;
+}
+.a11y-issue {
+    width: 100%;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid #d6deea;
+    border-left: 0.3rem solid #77869a;
+    border-radius: 0.55rem;
+    background: #fff;
+    color: inherit;
+    text-align: left;
+}
+.a11y-issue[data-status="fail"] { border-left-color: #b42318; }
+.a11y-issue[data-status="draft"] { border-left-color: #087990; background: #f0fbfd; }
+.a11y-issue[data-status="pass"] { border-left-color: #17823b; }
+.a11y-issue[data-status="blocked"] { border-left-color: #6c757d; background: #f8f9fa; }
+.a11y-issue:hover, .a11y-issue:focus-visible { background: #eef5ff; }
+.a11y-issue-rule { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; }
+.a11y-issue .badge { flex: 0 0 auto; align-self: flex-start; font-size: 0.65rem; font-weight: 600; }
+.a11y-issue-title { line-height: 1.25; }
+.a11y-disclaimer { padding: 0.65rem; border-radius: 0.5rem; background: #fff4ce; font-size: 0.78rem; }
+.a11y-structure-draft-layout { display: grid; grid-template-columns: minmax(20rem, 1.2fr) minmax(18rem, 0.8fr); gap: 1rem; align-items: start; }
+.a11y-structure-preview { max-height: 70vh; overflow: auto; padding: 0.75rem; border: 1px solid #ccd6e3; border-radius: 0.5rem; background: #e8edf3; }
+.a11y-structure-page { position: relative; margin: 0 auto 1rem; background: #fff; box-shadow: 0 2px 8px rgba(17,36,64,.2); }
+.a11y-structure-page canvas { display: block; width: 100%; height: 100%; }
+.a11y-structure-box { position: absolute; z-index: 2; border: 1px solid rgba(41,82,120,.5); background: rgba(41,82,120,.08); color: #17324d; font-size: .62rem; line-height: 1; overflow: hidden; pointer-events: auto; cursor: pointer; }
+.a11y-structure-box.is-heading { border: 2px solid #b26a00; background: rgba(255,193,7,.16); pointer-events: auto; cursor: pointer; }
+.a11y-structure-box.is-approved { border-color: #17823b; background: rgba(25,135,84,.18); }
+.a11y-structure-box.is-rejected { border-color: #6c757d; background: rgba(108,117,125,.08); text-decoration: line-through; opacity: .55; }
+.a11y-structure-box.is-selected { z-index: 3; outline: 3px solid #0d6efd; outline-offset: 1px; }
+.a11y-structure-box.is-artifact { border-style: dashed; border-color: #6c757d; background: rgba(108,117,125,.2); }
+.a11y-structure-target.is-focused { border-color: var(--bs-primary) !important; box-shadow: 0 0 0 .2rem rgba(13,110,253,.18); }
+.a11y-heading-candidate[data-decision="approved"] { border-left: .3rem solid #17823b !important; }
+.a11y-heading-candidate[data-decision="rejected"] { opacity: .65; text-decoration: line-through; }
+/* Laptop screens: give the chrome less and the working area more. */
+@media (max-height: 820px) {
+    .a11y-workshop-header { min-height: 0; padding: 0.5rem 1.25rem; }
+    .a11y-workshop-subtitle { display: none; }
+    .a11y-panel-nav { padding: 0.5rem 0; }
+    .a11y-workshop-footer { padding: 0.45rem 1.25rem; }
+    .a11y-auto-fix-status { max-height: min(9rem, 20vh); }
+    #a11y-ai-review-findings { height: 16rem; }
+}
+@media (max-width: 800px) {
+    .a11y-workshop-layout,
+    .a11y-workshop-layout.is-steps-collapsed,
+    .a11y-workshop-layout.is-report-collapsed,
+    .a11y-workshop-layout.is-report-collapsed.is-steps-collapsed {
+        grid-template-columns: 1fr;
+        overflow: auto;
+    }
+    .a11y-step-nav { border-right: 0; border-bottom: 1px solid #ccd6e3; }
+    .a11y-step-nav-list { flex-direction: row; flex-wrap: wrap; }
+    .a11y-panel-tab { width: auto; }
+    .a11y-step-nav-foot { display: none; }
+    .a11y-workshop-report { max-height: 38vh; border-right: 0; border-bottom: 1px solid #ccd6e3; }
+    .a11y-workshop-layout.is-report-collapsed { grid-template-columns: 1fr; }
+    .a11y-workshop-layout.is-report-collapsed .a11y-report-toggle { flex-direction: row; }
+    .a11y-workshop-layout.is-report-collapsed .a11y-report-toggle-label { display: inline; }
+    .a11y-workshop-content { overflow: visible; }
+    .a11y-workshop-header { align-items: flex-start; flex-direction: column; }
+    .a11y-workshop-actions { justify-content: flex-start; }
+    .a11y-action-group { padding-left: 0; border-left: 0; }
+    .a11y-structure-draft-layout { grid-template-columns: 1fr; }
+    .a11y-panel-tab-label { display: none; }
+    .a11y-panel-tab[aria-selected="true"] .a11y-panel-tab-label { display: inline; }
+}
 .loading-spinner { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .pdf-page-shell {
@@ -876,3 +1415,29 @@
         display: none;
     }
 }
+
+/* Glyph review: show the outline the PDF actually draws, large enough to judge. */
+.a11y-glyph-outline { width: 2.75rem; height: 2.75rem; flex: 0 0 auto; fill: #17324d; background: #fff; border: 1px solid #ccd6e3; border-radius: 0.35rem; padding: 0.15rem; }
+.a11y-glyph-missing { width: 2.75rem; height: 2.75rem; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; text-align: center; border: 1px dashed #ccd6e3; border-radius: 0.35rem; background: #f8f9fa; font-size: 0.6rem; line-height: 1.05; }
+.a11y-glyph-input { font-size: 1rem; text-align: center; min-width: 3.5rem; }
+.a11y-glyph-row { background: #fff; }
+
+.a11y-readback-transcript {
+    max-height: 65vh;
+    overflow-y: auto;
+    padding: 0.75rem;
+    list-style: none;
+    background: #f4f6f8;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.4rem;
+}
+.a11y-readback-transcript .a11y-reader-item { margin-bottom: 0.65rem; padding: 0.8rem 1rem; background: #fff; border-left: 3px solid #94a3b8; }
+.a11y-reader-item:focus { outline: 3px solid #0a58ca; outline-offset: 2px; }
+.a11y-reader-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; color: #475569; font-size: 0.75rem; }
+.a11y-reader-role { font-weight: 700; }
+.a11y-reader-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; color: #182b3e; }
+.a11y-reader-item.is-heading { border-left-color: #6741a5; }
+.a11y-reader-item.is-heading .a11y-reader-text { font-size: 1.15rem; font-weight: 650; }
+.a11y-reader-item.is-heading-1 .a11y-reader-text { font-size: 1.35rem; }
+.a11y-reader-item.a11y-readback-field { border-left-color: #0a58ca; background: #f0f6ff; }
+.a11y-reader-warning { color: #754600; background: #fff4d6; padding: 0.4rem 0.6rem; margin-top: 0.5rem; font-size: 0.8rem; }

@@ -77,6 +77,42 @@ _STUBBED_IMPORT_PREFIX = textwrap.dedent("""
 
 
 class TestLabelerQueryParams(unittest.TestCase):
+    def test_accessibility_metadata_persists_image_alt_drafts(self):
+        result = self._run_probe('''
+            import base64
+            import io
+            import pikepdf
+
+            pdf = pikepdf.Pdf.new()
+            page = pdf.add_blank_page()
+            image = pdf.make_stream(bytes([0]))
+            image.Type = pikepdf.Name.XObject
+            image.Subtype = pikepdf.Name.Image
+            image.Width = 1
+            image.Height = 1
+            image.ColorSpace = pikepdf.Name.DeviceGray
+            image.BitsPerComponent = 8
+            page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im1=image))
+            buffer = io.BytesIO()
+            pdf.save(buffer)
+            with app.test_client() as client:
+                response = client.post('/al/pdf-labeler/api/accessibility-remediate', data={
+                    'file': (io.BytesIO(buffer.getvalue()), 'image.pdf'),
+                    'action': 'metadata',
+                    'image_alt_text': json.dumps({'p1:Im1': 'Court seal'}),
+                })
+                assert response.status_code == 200, response.get_json()
+                payload = response.get_json()['data']
+                with pikepdf.open(io.BytesIO(base64.b64decode(payload['pdf_base64']))) as output:
+                    alt = str(output.pages[0].Resources.XObject.Im1.Alt)
+                invalid = client.post('/al/pdf-labeler/api/accessibility-remediate', data={
+                    'file': (io.BytesIO(buffer.getvalue()), 'image.pdf'),
+                    'action': 'metadata', 'image_alt_text': '[]',
+                })
+                print(json.dumps({'alt': alt, 'invalid_status': invalid.status_code}))
+            ''')
+        self.assertEqual(result, {'alt': 'Court seal', 'invalid_status': 400})
+
     def _run_probe(self, probe_code: str):
         script = _STUBBED_IMPORT_PREFIX + "\n" + textwrap.dedent(probe_code)
         result = subprocess.run(

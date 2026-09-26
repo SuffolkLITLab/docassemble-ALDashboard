@@ -23,6 +23,8 @@ dependencies = [
     'xmlschema>=4.3.1',
     'pyaml',
     'formfyxer>=1.1.0',
+    'pikepdf>=10.0',
+    'fonttools>=4.0',
     'dayamlchecker>=1.4.0',
     'Mako>=1.1.4',
     'pyspellchecker>=0.6.3',

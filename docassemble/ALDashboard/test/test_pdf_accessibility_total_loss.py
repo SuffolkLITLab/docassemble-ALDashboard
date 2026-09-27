@@ -178,3 +178,34 @@ def test_failed_ocr_cannot_make_vector_page_report_clean(tmp_path):
     assert result["pages_read"] == 0
     assert any(f["id"] == "readback-vector-only-0"
                for f in analyze_screen_reader_readback(str(output), heading_candidates=[])["findings"])
+
+
+def test_ocr_layer_keeps_recognised_unicode_text(tmp_path):
+    import shutil
+    import subprocess
+
+    source, output, tagged = tmp_path/"outlines.pdf", tmp_path/"ocr.pdf", tmp_path/"tagged.pdf"
+    vector_pdf(source)
+    texts = ["Łukasz", "Заявление", "申请人", "O’Brien", "(a)\\b"]
+    words = [dict(text=text, left=20, top=20 + index*30, width=80, height=14,
+                  pixelWidth=612, pixelHeight=792, confidence=96)
+             for index, text in enumerate(texts)]
+    with patch("docassemble.ALDashboard.pdf_accessibility._ocr_page_words", return_value=words):
+        result = ocr_image_only_pages(str(source), str(output))
+    assert result["pages"][0]["sample"] == " ".join(texts)
+    with pikepdf.open(output) as pdf:
+        page = pdf.pages[0]
+        font = page.Resources.Font.DAOCR
+        assert font.DescendantFonts[0].FontDescriptor.FontFile2.read_bytes()
+        ins = list(pikepdf.parse_content_stream(page))
+        decoded = [text for text in _decoded_instruction_texts(page, ins).values() if text]
+    assert decoded == texts
+    create_draft_structure_tree(str(output), str(tagged))
+    report = analyze_screen_reader_readback(str(tagged), heading_candidates=[])
+    announced = " ".join(item["text"] for item in report["announcements"])
+    for text in texts:
+        assert text in announced
+    if shutil.which("pdftotext"):
+        extracted = subprocess.check_output(["pdftotext", str(output), "-"], text=True)
+        for text in texts:
+            assert text in extracted

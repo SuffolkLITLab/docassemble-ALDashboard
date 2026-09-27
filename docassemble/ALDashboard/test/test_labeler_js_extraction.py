@@ -555,7 +555,15 @@ class TestPdfLabelerJsExtraction(unittest.TestCase):
 
     def test_accessibility_workshop_steps_are_tabs_not_one_long_column(self):
         self.assertIn('id="a11y-panel-nav"', self.html)
-        self.assertIn('role="tablist"', self.html)
+        # The tablist owns only the tabs; the collapse button sits outside it.
+        self.assertIn(
+            '<nav id="a11y-panel-nav" class="a11y-step-nav" aria-label="Remediation workflow">',
+            self.html,
+        )
+        self.assertIn(
+            '<div id="a11y-step-nav-list" class="a11y-step-nav-list" role="tablist"',
+            self.html,
+        )
         self.assertIn('data-panel-tab="metadata"', self.html)
         self.assertIn('data-panel-tab="fonts"', self.html)
         self.assertIn("function setActiveAccessibilityPanel", self.js)

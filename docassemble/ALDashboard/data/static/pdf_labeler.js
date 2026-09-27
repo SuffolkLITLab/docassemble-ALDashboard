@@ -359,7 +359,9 @@ const repairStatus = document.getElementById("repair-status");
 const repairStatusText = document.getElementById("repair-status-text");
 const utilitiesBtn = document.getElementById("utilities-btn");
 const accessibilityBtn = document.getElementById("accessibility-btn");
-const accessibilityPreviewBtn = document.getElementById("accessibility-preview-btn");
+const accessibilityPreviewBtn = document.getElementById(
+  "accessibility-preview-btn",
+);
 const previewBtn = document.getElementById("preview-btn");
 const accessibilityModal = document.getElementById("accessibility-modal");
 const closeAccessibilityBtn = document.getElementById("close-accessibility");
@@ -518,7 +520,10 @@ const a11yProgressValue = optionalWorkshopElement(
 const a11yProgressNote = optionalWorkshopElement("a11y-progress-note");
 const a11yReadbackSummary = optionalWorkshopElement("a11y-readback-summary");
 const a11yReadbackFindings = optionalWorkshopElement("a11y-readback-findings");
-const a11yReadbackHeadingNav = optionalWorkshopElement("a11y-readback-heading-nav", "select");
+const a11yReadbackHeadingNav = optionalWorkshopElement(
+  "a11y-readback-heading-nav",
+  "select",
+);
 const a11yReadbackTranscript = optionalWorkshopElement(
   "a11y-readback-transcript",
   "ol",
@@ -1590,7 +1595,9 @@ function renderAccessibilityOrderList() {
     note.setAttribute("role", "note");
     note.textContent =
       String(anchored) +
-      (anchored === 1 ? " field follows its label" : " fields follow their labels") +
+      (anchored === 1
+        ? " field follows its label"
+        : " fields follow their labels") +
       " in the reading order, so keyboard users reach " +
       (anchored === 1 ? "it" : "them") +
       " there rather than at the position shown here. To move " +
@@ -2058,44 +2065,107 @@ function screenReaderPreviewMarkup(announcements, findings) {
     if (!issues.has(index)) issues.set(index, []);
     issues.get(index).push(String(finding.title || "Review this item"));
   });
-  return announcements.map(function (item, position) {
-    const role = String(item.role || "");
-    const heading = /^H[1-6]$/.test(role);
-    const field = item.kind === "field" && role !== "Link";
-    const label = heading ? "Heading " + role.slice(1)
-      : field ? "Form control" : ({P: "Paragraph", Figure: "Figure", Link: "Link",
-        LI: "List item", TH: "Table header", TD: "Table cell"})[role] || role || "Content";
-    const page = item.page == null ? "Page unknown" : "Page " + String(Number(item.page) + 1);
-    const warnings = issues.get(Number(item.index)) || [];
-    return '<li id="a11y-reader-item-' + position + '" tabindex="-1" class="a11y-reader-item' +
-      (heading ? " is-heading is-heading-" + role.slice(1) : "") +
-      (field ? " a11y-readback-field" : "") + '">' +
-      '<div class="a11y-reader-meta"><span class="a11y-reader-role">' + escapeHtml(label) +
-      '</span><span>' + escapeHtml(page) + ' · ' + String(position + 1) + '</span></div>' +
-      '<div class="a11y-reader-text">' + escapeHtml(String(item.text || "(No announced text)")) + '</div>' +
-      (field && item.name ? '<div class="small text-muted mt-1">Field: ' + escapeHtml(String(item.name)) + '</div>' : '') +
-      warnings.map(function (warning) {
-        return '<div class="a11y-reader-warning">Review: ' + escapeHtml(warning) + '</div>';
-      }).join("") + '</li>';
-  }).join("");
+  return announcements
+    .map(function (item, position) {
+      const role = String(item.role || "");
+      const heading = /^H[1-6]$/.test(role);
+      const field = item.kind === "field" && role !== "Link";
+      const label = heading
+        ? "Heading " + role.slice(1)
+        : field
+          ? "Form control"
+          : {
+              P: "Paragraph",
+              Figure: "Figure",
+              Link: "Link",
+              LI: "List item",
+              TH: "Table header",
+              TD: "Table cell",
+            }[role] ||
+            role ||
+            "Content";
+      const page =
+        item.page == null
+          ? "Page unknown"
+          : "Page " + String(Number(item.page) + 1);
+      const warnings = issues.get(Number(item.index)) || [];
+      return (
+        '<li id="a11y-reader-item-' +
+        position +
+        '" tabindex="-1" class="a11y-reader-item' +
+        (heading ? " is-heading is-heading-" + role.slice(1) : "") +
+        (field ? " a11y-readback-field" : "") +
+        '">' +
+        '<div class="a11y-reader-meta"><span class="a11y-reader-role">' +
+        escapeHtml(label) +
+        "</span><span>" +
+        escapeHtml(page) +
+        " · " +
+        String(position + 1) +
+        "</span></div>" +
+        '<div class="a11y-reader-text">' +
+        escapeHtml(String(item.text || "(No announced text)")) +
+        "</div>" +
+        (field && item.name
+          ? '<div class="small text-muted mt-1">Field: ' +
+            escapeHtml(String(item.name)) +
+            "</div>"
+          : "") +
+        warnings
+          .map(function (warning) {
+            return (
+              '<div class="a11y-reader-warning">Review: ' +
+              escapeHtml(warning) +
+              "</div>"
+            );
+          })
+          .join("") +
+        "</li>"
+      );
+    })
+    .join("");
 }
 
 function renderScreenReaderPreview(readback) {
-  const announcements = readback.available && Array.isArray(readback.announcements)
-    ? readback.announcements : [];
-  const headings = announcements.map(function (item, position) { return {item, position}; })
-    .filter(function (entry) { return /^H[1-6]$/.test(String(entry.item.role)); });
+  const announcements =
+    readback.available && Array.isArray(readback.announcements)
+      ? readback.announcements
+      : [];
+  const headings = announcements
+    .map(function (item, position) {
+      return { item, position };
+    })
+    .filter(function (entry) {
+      return /^H[1-6]$/.test(String(entry.item.role));
+    });
   a11yReadbackHeadingNav.disabled = !headings.length;
-  a11yReadbackHeadingNav.innerHTML = '<option value="">' +
-    (headings.length ? "Choose a heading…" : "No tagged headings") + '</option>' +
-    headings.map(function (entry) {
-      return '<option value="' + entry.position + '">' + escapeHtml(entry.item.role + " — " +
-        String(entry.item.text || "(No announced text)")) + '</option>';
-    }).join("");
+  a11yReadbackHeadingNav.innerHTML =
+    '<option value="">' +
+    (headings.length ? "Choose a heading…" : "No tagged headings") +
+    "</option>" +
+    headings
+      .map(function (entry) {
+        return (
+          '<option value="' +
+          entry.position +
+          '">' +
+          escapeHtml(
+            entry.item.role +
+              " — " +
+              String(entry.item.text || "(No announced text)"),
+          ) +
+          "</option>"
+        );
+      })
+      .join("");
   a11yReadbackTranscript.innerHTML = announcements.length
     ? screenReaderPreviewMarkup(announcements, readback.findings || [])
-    : '<li class="text-muted">' + escapeHtml(readback.reason ||
-      "No tagged content is available to preview. Create tags, then inspect the reading order.") + '</li>';
+    : '<li class="text-muted">' +
+      escapeHtml(
+        readback.reason ||
+          "No tagged content is available to preview. Create tags, then inspect the reading order.",
+      ) +
+      "</li>";
 }
 
 a11yReadbackHeadingNav.addEventListener("change", function () {
@@ -2235,7 +2305,6 @@ function renderAccessibilityReadback() {
       );
     })
     .join("");
-
 }
 
 function renderAccessibilityProgress(issues) {
@@ -3650,8 +3719,11 @@ function remapAccessibilityDecisions(previous, current, decisions, idKey) {
   const result = {};
   const nearby = function (a, b) {
     return (
-      a.pageIndex === b.pageIndex && a.text === b.text &&
-      a.box && b.box && Math.abs(a.box.x - b.box.x) < 0.02 &&
+      a.pageIndex === b.pageIndex &&
+      a.text === b.text &&
+      a.box &&
+      b.box &&
+      Math.abs(a.box.x - b.box.x) < 0.02 &&
       Math.abs(a.box.y - b.box.y) < 0.02
     );
   };
@@ -3750,9 +3822,11 @@ async function inspectAccessibilityData(forceRefresh, options) {
   }
 
   const imageDrafts = new Map(
-    (preserveDrafts ? state.accessibility.images || [] : []).map(function (item) {
-      return [String(item.assetId || ""), item];
-    }),
+    (preserveDrafts ? state.accessibility.images || [] : []).map(
+      function (item) {
+        return [String(item.assetId || ""), item];
+      },
+    ),
   );
   state.accessibility.images = Array.isArray(payload.data.images)
     ? payload.data.images.map(function (item) {
@@ -3763,8 +3837,10 @@ async function inspectAccessibilityData(forceRefresh, options) {
           altText: imageDrafts.has(String(item.assetId || ""))
             ? imageDrafts.get(String(item.assetId)).altText
             : String(item.altText || ""),
-          altTextSource: (imageDrafts.get(String(item.assetId)) || {}).altTextSource,
-          decorative: !!(imageDrafts.get(String(item.assetId)) || {}).decorative,
+          altTextSource: (imageDrafts.get(String(item.assetId)) || {})
+            .altTextSource,
+          decorative: !!(imageDrafts.get(String(item.assetId)) || {})
+            .decorative,
           width: Number(item.width || 0),
           height: Number(item.height || 0),
         };
@@ -3781,13 +3857,17 @@ async function inspectAccessibilityData(forceRefresh, options) {
   state.accessibility.readback = payload.data.readback || null;
   state.accessibility.headingDecisions = remapAccessibilityDecisions(
     state.accessibility.headingCandidates || [],
-    Array.isArray(payload.data.heading_candidates) ? payload.data.heading_candidates : [],
+    Array.isArray(payload.data.heading_candidates)
+      ? payload.data.heading_candidates
+      : [],
     state.accessibility.headingDecisions,
     "candidateId",
   );
   state.accessibility.contentDecisions = remapAccessibilityDecisions(
     state.accessibility.contentBlocks || [],
-    Array.isArray(payload.data.content_blocks) ? payload.data.content_blocks : [],
+    Array.isArray(payload.data.content_blocks)
+      ? payload.data.content_blocks
+      : [],
     state.accessibility.contentDecisions,
     "blockId",
   );
@@ -9375,7 +9455,9 @@ function accessibilityRemediationFeedback(action, result, options) {
 }
 
 function mergeRemediatedTooltips(result) {
-  const updates = Array.isArray(result.tooltip_updates) ? result.tooltip_updates : [];
+  const updates = Array.isArray(result.tooltip_updates)
+    ? result.tooltip_updates
+    : [];
   const announcements = Array.isArray(
     (state.accessibility.readback || {}).announcements,
   )
@@ -9627,15 +9709,27 @@ a11yExportBtn.addEventListener("click", function () {
   void exportPdf();
 });
 a11yAiReviewBtn.addEventListener("click", async function () {
-  if (state.accessibility.autoFixRunning || state.accessibility.aiReview.running) return;
+  if (
+    state.accessibility.autoFixRunning ||
+    state.accessibility.aiReview.running
+  )
+    return;
   updateAccessibilityMetadataFromInputs();
   setAiReviewExpanded(true);
   try {
     saveAccessibilityAutoFixSnapshot();
-    await withLoadingOperation("Checking and applying AI accessibility fixes…", async function () {
-      await runAiAccessibilityReview({ applyDrafts: true, preserveHistory: true,
-        persistDrafts: function () { return persistAccessibilityAutoFixDrafts(true); } });
-    });
+    await withLoadingOperation(
+      "Checking and applying AI accessibility fixes…",
+      async function () {
+        await runAiAccessibilityReview({
+          applyDrafts: true,
+          preserveHistory: true,
+          persistDrafts: function () {
+            return persistAccessibilityAutoFixDrafts(true);
+          },
+        });
+      },
+    );
     showSuccess(
       "AI final check finished. Review each finding; this does not certify the PDF.",
       7000,
@@ -9650,7 +9744,11 @@ a11yAiReviewToggleBtn.addEventListener("click", function () {
 a11yAiReviewApplyAllBtn.addEventListener("click", async function () {
   saveAccessibilityAutoFixSnapshot();
   state.accessibility.aiReview.findings.forEach(applyAiAccessibilityFinding);
-  try { await persistAccessibilityAutoFixDrafts(false); } catch (error) { showError(error.message || String(error)); }
+  try {
+    await persistAccessibilityAutoFixDrafts(false);
+  } catch (error) {
+    showError(error.message || String(error));
+  }
   renderAiAccessibilityReview();
 });
 a11yAiReviewFindings.addEventListener("click", async function (event) {
@@ -9667,10 +9765,18 @@ a11yAiReviewFindings.addEventListener("click", async function (event) {
   } else if (button.dataset.aiReviewAction === "apply") {
     saveAccessibilityAutoFixSnapshot();
     applyAiAccessibilityFinding(finding);
-    try { await persistAccessibilityAutoFixDrafts(false); } catch (error) { showError(error.message || String(error)); }
+    try {
+      await persistAccessibilityAutoFixDrafts(false);
+    } catch (error) {
+      showError(error.message || String(error));
+    }
   } else if (button.dataset.aiReviewAction === "ignore") {
     ignoreAiAccessibilityFinding(finding);
-    try { await persistAccessibilityAutoFixDrafts(false); } catch (error) { showError(error.message || String(error)); }
+    try {
+      await persistAccessibilityAutoFixDrafts(false);
+    } catch (error) {
+      showError(error.message || String(error));
+    }
   } else if (button.dataset.aiReviewAction === "review") {
     finding.status = "reviewed";
   }
@@ -9810,6 +9916,8 @@ a11yPanelNav.addEventListener("keydown", function (event) {
     End: 0,
   };
   if (!(event.key in steps)) return;
+  // Arrow keys belong to the tabs, not the collapse button beside them.
+  if (!event.target.closest('[role="tablist"]')) return;
   const current = a11yPanelTabs.findIndex(function (tab) {
     return tab.dataset.panelTab === state.accessibility.activePanel;
   });
@@ -10135,9 +10243,14 @@ async function applyAiHeadingDraft(options) {
   }
   const decisions = (payload.data && payload.data.decisions) || [];
   decisions.forEach(function (decision) {
-    const existing = state.accessibility.headingDecisions[String(decision.candidateId || "")];
-    if (existing && (existing.source === "manual" ||
-        (settings.onlyPending && existing.status !== "pending"))) return;
+    const existing =
+      state.accessibility.headingDecisions[String(decision.candidateId || "")];
+    if (
+      existing &&
+      (existing.source === "manual" ||
+        (settings.onlyPending && existing.status !== "pending"))
+    )
+      return;
     setHeadingDecision(
       String(decision.candidateId || ""),
       {
@@ -10606,8 +10719,14 @@ function accessibilityAiReviewContext() {
     }),
     contentBlocks: state.accessibility.contentBlocks.map(function (block) {
       const decision = contentDecision(block);
-      return {blockId: block.blockId, page: Number(block.pageIndex) + 1,
-        text: block.text, box: block.box, role: decision.role, order: decision.order};
+      return {
+        blockId: block.blockId,
+        page: Number(block.pageIndex) + 1,
+        text: block.text,
+        box: block.box,
+        role: decision.role,
+        order: decision.order,
+      };
     }),
     images: state.accessibility.images.map(function (item) {
       return {
@@ -10665,9 +10784,18 @@ function aiReviewShortValue(value) {
 
 function aiReviewChangeValue(change) {
   if (!change) return "";
-  if (change.kind === "declaration") return "Repair tagging flags without asserting PDF/UA conformance";
-  if (change.kind === "repair_structure") return "Rebuild tags and place controls beside their labels";
-  if (change.kind === "content_order") return "Page " + change.target + ": " + change.value.length + " text blocks in proposed order";
+  if (change.kind === "declaration")
+    return "Repair tagging flags without asserting PDF/UA conformance";
+  if (change.kind === "repair_structure")
+    return "Rebuild tags and place controls beside their labels";
+  if (change.kind === "content_order")
+    return (
+      "Page " +
+      change.target +
+      ": " +
+      change.value.length +
+      " text blocks in proposed order"
+    );
   return aiReviewShortValue(change.value);
 }
 
@@ -10710,7 +10838,10 @@ function aiReviewPreviousValueText(finding) {
 
 function aiReviewChangeLabel(change) {
   if (!change) return "Manual review required";
-  if (["repair_structure", "content_order", "declaration"].includes(change.kind)) return aiReviewChangeValue(change);
+  if (
+    ["repair_structure", "content_order", "declaration"].includes(change.kind)
+  )
+    return aiReviewChangeValue(change);
   const target = String(change.target || "");
   const subjects = {
     metadata: "document " + (target || "metadata"),
@@ -10810,8 +10941,13 @@ function renderAiAccessibilityReview() {
     return finding.status === "pending" && finding.change;
   });
   document.getElementById("a11y-undo-auto-fix").disabled =
-    !state.accessibility.autoFixSnapshot || review.running || !!state.accessibility.autoFixRunning;
-  a11yAiReviewBtn.disabled = !state.auth.aiEnabled || review.running || !!state.accessibility.autoFixRunning;
+    !state.accessibility.autoFixSnapshot ||
+    review.running ||
+    !!state.accessibility.autoFixRunning;
+  a11yAiReviewBtn.disabled =
+    !state.auth.aiEnabled ||
+    review.running ||
+    !!state.accessibility.autoFixRunning;
   a11yAiReviewBtn.textContent = review.running
     ? "AI check running…"
     : "AI final check";
@@ -11016,18 +11152,37 @@ function applyAiAccessibilityFinding(finding) {
       quiet: true,
     });
   } else if (change.kind === "heading") {
-    const candidate = state.accessibility.headingCandidates.find(function (item) { return item.candidateId === change.target; });
+    const candidate = state.accessibility.headingCandidates.find(
+      function (item) {
+        return item.candidateId === change.target;
+      },
+    );
     if (!candidate) return false;
-    if (!hasPreviousValue) finding.previousValue = Object.assign({}, headingDecision(candidate));
-    setHeadingDecision(change.target, {status: change.value === "P" ? "rejected" : "approved",
-      tag: change.value === "P" ? "H2" : change.value, source: "ai"});
+    if (!hasPreviousValue)
+      finding.previousValue = Object.assign({}, headingDecision(candidate));
+    setHeadingDecision(change.target, {
+      status: change.value === "P" ? "rejected" : "approved",
+      tag: change.value === "P" ? "H2" : change.value,
+      source: "ai",
+    });
     state.accessibility.needsStructureRepair = true;
   } else if (change.kind === "content_order") {
-    const blocks = state.accessibility.contentBlocks.filter(function (block) { return String(Number(block.pageIndex) + 1) === change.target; });
-    if (!Array.isArray(change.value) || change.value.length !== blocks.length ||
-        new Set(change.value).size !== blocks.length ||
-        blocks.some(function (block) { return !change.value.includes(block.blockId); })) return false;
-    if (!hasPreviousValue) finding.previousValue = JSON.parse(JSON.stringify(state.accessibility.contentDecisions));
+    const blocks = state.accessibility.contentBlocks.filter(function (block) {
+      return String(Number(block.pageIndex) + 1) === change.target;
+    });
+    if (
+      !Array.isArray(change.value) ||
+      change.value.length !== blocks.length ||
+      new Set(change.value).size !== blocks.length ||
+      blocks.some(function (block) {
+        return !change.value.includes(block.blockId);
+      })
+    )
+      return false;
+    if (!hasPreviousValue)
+      finding.previousValue = JSON.parse(
+        JSON.stringify(state.accessibility.contentDecisions),
+      );
     blocks.forEach(function (block) {
       const decision = contentDecision(block);
       decision.order = change.value.indexOf(block.blockId);
@@ -11082,7 +11237,9 @@ function ignoreAiAccessibilityFinding(finding) {
       setHeadingDecision(change.target, previous);
       state.accessibility.needsStructureRepair = true;
     } else if (change.kind === "content_order" && previous) {
-      state.accessibility.contentDecisions = JSON.parse(JSON.stringify(previous));
+      state.accessibility.contentDecisions = JSON.parse(
+        JSON.stringify(previous),
+      );
       state.accessibility.needsStructureRepair = true;
     }
     setDirty(true);
@@ -11144,7 +11301,9 @@ async function runAiAccessibilityReview(options) {
       const settled = new Set(
         history
           .filter(function (finding) {
-            return finding.status === "ignored" || finding.status === "reviewed";
+            return (
+              finding.status === "ignored" || finding.status === "reviewed"
+            );
           })
           .map(aiAccessibilityFindingKey),
       );
@@ -11331,71 +11490,107 @@ function remainingAccessibilityIssues() {
       return issue.status !== "pass" && issue.status !== "blocked";
     },
   );
-  const ids = new Set(issues.map(function (issue) { return issue.id; }));
-  ((state.accessibility.readback || {}).findings || []).forEach(function (finding) {
-    if (!ids.has(finding.id)) {
-      issues.push(finding);
-      ids.add(finding.id);
-    }
-  });
+  const ids = new Set(
+    issues.map(function (issue) {
+      return issue.id;
+    }),
+  );
+  ((state.accessibility.readback || {}).findings || []).forEach(
+    function (finding) {
+      if (!ids.has(finding.id)) {
+        issues.push(finding);
+        ids.add(finding.id);
+      }
+    },
+  );
   return issues;
 }
 
 function saveAccessibilityAutoFixSnapshot() {
-  const previous = Object.assign({}, state.accessibility, {autoFixSnapshot: null, autoFixRunning: false});
+  const previous = Object.assign({}, state.accessibility, {
+    autoFixSnapshot: null,
+    autoFixRunning: false,
+  });
   state.accessibility.autoFixSnapshot = {
-    pdfBytes: clonePdfBytes(state.pdfBytes), fileName: state.fileName,
+    pdfBytes: clonePdfBytes(state.pdfBytes),
+    fileName: state.fileName,
     fields: JSON.parse(JSON.stringify(state.fields)),
     accessibility: JSON.parse(JSON.stringify(previous)),
   };
-  document.getElementById("a11y-undo-auto-fix").disabled = !!state.accessibility.autoFixRunning;
+  document.getElementById("a11y-undo-auto-fix").disabled =
+    !!state.accessibility.autoFixRunning;
 }
 
-document.getElementById("a11y-undo-auto-fix").addEventListener("click", async function () {
-  const snapshot = state.accessibility.autoFixSnapshot;
-  if (!snapshot || state.accessibility.autoFixRunning ||
-      (state.accessibility.aiReview || {}).running) return;
-  syncPdfState(snapshot.pdfBytes, snapshot.fileName);
-  state.fields = snapshot.fields;
-  state.accessibility = snapshot.accessibility;
-  try {
-    await refreshPdfDocumentFromState();
-    await inspectAccessibilityData(true, {preserveAccessibilityDrafts: true});
-    renderAccessibilityModal();
-    setDirty(true);
-    document.getElementById("a11y-undo-auto-fix").disabled = true;
-  } catch (error) { showError(error.message || String(error)); }
-});
+document
+  .getElementById("a11y-undo-auto-fix")
+  .addEventListener("click", async function () {
+    const snapshot = state.accessibility.autoFixSnapshot;
+    if (
+      !snapshot ||
+      state.accessibility.autoFixRunning ||
+      (state.accessibility.aiReview || {}).running
+    )
+      return;
+    syncPdfState(snapshot.pdfBytes, snapshot.fileName);
+    state.fields = snapshot.fields;
+    state.accessibility = snapshot.accessibility;
+    try {
+      await refreshPdfDocumentFromState();
+      await inspectAccessibilityData(true, {
+        preserveAccessibilityDrafts: true,
+      });
+      renderAccessibilityModal();
+      setDirty(true);
+      document.getElementById("a11y-undo-auto-fix").disabled = true;
+    } catch (error) {
+      showError(error.message || String(error));
+    }
+  });
 
 async function persistAccessibilityAutoFixDrafts(finalize) {
   if (state.accessibility.needsStructureRepair) {
-    const pendingHeadings = (state.accessibility.headingCandidates || []).some(function (candidate) {
-      return headingDecision(candidate).status === "pending";
-    });
-    if (pendingHeadings) await applyAiHeadingDraft({onlyPending: true});
-    await runAccessibilityRemediation("draft_structure", {
-      overwrite: true,
-      heading_decisions: accessibilityHeadingDecisionPayload(),
-      content_decisions: accessibilityContentDecisionPayload(),
-      mark_as_tagged: false,
-    }, { quiet: true });
+    const pendingHeadings = (state.accessibility.headingCandidates || []).some(
+      function (candidate) {
+        return headingDecision(candidate).status === "pending";
+      },
+    );
+    if (pendingHeadings) await applyAiHeadingDraft({ onlyPending: true });
+    await runAccessibilityRemediation(
+      "draft_structure",
+      {
+        overwrite: true,
+        heading_decisions: accessibilityHeadingDecisionPayload(),
+        content_decisions: accessibilityContentDecisionPayload(),
+        mark_as_tagged: false,
+      },
+      { quiet: true },
+    );
     state.accessibility.needsStructureRepair = false;
   }
   const imageAltText = {};
   state.accessibility.images.forEach(function (image) {
-    if (image.assetId) imageAltText[image.assetId] = String(image.altText || "");
+    if (image.assetId)
+      imageAltText[image.assetId] = String(image.altText || "");
   });
-  const metadataResult = await runAccessibilityRemediation("metadata", {
-    metadata: state.accessibility.metadata,
-    field_tooltips: accessibilityTooltipPayload(),
-    field_order: accessibilityFieldOrderPayload(),
-    image_alt_text: imageAltText,
-    display_doc_title: true,
-    set_structure_tab_order: !!finalize,
-    repair_declaration: !!(finalize || state.accessibility.needsDeclarationRepair),
-    // Only classify leftovers after this workflow has created their tags.
-    mark_untagged_as_artifacts: !!(finalize && state.accessibility.structureDrafted),
-  }, { quiet: true });
+  const metadataResult = await runAccessibilityRemediation(
+    "metadata",
+    {
+      metadata: state.accessibility.metadata,
+      field_tooltips: accessibilityTooltipPayload(),
+      field_order: accessibilityFieldOrderPayload(),
+      image_alt_text: imageAltText,
+      display_doc_title: true,
+      set_structure_tab_order: !!finalize,
+      repair_declaration: !!(
+        finalize || state.accessibility.needsDeclarationRepair
+      ),
+      // Only classify leftovers after this workflow has created their tags.
+      mark_untagged_as_artifacts: !!(
+        finalize && state.accessibility.structureDrafted
+      ),
+    },
+    { quiet: true },
+  );
   state.accessibility.needsDeclarationRepair = false;
   if (finalize) {
     state.accessibility.structureOrderAnchored = Number(
@@ -11403,15 +11598,22 @@ async function persistAccessibilityAutoFixDrafts(finalize) {
     );
     renderAccessibilityOrderList();
   }
-  if (!finalize || !state.accessibility.tagStructure ||
-      !state.accessibility.tagStructure.present) return;
+  if (
+    !finalize ||
+    !state.accessibility.tagStructure ||
+    !state.accessibility.tagStructure.present
+  )
+    return;
   for (const action of ["readback_text", "field_names"]) {
     const findings = (state.accessibility.readback || {}).findings || [];
-    if (findings.some(function (finding) {
-      return action === "field_names"
-        ? finding.category === "field-names" && (finding.suggestions || []).length
-        : finding.suggestion && finding.confident;
-    })) {
+    if (
+      findings.some(function (finding) {
+        return action === "field_names"
+          ? finding.category === "field-names" &&
+              (finding.suggestions || []).length
+          : finding.suggestion && finding.confident;
+      })
+    ) {
       // Omit overrides to use the same concrete defaults shown in the workshop.
       await runAccessibilityRemediation(action, {}, { quiet: true });
     }
@@ -11474,10 +11676,15 @@ async function runAccessibilityAutoFix() {
   const hadTagTree = !!(
     state.accessibility.tagStructure && state.accessibility.tagStructure.present
   );
-  const structuralFindings = (state.accessibility.readback || {}).findings || [];
-  const rebuild = !hadTagTree || structuralFindings.some(function (finding) {
-    return /^readback-(heading-coverage|detached-fields|split-line|nothing-tagged)/.test(String(finding.id));
-  });
+  const structuralFindings =
+    (state.accessibility.readback || {}).findings || [];
+  const rebuild =
+    !hadTagTree ||
+    structuralFindings.some(function (finding) {
+      return /^readback-(heading-coverage|detached-fields|split-line|nothing-tagged)/.test(
+        String(finding.id),
+      );
+    });
   if (rebuild && state.accessibility.headingCandidates.length) {
     summary.aiHeadings = await applyAiHeadingDraft();
     state.accessibility.headingReviewSavedSignature = headingReviewSignature();
@@ -11493,7 +11700,9 @@ async function runAccessibilityAutoFix() {
 
   const aiReviewFindings = await runAiAccessibilityReview({
     applyDrafts: true,
-    persistDrafts: function () { return persistAccessibilityAutoFixDrafts(false); },
+    persistDrafts: function () {
+      return persistAccessibilityAutoFixDrafts(false);
+    },
   });
   summary.aiReviewFindings = aiReviewFindings.length;
   summary.draftedLanguage =
@@ -11508,11 +11717,14 @@ async function runAccessibilityAutoFix() {
   const finalAiFindings = await runAiAccessibilityReview({
     applyDrafts: true,
     preserveHistory: true,
-    persistDrafts: function () { return persistAccessibilityAutoFixDrafts(true); },
+    persistDrafts: function () {
+      return persistAccessibilityAutoFixDrafts(true);
+    },
   });
   state.accessibility.aiReview.findings = finalAiFindings;
   state.accessibility.aiReview.lastSignature = accessibilityAiReviewSignature();
-  summary.aiReviewFindings = unresolvedAiAccessibilityFindings(finalAiFindings).length;
+  summary.aiReviewFindings =
+    unresolvedAiAccessibilityFindings(finalAiFindings).length;
   renderAiAccessibilityReview();
 
   setDirty(true);
@@ -11565,7 +11777,11 @@ async function runAccessibilityAutoFix() {
 
 if (a11yAutoFixBtn) {
   a11yAutoFixBtn.addEventListener("click", async function () {
-    if (state.accessibility.autoFixRunning || state.accessibility.aiReview.running) return;
+    if (
+      state.accessibility.autoFixRunning ||
+      state.accessibility.aiReview.running
+    )
+      return;
     state.accessibility.autoFixRunning = true;
     a11yAutoFixBtn.disabled = true;
     a11yAutoFixBtn.textContent = "Auto-fix running…";
@@ -11574,7 +11790,10 @@ if (a11yAutoFixBtn) {
       false,
     );
     try {
-      await withLoadingOperation("Drafting accessibility fixes with AI…", runAccessibilityAutoFix);
+      await withLoadingOperation(
+        "Drafting accessibility fixes with AI…",
+        runAccessibilityAutoFix,
+      );
     } catch (error) {
       showAccessibilityAutoFixStatus(
         "Auto-fix stopped before completing every step. Earlier draft changes may still have been applied and must be reviewed. PDF/UA conformance was not certified. " +
@@ -11585,7 +11804,8 @@ if (a11yAutoFixBtn) {
     } finally {
       state.accessibility.autoFixRunning = false;
       renderAiAccessibilityReview();
-      document.getElementById("a11y-undo-auto-fix").disabled = !state.accessibility.autoFixSnapshot;
+      document.getElementById("a11y-undo-auto-fix").disabled =
+        !state.accessibility.autoFixSnapshot;
       a11yAutoFixBtn.textContent = "Auto-fix draft (uses AI)";
       a11yAutoFixBtn.disabled = !state.auth.aiEnabled;
       hideLoading();

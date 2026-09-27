@@ -500,6 +500,10 @@
     border-radius: 0.6rem;
     background: #e7f1ff;
 }
+/* The theme's code pink is 4.48:1 on this tint; this shade clears AA. */
+.a11y-certification-bar code {
+    color: #a61e4d;
+}
 .a11y-ai-review {
     padding: 0.75rem 1rem;
     border: 1px solid #dee2e6;

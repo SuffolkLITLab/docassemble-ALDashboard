@@ -2111,6 +2111,130 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         finally:
             os.remove(pdf_path)
 
+    def test_apply_settings_keeps_valid_shared_name_form_references(self):
+        """Form tags ordered unlike /Annots must keep their own widgets."""
+        import pikepdf
+        from pikepdf import Array, Dictionary, Name, String
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf_path = tmp.name
+
+        try:
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            field = pdf.make_indirect(
+                Dictionary({"/FT": Name("/Tx"), "/T": String("shared_name")})
+            )
+
+            def widget(rect):
+                return pdf.make_indirect(
+                    Dictionary(
+                        {
+                            "/Type": Name("/Annot"),
+                            "/Subtype": Name("/Widget"),
+                            "/Parent": field,
+                            "/Rect": Array(rect),
+                        }
+                    )
+                )
+
+            widget_a = widget([0, 700, 100, 720])
+            widget_b = widget([0, 600, 100, 620])
+            field["/Kids"] = Array([widget_a, widget_b])
+            widget_a["/StructParent"] = 1
+            widget_b["/StructParent"] = 0
+            page.obj["/Annots"] = Array([widget_a, widget_b])
+            page.obj["/StructParents"] = 2
+
+            def form_tag(annot):
+                return pdf.make_indirect(
+                    Dictionary(
+                        {
+                            "/Type": Name("/StructElem"),
+                            "/S": Name("/Form"),
+                            "/Pg": page.obj,
+                            "/K": Dictionary(
+                                {
+                                    "/Type": Name("/OBJR"),
+                                    "/Obj": annot,
+                                    "/Pg": page.obj,
+                                }
+                            ),
+                        }
+                    )
+                )
+
+            form_b = form_tag(widget_b)
+            form_a = form_tag(widget_a)
+            document = pdf.make_indirect(
+                Dictionary(
+                    {
+                        "/Type": Name("/StructElem"),
+                        "/S": Name("/Document"),
+                        "/K": Array([form_b, form_a]),
+                    }
+                )
+            )
+            struct_root = pdf.make_indirect(
+                Dictionary(
+                    {
+                        "/Type": Name("/StructTreeRoot"),
+                        "/K": document,
+                        "/ParentTree": Dictionary(
+                            {"/Nums": Array([0, form_b, 1, form_a, 2, Array([])])}
+                        ),
+                        "/ParentTreeNextKey": 3,
+                    }
+                )
+            )
+            for elem in (form_a, form_b):
+                elem["/P"] = document
+            document["/P"] = struct_root
+            pdf.Root["/StructTreeRoot"] = struct_root
+            pdf.Root["/MarkInfo"] = Dictionary({"/Marked": True})
+            pdf.Root["/AcroForm"] = Dictionary({"/Fields": Array([field])})
+            pdf.save(pdf_path)
+            pdf.close()
+
+            def associations(path):
+                with pikepdf.open(path) as opened:
+                    annots = list(opened.pages[0]["/Annots"])
+                    index = {tuple(a.objgen): i for i, a in enumerate(annots)}
+                    nums = list(opened.Root.StructTreeRoot.ParentTree.Nums)
+                    parent_tree = {
+                        int(nums[i]): tuple(nums[i + 1].objgen)
+                        for i in range(0, len(nums), 2)
+                        if isinstance(nums[i + 1], pikepdf.Dictionary)
+                    }
+                    forms = list(opened.Root.StructTreeRoot.K.K)
+                    return {
+                        "objr": [index[tuple(form.K.Obj.objgen)] for form in forms],
+                        "struct_parent": [
+                            int(a["/StructParent"]) if "/StructParent" in a else None
+                            for a in annots
+                        ],
+                        "parent_tree": {
+                            key: [tuple(f.objgen) for f in forms].index(value)
+                            for key, value in parent_tree.items()
+                        },
+                    }
+
+            before = associations(pdf_path)
+            self.assertEqual(before["objr"], [1, 0])
+            self.assertEqual(before["struct_parent"], [1, 0])
+
+            result = apply_pdf_accessibility_settings(
+                input_pdf_path=pdf_path,
+                output_pdf_path=pdf_path,
+                metadata={"title": "Metadata only"},
+                auto_fill_missing_tooltips=False,
+            )
+
+            self.assertEqual(result["form_object_updates"], 0)
+            self.assertEqual(associations(pdf_path), before)
+        finally:
+            os.remove(pdf_path)
+
     def test_accessibility_metadata_updates_dublin_core_xmp(self):
         import pikepdf
 

@@ -13,7 +13,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Set, Tuple, cast
 
 from .standard_font_metrics import (
     is_standard_14,
@@ -1224,10 +1224,18 @@ def _sync_structure_form_alt_text(root: Any) -> int:
 
 
 def _sync_structure_form_objects(pdf: Any) -> int:
-    """Rebind Form OBJR entries after a field export replaces widgets."""
+    """Rebind stale Form OBJR entries after a field export replaces widgets.
+
+    References that already point to a widget on the Form element's page are
+    left alone and reserved, so widgets sharing a field name are never
+    reshuffled between Form elements. Only stale references are rebound, to an
+    unreserved widget with the same page and field name, preferring one with
+    the same /Rect as the widget it replaces.
+    """
     import pikepdf
 
     widgets: Dict[Tuple[Tuple[int, int], str], List[Any]] = {}
+    live_widgets: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
     for page in pdf.pages:
         page_key = tuple(page.objgen)
         for annot in cast(Iterable[Any], page.get("/Annots", [])):
@@ -1235,6 +1243,7 @@ def _sync_structure_form_objects(pdf: Any) -> int:
                 continue
             if _safe_pdf_string(annot.get("/Subtype", "")) != "/Widget":
                 continue
+            live_widgets.add((page_key, tuple(annot.objgen)))
             parent = _named_parent(annot)
             name = _safe_pdf_string(parent.get("/T", "")) if parent else ""
             if name:
@@ -1249,16 +1258,13 @@ def _sync_structure_form_objects(pdf: Any) -> int:
         for key, value in parent_tree.items()
         if hasattr(value, "objgen")
     }
-    updates = 0
 
-    def walk(node: Any) -> None:
-        nonlocal updates
+    form_refs: List[Tuple[Any, Any, Any]] = []
+
+    def collect(node: Any) -> None:
         if not hasattr(node, "get"):
             return
         if _safe_pdf_string(node.get("/S", "")) == "/Form":
-            name = _structure_form_field_name(node)
-            page = cast(Any, node.get("/Pg"))
-            candidates = widgets.get((tuple(page.objgen), name), []) if page else []
             kids = node.get("/K")
             object_refs = list(kids) if isinstance(kids, pikepdf.Array) else [kids]
             object_ref = next(
@@ -1269,36 +1275,76 @@ def _sync_structure_form_objects(pdf: Any) -> int:
                 ),
                 None,
             )
-            if candidates and object_ref is not None:
-                current = candidates.pop(0)
-                previous = cast(Any, object_ref.get("/Obj"))
-                previous_key = (
-                    tuple(previous.objgen) if hasattr(previous, "objgen") else None
-                )
-                current_key = tuple(current.objgen)
-                struct_parent = (
-                    previous.get("/StructParent") if hasattr(previous, "get") else None
-                )
-                if struct_parent is None:
-                    struct_parent = form_keys.get(tuple(node.objgen))
-                changed = previous_key != current_key
-                if (
-                    struct_parent is not None
-                    and current.get("/StructParent") != struct_parent
-                ):
-                    current["/StructParent"] = struct_parent
-                    changed = True
-                if previous_key != current_key:
-                    if hasattr(previous, "get") and "/StructParent" in previous:
-                        del previous["/StructParent"]
-                    object_ref["/Obj"] = current
-                    object_ref["/Pg"] = page
-                if changed:
-                    updates += 1
+            if object_ref is not None:
+                form_refs.append((node, cast(Any, node.get("/Pg")), object_ref))
         for child in _structure_children(node):
-            walk(child)
+            collect(child)
 
-    walk(struct_root)
+    collect(struct_root)
+
+    def is_live(page: Any, annot: Any) -> bool:
+        return (
+            page is not None
+            and hasattr(annot, "objgen")
+            and (tuple(page.objgen), tuple(annot.objgen)) in live_widgets
+        )
+
+    reserved = {
+        tuple(object_ref.get("/Obj").objgen)
+        for _node, page, object_ref in form_refs
+        if is_live(page, object_ref.get("/Obj"))
+    }
+
+    def rect_key(annot: Any) -> Optional[Tuple[float, ...]]:
+        rect = annot.get("/Rect") if hasattr(annot, "get") else None
+        try:
+            return tuple(round(float(value), 2) for value in cast(Any, rect))
+        except Exception:
+            return None
+
+    updates = 0
+    for node, page, object_ref in form_refs:
+        previous = cast(Any, object_ref.get("/Obj"))
+        if is_live(page, previous):
+            # Keep a valid association; only fill a missing back-reference.
+            if "/StructParent" not in previous:
+                struct_parent = form_keys.get(tuple(node.objgen))
+                if struct_parent is not None:
+                    previous["/StructParent"] = struct_parent
+                    updates += 1
+            continue
+        if page is None:
+            continue
+        name = _structure_form_field_name(node)
+        candidates = [
+            annot
+            for annot in widgets.get((tuple(page.objgen), name), [])
+            if tuple(annot.objgen) not in reserved
+        ]
+        if not candidates:
+            continue
+        previous_rect = rect_key(previous)
+        current = next(
+            (
+                annot
+                for annot in candidates
+                if previous_rect is not None and rect_key(annot) == previous_rect
+            ),
+            candidates[0],
+        )
+        reserved.add(tuple(current.objgen))
+        struct_parent = (
+            previous.get("/StructParent") if hasattr(previous, "get") else None
+        )
+        if struct_parent is None:
+            struct_parent = form_keys.get(tuple(node.objgen))
+        if struct_parent is not None:
+            current["/StructParent"] = struct_parent
+        if hasattr(previous, "get") and "/StructParent" in previous:
+            del previous["/StructParent"]
+        object_ref["/Obj"] = current
+        object_ref["/Pg"] = page
+        updates += 1
     return updates
 
 
@@ -5727,9 +5773,108 @@ def analyze_screen_reader_readback(
     }
 
 
-def _pdf_text_string(text: str) -> str:
-    """Escape a run for a PDF literal string."""
-    return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+_OCR_GLYPH_WIDTH = 500
+
+
+def _glyphless_font_program() -> bytes:
+    """Build a TrueType program whose only drawable glyph is empty.
+
+    The OCR layer is never painted (render mode 3), so it needs no outlines;
+    it needs Unicode. Every recognised character becomes its own CID that
+    draws this blank glyph, and the ToUnicode map carries the real text, so
+    no character is lost to a one-byte encoding.
+    """
+    from fontTools.fontBuilder import FontBuilder  # type: ignore[import-untyped]
+    from fontTools.pens.ttGlyphPen import TTGlyphPen  # type: ignore[import-untyped]
+
+    glyph_names = [".notdef", "blank"]
+    builder = FontBuilder(1000, isTTF=True)
+    builder.setupGlyphOrder(glyph_names)
+    builder.setupCharacterMap({})
+    empty = TTGlyphPen(None).glyph()
+    builder.setupGlyf({name: empty for name in glyph_names})
+    builder.setupHorizontalMetrics(
+        {name: (_OCR_GLYPH_WIDTH, 0) for name in glyph_names}
+    )
+    builder.setupHorizontalHeader(ascent=800, descent=-200)
+    builder.setupNameTable(
+        {"familyName": "ALDashboardOCRGlyphless", "styleName": "Regular"}
+    )
+    builder.setupOS2(
+        sTypoAscender=800,
+        sTypoDescender=-200,
+        usWinAscent=800,
+        usWinDescent=200,
+        fsType=0,
+    )
+    builder.setupPost()
+    buffer = io.BytesIO()
+    builder.save(buffer)
+    return buffer.getvalue()
+
+
+def _ocr_text_font(pdf: Any, char_codes: Mapping[str, int]) -> Any:
+    """Return a Type0 font that maps each assigned CID back to its character."""
+    import pikepdf
+
+    program = _glyphless_font_program()
+    font_file = pdf.make_stream(program)
+    font_file["/Length1"] = len(program)
+    descriptor = pdf.make_indirect(
+        pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/FontDescriptor"),
+                "/FontName": pikepdf.Name("/ALDashboardOCRGlyphless"),
+                "/Flags": 4,
+                "/FontBBox": pikepdf.Array([0, -200, _OCR_GLYPH_WIDTH, 800]),
+                "/ItalicAngle": 0,
+                "/Ascent": 800,
+                "/Descent": -200,
+                "/CapHeight": 700,
+                "/StemV": 80,
+                "/FontFile2": font_file,
+            }
+        )
+    )
+    # Every used CID draws glyph 1, the blank one; CID 0 stays .notdef.
+    highest = max(char_codes.values(), default=0)
+    cid_to_gid = bytearray(2 * (highest + 1))
+    for code in char_codes.values():
+        cid_to_gid[2 * code : 2 * code + 2] = (1).to_bytes(2, "big")
+    descendant = pdf.make_indirect(
+        pikepdf.Dictionary(
+            {
+                "/Type": pikepdf.Name("/Font"),
+                "/Subtype": pikepdf.Name("/CIDFontType2"),
+                "/BaseFont": pikepdf.Name("/ALDashboardOCRGlyphless"),
+                "/CIDSystemInfo": pikepdf.Dictionary(
+                    {
+                        "/Registry": pikepdf.String("Adobe"),
+                        "/Ordering": pikepdf.String("Identity"),
+                        "/Supplement": 0,
+                    }
+                ),
+                "/FontDescriptor": descriptor,
+                "/DW": _OCR_GLYPH_WIDTH,
+                "/CIDToGIDMap": pdf.make_stream(bytes(cid_to_gid)),
+            }
+        )
+    )
+    cmap = _confirmed_unicode_cmap(
+        {code: char for char, code in char_codes.items()}, two_byte=True
+    )
+    font = pikepdf.Dictionary(
+        {
+            "/Type": pikepdf.Name("/Font"),
+            "/Subtype": pikepdf.Name("/Type0"),
+            "/BaseFont": pikepdf.Name("/ALDashboardOCRGlyphless"),
+            "/Encoding": pikepdf.Name("/Identity-H"),
+            "/DescendantFonts": pikepdf.Array([descendant]),
+        }
+    )
+    if cmap is not None:
+        font["/ToUnicode"] = pdf.make_stream(cmap)
+    return pdf.make_indirect(font)
 
 
 def _ocr_page_words(
@@ -5909,16 +6054,12 @@ def ocr_image_only_pages(
                 page_height = float(box[3]) - float(box[1])
                 scale_x = page_width / float(words[0]["pixelWidth"])
                 scale_y = page_height / float(words[0]["pixelHeight"])
-                helvetica = pdf.make_indirect(
-                    pikepdf.Dictionary(
-                        {
-                            "/Type": pikepdf.Name("/Font"),
-                            "/Subtype": pikepdf.Name("/Type1"),
-                            "/BaseFont": pikepdf.Name("/Helvetica"),
-                            "/Encoding": pikepdf.Name("/WinAnsiEncoding"),
-                        }
-                    )
-                )
+                # One CID per distinct character keeps every recognised
+                # character, whatever the script, recoverable via ToUnicode.
+                char_codes: Dict[str, int] = {}
+                for word in words:
+                    for ch in word["text"]:
+                        char_codes.setdefault(ch, len(char_codes) + 1)
                 resources = page.get("/Resources")
                 if resources is None:
                     resources = pikepdf.Dictionary()
@@ -5928,8 +6069,7 @@ def ocr_image_only_pages(
                     fonts = pikepdf.Dictionary()
                     resources["/Font"] = fonts
                 font_name = "/DAOCR"
-                fonts[font_name] = helvetica
-                widths = standard_14_widths("helvetica") or {}
+                fonts[font_name] = _ocr_text_font(pdf, char_codes)
                 # Render mode 3 draws nothing: the picture already shows these
                 # words, and a second visible copy would be a mess.
                 # Original content is isolated below so this layer starts in
@@ -5937,27 +6077,20 @@ def ocr_image_only_pages(
                 pieces = ["q", "BT", "3 Tr"]
                 for word in words:
                     size = max(word["height"] * scale_y, 1.0)
-                    natural = (
-                        sum(widths.get(ord(ch), 500) for ch in word["text"])
-                        / 1000.0
-                        * size
-                    )
+                    natural = len(word["text"]) * _OCR_GLYPH_WIDTH / 1000.0 * size
                     target = word["width"] * scale_x
                     stretch = (target / natural * 100.0) if natural else 100.0
                     x = word["left"] * scale_x + float(box[0])
                     baseline = (word["top"] + word["height"] * 0.82) * scale_y
                     y = float(box[3]) - baseline
+                    encoded = "".join(f"{char_codes[ch]:04X}" for ch in word["text"])
                     pieces.append(f"{font_name} {size:.2f} Tf")
                     pieces.append(f"{max(min(stretch, 400.0), 10.0):.1f} Tz")
                     pieces.append(f"1 0 0 1 {x:.2f} {y:.2f} Tm")
-                    pieces.append(f"({_pdf_text_string(word['text'])}) Tj")
+                    pieces.append(f"<{encoded}> Tj")
                 pieces.append("ET")
                 pieces.append("Q")
-                layer = pdf.make_stream(
-                    # The font declares WinAnsiEncoding, which is cp1252; latin-1
-                    # would turn every curly apostrophe into a question mark.
-                    ("\n".join(pieces)).encode("cp1252", "replace")
-                )
+                layer = pdf.make_stream(("\n".join(pieces)).encode("ascii"))
                 contents = page.get("/Contents")
                 original = list(contents) if isinstance(contents, pikepdf.Array) else (
                     [contents] if contents is not None else []

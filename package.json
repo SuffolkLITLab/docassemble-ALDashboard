@@ -12,10 +12,11 @@
     "syntaxcheck": "for file in $npm_package_config_jsFiles; do node --check \"$file\"; done",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run syntaxcheck",
     "test:dialogs": "node --test docassemble/ALDashboard/test/test_labeler_dialogs.node.test.js",
-    "test:pdf-labeler-focus": "node --test docassemble/ALDashboard/test/test_pdf_labeler_focus.node.test.js"
+    "test:pdf-labeler-focus": "node --test docassemble/ALDashboard/test/test_pdf_labeler_focus.node.test.js",
+    "test:a11y-workshop": "node --test docassemble/ALDashboard/test/test_pdf_accessibility_workshop.node.test.js"
   },
   "config": {
-    "jsFiles": "docassemble/ALDashboard/data/static/labeler_dialogs.js docassemble/ALDashboard/data/static/docx_labeler.js docassemble/ALDashboard/data/static/docx_labeler_preview_utils.js docassemble/ALDashboard/data/static/pdf_labeler.js docassemble/ALDashboard/data/static/interview_linter.js .github/scripts/labeler_a11y.js"
+    "jsFiles": "docassemble/ALDashboard/data/static/labeler_dialogs.js docassemble/ALDashboard/data/static/docx_labeler.js docassemble/ALDashboard/data/static/docx_labeler_preview_utils.js docassemble/ALDashboard/data/static/pdf_labeler.js docassemble/ALDashboard/data/static/pdf_accessibility_workshop.js docassemble/ALDashboard/data/static/interview_linter.js .github/scripts/labeler_a11y.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",

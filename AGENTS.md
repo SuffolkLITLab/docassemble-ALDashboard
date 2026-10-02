@@ -57,6 +57,48 @@ Run the focused Python tests for export and attachment mapping, then the static
 labeler extraction tests. When changing browser behavior, also run a JavaScript
 syntax check.
 
+## PDF accessibility workshop
+
+A full-screen review mode of the PDF labeler, opened by the "Accessibility
+workshop" button. Implementation:
+
+- `docassemble/ALDashboard/pdf_accessibility.py`: detection and repairs.
+- `docassemble/ALDashboard/api_labelers.py`: `/pdf-labeler/api/accessibility-*`
+  endpoints. They are stateless: each repair receives the working PDF and
+  returns the repaired one.
+- `docassemble/ALDashboard/data/static/pdf_accessibility_workshop.js`: the
+  workshop module, imported by `pdf_labeler.js`.
+- `docassemble/ALDashboard/data/static/pdf_accessibility_workshop.css`: styles,
+  all scoped under `.aw`.
+- The workshop's markup shell is `#a11y-workshop` in `pdf_labeler.html`,
+  outside `#app` so the editor can be made inert while it is open.
+
+### Contract
+
+- Three steps: find problems (with the repairs that need no judgment applied
+  automatically), review eight reader-facing tasks, then test and export.
+- Machine checks, human review and external testing stay separate evidence.
+  There is no combined score. A task with nothing to review is "not
+  applicable", never "reviewed".
+- Drafts (from nearby text, the layout or AI) never count until a person
+  confirms them. AI calls happen only on an explicit click.
+- Never add the PDF/UA declaration automatically; only the explicit
+  declaration control in Test & export may set it.
+- Reading order, headings and image decisions are applied by rebuilding the
+  draft tag tree from all decisions (`create_draft_structure_tree` with
+  `overwrite`), then re-applying what lives on tag-tree elements (tab order,
+  `/ActualText` corrections). Keep `rebuildSteps()` and
+  `afterStructureSteps()` in step when adding a decision.
+- An earlier tag tree the PDF arrived with is kept until the person chooses to
+  replace it under Headings & tags.
+- Internal field names never change. Only announced names (`/TU`) do.
+
+### Verification
+
+Run `test/test_pdf_accessibility*.py` (including `_api`, `_image_decisions`
+and `_redraft`), `npm run check`, `npm run test:a11y-workshop`, and
+`npm run test:pdf-labeler-focus` (it stubs the workshop import).
+
 ## Court form shapes
 
 The Interview Intake Document Generator can draft a court filing instead of an

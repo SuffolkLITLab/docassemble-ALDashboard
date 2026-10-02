@@ -32,7 +32,8 @@ Ideas:
 
 `docassemble.ALDashboard.pdf_accessibility` provides Python functions for
 inspecting PDFs, detecting accessibility problems, and applying explicit repairs.
-These functions can be called from scripts or a future frontend:
+These functions can be called from scripts, and the PDF labeler's
+**Accessibility workshop** (`/al/pdf-labeler`) is a browser frontend for them:
 
 ```python
 from docassemble.ALDashboard.pdf_accessibility import (

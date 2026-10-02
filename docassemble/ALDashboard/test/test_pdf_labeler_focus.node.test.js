@@ -17,6 +17,10 @@ const labelerSource = fs
   .replace(
     /import \* as pdfjsLib from\s+"[^"]+";/,
     "const pdfjsLib = { GlobalWorkerOptions: {} };",
+  )
+  .replace(
+    /import \{ createAccessibilityWorkshop \} from\s+"[^"]+";/,
+    "const createAccessibilityWorkshop = () => ({ open() {}, close() {}, isOpen() { return false; } });",
   ).concat(`
     window.__pdfLabelerTest = {
       state: state,

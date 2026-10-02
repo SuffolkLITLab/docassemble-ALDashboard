@@ -16,7 +16,7 @@ import re
 import shutil
 import subprocess  # nosec B404 - fixed executable and arguments only
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 __all__ = [
     "simplify_field_label",
@@ -57,11 +57,12 @@ _LEADING_CHECK_IF = re.compile(
     r"\s+(?:if|when|to\s+indicate(?:\s+that)?)\s+",
     re.IGNORECASE,
 )
+_PRINT_NAME = re.compile(r"^print(?:ed)?\s+(?:your\s+|full\s+)?name$", re.IGNORECASE)
 _NAME_OF = re.compile(r"^name\s+of\s+(?:the\s+)?(.+)$", re.IGNORECASE)
 _TRAILING_NOISE = re.compile(r"\s+here$|[\s:*_.]+$|^[\s:*•·_-]+", re.IGNORECASE)
 
 # Words that name one answer among several printed next to their boxes.
-_OPTION_TEXT_LIMIT = 40
+_OPTION_TEXT_LIMIT = 80
 
 
 def _tidy(text: str) -> str:
@@ -100,14 +101,20 @@ def simplify_field_label(text: Any) -> str:
     value = _tidy(raw)
     if not value or _OPERATION_ONLY.match(raw) or _OPERATION_ONLY.match(value):
         return ""
+    # "Print name" beside a signature line asks for the printed name, which
+    # is not the same thing as the signature.
+    if _PRINT_NAME.match(value):
+        return "Printed name"
     stripped = _LEADING_CHECK_IF.sub("", value, count=1)
     if stripped == value:
         stripped = _LEADING_INSTRUCTION.sub("", value, count=1)
+    instructed = stripped != value
     stripped = _tidy(stripped)
     named = _NAME_OF.match(stripped)
-    # "name of county" is the county; "name of the person who filed the
-    # first case" is still a name, and reads better left as it is.
-    if named and len(named.group(1).split()) <= 2:
+    # "Type name of county" asks for the county. A label that simply says
+    # "Name of Petitioner" already names the information and is left alone,
+    # as is a long "name of the person who ..." phrase.
+    if instructed and named and len(named.group(1).split()) <= 2:
         stripped = named.group(1)
     return _capitalize(stripped) if stripped else ""
 
@@ -133,6 +140,9 @@ def field_label_problem(tooltip: Any, field_name: Any) -> str:
     # respelled as "users1 name" is an identifier read aloud.
     name = str(field_name or "").strip()
     if _squash(value) == _squash(name) and not re.search(r"\s", name):
+        return "derived"
+    # "court_division_bmc" is some field's identifier, whichever field.
+    if re.fullmatch(r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+", value):
         return "derived"
     if _squash(simplify_field_label(value)) != _squash(_tidy(value)):
         return "instruction"
@@ -182,6 +192,15 @@ def read_page_words(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
                 right = float(word.attrib["xMax"]) / width
                 bottom = float(word.attrib["yMax"]) / height
             except (KeyError, ValueError):
+                continue
+            # Some forms draw their text twice (a fake bold, or a flattened
+            # copy under the live one); one copy is enough.
+            if any(
+                other["text"] == text
+                and abs(other["box"]["x"] - left) < 0.004
+                and abs(other["box"]["y"] - top) < 0.004
+                for other in words[-40:]
+            ):
                 continue
             words.append(
                 {
@@ -242,7 +261,10 @@ def _run(
     even when "(name and relationship):" for the next blank follows it.
     """
     line = sorted(
-        (word for word in words if _same_line(word, start["box"])),
+        (
+            word for word in words
+            if abs(_middle(word["box"]) - _middle(start["box"])) < start["box"]["height"] * 0.5
+        ),
         key=lambda word: word["box"]["x"],
     )
     index = next(i for i, word in enumerate(line) if word is start)
@@ -290,30 +312,95 @@ def _phrase_text(phrase: List[Mapping[str, Any]]) -> str:
     return " ".join(str(word["text"]) for word in phrase)
 
 
+def _covers(box: Mapping[str, float], word: Mapping[str, float]) -> bool:
+    width = min(_right(box), _right(word)) - max(box["x"], word["x"])
+    height = min(_bottom(box), _bottom(word)) - max(box["y"], word["y"])
+    if width <= 0 or height <= 0:
+        return False
+    smaller = min(word["width"] * word["height"], box["width"] * box["height"])
+    return width * height >= 0.25 * smaller
+
+
+def _option_on_side(
+    field: Mapping[str, Any],
+    words: List[Dict[str, Any]],
+    stops: List[Mapping[str, float]],
+    side: int,
+) -> Optional[Tuple[List[Dict[str, Any]], float]]:
+    """The words printed right beside a box on one side (``1`` right, ``-1``
+    left), and how far they sit from it."""
+    box = field["box"]
+    # A box drawn over printed words ("week/month (circle one)") marks one
+    # of those words; it has no answer beside it to read. A single character
+    # under a box is usually the box itself, drawn as a symbol-font glyph.
+    if any(
+        _covers(box, word["box"]) and _letters(str(word["text"])) >= 2
+        for word in words
+    ):
+        return None
+    reach = max(box["width"], box["height"]) * 2.5
+    others = [stop for stop in stops if stop is not box]
+    if side > 0:
+        near = [
+            (word["box"]["x"] - _right(box), word) for word in words
+            if _same_line(word, box)
+            and -box["width"] * 0.3 <= word["box"]["x"] - _right(box) <= reach
+        ]
+    else:
+        near = [
+            (box["x"] - _right(word["box"]), word) for word in words
+            if _same_line(word, box)
+            and -box["width"] * 0.3 <= box["x"] - _right(word["box"]) <= reach
+        ]
+    if not near:
+        return None
+    gap, start = min(near, key=lambda item: item[0])
+    # "Check one: [ ] yes": text ending in a colon or question mark just
+    # left of a box asks the question; it is not that box's answer.
+    if side < 0 and str(start["text"]).endswith(("?", ":")):
+        return None
+    phrase = _run(words, start, side, others)
+    # The question often runs straight into its first answer ("Own home?
+    # Yes"); an answer starts after the question's final "?" or ":".
+    for index in range(len(phrase) - 1, -1, -1):
+        if str(phrase[index]["text"]).endswith(("?", ":")) and index < len(phrase) - 1:
+            phrase = phrase[index + 1 :]
+            break
+    return phrase, max(gap, 0.0)
+
+
 def _option_beside(
     field: Mapping[str, Any], words: List[Dict[str, Any]], stops: List[Mapping[str, float]]
 ) -> Optional[List[Dict[str, Any]]]:
-    """The words printed just to the right of a box (or, failing that, just
-    to its left): the answer that box stands for."""
-    box = field["box"]
-    reach = max(box["width"], box["height"]) * 2.5
-    right = [
-        word for word in words
-        if _same_line(word, box)
-        and -box["width"] * 0.3 <= word["box"]["x"] - _right(box) <= reach
+    """The words a lone box stands for: whichever side hugs it closer."""
+    found = [
+        item for item in (
+            _option_on_side(field, words, stops, 1),
+            _option_on_side(field, words, stops, -1),
+        )
+        if item is not None
     ]
-    if right:
-        start = min(right, key=lambda word: word["box"]["x"])
-        return _run(words, start, 1, [s for s in stops if s is not box])
-    left = [
-        word for word in words
-        if _same_line(word, box)
-        and -box["width"] * 0.3 <= box["x"] - _right(word["box"]) <= reach
-    ]
-    if left:
-        start = max(left, key=lambda word: _right(word["box"]))
-        return _run(words, start, -1, [s for s in stops if s is not box])
-    return None
+    if not found:
+        return None
+    return min(found, key=lambda item: item[1])[0]
+
+
+def _clean_option(text: str) -> str:
+    value = _tidy(text).rstrip("*").strip(" ,;")
+    value = re.sub(r"^(?:or|and)\s+|\s+(?:or|and)$", "", value, flags=re.IGNORECASE)
+    return value.strip(" ,;")
+
+
+def _option_core(text: str) -> str:
+    """An answer without its parenthetical directions: "Yes (go to #10)" is
+    the answer "Yes"."""
+    return _squash(re.sub(r"\([^)]*\)?", " ", _clean_option(text)))
+
+
+def _clean_question(text: str) -> str:
+    value = _without_enumerator(_tidy(text)).strip(" ,;")
+    # A comma or a stray letter left of the boxes is not a question.
+    return value if len(re.findall(r"[^\W\d_]", value)) >= 3 else ""
 
 
 def _question_for(
@@ -321,9 +408,8 @@ def _question_for(
 ) -> Optional[List[Dict[str, Any]]]:
     """The words that ask the question a row of boxes answers.
 
-    They sit on the same line, left of the first box. When that text begins
-    mid-sentence it wrapped from the line above, so earlier lines are added
-    until the sentence starts (at most two).
+    They sit on the same line, left of the first box, or on the line above
+    when the answers have a line of their own.
     """
     box = first["box"]
     left = [
@@ -331,9 +417,17 @@ def _question_for(
         if _same_line(word, box) and _right(word["box"]) <= box["x"] + 0.002
     ]
     if not left:
-        return None
+        above = _question_above(box, words, stops)
+        return _with_wrapped_start(above, words, stops) if above else None
     start = max(left, key=lambda word: _right(word["box"]))
-    phrase = _run(words, start, -1, stops)
+    return _with_wrapped_start(_run(words, start, -1, stops), words, stops)
+
+
+def _with_wrapped_start(
+    phrase: List[Dict[str, Any]], words: List[Dict[str, Any]], stops: List[Mapping[str, float]]
+) -> List[Dict[str, Any]]:
+    """Text that begins mid-sentence wrapped from the line above; add earlier
+    lines until the sentence starts (at most two)."""
     for _ in range(2):
         opening = _phrase_text(phrase)
         if _ENUMERATOR.match(opening) or re.match(r"^[\W\d]*[A-Z0-9]", opening):
@@ -358,18 +452,58 @@ def _question_for(
     return phrase
 
 
+def _question_above(
+    box: Mapping[str, float], words: List[Dict[str, Any]], stops: List[Mapping[str, float]]
+) -> Optional[List[Dict[str, Any]]]:
+    """A row of answers on a line of its own is asked on the line above. Only
+    a line that reads as a question (ending "?" or ":") is taken, so a
+    heading or the previous answer's text is never borrowed."""
+    above = [
+        word for word in words
+        if 0 < box["y"] - _bottom(word["box"]) <= box["height"] * 1.5
+        and word["box"]["x"] <= box["x"] + 0.02
+    ]
+    if not above:
+        return None
+    lowest = max(_middle(word["box"]) for word in above)
+    start = min(
+        (word for word in above if abs(_middle(word["box"]) - lowest) < box["height"] * 0.5),
+        key=lambda word: word["box"]["x"],
+    )
+    phrase = _run(words, start, 1, stops)
+    return phrase if _phrase_text(phrase).rstrip().endswith(("?", ":")) else None
+
+
+def _letters(text: str) -> int:
+    return len(re.findall(r"[^\W\d_]", text))
+
+
+_NOT_A_LABEL = {"or", "and", "if", "of", "the", "to", "a", "an", "per"}
+
+
+def _is_label(text: str) -> bool:
+    """Words that could name a blank: not just a "$", leader dots, or a
+    connective left over from the sentence around it."""
+    tidy = _tidy(text)
+    return _letters(tidy) >= 2 and tidy.casefold() not in _NOT_A_LABEL
+
+
 def _nearby_label(
     field: Mapping[str, Any], words: List[Dict[str, Any]], stops: List[Mapping[str, float]]
 ) -> Optional[Dict[str, Any]]:
-    """The printed words that introduce a text box: the phrase just left of it
-    on its line, else the line just above it. A short line just below it
-    ("first", "MM/DD/YYYY") is kept as a qualifier."""
+    """The printed words that introduce a text box.
+
+    In order: the phrase just left of it on its line (looking past a lone
+    "$" or "(" to the words before it), the line just above it (a column
+    heading), or, when neither exists, the small print just below it
+    ("first", "State"). Small print below is otherwise kept as a qualifier.
+    """
     box = field["box"]
     others = [stop for stop in stops if stop is not box]
     left = [
         word for word in words
         if _same_line(word, box)
-        and 0 <= box["x"] - _right(word["box"]) <= 0.3
+        and -0.01 <= box["x"] - _right(word["box"]) <= 0.3
     ]
     label: Optional[List[Dict[str, Any]]] = None
     where = ""
@@ -387,13 +521,59 @@ def _nearby_label(
             _between(stop, _right(start["box"]), box["x"], box) for stop in others
         ):
             label = _run(words, start, -1, others)
-            where = "left"
+            # "Income from assets   $ [______]": the "$" is a unit, and the
+            # label is the phrase before it.
+            for _ in range(4):
+                if _is_label(_phrase_text(label)):
+                    break
+                head = label[0]["box"]
+                # Beside a tall blank the label may sit a little above or
+                # below the "$"; any line level with the blank will do.
+                before = [
+                    word for word in words
+                    if _same_line(word, box)
+                    and 0 <= head["x"] - _right(word["box"]) <= 0.5
+                ]
+                if not before:
+                    break
+                closest = min(abs(_middle(word["box"]) - _middle(box)) for word in before)
+                previous = max(
+                    (
+                        word for word in before
+                        if abs(_middle(word["box"]) - _middle(box)) - closest < 0.004
+                    ),
+                    key=lambda word: _right(word["box"]),
+                )
+                if any(_between(stop, _right(previous["box"]), head["x"], head) for stop in others):
+                    break
+                label = _run(words, previous, -1, others)
+            if not _is_label(_phrase_text(label)):
+                label = None
+            else:
+                where = "left"
+                # "Dental and/or vision insurance: I pay $ [____]": a short
+                # phrase is the end of a sentence whose subject precedes it.
+                head = label[0]["box"]
+                before = [
+                    word for word in words
+                    if abs(_middle(word["box"]) - _middle(head)) < head["height"] * 0.5
+                    and 0 <= head["x"] - _right(word["box"]) <= 0.2
+                ]
+                if len(label) <= 2 and before:
+                    previous = max(before, key=lambda word: _right(word["box"]))
+                    if str(previous["text"]).endswith(":") and not any(
+                        _between(stop, _right(previous["box"]), head["x"], head) for stop in others
+                    ):
+                        label = _run(words, previous, -1, others) + label
+    reach = max(box["height"] * 1.5, 0.035)
     if label is None:
+        # A "$" from the row above is not a column heading.
         above = [
             word for word in words
-            if 0 <= box["y"] - _bottom(word["box"]) <= max(box["height"], 0.012) * 1.5
+            if 0 <= box["y"] - _bottom(word["box"]) <= reach
             and word["box"]["x"] < _right(box)
             and _right(word["box"]) > box["x"]
+            and _letters(str(word["text"])) >= 1
         ]
         if above:
             lowest = max(_middle(word["box"]) for word in above)
@@ -402,18 +582,27 @@ def _nearby_label(
                 key=lambda word: word["box"]["x"],
             )
             where = "above"
-    if not label:
-        return None
-    label_height = min(word["box"]["height"] for word in label)
-    # Only small print tucked under the blank qualifies it; ordinary text
-    # there is the next line of the form.
-    below = [
+    under = [
         word for word in words
         if 0 <= word["box"]["y"] - _bottom(box) <= max(box["height"], 0.012) * 0.9
         and word["box"]["x"] >= box["x"] - 0.01
         and _right(word["box"]) <= _right(box) + 0.01
-        and word["box"]["height"] < label_height * 0.95
     ]
+    if not label:
+        if not under or not _is_label(_phrase_text(under)):
+            return None
+        under.sort(key=lambda word: word["box"]["x"])
+        return {
+            "text": _without_enumerator(_tidy(_phrase_text(under))),
+            "required": False,
+            "box": _union(word["box"] for word in under),
+            "qualifierBox": None,
+            "where": "below",
+        }
+    label_height = min(word["box"]["height"] for word in label)
+    # Only small print tucked under the blank qualifies it; ordinary text
+    # there is the next line of the form.
+    below = [word for word in under if word["box"]["height"] < label_height * 0.95]
     qualifier = _tidy(" ".join(word["text"] for word in sorted(below, key=lambda w: w["box"]["x"])))
     text = _without_enumerator(_tidy(_phrase_text(label)))
     if qualifier and len(qualifier) <= 30 and qualifier.casefold() not in text.casefold():
@@ -447,14 +636,16 @@ def _option_groups(
     for page_index, choices in by_page.items():
         words = words_by_page.get(page_index) or []
         stops = [field["box"] for field in fields if field.get("box") and int(field["pageIndex"]) == page_index]
-        options: Dict[int, List[Dict[str, Any]]] = {}
+        sides: Dict[int, Dict[int, Tuple[List[Dict[str, Any]], float]]] = {}
         for index, field in enumerate(choices):
-            phrase = _option_beside(field, words, stops)
-            text = _tidy(_phrase_text(phrase)) if phrase else ""
-            if phrase and 0 < len(text) <= _OPTION_TEXT_LIMIT:
-                options[index] = phrase
+            for side in (1, -1):
+                found_side = _option_on_side(field, words, stops, side)
+                if found_side is None:
+                    continue
+                if _clean_option(_phrase_text(found_side[0])):
+                    sides.setdefault(index, {})[side] = found_side
         rows: List[List[int]] = []
-        for index in sorted(options, key=lambda i: (choices[i]["box"]["y"], choices[i]["box"]["x"])):
+        for index in sorted(sides, key=lambda i: (choices[i]["box"]["y"], choices[i]["box"]["x"])):
             box = choices[index]["box"]
             row = next(
                 (
@@ -471,18 +662,44 @@ def _option_groups(
             if len(row) < 2:
                 continue
             row.sort(key=lambda i: choices[i]["box"]["x"])
-            question = _question_for(choices[row[0]], words, stops)
-            question_text = (
-                _without_enumerator(_tidy(_phrase_text(question))) if question else ""
+            # Answers sit on one side of their boxes throughout a row: "[ ] Yes
+            # [ ] No" or "Yes [ ] No [ ]". Take the side most boxes have, then
+            # the one whose words hug the boxes closer; a box without an
+            # answer on that side is not part of the row.
+            side = min(
+                (1, -1),
+                key=lambda option_side: (
+                    -sum(1 for i in row if option_side in sides[i]),
+                    sum(sides[i][option_side][1] for i in row if option_side in sides[i]),
+                ),
             )
+            # An answer is short; a long run beside a box is a sentence the
+            # box sits in, not one of a row of answers.
+            row = [
+                index for index in row
+                if side in sides[index]
+                and len(_clean_option(_phrase_text(sides[index][side][0]))) <= _OPTION_TEXT_LIMIT
+            ]
+            if len(row) < 2:
+                continue
+            options = {index: sides[index][side][0] for index in row}
+            first_box = choices[row[0]]["box"]
+            if side < 0:
+                start = _union(word["box"] for word in options[row[0]]) or first_box
+                first_box = dict(first_box, x=start["x"])
+            question = _question_for({"box": first_box}, words, stops)
+            question_text = _clean_question(_phrase_text(question)) if question else ""
             for position, index in enumerate(row):
-                option_text = _tidy(_phrase_text(options[index]))
                 found[choices[index]["name"]] = {
                     "question": question_text,
-                    "option": option_text,
+                    "option": _clean_option(_phrase_text(options[index])),
                     "position": position,
                     "size": len(row),
-                    "questionBox": _union(word["box"] for word in question) if question else None,
+                    "questionBox": (
+                        _union(word["box"] for word in question)
+                        if question and question_text
+                        else None
+                    ),
                     "optionBox": _union(word["box"] for word in options[index]),
                     "members": [choices[i]["name"] for i in row],
                 }
@@ -539,14 +756,17 @@ def suggest_field_labels(
             }
             entry["labelBox"] = group["questionBox"]
             entry["optionBox"] = group["optionBox"]
-            option = str(group["option"]).rstrip("*").strip().casefold()
+            core = _option_core(group["option"])
             # Two boxes cannot share a name that leaves out their answer.
-            if not problem and option and option not in current.casefold():
+            if not problem and core and core not in _squash(current):
                 entry["problem"] = "option-missing"
             if entry["problem"]:
-                entry["suggested"] = _group_label(
-                    dict(group, option=str(group["option"]).rstrip("*").strip())
-                )
+                question = group["question"]
+                # No question printed beside the row: the form's own name for
+                # the box may still say what is being asked.
+                if not question and cleaned and _squash(cleaned) != core:
+                    question = cleaned
+                entry["suggested"] = _group_label(dict(group, question=question))
                 entry["source"] = "option-group"
         elif field.get("box"):
             words = words_by_page.get(int(field.get("pageIndex") or 0)) or []

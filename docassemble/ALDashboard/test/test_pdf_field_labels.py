@@ -26,7 +26,7 @@ class TestSimplifyFieldLabel(unittest.TestCase):
             "Fill in the case number": "Case number",
             "Check if you are the Plaintiff": "You are the Plaintiff",
             "Check this box if the mother is deceased": "The mother is deceased",
-            "Print your name here": "Your name",
+            "Print your name here": "Printed name",
         }
         for given, expected in cases.items():
             with self.subTest(given=given):
@@ -174,6 +174,149 @@ class TestOptionGroups(unittest.TestCase):
         self.assertEqual(
             labels["y"]["suggested"], "Have there been other cases about this? Yes"
         )
+
+
+class TestCorpusRegressions(unittest.TestCase):
+    """Cases found by running these rules over the interview-template corpus."""
+
+    def test_a_plain_name_of_label_is_already_a_name(self):
+        for label in ("Name of Petitioner/Tenant", "NAME OF PLAINTIFF’S SCHOOL"):
+            with self.subTest(label=label):
+                self.assertEqual(field_label_problem(label, "x"), "")
+                self.assertEqual(simplify_field_label(label), label)
+
+    def test_print_name_is_the_printed_name_not_just_a_name(self):
+        self.assertEqual(simplify_field_label("Print Name"), "Printed name")
+
+    def test_an_identifier_read_aloud_is_not_a_name(self):
+        self.assertEqual(field_label_problem("court_division_bmc", "court_bmc"), "derived")
+        self.assertEqual(field_label_problem("NAME_Row_1", "AGE_Row_1"), "derived")
+
+    def test_a_name_with_the_answer_and_its_directions_is_kept(self):
+        words = {
+            0: [
+                _word("Decided?", 0.10, 0.30, 0.06),
+                _word("Yes", 0.20, 0.30, 0.03),
+                _word("(go", 0.235, 0.30, 0.02),
+                _word("to", 0.258, 0.30, 0.012),
+                _word("#10)", 0.273, 0.30, 0.03),
+                _word("No", 0.34, 0.30, 0.02),
+            ]
+        }
+        labels = suggest_field_labels(
+            [
+                _box("y", 0.175, 0.30, tooltip="Yes (if yes, go to #10"),
+                _box("n", 0.315, 0.30, tooltip="No"),
+            ],
+            words,
+        )
+        self.assertEqual(labels["y"]["problem"], "")
+        self.assertEqual(labels["y"]["group"]["option"], "Yes (go to #10)")
+
+    def test_answers_printed_before_their_boxes(self):
+        # "Own Home? Yes [ ] No [ ] Market Value $"
+        words = {
+            0: [
+                _word("Own", 0.10, 0.10, 0.03),
+                _word("Home?", 0.135, 0.10, 0.045),
+                _word("Yes", 0.19, 0.10, 0.03),
+                _word("No", 0.245, 0.10, 0.02),
+                _word("Market", 0.30, 0.10, 0.05),
+                _word("Value", 0.355, 0.10, 0.04),
+            ]
+        }
+        labels = suggest_field_labels(
+            [_box("home_yes", 0.221, 0.10), _box("home_no", 0.266, 0.10)], words
+        )
+        self.assertEqual(labels["home_yes"]["suggested"], "Own Home? Yes")
+        self.assertEqual(labels["home_no"]["suggested"], "Own Home? No")
+
+    def test_a_long_answer_does_not_flip_the_row_to_the_other_side(self):
+        words = {
+            0: [
+                _word("This", 0.10, 0.20, 0.03),
+                _word("is", 0.135, 0.20, 0.015),
+                _word("the", 0.155, 0.20, 0.02),
+                _word("60", 0.205, 0.20, 0.015),
+                _word("Day", 0.225, 0.20, 0.025),
+                _word("Report", 0.255, 0.20, 0.04),
+            ]
+            + [
+                _word(text, 0.35 + index * 0.06, 0.20, 0.05)
+                for index, text in enumerate(
+                    "Annual Report for the reporting period of".split()
+                )
+            ]
+        }
+        labels = suggest_field_labels(
+            [_box("sixty", 0.182, 0.20), _box("annual", 0.327, 0.20)], words
+        )
+        self.assertEqual(labels["sixty"]["suggested"], "This is the: 60 Day Report")
+        self.assertEqual(labels["annual"]["group"]["option"], "Annual Report for the reporting period of")
+
+    def test_boxes_drawn_over_words_are_not_answer_boxes(self):
+        # "per week/month (circle one)" with a box over each word.
+        words = {
+            0: [
+                _word("I", 0.50, 0.40, 0.01),
+                _word("pay", 0.515, 0.40, 0.03),
+                _word("per", 0.60, 0.40, 0.025),
+                _word("week/month", 0.63, 0.40, 0.09),
+                _word("(circle", 0.73, 0.40, 0.05),
+                _word("one).", 0.785, 0.40, 0.04),
+            ]
+        }
+        labels = suggest_field_labels(
+            [_box("per_week", 0.632, 0.40), _box("per_month", 0.68, 0.40)], words
+        )
+        self.assertNotIn("group", labels["per_week"])
+
+    def test_a_box_drawn_as_a_symbol_glyph_is_still_an_answer_box(self):
+        # Forms that draw the empty box as a Wingdings "F" under the widget.
+        words = {
+            0: [
+                _word("Married?", 0.10, 0.30, 0.07),
+                _word("F", 0.401, 0.30, 0.016),
+                _word("Yes", 0.43, 0.30, 0.03),
+                _word("F", 0.491, 0.30, 0.016),
+                _word("No", 0.52, 0.30, 0.02),
+            ]
+        }
+        labels = suggest_field_labels(
+            [_box("yes", 0.40, 0.30), _box("no", 0.49, 0.30)], words
+        )
+        self.assertEqual(labels["no"]["suggested"], "Married? No")
+
+    def test_a_question_on_the_line_above_its_answers(self):
+        words = {
+            0: [
+                _word("Do", 0.10, 0.50, 0.02),
+                _word("you", 0.125, 0.50, 0.03),
+                _word("own", 0.16, 0.50, 0.03),
+                _word("land?", 0.195, 0.50, 0.04),
+                _word("Yes", 0.13, 0.52, 0.03),
+                _word("No", 0.20, 0.52, 0.02),
+            ]
+        }
+        labels = suggest_field_labels(
+            [_box("land_yes", 0.105, 0.52), _box("land_no", 0.175, 0.52)], words
+        )
+        self.assertEqual(labels["land_no"]["suggested"], "Do you own land? No")
+
+    def test_a_dollar_sign_is_not_the_label_of_the_blank_after_it(self):
+        labels = suggest_field_labels(
+            [_box("income", 0.42, 0.70, kind="text", width=0.15, height=0.02)],
+            {
+                0: [
+                    _word("J.", 0.08, 0.70, 0.015),
+                    _word("Income", 0.10, 0.70, 0.05),
+                    _word("from", 0.155, 0.70, 0.03),
+                    _word("Assets", 0.19, 0.70, 0.045),
+                    _word("$", 0.40, 0.70, 0.01),
+                ]
+            },
+        )
+        self.assertEqual(labels["income"]["suggested"], "Income from Assets")
 
 
 class TestTextFieldLabels(unittest.TestCase):

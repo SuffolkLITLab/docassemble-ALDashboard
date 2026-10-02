@@ -1,5 +1,6 @@
 // @ts-expect-error pdf.js is loaded from its CDN URL in the browser.
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs";
+import { createAccessibilityWorkshop } from "./pdf_accessibility_workshop.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
@@ -198,7 +199,6 @@ const state = {
   },
   usePlaygroundVariables: false,
   accessibility: {
-    enabled: true,
     fieldOrder: [],
     metadata: {
       language: "",
@@ -207,8 +207,6 @@ const state = {
       subject: "",
     },
     images: [],
-    imageMode: false,
-    tagStructure: null,
     inspected: false,
   },
 };
@@ -263,7 +261,6 @@ let currentVisiblePageIndex = 0;
 let fieldsListProgrammaticScroll = false;
 let pageManagerState = null;
 let pageManagerDragPageId = null;
-let a11yDragFieldId = null;
 
 const fileInput = document.getElementById("file-input");
 const pdfContainer = document.getElementById("pdf-container");
@@ -328,22 +325,10 @@ const closeRepairBtn = document.getElementById("close-repair");
 const repairStatus = document.getElementById("repair-status");
 const repairStatusText = document.getElementById("repair-status-text");
 const utilitiesBtn = document.getElementById("utilities-btn");
-const accessibilityBtn = document.getElementById("accessibility-btn");
-const previewBtn = document.getElementById("preview-btn");
-const accessibilityModal = document.getElementById("accessibility-modal");
-const closeAccessibilityBtn = document.getElementById("close-accessibility");
-const a11yEnableInput = document.getElementById("a11y-enable");
-const a11yAutofillTooltipsBtn = document.getElementById(
-  "a11y-autofill-tooltips",
+const accessibilityWorkshopBtn = document.getElementById(
+  "accessibility-workshop-btn",
 );
-const a11yFieldList = document.getElementById("a11y-field-list");
-const a11yMetaLanguage = document.getElementById("a11y-meta-language");
-const a11yMetaTitle = document.getElementById("a11y-meta-title");
-const a11yMetaAuthor = document.getElementById("a11y-meta-author");
-const a11yMetaSubject = document.getElementById("a11y-meta-subject");
-const a11yImageModeInput = document.getElementById("a11y-image-mode");
-const a11yImageList = document.getElementById("a11y-image-list");
-const a11yTagStructure = document.getElementById("a11y-tag-structure");
+const previewBtn = document.getElementById("preview-btn");
 const utilitiesModal = document.getElementById("utilities-modal");
 const utilitiesCloseBtn = document.getElementById("utilities-close");
 const fieldRenameSummaryModal = document.getElementById(
@@ -1135,7 +1120,8 @@ function updateFieldCount() {
       !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
   }
   previewBtn.disabled = !state.pdfBytes || totalCount === 0;
-  accessibilityBtn.disabled = !state.pdfBytes;
+  if (accessibilityWorkshopBtn)
+    accessibilityWorkshopBtn.disabled = !state.pdfBytes;
   managePagesBtn.disabled = !state.pdfBytes;
   if (!state.pdfBytes || totalCount === 0) {
     state.previewMode = false;
@@ -1282,140 +1268,6 @@ function refreshAccessibilityFromFields() {
   reconcileAccessibilityFieldOrder();
 }
 
-function renderAccessibilityFieldList() {
-  if (!a11yFieldList) return;
-  a11yFieldList.innerHTML = "";
-  if (!state.fields.length) {
-    a11yFieldList.innerHTML =
-      '<div class="small text-muted">No fields detected yet.</div>';
-    return;
-  }
-  const fragment = document.createDocumentFragment();
-  state.accessibility.fieldOrder.forEach(function (fieldId, index) {
-    const field = state.fields.find(function (candidate) {
-      return candidate.id === fieldId;
-    });
-    if (!field) return;
-    const row = document.createElement("div");
-    row.className = "a11y-field-row border rounded p-2";
-    row.dataset.fieldId = field.id;
-    row.innerHTML =
-      '<div class="d-flex align-items-center justify-content-between gap-2 mb-2">' +
-      '<div class="d-flex align-items-center gap-1">' +
-      '<span class="a11y-drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span>' +
-      '<div class="small fw-semibold">' +
-      escapeHtml(field.name) +
-      "</div>" +
-      "</div>" +
-      '<div class="btn-group btn-group-sm">' +
-      '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' +
-      escapeHtml(field.id) +
-      '"' +
-      (index === 0 ? " disabled" : "") +
-      ">Up</button>" +
-      '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' +
-      escapeHtml(field.id) +
-      '"' +
-      (index === state.accessibility.fieldOrder.length - 1 ? " disabled" : "") +
-      ">Down</button>" +
-      "</div>" +
-      "</div>" +
-      '<label class="form-label small text-muted mb-1" for="a11y-tooltip-' +
-      escapeHtml(field.id) +
-      '">Tooltip</label>' +
-      '<input id="a11y-tooltip-' +
-      escapeHtml(field.id) +
-      '" type="text" class="form-control form-control-sm" data-a11y-action="tooltip" data-field-id="' +
-      escapeHtml(field.id) +
-      '" value="' +
-      escapeHtml(String(field.tooltip || "")) +
-      '">';
-    fragment.appendChild(row);
-  });
-  a11yFieldList.appendChild(fragment);
-}
-
-function renderAccessibilityImages() {
-  if (!a11yImageList) return;
-  a11yImageList.innerHTML = "";
-  const showImages = !!state.accessibility.imageMode;
-  a11yImageList.classList.toggle("hidden", !showImages);
-  if (!showImages) return;
-  if (!state.accessibility.images.length) {
-    a11yImageList.innerHTML =
-      '<div class="small text-muted">No embedded image assets were detected.</div>';
-    return;
-  }
-  const fragment = document.createDocumentFragment();
-  state.accessibility.images.forEach(function (imageAsset) {
-    const row = document.createElement("div");
-    row.className = "border rounded p-2";
-    row.innerHTML =
-      '<div class="small fw-semibold mb-1">Page ' +
-      (Number(imageAsset.pageIndex || 0) + 1) +
-      " - " +
-      escapeHtml(String(imageAsset.name || imageAsset.assetId || "Image")) +
-      "</div>" +
-      '<div class="small text-muted mb-1">Asset ID: ' +
-      escapeHtml(String(imageAsset.assetId || "")) +
-      "</div>" +
-      '<input type="text" class="form-control form-control-sm" data-a11y-action="image-alt" data-asset-id="' +
-      escapeHtml(String(imageAsset.assetId || "")) +
-      '" value="' +
-      escapeHtml(String(imageAsset.altText || "")) +
-      '" placeholder="Alternative text">';
-    fragment.appendChild(row);
-  });
-  a11yImageList.appendChild(fragment);
-}
-
-function renderAccessibilityTagStructure() {
-  if (!a11yTagStructure) return;
-  const summary = state.accessibility.tagStructure;
-  if (!summary || !summary.present) {
-    a11yTagStructure.textContent = "No document tag tree detected.";
-    return;
-  }
-  const lines = [
-    "Tag tree present: yes",
-    "Nodes: " + String(summary.node_count || 0),
-    "Max depth: " + String(summary.max_depth || 0),
-    "",
-    "Preview:",
-  ];
-  const preview = Array.isArray(summary.preview) ? summary.preview : [];
-  if (!preview.length) {
-    lines.push("(no preview nodes available)");
-  } else {
-    preview.forEach(function (line) {
-      lines.push(String(line));
-    });
-  }
-  a11yTagStructure.textContent = lines.join("\n");
-}
-
-function renderAccessibilityModal() {
-  refreshAccessibilityFromFields();
-  a11yEnableInput.checked = !!state.accessibility.enabled;
-  a11yImageModeInput.checked = !!state.accessibility.imageMode;
-  a11yMetaLanguage.value = String(state.accessibility.metadata.language || "");
-  a11yMetaTitle.value = String(state.accessibility.metadata.title || "");
-  a11yMetaAuthor.value = String(state.accessibility.metadata.author || "");
-  a11yMetaSubject.value = String(state.accessibility.metadata.subject || "");
-  renderAccessibilityFieldList();
-  renderAccessibilityImages();
-  renderAccessibilityTagStructure();
-}
-
-function updateAccessibilityMetadataFromInputs() {
-  state.accessibility.metadata = {
-    language: String(a11yMetaLanguage.value || "").trim(),
-    title: String(a11yMetaTitle.value || "").trim(),
-    author: String(a11yMetaAuthor.value || "").trim(),
-    subject: String(a11yMetaSubject.value || "").trim(),
-  };
-}
-
 async function inspectAccessibilityData(forceRefresh) {
   if (!state.pdfBytes) return;
   if (state.accessibility.inspected && !forceRefresh) return;
@@ -1492,18 +1344,11 @@ async function inspectAccessibilityData(forceRefresh) {
         };
       })
     : [];
-  state.accessibility.tagStructure = payload.data.tag_structure || null;
   state.accessibility.inspected = true;
   refreshAccessibilityFromFields();
 }
 
 function buildAccessibilityPayload(exportNameMap) {
-  if (!state.accessibility.enabled) {
-    return {
-      enabled: false,
-      auto_fill_missing_tooltips: true,
-    };
-  }
   const fieldTooltips = {};
   state.fields.forEach(function (field) {
     const exportName = exportNameMap.get(field.id);
@@ -3009,7 +2854,6 @@ function syncPdfState(pdfBytes, fileName, originalFile) {
   }
   state.accessibility.inspected = false;
   state.accessibility.images = [];
-  state.accessibility.tagStructure = null;
   updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
 }
 
@@ -5454,6 +5298,43 @@ async function relabelFields() {
   }
 }
 
+// Write the editor's fields into the PDF on the server and return the
+// result. Export, and the accessibility workshop, both start from this.
+async function applyFieldsToPdf(exportNameMap, deduplicateFieldNames) {
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  formData.append(
+    "fields",
+    JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)),
+  );
+  formData.append(
+    "accessibility",
+    JSON.stringify(buildAccessibilityPayload(exportNameMap)),
+  );
+  formData.append(
+    "deduplicate_field_names",
+    deduplicateFieldNames ? "true" : "false",
+  );
+  const response = await fetch(apiUrl("/pdf-labeler/api/apply-fields"), {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: formData,
+  });
+  const data = await parseApiResponse(response);
+  if (!data.success) {
+    throw new Error((data.error && data.error.message) || "Export failed.");
+  }
+  if (!data.data || !data.data.pdf_base64) {
+    throw new Error("The export endpoint did not return a PDF.");
+  }
+  return {
+    bytes: base64ToUint8Array(data.data.pdf_base64),
+    filename:
+      data.data.filename ||
+      stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
+  };
+}
+
 async function exportPdf() {
   if (!state.pdfBytes || state.fields.length === 0) {
     showError("There are no fields to export.");
@@ -5487,40 +5368,12 @@ async function exportPdf() {
 
   showLoading("Exporting PDF...");
   try {
-    const formData = new FormData();
-    formData.append("file", getPdfFileForRequests());
-    formData.append(
-      "fields",
-      JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)),
+    const applied = await applyFieldsToPdf(
+      exportNameMap,
+      deduplicateFieldNames,
     );
-    formData.append(
-      "accessibility",
-      JSON.stringify(buildAccessibilityPayload(exportNameMap)),
-    );
-    formData.append(
-      "deduplicate_field_names",
-      deduplicateFieldNames ? "true" : "false",
-    );
-
-    const response = await fetch(apiUrl("/pdf-labeler/api/apply-fields"), {
-      method: "POST",
-      headers: { Accept: "application/json" },
-      body: formData,
-    });
-    const data = await parseApiResponse(response);
-    if (!data.success) {
-      throw new Error((data.error && data.error.message) || "Export failed.");
-    }
-
-    if (!data.data || !data.data.pdf_base64) {
-      throw new Error("The export endpoint did not return a PDF.");
-    }
-
-    const outputBytes = base64ToUint8Array(data.data.pdf_base64);
-    const filename =
-      data.data.filename ||
-      (state.fileName || "edited-form").replace(/\.pdf$/i, "") +
-        "-with-fields.pdf";
+    const outputBytes = applied.bytes;
+    const filename = applied.filename;
 
     const blob = new Blob([outputBytes], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
@@ -6826,138 +6679,76 @@ repairPromptCancelBtn.addEventListener("click", function () {
   state._pendingRepairFile = null;
   pdfEmpty.classList.remove("hidden");
 });
-accessibilityBtn.addEventListener("click", async function () {
-  if (!state.pdfBytes) return;
-  await inspectAccessibilityData(false).catch(function () {
-    showError("Could not inspect accessibility metadata for this PDF.");
-  });
-  renderAccessibilityModal();
-  accessibilityModal.classList.remove("hidden");
-});
-closeAccessibilityBtn.addEventListener("click", function () {
-  updateAccessibilityMetadataFromInputs();
-  accessibilityModal.classList.add("hidden");
-});
-a11yEnableInput.addEventListener("change", function () {
-  state.accessibility.enabled = !!a11yEnableInput.checked;
-});
-a11yImageModeInput.addEventListener("change", function () {
-  state.accessibility.imageMode = !!a11yImageModeInput.checked;
-  renderAccessibilityImages();
-});
-a11yAutofillTooltipsBtn.addEventListener("click", function () {
-  state.fields.forEach(function (field) {
-    if (!String(field.tooltip || "").trim()) {
-      field.tooltip = defaultTooltipFromFieldName(field.name);
-    }
-  });
-  renderAccessibilityFieldList();
-  setDirty(true);
-});
-[a11yMetaLanguage, a11yMetaTitle, a11yMetaAuthor, a11yMetaSubject].forEach(
-  function (input) {
-    input.addEventListener("input", function () {
-      updateAccessibilityMetadataFromInputs();
-      setDirty(true);
-    });
+const accessibilityWorkshop = createAccessibilityWorkshop({
+  pdfjsLib: pdfjsLib,
+  apiUrl: apiUrl,
+  parseApiResponse: parseApiResponse,
+  downloadBlob: downloadBlob,
+  showError: showError,
+  showSuccess: showSuccess,
+  aiEnabled: function () {
+    return !!state.auth.aiEnabled;
   },
-);
-a11yFieldList.addEventListener("input", function (event) {
-  var target = event.target;
-  if (!target || !target.dataset) return;
-  if (target.dataset.a11yAction !== "tooltip") return;
-  var fieldId = target.dataset.fieldId;
-  var field = state.fields.find(function (candidate) {
-    return candidate.id === fieldId;
+  model: function () {
+    return state.model || "";
+  },
+  onClose: function () {
+    if (accessibilityWorkshopBtn) accessibilityWorkshopBtn.focus();
+  },
+});
+
+// The workshop reviews the PDF as it would export: fields written in, with
+// exact duplicate names made unique the same way export does.
+function workshopNameMap() {
+  return buildExportNameMap({
+    deduplicate:
+      !exportDeduplicateFieldNamesInput ||
+      exportDeduplicateFieldNamesInput.checked,
   });
-  if (!field) return;
-  field.tooltip = String(target.value || "");
-  setDirty(true);
-});
-a11yFieldList.addEventListener("click", function (event) {
-  var actionTarget = event.target.closest("[data-a11y-action]");
-  if (!actionTarget) return;
-  var action = actionTarget.dataset.a11yAction;
-  var fieldId = actionTarget.dataset.fieldId;
-  if (!fieldId || (action !== "move-up" && action !== "move-down")) return;
-  var order = state.accessibility.fieldOrder.slice();
-  var index = order.indexOf(fieldId);
-  if (index < 0) return;
-  var swapWith = action === "move-up" ? index - 1 : index + 1;
-  if (swapWith < 0 || swapWith >= order.length) return;
-  var temp = order[swapWith];
-  order[swapWith] = order[index];
-  order[index] = temp;
-  state.accessibility.fieldOrder = order;
-  renderAccessibilityFieldList();
-  setDirty(true);
-});
-a11yFieldList.addEventListener("dragstart", function (event) {
-  if (!event.target.closest(".a11y-drag-handle")) return;
-  var row = event.target.closest("[data-field-id]");
-  if (!row) return;
-  a11yDragFieldId = row.dataset.fieldId;
-  row.classList.add("a11y-dragging");
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
+}
+
+function workshopSignature() {
+  if (!state.pdfBytes) return "";
+  return [
+    state.fileName,
+    state.pdfBytes.byteLength,
+    JSON.stringify(convertFieldsToAbsoluteCoordinates(workshopNameMap())),
+  ].join("|");
+}
+
+async function prepareWorkshopPdf() {
+  const exportNameMap = workshopNameMap();
+  const renamedFields = getRenamedFields(exportNameMap);
+  if (
+    !state.fields.length ||
+    (!state.hasUnsavedChanges && renamedFields.length === 0)
+  ) {
+    return { bytes: clonePdfBytes(state.pdfBytes), filename: state.fileName };
   }
-});
-a11yFieldList.addEventListener("dragend", function () {
-  a11yDragFieldId = null;
-  a11yFieldList
-    .querySelectorAll(".a11y-dragging, .a11y-drag-over")
-    .forEach(function (el) {
-      el.classList.remove("a11y-dragging", "a11y-drag-over");
-    });
-});
-a11yFieldList.addEventListener("dragover", function (event) {
-  if (!a11yDragFieldId) return;
-  event.preventDefault();
-  var row = event.target.closest("[data-field-id]");
-  a11yFieldList.querySelectorAll(".a11y-drag-over").forEach(function (el) {
-    el.classList.remove("a11y-drag-over");
+  const applied = await applyFieldsToPdf(
+    exportNameMap,
+    !exportDeduplicateFieldNamesInput ||
+      exportDeduplicateFieldNamesInput.checked,
+  );
+  showFieldRenameSummary(
+    renamedFields,
+    "The accessibility workshop reviews the PDF with these renamed exact duplicate fields.",
+  );
+  return { bytes: applied.bytes, filename: state.fileName };
+}
+
+function openAccessibilityWorkshop() {
+  if (!state.pdfBytes) return;
+  accessibilityWorkshop.open({
+    signature: workshopSignature(),
+    getPdf: prepareWorkshopPdf,
   });
-  if (row && row.dataset.fieldId !== a11yDragFieldId) {
-    row.classList.add("a11y-drag-over");
-  }
-});
-a11yFieldList.addEventListener("drop", function (event) {
-  if (!a11yDragFieldId) return;
-  event.preventDefault();
-  var targetRow = event.target.closest("[data-field-id]");
-  var order = state.accessibility.fieldOrder.slice();
-  var fromIndex = order.indexOf(a11yDragFieldId);
-  if (fromIndex < 0) return;
-  var toIndex;
-  if (targetRow && targetRow.dataset.fieldId !== a11yDragFieldId) {
-    toIndex = order.indexOf(targetRow.dataset.fieldId);
-    if (toIndex < 0) return;
-  } else if (!targetRow) {
-    toIndex = order.length;
-  } else {
-    return;
-  }
-  order.splice(fromIndex, 1);
-  var adjustedIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
-  order.splice(adjustedIndex, 0, a11yDragFieldId);
-  state.accessibility.fieldOrder = order;
-  a11yDragFieldId = null;
-  renderAccessibilityFieldList();
-  setDirty(true);
-});
-a11yImageList.addEventListener("input", function (event) {
-  var target = event.target;
-  if (!target || !target.dataset) return;
-  if (target.dataset.a11yAction !== "image-alt") return;
-  var assetId = String(target.dataset.assetId || "");
-  if (!assetId) return;
-  var imageAsset = state.accessibility.images.find(function (item) {
-    return String(item.assetId || "") === assetId;
-  });
-  if (!imageAsset) return;
-  imageAsset.altText = String(target.value || "");
-  setDirty(true);
-});
+}
+
+if (accessibilityWorkshopBtn) {
+  accessibilityWorkshopBtn.addEventListener("click", openAccessibilityWorkshop);
+}
+
 settingsBtn.addEventListener("click", function () {
   aiModelInput.value = state.model || state.defaultModel;
   renderModelSuggestions("");
@@ -7093,13 +6884,6 @@ document.addEventListener("mousedown", function (event) {
   ) {
     settingsModal.classList.add("hidden");
     aiModelSuggestions.classList.add("hidden");
-  }
-  if (
-    !accessibilityModal.classList.contains("hidden") &&
-    event.target === accessibilityModal
-  ) {
-    updateAccessibilityMetadataFromInputs();
-    accessibilityModal.classList.add("hidden");
   }
   if (
     !normalizationModal.classList.contains("hidden") &&
@@ -7418,7 +7202,6 @@ document.addEventListener("keydown", function (event) {
     selectField(null, { focusNameInput: false, scrollIntoView: false });
     aiModelSuggestions.classList.add("hidden");
     settingsModal.classList.add("hidden");
-    accessibilityModal.classList.add("hidden");
     normalizationModal.classList.add("hidden");
     if (!pageManagerModal.classList.contains("hidden")) {
       closePageManager();

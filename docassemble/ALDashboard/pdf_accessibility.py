@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import math
@@ -334,7 +335,7 @@ def draft_heading_levels_with_ai(
     """Classify supplied heading candidates after an explicit AI request."""
     from docassemble.ALToolbox.llms import chat_completion
 
-    records = []
+    records: List[Dict[str, Any]] = []
     allowed_ids: set[str] = set()
     for candidate in candidates:
         candidate_id = str(candidate.get("candidateId") or "").strip()
@@ -620,7 +621,7 @@ def review_pdf_accessibility_with_ai(
     for block in blocks:
         blocks_by_page.setdefault(str(block.get("page")), set()).add(str(block["blockId"]))
     heading_ids = {str(item["candidateId"]) for item in headings}
-    prompt_context = {
+    prompt_context: Dict[str, Any] = {
         "filename": str(context.get("filename") or "")[:300],
         "metadata": {
             key: str(metadata_input.get(key) or "")[:500] for key in metadata_keys
@@ -941,8 +942,10 @@ def review_pdf_accessibility_with_ai(
                 value = re.sub(r"\s+", " ", value).strip()[:500]
             elif isinstance(value, list):
                 value = list(value)
-            else:
+            elif isinstance(value, Mapping):
                 value = dict(value)
+            else:
+                return None
             return {"kind": kind, "target": target, "value": value}
 
         # Reconstruct from prose whenever the model supplied no change *or* one
@@ -1917,7 +1920,7 @@ def _walk_appearance_streams(value: Any) -> Iterable[Any]:
     if isinstance(value, pikepdf.Stream):
         yield value
     elif isinstance(value, pikepdf.Dictionary):
-        for child in value.values():
+        for _, child in value.items():
             yield from _walk_appearance_streams(child)
 
 
@@ -4359,7 +4362,7 @@ def _text_run_geometry(
     """
     identity = (1., 0., 0., 1., 0., 0.)
     ctm = identity
-    line = identity
+    line: Tuple[float, ...] = identity
     leading = 0.
     stack = []
     result = {}
@@ -4615,11 +4618,13 @@ def _readback_sequence(
     # Content inside a Form XObject has its own MCID space, so it is collected
     # against the stream it belongs to rather than the page.
     stream_runs: Dict[Any, Dict[int, Dict[str, Any]]] = {}
+    stream_paths: Dict[Any, str] = {}
     for page in pdf.pages:
         placements = _form_placements(page)
         for _path, obj in _walk_resource_xobjects(page.get("/Resources")):
             if _safe_pdf_string(obj.get("/Subtype", "")) != "/Form":
                 continue
+            stream_paths.setdefault(obj.objgen, _path)
             if obj.objgen in stream_runs:
                 continue
             # Without the form's placement its runs are in its own coordinate
@@ -4712,6 +4717,16 @@ def _readback_sequence(
                 "x": (record or {}).get("x"),
                 "rotation": (record or {}).get("rotation", 0),
             }
+            # MCIDs, object numbers and announcement positions change on redraft.
+            # Identify the drawn run by its source and page-space geometry instead.
+            # Duplicate identities are deliberately rejected when applying a fix.
+            if record is not None and page_index is not None:
+                identity = [page_index, stream_paths.get(stream_key, "page"),
+                            record.get("text", ""), record.get("x"), record.get("y"),
+                            record.get("rotation", 0)]
+                entry["contentId"] = hashlib.sha256(
+                    json.dumps(identity, ensure_ascii=True).encode("utf-8")
+                ).hexdigest()
             if keep_elements:
                 entry["element"] = node
                 entry["content_reference"] = content_reference
@@ -4749,6 +4764,11 @@ def _readback_sequence(
                 "y": top,
                 "x": left,
             }
+            if page_index is not None and rect is not None:
+                identity = [page_index, "field", field_entry["name"], list(map(float, rect))]
+                field_entry["contentId"] = hashlib.sha256(
+                    json.dumps(identity).encode("utf-8")
+                ).hexdigest()
             if keep_elements:
                 field_entry["element"] = node
                 field_entry["annotation"] = annot
@@ -5135,7 +5155,7 @@ def _duplicate_field_distinguishers(
         # collision defeats the entire point, so anything that is not
         # uniquely its own text within this component still earns the
         # position suffix.
-        drafts = []
+        drafts: List[Dict[str, Any]] = []
         for local_position, item in enumerate(ordered, start=1):
             position = (
                 local_position
@@ -5254,7 +5274,7 @@ def _layout_review_findings(sequence: List[Dict[str, Any]]) -> List[Dict[str, An
         letters = [i for i in page_items if len(i["text"].strip()) == 1
                    and i["text"].strip().isalpha()]
         vertical = []
-        used_letters = set()
+        used_letters: set[int] = set()
         for first in letters:
             if first["index"] in used_letters:
                 continue
@@ -5290,7 +5310,7 @@ def _layout_review_findings(sequence: List[Dict[str, Any]]) -> List[Dict[str, An
         # column. Group spatially, not by consecutive announcement indices.
         candidates = [i for i in page_items if len(i["text"]) <= 180
                       and i not in rotated and i not in vertical]
-        visited = set()
+        visited: set[int] = set()
         for heading in candidates:
             if not re.fullmatch(r"H[1-6]", str(heading.get("role"))) or heading["index"] in visited:
                 continue
@@ -5323,7 +5343,7 @@ def _layout_review_findings(sequence: List[Dict[str, Any]]) -> List[Dict[str, An
 
         # A short wrapped column label split by another column is ambiguous:
         # row-wise traversal is valid for data rows but breaks stacked headers.
-        flagged = set()
+        flagged: set[int] = set()
         flagged_bands: List[float] = []
         def column_start(run: Dict[str, Any]) -> bool:
             # Inline font changes and fill-in blanks create separate runs on
@@ -5395,8 +5415,9 @@ def _unmarked_image_findings(pdf: Any) -> List[Dict[str, Any]]:
                 instructions = pikepdf.parse_content_stream(container)
             except Exception:
                 return
-            for args, operator in instructions:
-                op = str(operator)
+            for instruction in instructions:
+                args = instruction.operands
+                op = str(instruction.operator)
                 if op in {"BMC", "BDC"}:
                     stack.append(covered)
                     covered = covered or bool(args and str(args[0]) == "/Artifact") or bool(
@@ -5443,7 +5464,7 @@ def _select_readback_review_findings(
         key = (finding.get("page"), str(finding.get("review", {}).get("task")
                                        or finding.get("category") or "other"))
         buckets.setdefault(key, []).append(finding)
-    selected = []
+    selected: List[Dict[str, Any]] = []
     depth = 0
     while len(selected) < limit:
         layer = [bucket[depth] for bucket in buckets.values() if len(bucket) > depth]
@@ -5709,6 +5730,7 @@ def analyze_screen_reader_readback(
                 "id": f"readback-unmappable-{item['index']}",
                 "severity": "fail",
                 "category": "text-encoding",
+                "contentId": item.get("contentId"),
                 "title": "Content on the page is never spoken",
                 "detail": (
                     f"{item['unmapped']} glyph(s) drawn in {font_name} have no "
@@ -5747,6 +5769,7 @@ def analyze_screen_reader_readback(
                 "id": f"readback-symbol-as-text-{item['index']}",
                 "severity": "fail",
                 "category": "text-encoding",
+                "contentId": item.get("contentId"),
                 "title": "A symbol is announced as a letter",
                 "detail": (
                     f"{item.get('font')} draws symbols, but its character map "
@@ -5773,6 +5796,7 @@ def analyze_screen_reader_readback(
                 "id": f"readback-mispronounced-{item['index']}",
                 "severity": "fail" if correction["confident"] else "warning",
                 "category": "text-encoding",
+                "contentId": item.get("contentId"),
                 "title": "Text would be spoken as something it does not say",
                 "detail": (
                     f"\u201c{announced[:60]}\u201d contains "
@@ -5842,6 +5866,7 @@ def analyze_screen_reader_readback(
         "announcements": [
             {
                 "index": item["index"],
+                "contentId": item.get("contentId"),
                 "page": item["page"],
                 "kind": item["kind"],
                 "role": item.get("role", ""),
@@ -6360,22 +6385,8 @@ def repair_readback_text(
     """
     import pikepdf
 
-    overrides: Dict[int, Optional[str]] = {}
-    for item in decisions or []:
-        if not isinstance(item, Mapping):
-            continue
-        try:
-            index = int(item.get("announcedIndex"))  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            continue
-        apply_flag = item.get("apply", True)
-        if isinstance(apply_flag, str):
-            apply_flag = apply_flag.strip().lower() not in {"false", "0", "no", ""}
-        if not apply_flag:
-            overrides[index] = None
-            continue
-        value = re.sub(r"\s+", " ", str(item.get("actualText") or "")).strip()
-        overrides[index] = value[:2000] or None
+    requested = [item for item in decisions or [] if isinstance(item, Mapping)]
+    unresolved: List[Dict[str, Any]] = []
 
     applied: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
@@ -6386,6 +6397,34 @@ def repair_readback_text(
                     "This PDF has no tag tree, so there is nothing to give replacement text to."
                 )
             sequence = _readback_sequence(pdf, keep_elements=True)
+            by_identity: Dict[str, List[int]] = {}
+            for run in sequence:
+                if run.get("contentId"):
+                    by_identity.setdefault(run["contentId"], []).append(run["index"])
+            overrides: Dict[int, Optional[str]] = {}
+            for decision in requested:
+                if "contentId" in decision:
+                    matches = by_identity.get(str(decision["contentId"]), [])
+                    if len(matches) != 1:
+                        unresolved.append({
+                            "contentId": decision["contentId"],
+                            "reason": "Content is missing or ambiguous; correction was not applied.",
+                        })
+                        continue
+                    index = matches[0]
+                else:
+                    # Compatibility for one-shot API clients. The workshop always
+                    # sends an identity, never a saved announcement position.
+                    try:
+                        index = int(decision.get("announcedIndex"))  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
+                        continue
+                apply_flag = decision.get("apply", True)
+                if isinstance(apply_flag, str):
+                    apply_flag = apply_flag.strip().lower() not in {"false", "0", "no", ""}
+                value = re.sub(r"\s+", " ", str(decision.get("actualText") or "")).strip()
+                overrides[index] = value[:2000] if apply_flag and value else None
+
             for item in sequence:
                 element = item.get("element")
                 if element is None:
@@ -6465,6 +6504,7 @@ def repair_readback_text(
     return {
         "action": "readback_text",
         "actual_text_added": len(applied),
+        "unresolved_decisions": unresolved,
         "applied": applied[:200],
         "needs_review": skipped[:200],
         "review_required": True,
@@ -7159,8 +7199,9 @@ def _heading_exclusion_boxes(pdf_path: str) -> Dict[int, List[Dict[str, float]]]
             matrix = (1., 0., 0., 1., 0., 0.)
             stack = []
             rectangles = []
-            for operands, operator in pikepdf.parse_content_stream(page):
-                op = str(operator)
+            for instruction in pikepdf.parse_content_stream(page):
+                operands = instruction.operands
+                op = str(instruction.operator)
                 if op == "q":
                     stack.append(matrix)
                 elif op == "Q":
@@ -8529,8 +8570,8 @@ def create_draft_structure_tree(
                 page_part["/K"] = pikepdf.Array(page_children)
 
             parent_tree_numbers: List[Any] = []
-            for key in sorted(parent_tree_entries):
-                parent_tree_numbers.extend([key, parent_tree_entries[key]])
+            for parent_tree_key in sorted(parent_tree_entries):
+                parent_tree_numbers.extend([parent_tree_key, parent_tree_entries[parent_tree_key]])
             document["/K"] = pikepdf.Array(document_children)
             struct_root["/K"] = document
             struct_root["/ParentTree"] = pdf.make_indirect(
@@ -8817,7 +8858,10 @@ def apply_manual_structure_repairs(
                         annot["/TU"] = pikepdf.String(description[:1000])
                         struct_parent = annot.get("/StructParent")
                         try:
-                            form_element = number_entries.get(int(struct_parent))
+                            form_element = (
+                                number_entries.get(int(struct_parent))
+                                if struct_parent is not None else None
+                            )
                         except (TypeError, ValueError):
                             form_element = None
                         if (

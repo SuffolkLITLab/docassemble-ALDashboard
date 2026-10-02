@@ -1,3 +1,4 @@
+# do not pre-load
 """Semantic control placement survives AI column ordering and export metadata."""
 from unittest.mock import patch
 

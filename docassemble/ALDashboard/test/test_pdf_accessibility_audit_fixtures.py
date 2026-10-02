@@ -1,3 +1,4 @@
+# do not pre-load
 """Optional integration checks against the all_interviews audit corpus.
 
 Set ALDASHBOARD_AUDIT_FIXTURES to its root when it is not ~/all_interviews.

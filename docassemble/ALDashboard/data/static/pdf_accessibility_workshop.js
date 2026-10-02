@@ -351,6 +351,48 @@ export function spokenAnnouncement(item, fieldsByName) {
   return text;
 }
 
+// Only serializable review state belongs in a PDF history entry. Keep Sets
+// intact and detach nested drafts so subsequent edits cannot mutate history.
+const DECISION_KEYS = [
+  "preexistingTree",
+  "treeDecision",
+  "reviewed",
+  "meta",
+  "names",
+  "tabOrder",
+  "tabConfirmedPages",
+  "tabEdited",
+  "blockOrder",
+  "blockRoles",
+  "orderEditedPages",
+  "orderConfirmedPages",
+  "headings",
+  "images",
+  "links",
+  "tables",
+  "textFixes",
+  "glyphs",
+  "external",
+  "recording",
+  "declare",
+  "receipts",
+  "receiptDetails",
+  "integrity",
+  "aiNotes",
+  "aiDismissed",
+  "aiRanAt",
+];
+
+export function snapshotDecisions(state) {
+  return structuredClone(
+    Object.fromEntries(
+      DECISION_KEYS.map(function (key) {
+        return [key, state[key]];
+      }),
+    ),
+  );
+}
+
 export function createAccessibilityWorkshop(host) {
   const root = document.getElementById("a11y-workshop");
   if (!root) {
@@ -386,6 +428,7 @@ export function createAccessibilityWorkshop(host) {
       working: null,
       version: 0,
       history: [],
+      savedDecisions: null,
       inspection: null,
       originalInspection: null,
       pdfDoc: null,
@@ -496,6 +539,15 @@ export function createAccessibilityWorkshop(host) {
       bytes || ws.working,
       Object.assign({ action: action }, fields),
     );
+    const unresolved =
+      (data.remediation_result || {}).unresolved_decisions || [];
+    if (unresolved.length) {
+      host.showError(
+        plural(unresolved.length, "saved text correction") +
+          " could not be applied because the content is missing or ambiguous. " +
+          "The corrections were kept for review; no other passage received them.",
+      );
+    }
     return {
       bytes: base64ToBytes(data.pdf_base64),
       result: data.remediation_result || {},
@@ -511,30 +563,32 @@ export function createAccessibilityWorkshop(host) {
   // ---------------------------------------------------------------------
 
   async function loadWorkingCopy(bytes) {
-    ws.working = bytes;
-    ws.version += 1;
-    pageCanvasCache.clear();
     const inspection = await inspect(bytes);
-    if (ws.pdfDoc) {
-      try {
-        ws.pdfDoc.destroy();
-      } catch (_error) {}
-    }
     // pdf.js transfers the buffer it is given, so hand it a copy.
-    ws.pdfDoc = await host.pdfjsLib.getDocument({ data: bytes.slice() })
+    const pdfDoc = await host.pdfjsLib.getDocument({ data: bytes.slice() })
       .promise;
-    ws.pageViews = [];
+    const pageViews = [];
     const widgets = [];
-    for (let index = 0; index < ws.pdfDoc.numPages; index += 1) {
-      const page = await ws.pdfDoc.getPage(index + 1);
+    for (let index = 0; index < pdfDoc.numPages; index += 1) {
+      const page = await pdfDoc.getPage(index + 1);
       const view = page.view;
-      ws.pageViews.push(view);
+      pageViews.push(view);
       const annotations = await page.getAnnotations({ intent: "display" });
       annotations.forEach(function (annotation) {
         if (annotation.annotationType !== 20 || !annotation.fieldName) return;
         widgets.push({ pageIndex: index, view: view, annotation: annotation });
       });
     }
+    if (ws.pdfDoc) {
+      try {
+        ws.pdfDoc.destroy();
+      } catch (_error) {}
+    }
+    ws.working = bytes;
+    ws.version += 1;
+    pageCanvasCache.clear();
+    ws.pdfDoc = pdfDoc;
+    ws.pageViews = pageViews;
     ws.inspection = inspection;
     buildFields(widgets);
     ws.page = Math.min(ws.page, Math.max(0, ws.pageViews.length - 1));
@@ -644,11 +698,14 @@ export function createAccessibilityWorkshop(host) {
       ws.original = prepared.bytes.slice();
       render();
       setBusy("Inspecting every page…");
-      ws.originalInspection = await inspect(ws.original);
+      await loadWorkingCopy(ws.original);
+      ws.originalInspection = ws.inspection;
       ws.preexistingTree = !!(
         ws.originalInspection.tag_structure &&
         ws.originalInspection.tag_structure.present
       );
+      initializeDecisions();
+      const originalDecisions = snapshotDecisions(ws);
       const repaired = await runAutomaticRepairs(ws.original);
       await loadWorkingCopy(repaired);
       checkIntegrity();
@@ -656,11 +713,13 @@ export function createAccessibilityWorkshop(host) {
         ws.history.push({
           label: "Automatic repairs",
           bytes: ws.original,
+          decisions: originalDecisions,
           taskId: "",
           at: new Date(),
         });
       }
       initializeDecisions();
+      saveDecisions();
     } catch (error) {
       host.showError(
         "The accessibility workshop could not inspect this PDF: " +
@@ -779,6 +838,14 @@ export function createAccessibilityWorkshop(host) {
   // ---------------------------------------------------------------------
 
   function initializeDecisions() {
+    // Automatic font repairs can change extracted block IDs. Each initial
+    // version gets its own drafts, including the original version for Undo.
+    ws.names = {};
+    ws.headings = {};
+    ws.images = {};
+    ws.links = {};
+    ws.tables = {};
+    ws.blockOrder = {};
     const inspection = ws.inspection;
     const metadata = inspection.metadata || {};
     const headings = inspection.heading_candidates || [];
@@ -1451,6 +1518,12 @@ export function createAccessibilityWorkshop(host) {
     }, 30);
   }
 
+  function saveDecisions() {
+    // Pair the PDF with its last committed review state, not the confirmed
+    // drafts about to be written. Otherwise Undo would queue those drafts again.
+    ws.savedDecisions = snapshotDecisions(ws);
+  }
+
   async function applyChange(label, taskId, steps) {
     if (ws.busy) return false;
     const before = ws.working;
@@ -1467,9 +1540,11 @@ export function createAccessibilityWorkshop(host) {
       ws.history.push({
         label: label,
         bytes: before,
+        decisions: ws.savedDecisions,
         taskId: taskId,
         at: new Date(),
       });
+      saveDecisions();
       setBusy("");
       announce(label + " — done.");
       return true;
@@ -1483,13 +1558,19 @@ export function createAccessibilityWorkshop(host) {
   }
 
   async function undo() {
+    if (ws.busy) return;
     const entry = ws.history.pop();
-    if (!entry || ws.busy) return;
+    if (!entry) return;
+    stopSpeaking();
     setBusy("Undoing “" + entry.label + "”…");
     try {
       await loadWorkingCopy(entry.bytes);
-      if (entry.taskId) delete ws.reviewed[entry.taskId];
-      if (entry.label === "Automatic repairs") ws.receipts = [];
+      Object.assign(ws, structuredClone(entry.decisions));
+      ws.fontReview = null;
+      ws.fontSubs = null;
+      ws.previews = null;
+      ws.replay = { mode: "all", index: 0, playing: false, heardAll: false };
+      saveDecisions();
       announce("Undid " + entry.label + ".");
     } catch (error) {
       ws.history.push(entry);
@@ -1578,7 +1659,7 @@ export function createAccessibilityWorkshop(host) {
       })
       .map(function (key) {
         return {
-          announcedIndex: Number(key),
+          contentId: key,
           actualText: ws.textFixes[key].actualText,
           apply: true,
         };
@@ -1638,7 +1719,10 @@ export function createAccessibilityWorkshop(host) {
     }
     const applied = await applyChange(label, taskId, rebuildSteps());
     // Once replaced, the earlier tags are gone and this draft is ours to edit.
-    if (applied && ws.treeDecision === "replace") ws.preexistingTree = false;
+    if (applied && ws.treeDecision === "replace") {
+      ws.preexistingTree = false;
+      saveDecisions();
+    }
     return applied;
   }
 
@@ -2441,6 +2525,7 @@ export function createAccessibilityWorkshop(host) {
       meta.confirmed = true;
       meta.languageGuessed = false;
       markReviewed("document");
+      saveDecisions();
       goToNextTask();
     }
   }
@@ -2698,6 +2783,7 @@ export function createAccessibilityWorkshop(host) {
       markReviewed("fields");
       render();
     }
+    saveDecisions();
   }
 
   // --- Keyboard order ---
@@ -2876,6 +2962,7 @@ export function createAccessibilityWorkshop(host) {
     });
     if (!remaining.length) markReviewed("tab");
     else ws.page = remaining[0];
+    saveDecisions();
     render();
   }
 
@@ -3087,6 +3174,7 @@ export function createAccessibilityWorkshop(host) {
     });
     if (!remaining.length) markReviewed("order");
     else ws.page = remaining[0];
+    if (needsRebuild) saveDecisions();
     render();
   }
 
@@ -3269,6 +3357,7 @@ export function createAccessibilityWorkshop(host) {
     const applied = await rebuildStructure("Headings", "headings");
     if (applied) {
       markReviewed("headings");
+      saveDecisions();
       goToNextTask();
     }
   }
@@ -3440,6 +3529,7 @@ export function createAccessibilityWorkshop(host) {
       return !(ws.images[image.assetId] || {}).confirmed;
     });
     if (!open.length) markReviewed("images");
+    saveDecisions();
     render();
   }
 
@@ -3608,6 +3698,7 @@ export function createAccessibilityWorkshop(host) {
     if (!applied) return;
     const open = taskSummary("links").count;
     if (!open) markReviewed("links");
+    saveDecisions();
     render();
   }
 
@@ -3751,7 +3842,8 @@ export function createAccessibilityWorkshop(host) {
     );
     const encodingRows = encoding
       .map(function (finding) {
-        const key = String(finding.announcedIndex);
+        const key = finding.contentId;
+        if (!key) return "";
         const fix = ws.textFixes[key] || {
           actualText: finding.suggestion || "",
           confirmed: false,

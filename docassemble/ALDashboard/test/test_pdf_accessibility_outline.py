@@ -1,3 +1,4 @@
+# do not pre-load
 """Regression cases from the deterministic accessibility pipeline audit."""
 import xml.etree.ElementTree as ET
 

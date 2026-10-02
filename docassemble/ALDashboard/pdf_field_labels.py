@@ -308,7 +308,7 @@ def _between(
     return on_line and low - 0.002 <= stop["x"] <= high + 0.002
 
 
-def _phrase_text(phrase: List[Mapping[str, Any]]) -> str:
+def _phrase_text(phrase: Iterable[Mapping[str, Any]]) -> str:
     return " ".join(str(word["text"]) for word in phrase)
 
 
@@ -647,17 +647,17 @@ def _option_groups(
         rows: List[List[int]] = []
         for index in sorted(sides, key=lambda i: (choices[i]["box"]["y"], choices[i]["box"]["x"])):
             box = choices[index]["box"]
-            row = next(
+            matching_row = next(
                 (
                     row for row in rows
                     if abs(_middle(choices[row[0]]["box"]) - _middle(box)) < box["height"] * 0.6
                 ),
                 None,
             )
-            if row is None:
+            if matching_row is None:
                 rows.append([index])
             else:
-                row.append(index)
+                matching_row.append(index)
         for row in rows:
             if len(row) < 2:
                 continue

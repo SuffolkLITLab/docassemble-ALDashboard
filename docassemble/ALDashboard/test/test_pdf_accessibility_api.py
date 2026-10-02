@@ -8,8 +8,9 @@ import sys
 import textwrap
 import unittest
 
-sys.path.insert(0, os.path.dirname(__file__))
-from test_api_labelers_query_params import _STUBBED_IMPORT_PREFIX  # noqa: E402
+from docassemble.ALDashboard.test.test_api_labelers_query_params import (
+    _STUBBED_IMPORT_PREFIX,
+)
 
 _FIXTURE = os.path.join(
     os.path.dirname(__file__), "civil_docketing_statement_polished_repaired.pdf"

@@ -1,3 +1,4 @@
+# do not pre-load
 """Content-based regressions for encoded headings and vector-outlined text."""
 from unittest.mock import patch
 

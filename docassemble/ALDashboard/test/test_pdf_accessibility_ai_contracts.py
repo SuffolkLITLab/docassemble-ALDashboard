@@ -1,3 +1,4 @@
+# do not pre-load
 """AI response contract regressions; no live model or credentials required."""
 from unittest.mock import patch
 

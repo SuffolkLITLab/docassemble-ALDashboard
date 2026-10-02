@@ -15,6 +15,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional, Set, Tuple, cast
 
+from .pdf_field_labels import (
+    read_page_words,
+    simplify_field_label,
+    suggest_field_labels,
+)
 from .standard_font_metrics import (
     is_standard_14,
     is_unicode_keyed,
@@ -116,6 +121,9 @@ def draft_field_tooltips_with_ai(
                     if str(item).strip()
                 ][:5],
                 "current_tooltip": str(field.get("tooltip") or "")[:240],
+                # For a box in a row of answers: the question and its answer.
+                "question": str(field.get("question") or "")[:240],
+                "option": str(field.get("option") or "")[:80],
             }
         )
     if not records:
@@ -127,7 +135,11 @@ def draft_field_tooltips_with_ai(
                 "role": "system",
                 "content": (
                     "Draft short, plain-language labels for PDF form controls. Use the nearby printed "
-                    "label, current label, and field type while preserving the legal meaning. Each "
+                    "label, current label, and field type while preserving the legal meaning. A current "
+                    "label that is an instruction (\"Type name of county\") or describes how to operate the "
+                    "control (\"Click to check this box\") is not a good label: name the information instead "
+                    "(\"County\"). When a control has a question and option, it is one answer among several "
+                    "boxes: name both, with the question shortened, as in \"Mother married to father? Yes\". Each "
                     "tooltip must name the information or choice represented by the control: use a "
                     "sentence fragment of at most 45 characters, not an instruction or a full sentence. "
                     "Do not begin with Enter, Type, Input, Provide, Choose, Select, Check, or Please. "
@@ -154,7 +166,9 @@ def draft_field_tooltips_with_ai(
         name = str(row.get("name") or "")
         tooltip = str(row.get("tooltip") or "")
         tooltip = re.sub(r"\s+", " ", tooltip).strip(" .:-")
-        tooltip = _clip_tooltip(tooltip)
+        # The prompt asks for names, not instructions; enforce it, since a
+        # model will sometimes keep "Type name of county" as it found it.
+        tooltip = _clip_tooltip(simplify_field_label(tooltip) or tooltip)
         if name in allowed_names and tooltip:
             result[name] = tooltip
     # Number by the order the caller supplied the fields, not the order the
@@ -1648,6 +1662,42 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
         "annotations": annotations,
         "widgets": widgets,
     }
+
+
+def _field_label_inputs(pdf: Any) -> List[Dict[str, Any]]:
+    """One entry per named field, placed by its first widget, for labeling."""
+    from .pdf_field_labels import field_type_from_flags, normalized_rect
+
+    fields: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for page_index, page in enumerate(pdf.pages):
+        for annot in cast(Iterable[Any], page.get("/Annots") or []):
+            try:
+                if annot.get("/Subtype") != "/Widget":
+                    continue
+                parent = _named_parent(annot)
+                if parent is None:
+                    continue
+                name = _safe_pdf_string(parent.get("/T", ""))
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                field_type = _safe_pdf_string(
+                    annot.get("/FT") or parent.get("/FT") or ""
+                )
+                flags = int(annot.get("/Ff", parent.get("/Ff", 0)) or 0)
+                fields.append(
+                    {
+                        "name": name,
+                        "type": field_type_from_flags(field_type, flags),
+                        "pageIndex": page_index,
+                        "box": normalized_rect(annot.get("/Rect"), page.mediabox),
+                        "tooltip": _widget_tooltip(annot, parent),
+                    }
+                )
+            except Exception:
+                continue
+    return fields
 
 
 def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -7233,7 +7283,11 @@ def inspect_pdf_accessibility(pdf_path: str) -> Dict[str, Any]:
         with pikepdf.open(pdf_path) as pdf:
             fields, field_order = _extract_field_records(pdf)
             structure_editor = _structure_editor_data(pdf)
+            field_labels = suggest_field_labels(
+                _field_label_inputs(pdf), read_page_words(pdf_path)
+            )
             return {
+                "field_labels": field_labels,
                 "metadata": _extract_pdf_metadata(pdf),
                 "fields": fields,
                 "field_order": field_order,

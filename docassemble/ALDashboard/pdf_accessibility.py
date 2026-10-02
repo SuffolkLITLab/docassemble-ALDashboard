@@ -13,7 +13,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Set, Tuple, cast
+from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional, Set, Tuple, cast
 
 from .standard_font_metrics import (
     is_standard_14,
@@ -3922,7 +3922,13 @@ def _artifact_untagged_content(pdf: Any) -> int:
 
         for instruction in instructions:
             operator = str(instruction.operator)
-            if operator in {"BMC", "BDC"}:
+            if operator in {"BT", "ET"} and depth == 0:
+                # A run must not cross a text-object boundary: an artifact
+                # that opens before ET and closes after the next BT swallows
+                # that whole text object when the tags are drafted again.
+                flush()
+                rewritten.append(instruction)
+            elif operator in {"BMC", "BDC"}:
                 if depth == 0:
                     flush()
                 rewritten.append(instruction)
@@ -4161,6 +4167,36 @@ def _strip_stale_mcid_wrappers(instructions: Iterable[Any]) -> List[Any]:
         else:
             output.append(instruction)
     return output
+
+
+def _strip_straddling_artifacts(instructions: Iterable[Any]) -> List[Any]:
+    """Drop ``/Artifact`` wrappers that cross a BT/ET boundary.
+
+    Earlier drafts could wrap the drawing between two text objects as
+    ``BMC /Artifact ... ET ... BT ... EMC``. A rebuild then saw the following
+    text object start inside an artifact and left it untagged. A wrapper that
+    encloses whole text objects is properly nested and is kept.
+    """
+    instructions = list(instructions)
+    open_sequences: List[List[Any]] = []  # [index, is_artifact, relative text depth, straddles]
+    dropped: set[int] = set()
+    for index, instruction in enumerate(instructions):
+        operator = str(instruction.operator)
+        if operator in {"BT", "ET"}:
+            step = 1 if operator == "BT" else -1
+            for entry in open_sequences:
+                entry[2] += step
+                if entry[2] < 0:
+                    entry[3] = True
+        elif operator in {"BMC", "BDC"}:
+            operands = list(instruction.operands)
+            is_artifact = bool(operands) and str(operands[0]) == "/Artifact"
+            open_sequences.append([index, is_artifact, 0, False])
+        elif operator == "EMC" and open_sequences:
+            start, is_artifact, depth, straddles = open_sequences.pop()
+            if is_artifact and (straddles or depth != 0):
+                dropped.update({start, index})
+    return [item for index, item in enumerate(instructions) if index not in dropped]
 
 
 def _missing_structure_form_alt_count(root: Any) -> int:
@@ -4607,6 +4643,9 @@ def _readback_sequence(
             # glyphs, so the replay has to as well or it reports a problem the
             # listener would never hit.
             replacement = _safe_pdf_string(node.get("/ActualText", ""))
+            # A Figure is announced by its description, not by what it draws.
+            if not replacement and role == "Figure":
+                replacement = _safe_pdf_string(node.get("/Alt", ""))
             entry: Dict[str, Any] = {
                 "kind": "text",
                 "role": role,
@@ -5758,6 +5797,9 @@ def analyze_screen_reader_readback(
                 "role": item.get("role", ""),
                 "text": item.get("spoken") or item.get("text", ""),
                 "name": item.get("name", ""),
+                # Page-space origin (PDF points, y up) for highlighting.
+                "x": round(float(item["x"]), 1) if item.get("x") is not None else None,
+                "y": round(float(item["y"]), 1) if item.get("y") is not None else None,
             }
             for item in spoken
         ],
@@ -7531,6 +7573,103 @@ def _field_anchor_index(spots: List[Tuple[float, float]], top: float, left: floa
     return best[1] if best is not None else -1
 
 
+def _image_draw_spots(
+    instructions: List[Any], to_page: Optional[Tuple[float, ...]] = None,
+) -> Dict[int, Tuple[float, float]]:
+    """Return the top-left corner, in page space, of each ``Do`` operation.
+
+    An image XObject paints the unit square through the CTM, so its corners
+    follow from the matrix in force when it is drawn.
+    """
+    identity = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    ctm: Tuple[float, ...] = identity
+    stack: List[Tuple[float, ...]] = []
+    spots: Dict[int, Tuple[float, float]] = {}
+    for index, instruction in enumerate(instructions):
+        operator = str(instruction.operator)
+        try:
+            if operator == "q":
+                stack.append(ctm)
+            elif operator == "Q":
+                ctm = stack.pop() if stack else identity
+            elif operator == "cm":
+                ctm = _compose_matrix(
+                    tuple(float(v) for v in instruction.operands), ctm
+                )
+            elif operator == "Do":
+                matrix = ctm if to_page is None else _compose_matrix(ctm, to_page)
+                corners = [
+                    (
+                        matrix[0] * u + matrix[2] * v + matrix[4],
+                        matrix[1] * u + matrix[3] * v + matrix[5],
+                    )
+                    for u, v in ((0, 0), (1, 0), (0, 1), (1, 1))
+                ]
+                spots[index] = (
+                    max(y for _x, y in corners),
+                    min(x for x, _y in corners),
+                )
+        except (TypeError, ValueError, IndexError):
+            continue
+    return spots
+
+
+def _normalized_image_decisions(
+    image_decisions: Optional[Iterable[Mapping[str, Any]]],
+) -> Dict[str, Dict[str, str]]:
+    """Validate reviewed image classifications, keyed by asset id.
+
+    A meaningful image needs the description a person checked; one without it
+    is left untouched rather than tagged as a Figure that says nothing.
+    """
+    choices: Dict[str, Dict[str, str]] = {}
+    for item in image_decisions or []:
+        if not isinstance(item, Mapping):
+            raise PDFAccessibilityError("Each image decision must be an object.")
+        asset_id = str(item.get("assetId") or "").strip()
+        decision = str(item.get("decision") or "").strip()
+        if not asset_id:
+            continue
+        if decision not in {"figure", "artifact"}:
+            raise PDFAccessibilityError(
+                "Image decisions must be figure or artifact."
+            )
+        alt_text = re.sub(r"\s+", " ", str(item.get("altText") or "")).strip()
+        if decision == "figure" and not alt_text:
+            continue
+        choices[asset_id] = {"decision": decision, "altText": alt_text[:2000]}
+    return choices
+
+
+def _unwrap_decided_image_artifacts(
+    instructions: List[Any], decided: Callable[[Any], bool]
+) -> List[Any]:
+    """Drop an ``/Artifact`` wrapper that encloses only a reviewed image.
+
+    Rebuilding a draft must let a person change their mind about an image that
+    an earlier draft marked decorative; otherwise the old wrapper would hide it.
+    """
+    output: List[Any] = []
+    index = 0
+    while index < len(instructions):
+        window = instructions[index : index + 3]
+        if (
+            len(window) == 3
+            and str(window[0].operator) == "BMC"
+            and list(window[0].operands)
+            and str(window[0].operands[0]) == "/Artifact"
+            and str(window[1].operator) == "Do"
+            and str(window[2].operator) == "EMC"
+            and decided(window[1])
+        ):
+            output.append(window[1])
+            index += 3
+            continue
+        output.append(instructions[index])
+        index += 1
+    return output
+
+
 def create_draft_structure_tree(
     input_pdf_path: str,
     output_pdf_path: str,
@@ -7538,6 +7677,7 @@ def create_draft_structure_tree(
     overwrite: bool = False,
     heading_decisions: Optional[Iterable[Mapping[str, Any]]] = None,
     content_decisions: Optional[Iterable[Mapping[str, Any]]] = None,
+    image_decisions: Optional[Iterable[Mapping[str, Any]]] = None,
     mark_as_tagged: bool = False,
 ) -> Dict[str, Any]:
     """Create a content-block tag-tree draft without redrawing page content.
@@ -7545,8 +7685,11 @@ def create_draft_structure_tree(
     Existing PDF text objects become individual paragraph elements. Exact
     matches from the conservative heading analysis are promoted to headings,
     and widgets become Form elements. Graphics remain unclassified because
-    deciding whether they are figures or artifacts requires human review.
+    deciding whether they are figures or artifacts requires human review;
+    ``image_decisions`` carries that review: each ``{"assetId", "decision",
+    "altText"}`` tags an image as a described Figure or marks it an Artifact.
     """
+    image_choices = _normalized_image_decisions(image_decisions)
     if input_pdf_path != output_pdf_path:
         shutil.copyfile(input_pdf_path, output_pdf_path)
     try:
@@ -7591,8 +7734,11 @@ def create_draft_structure_tree(
             "Artifact",
         }
         content_by_key: Dict[Tuple[int, str, int], Dict[str, Any]] = {}
+        # Content decisions name blocks by the layout analysis's text, which
+        # has word spaces that the content stream often draws as kerning.
+        # Match the way headings do, ignoring whitespace.
         for item in content_decisions or []:
-            normalized = _normalized_running_text(str(item.get("text") or ""))
+            normalized = _heading_match_key(str(item.get("text") or ""))
             role = str(item.get("role") or "P").strip()
             if not normalized or role not in allowed_roles:
                 continue
@@ -7643,6 +7789,9 @@ def create_draft_structure_tree(
             stale_mcid_wrappers_removed = 0
             heading_levels_normalized = 0
             manual_artifact_count = 0
+            figures_tagged = 0
+            images_marked_decorative = 0
+            decided_asset_ids: set[str] = set()
             previous_heading_level = 0
             document_form_draws: Dict[Any, int] = {}
             form_placements_by_page = [
@@ -7683,15 +7832,49 @@ def create_draft_structure_tree(
                             top - box["y"] * (top-bottom),
                         )
 
-                def tag_stream(container, mcid_reference, write_back, to_page=None):
+                def tag_stream(
+                    container, mcid_reference, write_back, to_page=None, resource_prefix=""
+                ):
                     nonlocal heading_count, heading_levels_normalized
                     nonlocal manual_artifact_count, stale_mcid_wrappers_removed
                     nonlocal text_block_count, previous_heading_level
+                    nonlocal figures_tagged, images_marked_decorative
                     instructions = list(pikepdf.parse_content_stream(container))
                     if overwrite:
                         stripped = _strip_stale_mcid_wrappers(instructions)
                         stale_mcid_wrappers_removed += len(instructions) - len(stripped)
-                        instructions = stripped
+                        instructions = _strip_straddling_artifacts(stripped)
+                    container_resources = container.get("/Resources")
+                    container_xobjects = (
+                        container_resources.get("/XObject")
+                        if container_resources is not None
+                        else None
+                    )
+
+                    def image_choice(instruction: Any) -> Optional[Tuple[str, Dict[str, str]]]:
+                        operands = list(instruction.operands)
+                        if not image_choices or not operands or container_xobjects is None:
+                            return None
+                        name = operands[0]
+                        if name not in container_xobjects:
+                            return None
+                        if _safe_pdf_string(container_xobjects[name].get("/Subtype", "")) != "/Image":
+                            return None
+                        resource_path = str(name).lstrip("/")
+                        if resource_prefix:
+                            resource_path = f"{resource_prefix}/{resource_path}"
+                        asset_id = f"p{page_index + 1}:{resource_path}"
+                        choice = image_choices.get(asset_id)
+                        if choice is None:
+                            return None
+                        decided_asset_ids.add(asset_id)
+                        return asset_id, choice
+
+                    if image_choices:
+                        instructions = _unwrap_decided_image_artifacts(
+                            instructions, lambda item: image_choice(item) is not None
+                        )
+                    image_spots = _image_draw_spots(instructions, to_page) if image_choices else {}
                     existing_mcids: List[int] = []
                     for instruction in instructions:
                         if str(instruction.operator) != "BDC":
@@ -7844,7 +8027,7 @@ def create_draft_structure_tree(
                                                 compact_text,
                                             ):
                                                 candidate_normalized = (
-                                                    _normalized_running_text(
+                                                    _heading_match_key(
                                                         candidate_text
                                                     )
                                                 )
@@ -7871,7 +8054,7 @@ def create_draft_structure_tree(
                                         text_values[index]
                                         for index in group
                                     )
-                                    normalized_group = _normalized_running_text(
+                                    normalized_group = _heading_match_key(
                                         group_text
                                     )
                                     occurrence = content_occurrences.get(
@@ -8013,6 +8196,62 @@ def create_draft_structure_tree(
                             text_block_is_artifact = False
                             text_block = []
                             continue
+                        decided_image = (
+                            image_choice(instruction)
+                            if operator == "Do" and not any(artifact_stack)
+                            else None
+                        )
+                        if decided_image is not None:
+                            _asset_id, choice = decided_image
+                            if choice["decision"] == "artifact":
+                                rewritten.append(
+                                    pikepdf.ContentStreamInstruction(
+                                        [pikepdf.Name("/Artifact")],
+                                        pikepdf.Operator("BMC"),
+                                    )
+                                )
+                                images_marked_decorative += 1
+                            else:
+                                mcid = len(mcid_elements)
+                                figure = pdf.make_indirect(
+                                    pikepdf.Dictionary(
+                                        {
+                                            "/Type": pikepdf.Name("/StructElem"),
+                                            "/S": pikepdf.Name("/Figure"),
+                                            "/P": page_part,
+                                            "/Pg": page.obj,
+                                            "/K": mcid_reference(mcid),
+                                            "/Alt": pikepdf.String(choice["altText"]),
+                                        }
+                                    )
+                                )
+                                rewritten.append(
+                                    pikepdf.ContentStreamInstruction(
+                                        [
+                                            pikepdf.Name("/Figure"),
+                                            pikepdf.Dictionary({"/MCID": mcid}),
+                                        ],
+                                        pikepdf.Operator("BDC"),
+                                    )
+                                )
+                                mcid_elements.append(figure)
+                                text_children.append(
+                                    (
+                                        None,
+                                        image_spots.get(instruction_index, (0.0, 0.0)),
+                                        len(text_children),
+                                        figure,
+                                        "Figure",
+                                    )
+                                )
+                                figures_tagged += 1
+                            rewritten.append(instruction)
+                            rewritten.append(
+                                pikepdf.ContentStreamInstruction(
+                                    [], pikepdf.Operator("EMC")
+                                )
+                            )
+                            continue
                         rewritten.append(instruction)
                         if operator in {"BMC", "BDC"}:
                             artifact_stack.append(starts_artifact(instruction))
@@ -8075,6 +8314,7 @@ def create_draft_structure_tree(
                         make_reference,
                         replace_form,
                         placements[form_obj.objgen],
+                        form_path,
                     )
                     if not any(element is not None for element in form_elements):
                         next_struct_parent -= 1
@@ -8274,6 +8514,9 @@ def create_draft_structure_tree(
             "stale_mcid_wrappers_removed": stale_mcid_wrappers_removed,
             "content_artifact_runs": content_artifact_runs,
             "manual_artifact_blocks": manual_artifact_count,
+            "figures_tagged": figures_tagged,
+            "images_marked_decorative": images_marked_decorative,
+            "unmatched_image_decisions": sorted(set(image_choices) - decided_asset_ids),
             "marked_as_tagged": bool(mark_as_tagged),
             "review_required": True,
             "warning": (

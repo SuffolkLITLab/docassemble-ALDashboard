@@ -28,6 +28,60 @@ Ideas:
 1. Add a link to the dispatch directive for an existing file in an existing package.
 1. Generate translation files [TBD].
 
+## PDF accessibility backend
+
+`docassemble.ALDashboard.pdf_accessibility` provides Python functions for
+inspecting PDFs, detecting accessibility problems, and applying explicit repairs.
+These functions can be called from scripts or a future frontend:
+
+```python
+from docassemble.ALDashboard.pdf_accessibility import (
+    apply_pdf_accessibility_settings,
+    inspect_pdf_accessibility,
+)
+
+before = inspect_pdf_accessibility("input.pdf")
+result = apply_pdf_accessibility_settings(
+    input_pdf_path="input.pdf",
+    output_pdf_path="repaired.pdf",
+    metadata={"title": "Application", "language": "en-US"},
+    field_tooltips={"applicant_name": "Applicant name"},
+    auto_fill_missing_tooltips=False,
+)
+after = inspect_pdf_accessibility("repaired.pdf")
+```
+
+Inspection returns metadata, fields, images, structure, heading candidates,
+content blocks, an accessibility `report`, and simulated screen reader
+`readback` findings. It does not modify the file or call an AI model.
+
+Additional repair functions cover draft tagging (`create_draft_structure_tree`),
+semantic structure (`apply_manual_structure_repairs`), font embedding and Unicode
+maps (`embed_fonts_and_rebuild_unicode`, `apply_unicode_map_decisions`), reviewed
+font substitution (`substitute_fonts`), replacement text (`repair_readback_text`),
+and OCR (`ocr_image_only_pages`). `repair_duplicate_field_names` disambiguates
+announced tooltips while preserving the actual PDF field names. Repair results
+include operation-specific counts, skipped items, or review information; callers
+should inspect the resulting PDF again after repairs.
+
+Optional AI helpers draft tooltips, image descriptions, heading levels, and
+accessibility review findings. They use ALToolbox's configured model access only
+when explicitly called; suggestions require review. Detection and draft repairs
+do not certify PDF/UA conformance.
+
+Python dependencies include `pikepdf` and `fonttools`. Layout analysis uses
+Poppler's `pdftohtml`; OCR uses `pdftoppm` and Tesseract with the requested language
+data. Font discovery uses installed fonts and Fontconfig when available.
+
+Run the backend regression tests with:
+
+```sh
+python -m pytest -q docassemble/ALDashboard/test/test_pdf_accessibility*.py
+```
+
+The optional audit-corpus tests use `ALDASHBOARD_AUDIT_FIXTURES` (default:
+`~/all_interviews`) and skip unavailable fixtures.
+
 ## Use
 
 To use, you must create a docassemble API key and add it to your

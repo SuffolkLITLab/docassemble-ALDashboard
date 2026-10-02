@@ -990,10 +990,56 @@ textarea.aw-input {
 .aw-review-body {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+  grid-template-columns: minmax(0, 1fr) 12px var(--aw-inspector-width, 360px);
   gap: 0;
   min-height: 0;
   border-top: 1px solid var(--aw-line);
+}
+
+.aw-review-body.aw-no-preview {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.aw-divider {
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--aw-ground);
+  border-inline: 1px solid var(--aw-line);
+  position: relative;
+}
+
+.aw-divider::after {
+  content: "";
+  position: absolute;
+  top: 45%;
+  left: 3px;
+  width: 4px;
+  height: 36px;
+  border-radius: 4px;
+  background: var(--aw-line-strong);
+}
+
+.aw-divider:hover::after,
+.aw-divider:focus-visible::after {
+  background: var(--aw-accent);
+}
+
+.aw.is-resizing,
+.aw.is-resizing * {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.aw-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.aw-zoom-controls output {
+  min-width: 4ch;
+  text-align: center;
 }
 
 .aw-viewer {
@@ -1005,6 +1051,7 @@ textarea.aw-input {
 
 .aw-viewer-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
@@ -1022,14 +1069,13 @@ textarea.aw-input {
   flex: 1;
   overflow: auto;
   padding: 20px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  min-width: 0;
 }
 
 .aw-page {
   position: relative;
-  width: min(100%, 760px);
+  width: 100%;
+  margin-inline: auto;
   background: #ffffff;
   box-shadow:
     0 1px 2px rgba(20, 23, 28, 0.12),
@@ -1562,6 +1608,10 @@ textarea.aw-input {
 
   .aw-review-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .aw-divider {
+    display: none;
   }
 
   .aw-task-grid {

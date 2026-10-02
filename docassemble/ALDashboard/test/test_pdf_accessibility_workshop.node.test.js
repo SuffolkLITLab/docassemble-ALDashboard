@@ -125,7 +125,9 @@ const { chromium } = require("playwright");
 async function withWorkshop(run) {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({
+      viewport: { width: 1280, height: 800 },
+    });
     const template = fs
       .readFileSync(
         path.join(__dirname, "../data/templates/pdf_labeler.html"),
@@ -140,10 +142,16 @@ async function withWorkshop(run) {
       .replace(
         "    open: open,",
         `    test: { state: () => ws, loadWorkingCopy, initializeDecisions, saveDecisions,
-        writeFieldNames, rebuildStructure, undo, applyChange, confirmOrderPage, writeImages, textFixPayload },
+        writeFieldNames, rebuildStructure, undo, applyChange, confirmOrderPage, writeImages, textFixPayload, render },
     open: open,`,
       );
-    await page.setContent(template);
+    await page.setContent(template.replace(/<link[^>]*>/g, ""));
+    await page.addStyleTag({
+      content: fs.readFileSync(
+        path.join(__dirname, "../data/static/pdf_accessibility_workshop.css"),
+        "utf8",
+      ),
+    });
     await page.addScriptTag({
       type: "module",
       content:
@@ -193,6 +201,7 @@ async function withWorkshop(run) {
           data: response.data,
         }),
         showError: (message) => window.errors.push(message),
+        aiEnabled: () => false,
         pdfjsLib: {
           getDocument: ({ data }) => ({
             promise: Promise.resolve({
@@ -200,6 +209,11 @@ async function withWorkshop(run) {
               destroy() {},
               getPage: async () => ({
                 view: [0, 0, 612, 792],
+                getViewport: ({ scale }) => ({
+                  width: 612 * scale,
+                  height: 792 * scale,
+                }),
+                render: () => ({ promise: Promise.resolve() }),
                 getAnnotations: async () => [
                   {
                     annotationType: 20,
@@ -388,5 +402,125 @@ test("initial drafts use repaired block IDs while the original snapshot stays in
     });
     assert.deepEqual(result.original, { 0: ["before-font-repair"] });
     assert.deepEqual(result.repaired, { 0: ["after-font-repair"] });
+  });
+});
+
+async function showPreview(page) {
+  await page.evaluate(() => {
+    const t = window.workshop,
+      state = t.state();
+    state.open = true;
+    document.querySelector("#app").inert = true;
+    state.step = "review";
+    state.task = "fields";
+    state.showAllFields = true;
+    document.querySelector("#a11y-workshop").hidden = false;
+    t.render();
+  });
+  await page.locator(".aw-page-canvas canvas").waitFor();
+}
+
+test("preview zoom keeps overlays aligned, preserves focus, and fits after resizing", async () => {
+  await withWorkshop(async (page) => {
+    await showPreview(page);
+    const preview = page.locator("[data-aw-ref=page]");
+    const initial = await preview.boundingBox();
+    await page
+      .locator("#a11y-workshop")
+      .getByRole("button", { name: "Zoom in", exact: true })
+      .click();
+    assert.ok((await preview.boundingBox()).width > initial.width);
+    assert.equal(
+      await page.evaluate(() => document.activeElement.dataset.aw),
+      "zoom-in",
+    );
+    for (let i = 0; i < 5; i++)
+      await page
+        .locator("#a11y-workshop")
+        .getByRole("button", { name: "Zoom in", exact: true })
+        .click();
+    const dimensions = await page.evaluate(() => {
+      const well = document.querySelector(".aw-page-well");
+      const page = document
+        .querySelector("[data-aw-ref=page]")
+        .getBoundingClientRect();
+      const overlay = document
+        .querySelector(".aw-overlay")
+        .getBoundingClientRect();
+      const mark = document.querySelector(".aw-mark").getBoundingClientRect();
+      return {
+        width: page.width,
+        overlayWidth: overlay.width,
+        markWidth: mark.width,
+        scroll: well.scrollWidth > well.clientWidth,
+        left: page.left,
+        wellLeft: well.getBoundingClientRect().left,
+      };
+    });
+    assert.ok(dimensions.scroll);
+    assert.equal(dimensions.overlayWidth, dimensions.width);
+    assert.ok(
+      Math.abs(dimensions.markWidth / dimensions.width - 80 / 612) < 0.001,
+    );
+    assert.ok(dimensions.left >= dimensions.wellLeft);
+    const zoom = await page.locator("[data-aw-ref=zoom]").innerText();
+    await page.evaluate(() => window.workshop.render());
+    assert.equal(await page.locator("[data-aw-ref=zoom]").innerText(), zoom);
+    await page.getByRole("button", { name: "Fit width", exact: true }).click();
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await page.waitForFunction(() => {
+      const well = document.querySelector(".aw-page-well");
+      return well.scrollWidth <= well.clientWidth + 1;
+    });
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Fit width", exact: true })
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.deepEqual(await page.evaluate(() => window.requests), []);
+  });
+});
+
+test("review panel resizes by keyboard and drag without losing edits, and stacks on small screens", async () => {
+  await withWorkshop(async (page) => {
+    await showPreview(page);
+    await page.locator("#aw-field-name").fill("An unsaved edit");
+    const divider = page.getByRole("separator", { name: "Review panel width" });
+    const panel = page.locator("#aw-review-panel");
+    await divider.focus();
+    const originalWidth = (await panel.boundingBox()).width;
+    await divider.press("ArrowRight");
+    assert.ok((await panel.boundingBox()).width < originalWidth);
+    await divider.press("Home");
+    assert.equal(Math.round((await panel.boundingBox()).width), 240);
+    await divider.press("End");
+    const wide = (await panel.boundingBox()).width;
+    const handle = await divider.boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 50);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 + 120, handle.y + 50, {
+      steps: 5,
+    });
+    await page.mouse.up();
+    const narrow = (await panel.boundingBox()).width;
+    assert.ok(narrow < wide - 100);
+    assert.equal(
+      await page.locator("#aw-field-name").inputValue(),
+      "An unsaved edit",
+    );
+    await page.evaluate(() => window.workshop.render());
+    assert.equal((await panel.boundingBox()).width, narrow);
+    await page.setViewportSize({ width: 800, height: 700 });
+    assert.equal(await divider.isVisible(), false);
+    assert.ok((await panel.boundingBox()).width > 700);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await divider.focus();
+    await divider.press("Enter");
+    assert.equal(
+      Math.round((await panel.boundingBox()).width),
+      Math.round(originalWidth),
+    );
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
   });
 });

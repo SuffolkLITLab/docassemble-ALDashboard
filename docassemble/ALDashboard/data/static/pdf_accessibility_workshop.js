@@ -417,6 +417,12 @@ export function createAccessibilityWorkshop(host) {
   };
   let ws = freshState();
   let renderVersion = 0;
+  let paintVersion = 0;
+  let previewContent = { overlays: [], overlaySvg: "" };
+  let previewRenderTimer;
+  let lastPreviewWidth = 0;
+  let panelDrag = null;
+  const previewObserver = new ResizeObserver(syncPreviewLayout);
   const pageCanvasCache = new Map();
 
   function freshState() {
@@ -439,6 +445,8 @@ export function createAccessibilityWorkshop(host) {
       step: "find",
       task: "document",
       page: 0,
+      previewZoom: null,
+      inspectorWidth: null,
       receipts: [],
       receiptDetails: [],
       integrity: null,
@@ -1975,6 +1983,11 @@ export function createAccessibilityWorkshop(host) {
     if (ws.step === "find") renderFind();
     else if (ws.step === "review") renderReview();
     else renderTest();
+    previewObserver.disconnect();
+    previewObserver.observe(els.main);
+    const well = els.main.querySelector(".aw-page-well");
+    if (well) previewObserver.observe(well);
+    syncPreviewLayout();
   }
 
   function renderHistory() {
@@ -2264,6 +2277,89 @@ export function createAccessibilityWorkshop(host) {
   // Page viewer with an overlay of what the current task is about
   // ---------------------------------------------------------------------
 
+  function previewNaturalWidth() {
+    const view = ws.pageViews[ws.page] || [0, 0, 612, 792];
+    return (view[2] - view[0]) * (96 / 72);
+  }
+
+  function panelBounds() {
+    const body = els.main.querySelector(".aw-review-body");
+    const width = body ? body.clientWidth : els.main.clientWidth;
+    return { min: 240, max: Math.max(240, Math.min(600, width - 272)) };
+  }
+
+  function previewDivider() {
+    return (
+      '<div class="aw-divider" role="separator" tabindex="0" ' +
+      'aria-label="Review panel width" aria-orientation="vertical" ' +
+      'aria-controls="aw-review-panel" aria-valuemin="240" aria-valuemax="600" aria-valuenow="440" ' +
+      'aria-describedby="aw-divider-help" title="Drag to resize the review panel">' +
+      '<span id="aw-divider-help" class="aw-sr">Use Left and Right arrow keys to resize. ' +
+      "Home makes the panel narrowest, End widest, and Enter resets its width.</span></div>"
+    );
+  }
+
+  function syncPreviewLayout() {
+    const bounds = panelBounds();
+    const desired =
+      ws.inspectorWidth === null
+        ? Math.min(440, els.main.clientWidth * 0.4)
+        : ws.inspectorWidth;
+    const width = Math.round(
+      Math.max(bounds.min, Math.min(bounds.max, desired)),
+    );
+    root.style.setProperty("--aw-inspector-width", width + "px");
+    const divider = els.main.querySelector(".aw-divider");
+    if (divider) {
+      divider.setAttribute("aria-valuemin", String(bounds.min));
+      divider.setAttribute("aria-valuemax", String(bounds.max));
+      divider.setAttribute("aria-valuenow", String(width));
+      divider.setAttribute("aria-valuetext", width + " pixels wide");
+    }
+    const page = els.main.querySelector("[data-aw-ref=page]");
+    if (!page) return;
+    page.style.width =
+      ws.previewZoom === null
+        ? "100%"
+        : (previewNaturalWidth() * ws.previewZoom) / 100 + "px";
+    const actualWidth = page.getBoundingClientRect().width;
+    const zoom =
+      ws.previewZoom === null
+        ? Math.round((actualWidth / previewNaturalWidth()) * 100)
+        : ws.previewZoom;
+    const label = els.main.querySelector("[data-aw-ref=zoom]");
+    if (label) label.textContent = zoom + "%";
+    const out = els.main.querySelector("[data-aw=zoom-out]");
+    const into = els.main.querySelector("[data-aw=zoom-in]");
+    const fit = els.main.querySelector("[data-aw=zoom-fit]");
+    if (out) out.disabled = zoom <= 25;
+    if (into) into.disabled = zoom >= 300;
+    if (fit) fit.setAttribute("aria-pressed", String(ws.previewZoom === null));
+    if (actualWidth !== lastPreviewWidth) {
+      lastPreviewWidth = actualWidth;
+      window.clearTimeout(previewRenderTimer);
+      previewRenderTimer = window.setTimeout(function () {
+        if (ws.open)
+          paintPage(previewContent.overlays, previewContent.overlaySvg);
+      }, 120);
+    }
+  }
+
+  function changePreviewZoom(delta) {
+    const page = els.main.querySelector("[data-aw-ref=page]");
+    const current =
+      ws.previewZoom === null
+        ? page
+          ? (page.getBoundingClientRect().width / previewNaturalWidth()) * 100
+          : 100
+        : ws.previewZoom;
+    ws.previewZoom = Math.max(
+      25,
+      Math.min(300, Math.round(current / 25) * 25 + delta),
+    );
+    syncPreviewLayout();
+  }
+
   function pageViewer(options) {
     const pageCount = ws.pageViews.length;
     return (
@@ -2277,6 +2373,11 @@ export function createAccessibilityWorkshop(host) {
       '</span><button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="page-next"' +
       (ws.page >= pageCount - 1 ? " disabled" : "") +
       ' aria-label="Next page">›</button>' +
+      '<div class="aw-zoom-controls" role="group" aria-label="Preview zoom">' +
+      '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="zoom-out" aria-label="Zoom out">−</button>' +
+      '<output class="aw-mono" data-aw-ref="zoom" aria-label="Preview zoom level">100%</output>' +
+      '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="zoom-in" aria-label="Zoom in">+</button>' +
+      '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="zoom-fit" aria-pressed="true">Fit width</button></div>' +
       (options && options.caption
         ? '<span class="aw-viewer-caption">' + esc(options.caption) + "</span>"
         : "") +
@@ -2285,19 +2386,24 @@ export function createAccessibilityWorkshop(host) {
   }
 
   async function paintPage(overlays, overlaySvg) {
+    previewContent = { overlays: overlays || [], overlaySvg: overlaySvg || "" };
+    const myPaintVersion = ++paintVersion;
     const container = els.main.querySelector("[data-aw-ref=canvas]");
     const overlay = els.main.querySelector("[data-aw-ref=overlay]");
     const pageEl = els.main.querySelector("[data-aw-ref=page]");
     if (!container || !ws.pdfDoc) return;
     const myVersion = renderVersion;
-    const key = ws.version + ":" + ws.page;
+    const renderWidth = Math.max(
+      PAGE_RENDER_WIDTH,
+      Math.ceil(pageEl.getBoundingClientRect().width / 100) * 100,
+    );
+    const key = ws.version + ":" + ws.page + ":" + renderWidth;
     let canvas = pageCanvasCache.get(key);
     if (!canvas) {
       const page = await ws.pdfDoc.getPage(ws.page + 1);
       const baseViewport = page.getViewport({ scale: 1 });
       const scale =
-        (PAGE_RENDER_WIDTH / baseViewport.width) *
-        (window.devicePixelRatio || 1);
+        (renderWidth / baseViewport.width) * (window.devicePixelRatio || 1);
       const viewport = page.getViewport({ scale: scale });
       canvas = document.createElement("canvas");
       canvas.width = Math.floor(viewport.width);
@@ -2309,8 +2415,10 @@ export function createAccessibilityWorkshop(host) {
         viewport: viewport,
       }).promise;
       pageCanvasCache.set(key, canvas);
+      if (pageCanvasCache.size > 8)
+        pageCanvasCache.delete(pageCanvasCache.keys().next().value);
     }
-    if (myVersion !== renderVersion) return;
+    if (myVersion !== renderVersion || myPaintVersion !== paintVersion) return;
     container.innerHTML = "";
     container.appendChild(canvas);
     const view = ws.pageViews[ws.page] || [0, 0, 612, 792];
@@ -2385,9 +2493,13 @@ export function createAccessibilityWorkshop(host) {
       '</h2><p class="aw-lead">' +
       esc(view.lead) +
       "</p></header>" +
-      '<div class="aw-review-body">' +
-      (view.noViewer ? "" : pageViewer({ caption: view.caption })) +
-      '<section class="aw-inspector" aria-label="' +
+      '<div class="aw-review-body' +
+      (view.noViewer ? " aw-no-preview" : "") +
+      '">' +
+      (view.noViewer
+        ? ""
+        : pageViewer({ caption: view.caption }) + previewDivider()) +
+      '<section id="aw-review-panel" class="aw-inspector" aria-label="' +
       esc(task.category) +
       ' review">' +
       (summary.applicable
@@ -4129,7 +4241,8 @@ export function createAccessibilityWorkshop(host) {
       '<p class="aw-lead">Read the replay against the page. Anything that sounds wrong links back to the task that fixes it.</p></header>' +
       '<div class="aw-review-body">' +
       pageViewer({ caption: "Highlight follows the replay" }) +
-      '<section class="aw-inspector" aria-label="Replay">' +
+      previewDivider() +
+      '<section id="aw-review-panel" class="aw-inspector" aria-label="Replay">' +
       (readback().available === false
         ? '<p class="aw-warning">' +
           esc(readback().reason || "There is no tag tree to replay.") +
@@ -4593,6 +4706,16 @@ export function createAccessibilityWorkshop(host) {
       goToTask(open ? open.id : "document");
     },
     "auto-draft": autoDraftAll,
+    "zoom-in": function () {
+      changePreviewZoom(25);
+    },
+    "zoom-out": function () {
+      changePreviewZoom(-25);
+    },
+    "zoom-fit": function () {
+      ws.previewZoom = null;
+      syncPreviewLayout();
+    },
     "page-prev": function () {
       ws.page = Math.max(0, ws.page - 1);
       render();
@@ -5174,7 +5297,58 @@ export function createAccessibilityWorkshop(host) {
   root.addEventListener("input", handleInput);
   root.addEventListener("change", handleInput);
 
+  root.addEventListener("pointerdown", function (event) {
+    const divider = event.target.closest(".aw-divider");
+    if (!divider || event.button !== 0) return;
+    event.preventDefault();
+    divider.focus();
+    panelDrag = {
+      x: event.clientX,
+      width: Number(divider.getAttribute("aria-valuenow")),
+      pointerId: event.pointerId,
+    };
+    divider.setPointerCapture(event.pointerId);
+    root.classList.add("is-resizing");
+  });
+  root.addEventListener("pointermove", function (event) {
+    if (!panelDrag || panelDrag.pointerId !== event.pointerId) return;
+    const bounds = panelBounds();
+    ws.inspectorWidth = Math.max(
+      bounds.min,
+      Math.min(bounds.max, panelDrag.width + panelDrag.x - event.clientX),
+    );
+    syncPreviewLayout();
+  });
+  function endPanelDrag() {
+    panelDrag = null;
+    root.classList.remove("is-resizing");
+  }
+  root.addEventListener("pointerup", endPanelDrag);
+  root.addEventListener("pointercancel", endPanelDrag);
+  root.addEventListener("lostpointercapture", endPanelDrag);
+
   root.addEventListener("keydown", function (event) {
+    const divider = event.target.closest(".aw-divider");
+    if (
+      divider &&
+      ["ArrowLeft", "ArrowRight", "Home", "End", "Enter"].includes(event.key)
+    ) {
+      event.preventDefault();
+      const bounds = panelBounds();
+      const current = Number(divider.getAttribute("aria-valuenow"));
+      const values = {
+        ArrowLeft: current + 20,
+        ArrowRight: current - 20,
+        Home: bounds.min,
+        End: bounds.max,
+      };
+      ws.inspectorWidth =
+        event.key === "Enter"
+          ? null
+          : Math.max(bounds.min, Math.min(bounds.max, values[event.key]));
+      syncPreviewLayout();
+      return;
+    }
     if (event.key === "Escape" && ws.replay.playing) {
       stopSpeaking();
       render();

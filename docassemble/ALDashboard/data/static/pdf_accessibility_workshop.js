@@ -145,6 +145,19 @@ const ROLE_CHOICES = [
 
 const PAGE_RENDER_WIDTH = 760;
 
+// What the server found wrong with a field's current name, in the words a
+// reviewer needs. See pdf_field_labels.field_label_problem.
+const NAME_PROBLEMS = {
+  missing: "It has no name, so a screen reader says only its type.",
+  placeholder:
+    "Its name is a placeholder or a hint about operating it, which says nothing about the field.",
+  derived: "Its name is the internal field name read aloud.",
+  instruction:
+    "Its name is an instruction. The screen reader already says “edit text” or “check box”; the name should say what the information is.",
+  "option-missing":
+    "It is one of several answer boxes, and its name doesn’t say which answer it is.",
+};
+
 function esc(value) {
   return String(value === null || value === undefined ? "" : value)
     .replace(/&/g, "&amp;")
@@ -181,9 +194,8 @@ function stripPdf(name) {
   return String(name || "document.pdf").replace(/\.pdf$/i, "");
 }
 
-// A label printed next to a blank is usually written for the eye: a colon,
-// an asterisk for "required", and leader underscores. None of that should be
-// spoken.
+// Printed text is written for the eye: a colon, an asterisk for "required",
+// leader underscores. None of that should be spoken in a title.
 export function cleanLabelText(text) {
   return String(text || "")
     .replace(/_{2,}/g, " ")
@@ -192,24 +204,6 @@ export function cleanLabelText(text) {
     .replace(/[\s:*]+$/g, "")
     .replace(/^[\s:*•·-]+/g, "")
     .trim();
-}
-
-// A tooltip that only respells the internal field name ("users1_name" as
-// "users1 name") was generated, not written, and tells a listener nothing.
-export function isDerivedFromFieldName(tooltip, fieldName) {
-  const squash = function (value) {
-    return String(value || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "");
-  };
-  return !!squash(tooltip) && squash(tooltip) === squash(fieldName);
-}
-
-// Names authoring tools leave behind that say nothing to a listener.
-export function isPlaceholderName(tooltip) {
-  return /^\s*(undefined|null|none|n\/a|field|untitled|text(\s*field)?\s*\d*|check\s*box\s*\d*|radio(\s*button)?\s*\d*|combo\s*box\s*\d*|list\s*box\s*\d*|signature\s*\d*|button\s*\d*)\s*$/i.test(
-    String(tooltip || ""),
-  );
 }
 
 function looksLikeFilename(title) {
@@ -249,79 +243,6 @@ function languageLabel(code) {
     return entry[0] === code;
   });
   return match ? match[1] : code;
-}
-
-// Boxes are normalized to the page: 0..1, origin at the top left.
-function overlaps(start1, end1, start2, end2) {
-  return Math.min(end1, end2) - Math.max(start1, start2);
-}
-
-// Find the printed words that introduce a form control: text on the same
-// line to its left, or else text just above it. A small line directly below
-// is kept as a format hint ("MM/DD/YYYY").
-export function findNearbyLabel(fieldBox, blocks) {
-  if (!fieldBox) return null;
-  const fieldTop = fieldBox.y;
-  const fieldBottom = fieldBox.y + fieldBox.height;
-  const fieldLeft = fieldBox.x;
-  const fieldRight = fieldBox.x + fieldBox.width;
-  /** @type {any} */
-  let left = null;
-  /** @type {any} */
-  let above = null;
-  /** @type {any} */
-  let below = null;
-  blocks.forEach(function (block) {
-    const box = block.box;
-    if (!box || !String(block.text || "").trim()) return;
-    const top = box.y;
-    const bottom = box.y + box.height;
-    const right = box.x + box.width;
-    const verticalShared = overlaps(top, bottom, fieldTop, fieldBottom);
-    if (
-      verticalShared > Math.min(box.height, fieldBox.height) * 0.4 &&
-      right <= fieldLeft + 0.01
-    ) {
-      const gap = fieldLeft - right;
-      if (gap < 0.3 && (!left || gap < left.gap)) left = { block, gap };
-      return;
-    }
-    const horizontalShared = overlaps(box.x, right, fieldLeft, fieldRight);
-    const aboveGap = fieldTop - bottom;
-    if (
-      aboveGap >= -0.004 &&
-      aboveGap < 0.035 &&
-      (horizontalShared > 0 || Math.abs(box.x - fieldLeft) < 0.03)
-    ) {
-      if (!above || aboveGap < above.gap) above = { block, gap: aboveGap };
-      return;
-    }
-    const belowGap = top - fieldBottom;
-    if (
-      belowGap >= -0.004 &&
-      belowGap < 0.02 &&
-      horizontalShared > 0 &&
-      String(block.text).length <= 40
-    ) {
-      if (!below || belowGap < below.gap) below = { block, gap: belowGap };
-    }
-  });
-  const label = left || above;
-  if (!label) return null;
-  const labelText = cleanLabelText(label.block.text);
-  if (!labelText) return null;
-  const hint = below ? cleanLabelText(below.block.text) : "";
-  const hintIsFormat = hint && /^[\s(]*[A-Z/.\-()]{4,}[\s)]*$/.test(hint);
-  return {
-    text:
-      hintIsFormat && labelText.indexOf(hint) === -1
-        ? labelText + " (" + hint.replace(/[()]/g, "") + ")"
-        : labelText,
-    required: /\*\s*$/.test(String(label.block.text || "")),
-    labelBlockId: label.block.blockId,
-    hintBlockId: hintIsFormat ? below.block.blockId : "",
-    where: left ? "left of the field" : "above the field",
-  };
 }
 
 // Visual order: page, then rows from the top, then left to right. Fields
@@ -682,10 +603,14 @@ export function createAccessibilityWorkshop(host) {
         byName.set(name, field);
       }
       field.tooltip = record.has_custom_tooltip ? String(record.tooltip) : "";
-      field.hasCustomTooltip =
-        !!record.has_custom_tooltip &&
-        !isDerivedFromFieldName(record.tooltip, name) &&
-        !isPlaceholderName(record.tooltip);
+    });
+    const labels = (ws.inspection && ws.inspection.field_labels) || {};
+    byName.forEach(function (field, name) {
+      field.label = labels[name] || { problem: "", suggested: "" };
+      if (field.label.required) field.required = true;
+      // A name the server found nothing wrong with is a real name; anything
+      // else starts the review empty or as a draft.
+      field.hasCustomTooltip = !!field.tooltip && !field.label.problem;
     });
     ws.fieldsByName = byName;
     ws.fields = Array.from(byName.values());
@@ -1096,14 +1021,10 @@ export function createAccessibilityWorkshop(host) {
   function fieldNeedsAttention(field, duplicates) {
     const decision = ws.names[field.name] || {};
     if (decision.confirmed) return false;
+    // A drafted or edited name still needs a person to confirm it.
+    if (decision.touched) return true;
     const value = String(decision.value || "").trim();
-    if (
-      !value ||
-      isDerivedFromFieldName(value, field.name) ||
-      isPlaceholderName(value)
-    )
-      return true;
-    if (!field.hasCustomTooltip && !decision.touched) return true;
+    if (!value || field.label.problem) return true;
     return (duplicates.get(value.toLowerCase()) || 0) > 1;
   }
 
@@ -1245,9 +1166,11 @@ export function createAccessibilityWorkshop(host) {
       if (!ws.fields.length)
         return notApplicable(machine, "This PDF has no form fields.");
       const attention = attentionFields();
-      const unnamed = attention.filter(function (field) {
-        return !currentName(field.name).trim() || !field.hasCustomTooltip;
-      }).length;
+      const problemCounts = {};
+      attention.forEach(function (field) {
+        const problem = field.label.problem;
+        if (problem) problemCounts[problem] = (problemCounts[problem] || 0) + 1;
+      });
       const duplicateGroups = readbackFindings("fields").length;
       let summary = attention.length
         ? plural(attention.length, "field") +
@@ -1255,11 +1178,34 @@ export function createAccessibilityWorkshop(host) {
           (attention.length === 1 ? "doesn’t" : "don’t") +
           " have a name a person confirmed."
         : "Every field has a confirmed name.";
+      const unnamed =
+        (problemCounts.missing || 0) +
+        (problemCounts.placeholder || 0) +
+        (problemCounts.derived || 0);
       if (unnamed)
         summary +=
           " " +
           plural(unnamed, "field") +
-          " would be announced by an internal name or not at all. We can draft names from nearby text.";
+          " would be announced by an internal name, a placeholder or nothing at all.";
+      if (problemCounts.instruction)
+        summary +=
+          " " +
+          plural(problemCounts.instruction, "name") +
+          " " +
+          (problemCounts.instruction === 1
+            ? "is an instruction"
+            : "are instructions") +
+          " (“Type …”) instead of the information.";
+      if (problemCounts["option-missing"])
+        summary +=
+          " " +
+          plural(
+            problemCounts["option-missing"],
+            "answer box",
+            "answer boxes",
+          ) +
+          " don’t say which answer they are.";
+      if (attention.length) summary += " We suggest a name for each.";
       if (duplicateGroups)
         summary +=
           " " +
@@ -1705,12 +1651,24 @@ export function createAccessibilityWorkshop(host) {
   // Drafting
   // ---------------------------------------------------------------------
 
+  // The server's suggestion: the current name cleaned up, a question and
+  // its answer for a box in a row of answers, or the printed label nearby.
   function nearbyFor(field) {
-    if (!field || !field.box) return null;
-    return findNearbyLabel(field.box, blocksOnPage(field.pageIndex));
+    if (!field || !field.label || !field.label.suggested) return null;
+    const label = field.label;
+    return {
+      text: label.suggested,
+      // The server calls a tidied version of the form's own name "existing";
+      // here that would read as the untouched original.
+      source: label.source === "existing" ? "cleaned" : label.source,
+      required: !!label.required,
+      boxes: [label.labelBox, label.optionBox, label.qualifierBox].filter(
+        Boolean,
+      ),
+    };
   }
 
-  function draftNamesFromNearbyText(fields) {
+  function draftNamesFromSuggestions(fields) {
     let drafted = 0;
     fields.forEach(function (field) {
       const decision = ws.names[field.name];
@@ -1718,7 +1676,7 @@ export function createAccessibilityWorkshop(host) {
       const nearby = nearbyFor(field);
       if (!nearby) return;
       decision.value = nearby.text;
-      decision.source = "nearby";
+      decision.source = nearby.source;
       decision.touched = true;
       if (nearby.required) field.required = true;
       drafted += 1;
@@ -1729,13 +1687,14 @@ export function createAccessibilityWorkshop(host) {
   async function draftNamesWithAi(fields) {
     const payload = fields.map(function (field) {
       const nearby = nearbyFor(field);
-      const nearbyText = [];
-      if (nearby) nearbyText.push(nearby.text);
+      const group = field.label.group || {};
       return {
         name: field.name,
         type: field.type,
-        tooltip: currentName(field.name),
-        nearby_text: nearbyText,
+        tooltip: currentName(field.name) || field.tooltip,
+        nearby_text: nearby ? [nearby.text] : [],
+        question: group.question || "",
+        option: group.option || "",
       };
     });
     const data = await postJson("/pdf-labeler/api/accessibility-ai-tooltips", {
@@ -1809,12 +1768,11 @@ export function createAccessibilityWorkshop(host) {
     const notes = [];
     try {
       const fields = attentionFields();
-      const nearby = draftNamesFromNearbyText(fields);
-      if (nearby)
-        notes.push(plural(nearby, "field name") + " from nearby text");
+      const nearby = draftNamesFromSuggestions(fields);
+      if (nearby) notes.push(plural(nearby, "suggested field name"));
       if (ws.draftWithAi && host.aiEnabled()) {
         const stillVague = attentionFields().filter(function (field) {
-          return (ws.names[field.name] || {}).source !== "nearby";
+          return !(ws.names[field.name] || {}).source;
         });
         if (stillVague.length) {
           setBusy(
@@ -2205,7 +2163,7 @@ export function createAccessibilityWorkshop(host) {
       '<p class="aw-lead">We inspected every page and made the repairs that don’t involve judgment. What’s left is listed by the question it answers for a reader.</p>' +
       '<section class="aw-card aw-autodraft" aria-labelledby="aw-autodraft-title"><div>' +
       '<h3 id="aw-autodraft-title" class="aw-card-title">Draft everything we can, then review it</h3>' +
-      '<p class="aw-small">Field names from nearby text, and heading levels from the layout. Drafts land in each task marked <span class="aw-tag-draft">Draft</span>. Nothing counts as reviewed until you confirm it.</p>' +
+      '<p class="aw-small">Field names from the page and the form’s own hints, and heading levels from the layout. Drafts land in each task marked <span class="aw-tag-draft">Draft</span>. Nothing counts as reviewed until you confirm it.</p>' +
       aiOption +
       '</div><button type="button" class="aw-btn aw-btn-primary" data-aw="auto-draft">Draft what we can</button></section>' +
       '<ul class="aw-task-grid" aria-label="Tasks">' +
@@ -2492,6 +2450,10 @@ export function createAccessibilityWorkshop(host) {
   function sourceChip(source) {
     if (source === "nearby")
       return '<span class="aw-tag-draft">Drafted from nearby text</span>';
+    if (source === "cleaned")
+      return '<span class="aw-tag-draft">Cleaned up from the form’s own name</span>';
+    if (source === "option-group")
+      return '<span class="aw-tag-draft">Drafted from the question and answer</span>';
     if (source === "ai")
       return '<span class="aw-tag-draft">AI draft · not verified</span>';
     if (source === "existing")
@@ -2575,18 +2537,17 @@ export function createAccessibilityWorkshop(host) {
         '<p class="aw-small"><span class="aw-muted">Announced today</span> <span class="aw-said">“' +
         esc((field.tooltip || field.name) + ", " + controlRoleWords(field)) +
         "”</span></p>" +
+        (field.label.problem && !decision.confirmed
+          ? '<p class="aw-small">' +
+            esc(NAME_PROBLEMS[field.label.problem] || "") +
+            "</p>"
+          : "") +
         '<div class="aw-field-group"><label for="aw-field-name" class="aw-label">Announced name</label>' +
         '<input id="aw-field-name" class="aw-input aw-input-strong" type="text" data-aw-input="field-name" value="' +
         esc(value) +
         '" autocomplete="off">' +
         '<p class="aw-help">' +
-        (nearby
-          ? "Nearby text " +
-            esc(nearby.where) +
-            ": “" +
-            esc(nearby.text) +
-            "” (outlined on the page). "
-          : "We found no printed label next to this field. ") +
+        (nearby ? esc(suggestionNote(field)) + " " : "") +
         'Internal name: <span class="aw-mono">' +
         esc(field.name) +
         "</span> — it never changes.</p>" +
@@ -2623,7 +2584,7 @@ export function createAccessibilityWorkshop(host) {
           : "") +
         "</div>" +
         '<div class="aw-subhead"><h3 class="aw-card-title">This task</h3>' +
-        '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="fields-draft-all">Draft all from nearby text</button></div>' +
+        '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="fields-draft-all">Use all suggestions</button></div>' +
         '<ol class="aw-list">' +
         items +
         "</ol>" +
@@ -2637,6 +2598,26 @@ export function createAccessibilityWorkshop(host) {
         plural(pendingWrites, "confirmed name") +
         " to the PDF</button></div>",
     };
+  }
+
+  // Where a suggestion came from, said plainly, with its source outlined.
+  function suggestionNote(field) {
+    const label = field.label;
+    const group = label.group;
+    if (label.source === "option-group" && group) {
+      return (
+        "One of " +
+        group.size +
+        " answers to “" +
+        (group.question || "the question") +
+        "”: this box is “" +
+        group.option +
+        "” (both outlined on the page)."
+      );
+    }
+    if (label.source === "existing")
+      return "Suggested from the form’s own name, without the instruction.";
+    return "Suggested from the printed label (outlined on the page).";
   }
 
   function fieldOverlays(currentField, nearby) {
@@ -2655,11 +2636,9 @@ export function createAccessibilityWorkshop(host) {
           target: "field:" + field.name,
         };
       });
-    if (nearby) {
-      [nearby.labelBlockId, nearby.hintBlockId].forEach(function (blockId) {
-        const block = blockId ? blockById(blockId) : null;
-        if (block && block.pageIndex === ws.page)
-          marks.push({ box: block.box, tone: "source" });
+    if (nearby && currentField && currentField.pageIndex === ws.page) {
+      nearby.boxes.forEach(function (box) {
+        marks.push({ box: box, tone: "source" });
       });
     }
     if (currentField && currentField.pageIndex === ws.page)
@@ -4552,7 +4531,7 @@ export function createAccessibilityWorkshop(host) {
       if (!nearby) return;
       const decision = ws.names[field.name];
       decision.value = nearby.text;
-      decision.source = "nearby";
+      decision.source = nearby.source;
       decision.touched = true;
       render();
       focusField("aw-field-name");
@@ -4574,11 +4553,13 @@ export function createAccessibilityWorkshop(host) {
       }
     },
     "fields-draft-all": function () {
-      const count = draftNamesFromNearbyText(attentionFields());
+      const count = draftNamesFromSuggestions(attentionFields());
       announce(
         count
-          ? "Drafted " + plural(count, "name") + " from nearby text."
-          : "No nearby labels found.",
+          ? "Filled in " +
+              plural(count, "suggested name") +
+              ". Confirm each one."
+          : "There were no suggestions to use.",
       );
       render();
     },

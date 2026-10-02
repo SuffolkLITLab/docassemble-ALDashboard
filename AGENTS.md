@@ -63,6 +63,10 @@ A full-screen review mode of the PDF labeler, opened by the "Accessibility
 workshop" button. Implementation:
 
 - `docassemble/ALDashboard/pdf_accessibility.py`: detection and repairs.
+- `docassemble/ALDashboard/pdf_field_labels.py`: accessible-name review for
+  form controls (instruction-style names, placeholders, answer boxes grouped
+  with their question). Inspection returns it as `field_labels`; the browser
+  uses those suggestions and has no labeling heuristics of its own.
 - `docassemble/ALDashboard/api_labelers.py`: `/pdf-labeler/api/accessibility-*`
   endpoints. They are stateless: each repair receives the working PDF and
   returns the repaired one.
@@ -92,11 +96,14 @@ workshop" button. Implementation:
 - An earlier tag tree the PDF arrived with is kept until the person chooses to
   replace it under Headings & tags.
 - Internal field names never change. Only announced names (`/TU`) do.
+- A name is the information, not an instruction: "County", not "Type name of
+  county"; the screen reader already announces the role. Each box in a row of
+  answers is named by its question and its answer.
 
 ### Verification
 
 Run `test/test_pdf_accessibility*.py` (including `_api`, `_image_decisions`
-and `_redraft`), `npm run check`, `npm run test:a11y-workshop`, and
+and `_redraft`) and `test/test_pdf_field_labels.py`, `npm run check`, `npm run test:a11y-workshop`, and
 `npm run test:pdf-labeler-focus` (it stubs the workshop import).
 
 ## Court form shapes

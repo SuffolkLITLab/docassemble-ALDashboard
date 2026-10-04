@@ -77,6 +77,36 @@ class TestAccessibilityWorkshopEndpoints(unittest.TestCase):
         self.assertEqual(result["status"], 400)
         self.assertEqual(result["body"]["error"]["type"], "validation_error")
 
+    def test_preserving_pages_keeps_the_tag_tree_in_a_split(self):
+        result = self._run_probe(f"""
+            import base64, io, pikepdf
+            client = app.test_client()
+            route = "/al/pdf-labeler/api/accessibility-remediate"
+            original = open({_FIXTURE!r}, "rb").read()
+            draft = client.post(route, data={{
+                "file": (io.BytesIO(original), "form.pdf"), "action": "draft_structure"
+            }}).get_json()["data"]
+            response = client.post(route, data={{
+                "file": (io.BytesIO(base64.b64decode(draft["pdf_base64"])), "form.pdf"),
+                "action": "preserve_pages", "page_indexes": "[1]"
+            }})
+            body = response.get_json()
+            with pikepdf.open(io.BytesIO(base64.b64decode(body["data"]["pdf_base64"]))) as pdf:
+                print(json.dumps({{"status": response.status_code, "pages": len(pdf.pages),
+                    "tags": "/StructTreeRoot" in pdf.Root,
+                    "preserved": body["data"]["remediation_result"]["tags_preserved"]}}))
+        """)
+        self.assertEqual(
+            result, {"status": 200, "pages": 1, "tags": True, "preserved": True}
+        )
+
+    def test_preserving_pages_requires_a_json_list(self):
+        result = self._post(
+            "/al/pdf-labeler/api/accessibility-remediate",
+            {"action": "preserve_pages", "page_indexes": '{"page": 1}'},
+        )
+        self.assertEqual(result["status"], 400)
+
     def test_malformed_decisions_are_a_validation_error(self):
         result = self._post(
             "/al/pdf-labeler/api/accessibility-remediate",

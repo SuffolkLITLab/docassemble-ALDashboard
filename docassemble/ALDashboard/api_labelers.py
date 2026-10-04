@@ -3339,6 +3339,7 @@ ACCESSIBILITY_REMEDIATION_ACTIONS = (
     "readback_text",
     "field_names",
     "ocr",
+    "preserve_pages",
 )
 
 
@@ -3487,6 +3488,18 @@ def _run_accessibility_remediation(
             input_path,
             output_path,
             language=str(post_data.get("language") or "eng")[:12],
+        )
+    if action == "preserve_pages":
+        from .pdf_accessibility_review import preserve_page_tags
+
+        indexes = _parse_optional_json_field(
+            post_data.get("page_indexes"), field_name="page_indexes"
+        )
+        if not isinstance(indexes, list):
+            raise DashboardAPIValidationError("page_indexes must be a JSON list.")
+        return preserve_page_tags(
+            input_path, output_path, indexes,
+            deduplicate=parse_bool(post_data.get("deduplicate_field_names"), default=False),
         )
     if action in {"readback_text", "field_names"}:
         repair_call = (

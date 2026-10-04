@@ -4548,6 +4548,32 @@ class TestStandardFourteenEmbedding(unittest.TestCase):
 class TestFontSubstitution(unittest.TestCase):
     """Substitution swaps the typeface but must never move the text."""
 
+    def test_composite_encodings_are_never_offered_or_rewritten_as_simple_fonts(self):
+        import pikepdf
+        from docassemble.ALDashboard.pdf_accessibility import _substitute_font_program
+
+        with pikepdf.new() as pdf:
+            for subtype in (pikepdf.Name.Type0, pikepdf.Name.Type3):
+                font = pikepdf.Dictionary(
+                    Type=pikepdf.Name.Font,
+                    Subtype=subtype,
+                    BaseFont=pikepdf.Name.Helvetica,
+                    FirstChar=65,
+                    Widths=pikepdf.Array([667]),
+                )
+                self.assertEqual(find_metric_compatible_fonts(font, []), [])
+                self.assertFalse(
+                    _substitute_font_program(
+                        pdf,
+                        font,
+                        "Helvetica",
+                        {"path": "/unavailable.ttf", "postscript_name": "Replacement"},
+                    )
+                )
+                self.assertEqual(font.Subtype, subtype)
+                self.assertEqual(font.BaseFont, pikepdf.Name.Helvetica)
+                self.assertNotIn("/FontDescriptor", font)
+
     def test_cff_replacement_changes_a_truetype_dictionary_to_type1(self):
         import pikepdf
         from docassemble.ALDashboard.pdf_accessibility import _substitute_font_program

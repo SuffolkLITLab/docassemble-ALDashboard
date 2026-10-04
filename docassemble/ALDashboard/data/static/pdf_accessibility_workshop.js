@@ -370,6 +370,8 @@ const DECISION_KEYS = [
   "images",
   "links",
   "tables",
+  "tableDrafts",
+  "fontChecks",
   "textFixes",
   "glyphs",
   "external",
@@ -465,12 +467,18 @@ export function createAccessibilityWorkshop(host) {
       orderEditedPages: new Set(),
       orderConfirmedPages: new Set(),
       selectedBlock: "",
+      selectedLink: "",
       headings: {},
       images: {},
       imageCursor: 0,
       previews: null,
       links: {},
       tables: {},
+      tableDrafts: [],
+      tableEditor: null,
+      fontChecks: [],
+      compareOriginal: false,
+      originalPdfDoc: null,
       textFixes: {},
       fontReview: null,
       fontSubs: null,
@@ -592,6 +600,7 @@ export function createAccessibilityWorkshop(host) {
         ws.pdfDoc.destroy();
       } catch (_error) {}
     }
+    ws.compareOriginal = false;
     ws.working = bytes;
     ws.version += 1;
     pageCanvasCache.clear();
@@ -867,6 +876,8 @@ export function createAccessibilityWorkshop(host) {
     ws.images = {};
     ws.links = {};
     ws.tables = {};
+    ws.tableDrafts = [];
+    ws.fontChecks = [];
     ws.blockOrder = {};
     const inspection = ws.inspection;
     const metadata = inspection.metadata || {};
@@ -970,13 +981,14 @@ export function createAccessibilityWorkshop(host) {
         ws.links[key] = {
           contents: String(annotation.contents || ""),
           confirmed: false,
+          decorative: false,
         };
       }
     });
     (editor.tables || []).forEach(function (table) {
-      if (!ws.tables[table.path]) {
+      if (!ws.tables[tableKey(table)]) {
         const firstRow = (table.rows || [])[0];
-        ws.tables[table.path] = {
+        ws.tables[tableKey(table)] = {
           headerRow: !!(
             firstRow &&
             firstRow.cells.length &&
@@ -986,6 +998,14 @@ export function createAccessibilityWorkshop(host) {
           ),
           confirmed: false,
         };
+      }
+      const decision = ws.tables[tableKey(table)];
+      const paths = table.rows
+        .flatMap((row) => row.cells.map((cell) => cell.path))
+        .join(",");
+      if (decision.cellPaths !== paths) {
+        delete decision.cells;
+        decision.cellPaths = paths;
       }
     });
   }
@@ -1197,7 +1217,7 @@ export function createAccessibilityWorkshop(host) {
     const editor = (ws.inspection && ws.inspection.structure_editor) || {};
     const unnamed = (editor.widgets || [])
       .filter(function (widget) {
-        return !widget.name;
+        return !widget.name || widget.pushButton;
       })
       .map(function (widget) {
         return {
@@ -1212,6 +1232,10 @@ export function createAccessibilityWorkshop(host) {
 
   function linkKey(annotation) {
     return annotation.widgetId || annotation.pageIndex + ":" + annotation.index;
+  }
+
+  function tableKey(table) {
+    return table.identity || table.tableId || table.path;
   }
 
   function tableList() {
@@ -1430,7 +1454,7 @@ export function createAccessibilityWorkshop(host) {
         return !decision.confirmed;
       }).length;
       const openTables = tables.filter(function (table) {
-        return !(ws.tables[table.path] || {}).confirmed;
+        return !(ws.tables[tableKey(table)] || {}).confirmed;
       }).length;
       const parts = [];
       if (links.length)
@@ -1456,8 +1480,14 @@ export function createAccessibilityWorkshop(host) {
     // text
     const fonts = fontIssues();
     const findings = textFindings();
-    const count = fonts.length + findings.length;
+    const pendingFonts = (ws.fontChecks || []).filter(
+      (check) => !check.confirmed,
+    ).length;
+    const count = fonts.length + findings.length + pendingFonts;
     let summary = "";
+    if (pendingFonts)
+      summary +=
+        plural(pendingFonts, "substitution") + " needs a visual check. ";
     if (!count)
       summary =
         "Every font is embedded and every glyph maps to text. Spot-check a few lines to confirm.";
@@ -1576,6 +1606,7 @@ export function createAccessibilityWorkshop(host) {
         if (next) current = next;
       }
       await loadWorkingCopy(current);
+      ws.compareOriginal = false;
       if (!preserveEvidence) {
         ws.external = {};
         ws.recording = "";
@@ -1720,6 +1751,18 @@ export function createAccessibilityWorkshop(host) {
   // the tree is rebuilt; decisions on widgets and fonts survive on their own.
   function afterStructureSteps() {
     return [
+      async function (bytes) {
+        const operations = (ws.tableDrafts || [])
+          .filter((draft) => draft.confirmed)
+          .map((draft) => ({
+            action: "create_table",
+            tableId: draft.id,
+            rows: draft.rows,
+          }));
+        return operations.length
+          ? (await remediate("structure", { operations }, bytes)).bytes
+          : bytes;
+      },
       async function (bytes) {
         const fields = {
           field_tooltips: confirmedTooltips(),
@@ -2439,10 +2482,13 @@ export function createAccessibilityWorkshop(host) {
       PAGE_RENDER_WIDTH,
       Math.ceil(pageEl.getBoundingClientRect().width / 100) * 100,
     );
-    const key = ws.version + ":" + ws.page + ":" + renderWidth;
+    const key =
+      ws.version + ":" + ws.page + ":" + renderWidth + ":" + ws.compareOriginal;
     let canvas = pageCanvasCache.get(key);
     if (!canvas) {
-      const page = await ws.pdfDoc.getPage(ws.page + 1);
+      const previewDocument =
+        ws.compareOriginal && ws.originalPdfDoc ? ws.originalPdfDoc : ws.pdfDoc;
+      const page = await previewDocument.getPage(ws.page + 1);
       const baseViewport = page.getViewport({ scale: 1 });
       const scale =
         (renderWidth / baseViewport.width) * (window.devicePixelRatio || 1);
@@ -2524,17 +2570,18 @@ export function createAccessibilityWorkshop(host) {
   function renderReview() {
     const task = TASK_BY_ID.get(ws.task) || TASKS[0];
     const summary = taskSummary(task.id);
-    const view = summary.applicable
-      ? taskView(task.id)
-      : { lead: summary.summary, overlays: [], html: "" };
+    const view =
+      summary.applicable || ws.task === "links"
+        ? taskView(task.id)
+        : { lead: summary.summary, overlays: [], html: "" };
     els.main.innerHTML =
-      '<div class="aw-review"><header class="aw-review-head"><p class="aw-eyebrow">Step 2 · Review the experience · ' +
+      '<div class="aw-review"><div class="aw-review-head"><p class="aw-eyebrow">Step 2 · Review the experience · ' +
       esc(task.category) +
       '</p><h2 class="aw-title">' +
       esc(task.question) +
       '</h2><p class="aw-lead">' +
       esc(view.lead) +
-      "</p></header>" +
+      "</p></div>" +
       '<div class="aw-review-body' +
       (view.noViewer ? " aw-no-preview" : "") +
       '">' +
@@ -2544,7 +2591,7 @@ export function createAccessibilityWorkshop(host) {
       '<section id="aw-review-panel" class="aw-inspector" aria-label="' +
       esc(task.category) +
       ' review">' +
-      (summary.applicable
+      (summary.applicable || ws.task === "links"
         ? view.html
         : '<p class="aw-empty">' + esc(summary.summary) + "</p>") +
       '<p class="aw-done-note">' +
@@ -3723,7 +3770,11 @@ export function createAccessibilityWorkshop(host) {
           '" class="aw-label">' +
           esc(
             link.subtype === "Widget"
-              ? "Control without an internal name"
+              ? link.name
+                ? "Button: " + link.name
+                : link.caption
+                  ? "Button: " + link.caption
+                  : "Control without an internal name"
               : link.subtype === "Link"
                 ? "Link"
                 : link.subtype,
@@ -3733,8 +3784,18 @@ export function createAccessibilityWorkshop(host) {
           (link.tagged
             ? ""
             : ' <span class="aw-chip aw-chip-fail">not tagged</span>') +
-          '</label><button type="button" class="aw-linklike" data-aw="go-page" data-page="' +
+          "</label>" +
+          (link.pushButton
+            ? '<label class="aw-check"><input type="checkbox" data-aw-input="button-decorative" data-key="' +
+              esc(key) +
+              '"' +
+              (decision.decorative ? " checked" : "") +
+              "> <span>Decorative: keep the picture and disable this button</span></label>"
+            : "") +
+          '<button type="button" class="aw-linklike" data-aw="go-page" data-page="' +
           link.pageIndex +
+          '" data-link="' +
+          esc(key) +
           '">Show on page ' +
           (Number(link.pageIndex) + 1) +
           '</button><div class="aw-inline"><input id="' +
@@ -3743,7 +3804,8 @@ export function createAccessibilityWorkshop(host) {
           esc(key) +
           '" value="' +
           esc(decision.contents) +
-          '"><button type="button" class="aw-btn aw-btn-secondary aw-btn-small" data-aw="link-confirm" data-key="' +
+          (decision.decorative ? '" disabled><button' : '"><button') +
+          ' type="button" class="aw-btn aw-btn-secondary aw-btn-small" data-aw="link-confirm" data-key="' +
           esc(key) +
           '">' +
           (decision.confirmed ? "Confirmed" : "Confirm") +
@@ -3753,7 +3815,7 @@ export function createAccessibilityWorkshop(host) {
       .join("");
     const tableRows = tables
       .map(function (table) {
-        const decision = ws.tables[table.path] || {};
+        const decision = ws.tables[tableKey(table)] || {};
         const grid = (table.rows || [])
           .slice(0, 4)
           .map(function (row) {
@@ -3790,13 +3852,15 @@ export function createAccessibilityWorkshop(host) {
           grid +
           "</table>" +
           '<label class="aw-check"><input type="checkbox" data-aw-input="table-header" data-path="' +
-          esc(table.path) +
+          esc(tableKey(table)) +
           '"' +
           (decision.headerRow ? " checked" : "") +
           "> <span>The first row holds the column headers</span></label>" +
           '<button type="button" class="aw-btn aw-btn-secondary aw-btn-small" data-aw="table-confirm" data-path="' +
-          esc(table.path) +
-          '">Confirm headers</button></li>'
+          esc(tableKey(table)) +
+          '">Confirm headers</button>' +
+          cellRepairView(table, decision) +
+          "</li>"
         );
       })
       .join("");
@@ -3812,7 +3876,10 @@ export function createAccessibilityWorkshop(host) {
         .map(function (link) {
           return {
             box: normalizedRect(link.rect, ws.pageViews[ws.page]),
-            tone: "current",
+            tone:
+              !ws.selectedLink || ws.selectedLink === linkKey(link)
+                ? "current"
+                : "suggestion",
           };
         }),
       html:
@@ -3827,8 +3894,193 @@ export function createAccessibilityWorkshop(host) {
             tableRows +
             "</ul>"
           : "") +
-        '<div class="aw-sticky-actions"><button type="button" class="aw-btn aw-btn-primary" data-aw="links-write">Write links & tables to the PDF</button></div>',
+        tableEditorView() +
+        (links.length || tables.length
+          ? '<div class="aw-sticky-actions"><button type="button" class="aw-btn aw-btn-primary" data-aw="links-write">Write links & tables to the PDF</button></div>'
+          : ""),
     };
+  }
+
+  function tableEditorView() {
+    const items = (
+      (ws.inspection.structure_editor || {}).tableItems || []
+    ).filter((item) => !item.tableOwner && item.pageIndex === ws.page);
+    const draft = ws.tableEditor;
+    if (!draft)
+      return '<details class="aw-card"><summary>Create a table on this page</summary><p class="aw-small">Group the page’s existing passages and controls into a simple table. No text or field names are changed. Merged cells and tables spanning pages are outside this basic editor.</p><button type="button" class="aw-btn aw-btn-secondary aw-btn-small" data-aw="table-start">Set up a table</button></details>';
+    if (draft.pageIndex !== ws.page)
+      return (
+        '<p class="aw-warning">A table draft is open on page ' +
+        (draft.pageIndex + 1) +
+        '. Return to that page or <button type="button" class="aw-linklike" data-aw="table-cancel">discard the draft</button>.</p>'
+      );
+    const grid = draft.rows
+      .map(
+        (row, r) =>
+          "<tr>" +
+          row
+            .map(
+              (cell, c) =>
+                '<td><label class="aw-label" for="aw-cell-' +
+                r +
+                "-" +
+                c +
+                '">Row ' +
+                (r + 1) +
+                ", column " +
+                (c + 1) +
+                '</label><select id="aw-cell-' +
+                r +
+                "-" +
+                c +
+                '" class="aw-input" multiple size="3" data-aw-input="table-cell-content" data-row="' +
+                r +
+                '" data-col="' +
+                c +
+                '">' +
+                items
+                  .map(
+                    (item, i) =>
+                      '<option value="' +
+                      i +
+                      '"' +
+                      (item.contentIds.every((id) =>
+                        cell.contentIds.includes(id),
+                      )
+                        ? " selected"
+                        : "") +
+                      ">" +
+                      esc(item.text) +
+                      "</option>",
+                  )
+                  .join("") +
+                "</select></td>",
+            )
+            .join("") +
+          "</tr>",
+      )
+      .join("");
+    return (
+      '<section class="aw-card"><h3 class="aw-card-title">New table · page ' +
+      (ws.page + 1) +
+      '</h3><p class="aw-small">Select the whole passages or controls for each cell. Hold Ctrl or Command to select more than one. Leave a cell unselected if it is blank. A passage can appear in only one cell.</p><div class="aw-inline"><label>Rows <input class="aw-input" type="number" min="1" max="20" value="' +
+      draft.rows.length +
+      '" data-aw-input="table-size" data-axis="rows"></label><label>Columns <input class="aw-input" type="number" min="1" max="10" value="' +
+      draft.rows[0].length +
+      '" data-aw-input="table-size" data-axis="cols"></label></div><label class="aw-check"><input type="checkbox" data-aw-input="table-new-header" data-axis="row"' +
+      (draft.headerRow ? " checked" : "") +
+      '> First row contains column headers</label><label class="aw-check"><input type="checkbox" data-aw-input="table-new-header" data-axis="col"' +
+      (draft.headerCol ? " checked" : "") +
+      '> First column contains row headers</label><div class="aw-table-editor-scroll"><table class="aw-mini-table"><caption>Choose content for each cell</caption>' +
+      grid +
+      '</table></div><div class="aw-actions"><button type="button" class="aw-btn aw-btn-primary" data-aw="table-create">Confirm and write this table</button><button type="button" class="aw-btn aw-btn-secondary" data-aw="table-cancel">Cancel table draft</button></div></section>'
+    );
+  }
+
+  async function writeNewTable() {
+    const draft = ws.tableEditor;
+    if (!draft || draft.pageIndex !== ws.page) return;
+    const rows = draft.rows.map((row, r) =>
+      row.map((cell, c) => ({
+        contentIds: cell.contentIds,
+        role:
+          (draft.headerRow && r === 0) || (draft.headerCol && c === 0)
+            ? "TH"
+            : "TD",
+        scope:
+          draft.headerRow && r === 0 && draft.headerCol && c === 0
+            ? "Both"
+            : draft.headerRow && r === 0
+              ? "Column"
+              : "Row",
+      })),
+    );
+    const id =
+      "table-" +
+      Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
+        value.toString(16).padStart(2, "0"),
+      ).join("");
+    const applied = await applyChange("Table creation", "", [
+      async (bytes) =>
+        (
+          await remediate(
+            "structure",
+            { operations: [{ action: "create_table", tableId: id, rows }] },
+            bytes,
+          )
+        ).bytes,
+    ]);
+    if (!applied) return;
+    ws.tableDrafts.push({ id, rows, confirmed: true });
+    const table = tableList().find((item) => item.tableId === id);
+    if (table) ws.tables[tableKey(table)].confirmed = true;
+    ws.tableEditor = null;
+    if (!taskSummary("links").count) markReviewed("links");
+    else ws.reviewed.links = false;
+    saveDecisions();
+    render();
+  }
+
+  function cellRepairView(table, decision) {
+    return (
+      '<details><summary>Edit cell roles and repair this table</summary><p class="aw-small">Choose data cells or headers and the direction each header describes. Content and existing cell spans stay in place.</p><div class="aw-table-editor-scroll"><table class="aw-mini-table"><caption>Cell roles in the existing table</caption>' +
+      table.rows
+        .map(
+          (row, r) =>
+            "<tr>" +
+            row.cells
+              .map((cell, c) => {
+                const selected =
+                  (decision.cells || {})[cell.path] ||
+                  (cell.role === "TH" ? cell.scope || "Column" : "data");
+                return (
+                  '<td><label class="aw-label" for="aw-repair-' +
+                  esc(cell.path) +
+                  '">Row ' +
+                  (r + 1) +
+                  ", column " +
+                  (c + 1) +
+                  '</label><select id="aw-repair-' +
+                  esc(cell.path) +
+                  '" class="aw-input" data-aw-input="table-cell-role" data-key="' +
+                  esc(tableKey(table)) +
+                  '" data-cell="' +
+                  esc(cell.path) +
+                  '">' +
+                  [
+                    ["data", "Data cell"],
+                    ["Column", "Column header"],
+                    ["Row", "Row header"],
+                    ["Both", "Header for row and column"],
+                  ]
+                    .map(
+                      ([v, label]) =>
+                        '<option value="' +
+                        v +
+                        '"' +
+                        (selected === v ? " selected" : "") +
+                        ">" +
+                        label +
+                        "</option>",
+                    )
+                    .join("") +
+                  '</select><p class="aw-small aw-muted">Current tag: ' +
+                  esc(cell.role) +
+                  "</p></td>"
+                );
+              })
+              .join("") +
+            "</tr>",
+        )
+        .join("") +
+      '</table></div><label class="aw-check"><input type="checkbox" data-aw-input="table-pad" data-key="' +
+      esc(tableKey(table)) +
+      '"' +
+      (table.hasSpans ? " disabled" : decision.pad ? " checked" : "") +
+      '> Add empty cells to align shorter rows</label><button type="button" class="aw-btn aw-btn-secondary aw-btn-small" data-aw="table-repair-confirm" data-key="' +
+      esc(tableKey(table)) +
+      '">Confirm these cell roles</button></details>'
+    );
   }
 
   async function writeLinks() {
@@ -3837,6 +4089,14 @@ export function createAccessibilityWorkshop(host) {
       const key = linkKey(link);
       const decision = ws.links[key];
       if (!decision || !decision.confirmed) return;
+      if (decision.decorative && link.pushButton) {
+        operations.push({
+          action: "disable_decorative_button",
+          pageIndex: link.pageIndex,
+          index: link.index,
+        });
+        return;
+      }
       operations.push({
         action:
           link.subtype === "Widget"
@@ -3856,9 +4116,35 @@ export function createAccessibilityWorkshop(host) {
         });
     });
     tableList().forEach(function (table) {
-      const decision = ws.tables[table.path];
+      const decision = ws.tables[tableKey(table)];
       if (!decision || !decision.confirmed) return;
-      if ((table.issueIds || []).indexOf("table-columns") !== -1)
+      if (decision.repairCells) {
+        table.rows.forEach((row) =>
+          row.cells.forEach((cell) => {
+            const choice =
+              (decision.cells || {})[cell.path] ||
+              (cell.role === "TH" ? cell.scope || "Column" : "data");
+            operations.push({
+              action: "set_role",
+              path: cell.path,
+              role: choice === "data" ? "TD" : "TH",
+            });
+            if (choice !== "data")
+              operations.push({
+                action: "set_scope",
+                path: cell.path,
+                scope: choice,
+              });
+          }),
+        );
+        if (decision.pad && !table.hasSpans)
+          operations.push({ action: "pad_table", path: table.path });
+        return;
+      }
+      if (
+        !table.hasSpans &&
+        (table.issueIds || []).indexOf("table-columns") !== -1
+      )
         operations.push({ action: "pad_table", path: table.path });
       const firstRow = (table.rows || [])[0];
       if (!firstRow) return;
@@ -3881,6 +4167,56 @@ export function createAccessibilityWorkshop(host) {
       host.showError("Confirm at least one link or table first.");
       return;
     }
+    operations.sort((a, b) => {
+      const ad = a.action === "disable_decorative_button",
+        bd = b.action === "disable_decorative_button";
+      if (ad !== bd) return ad ? 1 : -1;
+      return ad ? b.pageIndex - a.pageIndex || b.index - a.index : 0;
+    });
+    const disabledBases = linkList()
+      .filter(
+        (link) =>
+          link.pushButton &&
+          ws.links[linkKey(link)]?.confirmed &&
+          ws.links[linkKey(link)]?.decorative,
+      )
+      .map((link) => link.baseId || link.widgetId);
+    const beforeContent = new Set(
+      (ws.inspection.readback?.announcements || []).map(
+        (item) => item.contentId,
+      ),
+    );
+    const tableUpdates = tableList()
+      .filter((table) => table.tableId)
+      .map((table) => {
+        const decision = ws.tables[tableKey(table)],
+          draft = ws.tableDrafts.find((item) => item.id === table.tableId);
+        if (!draft || !decision?.confirmed) return null;
+        return {
+          draft,
+          rows: draft.rows.map((row, r) =>
+            row.map((cell, c) => {
+              const current = table.rows[r]?.cells[c];
+              const choice = decision.repairCells
+                ? (decision.cells || {})[current?.path] ||
+                  (current?.role === "TH" ? current.scope || "Column" : "data")
+                : r === 0
+                  ? decision.headerRow
+                    ? "Column"
+                    : "data"
+                  : cell.role === "TH"
+                    ? cell.scope
+                    : "data";
+              return {
+                ...cell,
+                role: choice === "data" ? "TD" : "TH",
+                scope: choice === "data" ? "" : choice,
+              };
+            }),
+          ),
+        };
+      })
+      .filter(Boolean);
     const applied = await applyChange("Links & tables", "", [
       async function (bytes) {
         return (await remediate("structure", { operations: operations }, bytes))
@@ -3888,6 +4224,36 @@ export function createAccessibilityWorkshop(host) {
       },
     ]);
     if (!applied) return;
+    if (disabledBases.length) {
+      linkList().forEach((link) => {
+        if (disabledBases.includes(link.baseId || link.widgetId))
+          delete ws.links[linkKey(link)];
+      });
+      refreshLinkDrafts();
+    }
+    tableUpdates.forEach((update) => {
+      update.draft.rows = update.rows;
+    });
+    if (disabledBases.length) {
+      const remaining = new Set(
+        (ws.inspection.readback?.announcements || []).map(
+          (item) => item.contentId,
+        ),
+      );
+      const removed = new Set(
+        [...beforeContent].filter((id) => id && !remaining.has(id)),
+      );
+      ws.tableDrafts.forEach((draft) =>
+        draft.rows.forEach((row) =>
+          row.forEach((cell) => {
+            cell.contentIds = cell.contentIds.filter((id) => !removed.has(id));
+          }),
+        ),
+      );
+      ws.tableDrafts = ws.tableDrafts.filter((draft) =>
+        draft.rows.some((row) => row.some((cell) => cell.contentIds.length)),
+      );
+    }
     const open = taskSummary("links").count;
     if (!open) markReviewed("links");
     saveDecisions();
@@ -3950,7 +4316,11 @@ export function createAccessibilityWorkshop(host) {
                 })
                 .join("") +
               "</select>"
-            : '<p class="aw-small aw-muted">No installed font has matching widths.</p>'
+            : '<p class="aw-small aw-muted">' +
+              (options.subtype === "Type0" || options.subtype === "Type3"
+                ? "This font’s encoding cannot safely use these substitutes. Obtain its original font or regenerate the PDF."
+                : "No installed font has matching widths.") +
+              "</p>"
           : "";
         return (
           '<li class="aw-card"><p class="aw-eyebrow">Not embedded</p><p><strong>' +
@@ -4080,6 +4450,28 @@ export function createAccessibilityWorkshop(host) {
       overlays: [],
       html:
         reviewedBanner("text") +
+        ((ws.fontChecks || []).some((check) => !check.confirmed)
+          ? '<div class="aw-callout aw-callout-attention"><h3 class="aw-card-title">Check the substituted fonts</h3><p class="aw-small">Compare the affected pages with the original. Check symbols, line breaks and form text before keeping these substitutions.</p><ul class="aw-small">' +
+            ws.fontChecks
+              .filter((check) => !check.confirmed)
+              .map(
+                (check) =>
+                  "<li>" +
+                  esc(check.source || check.resource) +
+                  " → " +
+                  esc(check.replacement || "Chosen substitute") +
+                  (check.pageIndex === undefined || check.pageIndex === null
+                    ? " · form fields"
+                    : " · page " + (check.pageIndex + 1)) +
+                  "</li>",
+              )
+              .join("") +
+            '</ul><p class="aw-small">Preview: <strong>' +
+            (ws.compareOriginal ? "Original PDF" : "Working PDF") +
+            '</strong></p><div class="aw-actions"><button type="button" class="aw-btn aw-btn-secondary" data-aw="compare-fonts">' +
+            (ws.compareOriginal ? "Show working PDF" : "Compare original PDF") +
+            '</button><button type="button" class="aw-btn aw-btn-primary" data-aw="keep-fonts">The appearance is acceptable — keep substitutions</button></div><p class="aw-small aw-muted">Use Undo to reject the substitution.</p></div>'
+          : "") +
         (nothing
           ? '<p class="aw-empty">Every font is embedded and every glyph maps to text. Spot-check a few lines by selecting and copying them in a PDF reader.</p>'
           : "") +
@@ -4316,9 +4708,9 @@ export function createAccessibilityWorkshop(host) {
     });
     const canDeclare = recorded === EXTERNAL_TESTS.length && allPassed;
     els.main.innerHTML =
-      '<div class="aw-test"><header class="aw-review-head"><p class="aw-eyebrow">Step 3 · Test & export</p>' +
+      '<div class="aw-test"><div class="aw-review-head"><p class="aw-eyebrow">Step 3 · Test & export</p>' +
       '<h2 class="aw-title">Hear it the way a screen reader user will</h2>' +
-      '<p class="aw-lead">Read the replay against the page. Anything that sounds wrong links back to the task that fixes it.</p></header>' +
+      '<p class="aw-lead">Read the replay against the page. Anything that sounds wrong links back to the task that fixes it.</p></div>' +
       '<div class="aw-review-body">' +
       pageViewer({ caption: "Highlight follows the replay" }) +
       previewDivider() +
@@ -4811,6 +5203,7 @@ export function createAccessibilityWorkshop(host) {
     },
     "go-page": function (target) {
       ws.page = Number(target.dataset.page);
+      if (target.dataset.link) ws.selectedLink = target.dataset.link;
       render();
     },
     "confirm-document": confirmDocument,
@@ -4990,15 +5383,38 @@ export function createAccessibilityWorkshop(host) {
     "link-confirm": function (target) {
       const decision = ws.links[target.dataset.key];
       if (!decision) return;
-      if (!String(decision.contents || "").trim()) {
+      if (!decision.decorative && !String(decision.contents || "").trim()) {
         host.showError("Describe the link first.");
         return;
       }
       decision.confirmed = true;
       render();
     },
+    "table-start": function () {
+      ws.tableEditor = {
+        pageIndex: ws.page,
+        headerRow: true,
+        headerCol: false,
+        rows: Array.from({ length: 2 }, () =>
+          Array.from({ length: 2 }, () => ({ contentIds: [] })),
+        ),
+      };
+      render();
+    },
+    "table-cancel": function () {
+      ws.tableEditor = null;
+      render();
+    },
+    "table-create": writeNewTable,
+    "table-repair-confirm": function (target) {
+      const decision = ws.tables[target.dataset.key];
+      decision.repairCells = true;
+      decision.confirmed = true;
+      render();
+    },
     "table-confirm": function (target) {
       const decision = ws.tables[target.dataset.path];
+      if (decision) decision.repairCells = false;
       if (decision) decision.confirmed = true;
       render();
     },
@@ -5037,7 +5453,7 @@ export function createAccessibilityWorkshop(host) {
         render();
       }
     },
-    "apply-font-subs": function () {
+    "apply-font-subs": async function () {
       const decisions = Object.keys(ws.glyphs)
         .filter(function (key) {
           return key.indexOf("sub:") === 0 && ws.glyphs[key];
@@ -5049,15 +5465,61 @@ export function createAccessibilityWorkshop(host) {
         host.showError("Choose a substitute first.");
         return;
       }
-      applyChange("Font substitution", "", [
+      const checks = decisions.map((decision) => {
+        const font = (report().fonts || []).find(
+          (item) => item.resource === decision.resource,
+        );
+        const options = (ws.fontSubs?.fonts || []).find(
+          (item) => item.resource === decision.resource,
+        );
+        const candidate = (options?.candidates || []).find(
+          (item) => item.path === decision.path,
+        );
+        return {
+          ...decision,
+          source: font?.name || decision.resource,
+          replacement: candidate?.postscript_name || "Chosen substitute",
+          pageIndex: font?.pageIndex,
+          confirmed: false,
+        };
+      });
+      const applied = await applyChange("Font substitution", "", [
         async function (bytes) {
           return (
             await remediate("substitute_fonts", { decisions: decisions }, bytes)
           ).bytes;
         },
-      ]).then(function () {
+      ]);
+      if (applied) {
+        ws.fontChecks = (ws.fontChecks || [])
+          .filter(
+            (check) =>
+              !decisions.some(
+                (decision) => check.resource === decision.resource,
+              ),
+          )
+          .concat(checks);
+        ws.reviewed.text = false;
         ws.fontSubs = null;
+        saveDecisions();
+        render();
+      }
+    },
+    "compare-fonts": async function () {
+      if (!ws.originalPdfDoc)
+        ws.originalPdfDoc = await host.pdfjsLib.getDocument({
+          data: ws.original.slice(),
+        }).promise;
+      ws.compareOriginal = !ws.compareOriginal;
+      render();
+    },
+    "keep-fonts": function () {
+      ws.fontChecks.forEach((check) => {
+        check.confirmed = true;
       });
+      ws.compareOriginal = false;
+      saveDecisions();
+      render();
     },
     "load-font-review": async function () {
       setBusy("Reading glyph outlines…");
@@ -5154,6 +5616,12 @@ export function createAccessibilityWorkshop(host) {
       ]);
     },
     "text-done": function () {
+      if ((ws.fontChecks || []).some((check) => !check.confirmed)) {
+        host.showError(
+          "Check and keep the substituted fonts before marking text reviewed.",
+        );
+        return;
+      }
       markReviewed("text");
       goToNextTask();
     },
@@ -5324,11 +5792,60 @@ export function createAccessibilityWorkshop(host) {
       const image = imageList()[ws.imageCursor];
       ws.images[image.assetId].verified = !!target.checked;
     },
+    "button-decorative": function (target) {
+      const decision = ws.links[target.dataset.key];
+      decision.decorative = target.checked;
+      decision.confirmed = false;
+      render();
+    },
     "link-contents": function (target) {
       const decision = ws.links[target.dataset.key];
       if (!decision) return;
       decision.contents = target.value;
       decision.confirmed = false;
+    },
+    "table-cell-content": function (target) {
+      const items = (
+        (ws.inspection.structure_editor || {}).tableItems || []
+      ).filter((item) => !item.tableOwner && item.pageIndex === ws.page);
+      ws.tableEditor.rows[Number(target.dataset.row)][
+        Number(target.dataset.col)
+      ].contentIds = Array.from(target.selectedOptions).flatMap(
+        (option) => items[Number(option.value)].contentIds,
+      );
+    },
+    "table-size": function (target) {
+      const draft = ws.tableEditor,
+        nr =
+          target.dataset.axis === "rows"
+            ? Math.max(1, Math.min(20, Math.floor(Number(target.value) || 1)))
+            : draft.rows.length,
+        nc =
+          target.dataset.axis === "cols"
+            ? Math.max(1, Math.min(10, Math.floor(Number(target.value) || 1)))
+            : draft.rows[0].length;
+      draft.rows = Array.from({ length: nr }, (_, r) =>
+        Array.from(
+          { length: nc },
+          (_, c) => draft.rows[r]?.[c] || { contentIds: [] },
+        ),
+      );
+      render();
+    },
+    "table-new-header": function (target) {
+      ws.tableEditor[
+        target.dataset.axis === "row" ? "headerRow" : "headerCol"
+      ] = target.checked;
+    },
+    "table-cell-role": function (target) {
+      const decision = ws.tables[target.dataset.key];
+      decision.cells ||= {};
+      decision.cells[target.dataset.cell] = target.value;
+      decision.confirmed = false;
+    },
+    "table-pad": function (target) {
+      ws.tables[target.dataset.key].pad = target.checked;
+      ws.tables[target.dataset.key].confirmed = false;
     },
     "table-header": function (target) {
       const decision = ws.tables[target.dataset.path];
@@ -5370,7 +5887,9 @@ export function createAccessibilityWorkshop(host) {
     },
   };
 
+  let handlingInput = false;
   function handleInput(event) {
+    if (handlingInput) return;
     const target = event.target.closest("[data-aw-input]");
     if (!target) return;
     const handler = inputHandlers[target.dataset.awInput];
@@ -5380,7 +5899,14 @@ export function createAccessibilityWorkshop(host) {
       target.tagName === "TEXTAREA" ||
       (target.tagName === "INPUT" && /^(text|search)$/.test(target.type));
     if ((event.type === "input") !== isText) return;
-    handler(target);
+    // Removing a changed, focused number input during render can dispatch a
+    // second change event while innerHTML is still being replaced.
+    handlingInput = true;
+    try {
+      handler(target);
+    } finally {
+      handlingInput = false;
+    }
   }
 
   root.addEventListener("input", handleInput);

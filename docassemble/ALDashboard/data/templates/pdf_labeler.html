@@ -831,6 +831,15 @@
                         </div>
                         <div class="page-manager-panel">
                             <div class="panel-title">Split &amp; Apply</div>
+                            <div id="page-manager-tag-choice" class="hidden mb-3">
+                                <label for="page-manager-tags" class="form-label small">Existing accessibility tags</label>
+                                <select id="page-manager-tags" class="form-select form-select-sm">
+                                    <option value="">Choose how to handle existing tags</option>
+                                    <option value="preserve">Keep tags when reordering, removing or splitting pages</option>
+                                    <option value="rebuild">Replace tags after editing in the accessibility workshop</option>
+                                </select>
+                                <p class="form-text">Keeping tags supports distinct pages from this PDF. Inserting pages requires a new draft. Either choice needs another reading-order and external test pass before declaring conformance.</p>
+                            </div>
                             <p class="small text-muted mb-3">Applying updates the active PDF in the workspace and preserves field overlays on kept pages. Split download exports the current arrangement as multiple PDFs.</p>
                             <div class="form-text mb-3">Split downloads use the current PDF pages. If you have unsaved field edits, apply the arrangement to the workspace first and export afterward to embed those fields.</div>
                             <div class="d-flex gap-2 flex-wrap">

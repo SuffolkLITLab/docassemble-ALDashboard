@@ -1192,6 +1192,20 @@ def _structure_scope(node: Any) -> str:
     return ""
 
 
+def _structure_has_cell_spans(node: Any) -> bool:
+    import pikepdf
+
+    attributes = node.get("/A")
+    candidates = (
+        list(attributes) if isinstance(attributes, pikepdf.Array) else [attributes]
+    )
+    return any(
+        hasattr(item, "get")
+        and (int(item.get("/ColSpan", 1)) != 1 or int(item.get("/RowSpan", 1)) != 1)
+        for item in candidates
+    )
+
+
 def _structure_form_field_name(node: Any) -> str:
     """Return the field name referenced by a Form structure element."""
     import pikepdf
@@ -1564,6 +1578,7 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                             ),
                             "role": _safe_pdf_string(cell.get("/S", "")).lstrip("/"),
                             "scope": _structure_scope(cell),
+                            "hasSpans": _structure_has_cell_spans(cell),
                         }
                     )
                 rows.append(
@@ -1578,8 +1593,13 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
             tables.append(
                 {
                     "path": path_text,
+                    "tableId": _safe_pdf_string(node.get("/DAWorkshopTable", "")),
+                    "structureId": str(node.objgen),
                     "pageIndex": page_index_for(node),
                     "rows": rows,
+                    "hasSpans": any(
+                        cell["hasSpans"] for row in rows for cell in row["cells"]
+                    ),
                     "targetColumns": max(
                         (row["validCellCount"] for row in rows), default=0
                     ),
@@ -1647,6 +1667,10 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                         "baseId": base_id,
                         "widgetId": f"{base_id}:{occurrence}",
                         "caption": _safe_pdf_string((annot.get("/MK") or {}).get("/CA", "")),
+                        "pushButton": (
+                            _safe_pdf_string(field.get("/FT", annot.get("/FT", ""))) == "/Btn"
+                            and bool(int(field.get("/Ff", annot.get("/Ff", 0)) or 0) & 65536)
+                        ),
                         "tagged": "Form" in tagged_annotation_roles.get(object_id, set()),
                         "issueIds": [] if tooltip.strip() else ["field_tooltips"],
                     }
@@ -1672,8 +1696,22 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                     ),
                 }
             )
+    from .pdf_accessibility_review import table_content_items
+
+    table_items = table_content_items(pdf) if struct_root is not None else []
+    for table in tables:
+        identities = sorted(
+            identity
+            for item in table_items
+            if item["tableOwner"] == table["structureId"]
+            for identity in item["contentIds"]
+        )
+        table["identity"] = table["tableId"] or hashlib.sha256(
+            json.dumps([table["pageIndex"], identities]).encode()
+        ).hexdigest()
     return {
         "tables": tables,
+        "tableItems": table_items,
         "figures": figures,
         "annotations": annotations,
         "widgets": widgets,
@@ -1801,8 +1839,13 @@ def _extract_image_assets(pdf: Any) -> List[Dict[str, Any]]:
     assets: List[Dict[str, Any]] = []
     for page_index, page in enumerate(pdf.pages):
         resources = page.get("/Resources") if hasattr(page, "get") else None
+        decorative_paths: List[str] = []
         for resource_path, obj in _walk_resource_xobjects(resources):
             try:
+                if obj.get("/DAWorkshopDecorative"):
+                    decorative_paths.append(resource_path + "/")
+                if any(resource_path.startswith(path) for path in decorative_paths):
+                    continue
                 if obj.get("/Subtype") != "/Image":
                     continue
                 asset_id = f"p{page_index + 1}:{resource_path}"
@@ -3554,6 +3597,10 @@ def find_metric_compatible_fonts(
     line up, so that text keeps its exact position and line breaks. The caller
     still has to choose one.
     """
+    # Composite and Type3 encodings cannot be replaced by the simple-font
+    # dictionaries below. Matching widths alone does not preserve their glyphs.
+    if _safe_pdf_string(pdf_font.get("/Subtype", "")) in {"/Type0", "/Type3"}:
+        return []
     expected, source = _expected_font_widths(pdf_font)
     if not expected:
         return []
@@ -3603,6 +3650,8 @@ def _substitute_font_program(
     """
     import pikepdf
 
+    if _safe_pdf_string(pdf_font.get("/Subtype", "")) in {"/Type0", "/Type3"}:
+        return False
     canonical = _canonical_font_name(pdf_font.get("/BaseFont", font_name))
     published = standard_14_widths(canonical)
     if "/Widths" not in pdf_font and published is not None:
@@ -8724,6 +8773,8 @@ def apply_manual_structure_repairs(
                 "annotations_tagged": 0,
                 "annotation_descriptions_changed": 0,
                 "widget_descriptions_changed": 0,
+                "buttons_disabled": 0,
+                "tables_created": 0,
             }
             tooltip_updates = []
             parent_tree = struct_root.get("/ParentTree")
@@ -8736,6 +8787,18 @@ def apply_manual_structure_repairs(
             )
             for operation in operation_list:
                 action = str(operation.get("action") or "")
+                if action == "create_table":
+                    from .pdf_accessibility_review import create_table
+
+                    create_table(pdf, operation)
+                    counts["tables_created"] += 1
+                    continue
+                if action == "disable_decorative_button":
+                    from .pdf_accessibility_review import disable_decorative_button
+
+                    disable_decorative_button(pdf, operation, number_entries)
+                    counts["buttons_disabled"] += 1
+                    continue
                 if action in {"set_role", "set_scope", "set_figure_alt", "pad_table"}:
                     node = _structure_node_at_path(
                         struct_root, str(operation.get("path") or "")
@@ -8747,6 +8810,16 @@ def apply_manual_structure_repairs(
                             "Table child roles must be TH or TD."
                         )
                     node["/S"] = pikepdf.Name(f"/{role}")
+                    if role == "TD":
+                        attributes = node.get("/A")
+                        candidates = list(attributes) if isinstance(attributes, pikepdf.Array) else [attributes]
+                        for attribute in candidates:
+                            if (
+                                hasattr(attribute, "get")
+                                and attribute.get("/O") == "/Table"
+                                and "/Scope" in attribute
+                            ):
+                                del attribute["/Scope"]
                     counts["roles_changed"] += 1
                 elif action == "set_scope":
                     scope = str(operation.get("scope") or "")
@@ -8800,6 +8873,12 @@ def apply_manual_structure_repairs(
                         for child in _structure_children(node)
                         if _safe_pdf_string(child.get("/S", "")) == "/TR"
                     ]
+                    for row in rows:
+                        for cell in _structure_children(row):
+                            if _structure_has_cell_spans(cell):
+                                raise PDFAccessibilityError(
+                                    "Padding tables with merged cells requires a table editor that supports spans."
+                                )
                     target = max(
                         (
                             sum(

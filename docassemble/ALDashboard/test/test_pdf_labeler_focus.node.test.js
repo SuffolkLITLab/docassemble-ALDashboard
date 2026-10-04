@@ -32,6 +32,10 @@ const labelerSource = fs
       acknowledgeWorkshopRenames: acknowledgeWorkshopRenames
       , remapFieldsForPageManagerDraft: remapFieldsForPageManagerDraft,
       setPageManagerState: value => { pageManagerState = value; },
+      updatePageManagerControls: updatePageManagerControls,
+      renderPageManagerPages: renderPageManagerPages,
+      pageManagerState: () => pageManagerState,
+      prepareWorkshopPdf: prepareWorkshopPdf,
       buildUniqueExportNameMap: buildUniqueExportNameMap
     };
   `);
@@ -208,5 +212,136 @@ test("duplicate-name summary is reachable above the workshop and preparation wai
       await page.locator("#field-rename-summary-modal").isVisible(),
       false,
     );
+  });
+});
+
+test("tagged page edits wait for an author choice and preservation blocks insertion", async () => {
+  await withLabelerPage(async (page) => {
+    await page.evaluate(() => {
+      const h = window.__pdfLabelerTest;
+      h.state.pageCount = 2;
+      h.setPageManagerState({
+        sources: {
+          active: { id: "active", name: "Tagged.pdf", tagged: true },
+          insert: { id: "insert", name: "New.pdf", tagged: false },
+        },
+        checkingTags: false,
+        tagPolicy: "",
+        insertSourceId: null,
+        insertSelections: new Set(),
+        draftPages: [
+          {
+            id: "p",
+            sourceId: "active",
+            sourcePageIndex: 1,
+            splitBefore: false,
+          },
+        ],
+      });
+      document.querySelector("#page-manager-modal").classList.remove("hidden");
+      h.updatePageManagerControls();
+    });
+    assert.equal(
+      await page.locator("#page-manager-tag-choice").isVisible(),
+      true,
+    );
+    assert.equal(await page.locator("#page-manager-apply").isDisabled(), true);
+    await page.locator("#page-manager-tags").selectOption("preserve");
+    assert.equal(await page.locator("#page-manager-apply").isDisabled(), false);
+    await page.evaluate(() => {
+      const h = window.__pdfLabelerTest;
+      h.setPageManagerState({
+        sources: {
+          active: { id: "active", name: "Tagged.pdf", tagged: true },
+          insert: { id: "insert", name: "New.pdf", tagged: false },
+        },
+        checkingTags: false,
+        tagPolicy: "preserve",
+        insertSourceId: null,
+        insertSelections: new Set(),
+        draftPages: [
+          {
+            id: "p",
+            sourceId: "active",
+            sourcePageIndex: 1,
+            splitBefore: false,
+          },
+          {
+            id: "n",
+            sourceId: "insert",
+            sourcePageIndex: 0,
+            splitBefore: true,
+          },
+        ],
+      });
+      h.updatePageManagerControls();
+    });
+    assert.equal(await page.locator("#page-manager-apply").isDisabled(), true);
+    assert.equal(
+      await page.locator("#page-manager-download-splits").isDisabled(),
+      true,
+    );
+    await page.locator("#page-manager-tags").selectOption("rebuild");
+    assert.equal(await page.locator("#page-manager-apply").isDisabled(), false);
+    assert.equal(
+      await page.locator("#page-manager-download-splits").isDisabled(),
+      false,
+    );
+  });
+});
+
+
+test("page-only edits preserve original controls when opening the workshop, and field edits still apply", async () => {
+  await withLabelerPage(async (page) => {
+    const result = await page.evaluate(async () => {
+      const h = window.__pdfLabelerTest, requests = [];
+      h.state.pdfBytes = new TextEncoder().encode("%PDF-original-values");
+      h.state.fileName = "Tagged.pdf";
+      h.state.pageCount = 2;
+      h.state.pageSizes = [{width:612,height:792},{width:612,height:792}];
+      h.state.fields = [h.state.fields[0]];
+      h.state.hasUnsavedChanges = true;
+      h.state.preservedPageFields = JSON.stringify(h.state.fields);
+      window.fetch = async (url, options) => {
+        const form = options.body;
+        requests.push({url, action: form.get("action"), pages: form.get("page_indexes"),
+          original: await form.get("file").text()});
+        return new Response(JSON.stringify({success:true,data:{
+          pdf_base64:btoa("%PDF-original-values"),remediation_result:{renames:[]}
+        }}), {status:200});
+      };
+      const preserved = await h.prepareWorkshopPdf();
+      h.state.fields[0].name = "Edited";
+      await h.prepareWorkshopPdf();
+      return {requests, bytes:new TextDecoder().decode(preserved.bytes)};
+    });
+    assert.equal(result.bytes, "%PDF-original-values");
+    assert.equal(result.requests[0].action, "preserve_pages");
+    assert.equal(result.requests[0].pages, "[0,1]");
+    assert.equal(result.requests[0].original, "%PDF-original-values");
+    assert.match(result.requests[1].url, /apply-fields$/);
+  });
+});
+
+
+test("page reorder buttons work from the keyboard and keep focus on the moved page", async () => {
+  await withLabelerPage(async (page) => {
+    await page.evaluate(() => {
+      const h = window.__pdfLabelerTest;
+      h.state.pageCount = 3;
+      h.setPageManagerState({sources:{active:{kind:"active",name:"Form.pdf"}}, checkingTags:false,
+        tagPolicy:"",insertSourceId:null,insertSelections:new Set(),
+        draftPages:[0,1,2].map(i=>({id:"page-"+i,sourceId:"active",sourcePageIndex:i,splitBefore:false}))});
+      document.querySelector("#page-manager-modal").classList.remove("hidden");
+      h.renderPageManagerPages();
+    });
+    await page.locator('[data-page-manager-action=earlier][data-page-id=page-2]').focus();
+    await page.keyboard.press("Enter");
+    assert.deepEqual(await page.evaluate(() => window.__pdfLabelerTest.pageManagerState().draftPages.map(p=>p.sourcePageIndex)),[0,2,1]);
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.pageId), "page-2");
+    await page.keyboard.press("Enter");
+    assert.deepEqual(await page.evaluate(() => window.__pdfLabelerTest.pageManagerState().draftPages.map(p=>p.sourcePageIndex)),[2,0,1]);
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.pageId), "page-2");
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.pageManagerAction), "later");
   });
 });

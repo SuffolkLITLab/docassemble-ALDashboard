@@ -1633,3 +1633,8 @@ textarea.aw-input {
 .aw-field-group > .aw-btn {
   align-self: flex-start;
 }
+
+.aw .aw-table-editor-scroll { overflow-x: auto; margin-block: 0.75rem; }
+.aw .aw-table-editor-scroll td { min-width: 12rem; vertical-align: top; }
+.aw .aw-table-editor-scroll select[multiple] { max-width: 18rem; }
+.aw details > summary { cursor: pointer; font-weight: 600; padding-block: 0.5rem; }

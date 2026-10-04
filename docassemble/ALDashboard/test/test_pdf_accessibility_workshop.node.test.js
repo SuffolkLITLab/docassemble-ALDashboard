@@ -161,6 +161,7 @@ async function withWorkshop(run) {
     await page.evaluate(async () => {
       window.requests = [];
       window.errors = [];
+      window.addEventListener("error", (event) => window.errors.push(event.message));
       window.failInspection = false;
       const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
       window.fetch = async (url, options) => {
@@ -177,7 +178,7 @@ async function withWorkshop(run) {
               images: [],
               tag_structure: { present: true },
               structure_editor: window.testStructureEditor || {},
-              readback: { announcements: [] },
+              readback: { announcements: window.testReadback || [] },
             },
           };
         }
@@ -605,6 +606,222 @@ test("review panel resizes by keyboard and drag without losing edits, and stacks
     assert.equal(
       Math.round((await panel.boundingBox()).width),
       Math.round(originalWidth),
+    );
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
+  });
+});
+
+test("decorative push buttons require confirmation and undo restores the choice", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop,
+        state = t.state();
+      state.inspection.structure_editor = window.testStructureEditor = {
+        widgets: [
+          {
+            name: "",
+            pageIndex: 0,
+            index: 2,
+            widgetId: "seal",
+            pushButton: true,
+            rect: [20, 20, 60, 60],
+          },
+        ],
+      };
+      state.tableDrafts = [{id:"table", confirmed:true, rows:[[
+        {contentIds:["button-content","text-content"], role:"TD"}
+      ]]}];
+      state.inspection.readback.announcements = [{contentId:"button-content"},{contentId:"text-content"}];
+      window.testReadback = [{contentId:"text-content"}];
+      t.refreshLinkDrafts();
+      t.saveDecisions();
+      state.open = true;
+      state.step = "review";
+      state.task = "links";
+      document.querySelector("#a11y-workshop").hidden = false;
+      t.render();
+    });
+    await page.locator("[data-aw-input=button-decorative]").check();
+    assert.equal(
+      await page.locator("[data-aw-input=link-contents]").isDisabled(),
+      true,
+    );
+    assert.equal(
+      await page.evaluate(() => window.workshop.state().links.seal.confirmed),
+      false,
+    );
+    await page.locator("[data-aw=link-confirm]").click();
+    await page.locator("[data-aw=links-write]").click();
+    await page.waitForFunction(() => !window.workshop.state().busy);
+    const operations = await page.evaluate(() =>
+      JSON.parse(window.requests.at(-1).operations),
+    );
+    assert.deepEqual(operations, [
+      { action: "disable_decorative_button", pageIndex: 0, index: 2 },
+    ]);
+    assert.deepEqual(await page.evaluate(() => window.workshop.state().tableDrafts[0].rows[0][0].contentIds), ["text-content"]);
+    await page.evaluate(() => window.workshop.undo());
+    assert.equal(
+      await page.locator("[data-aw-input=button-decorative]").isChecked(),
+      false,
+    );
+    assert.deepEqual(await page.evaluate(() => window.workshop.state().tableDrafts[0].rows[0][0].contentIds), ["button-content", "text-content"]);
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
+  });
+});
+
+test("font substitution needs a visual decision, offers original comparison, and undo restores review", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop,
+        state = t.state();
+      state.original = state.working.slice();
+      state.inspection.report.fonts = [
+        {
+          resource: "F0",
+          name: "UnavailableFont",
+          embedded: false,
+          pageIndex: 0,
+        },
+      ];
+      state.fontSubs = {
+        fonts: [
+          {
+            resource: "F0",
+            candidates: [
+              {
+                path: "/font.ttf",
+                postscript_name: "ChosenFont",
+                width_delta: 0,
+              },
+            ],
+          },
+        ],
+      };
+      state.glyphs["sub:F0"] = "/font.ttf";
+      t.saveDecisions();
+      state.open = true;
+      state.step = "review";
+      state.task = "text";
+      document.querySelector("#a11y-workshop").hidden = false;
+      t.render();
+    });
+    await page.locator("[data-aw=apply-font-subs]").click();
+    await page.waitForFunction(() => !window.workshop.state().busy);
+    await page.locator("[data-aw=compare-fonts]").click();
+    await page.locator(".aw-page-canvas canvas").waitFor();
+    assert.equal(
+      await page.evaluate(() => window.workshop.state().compareOriginal),
+      true,
+    );
+    assert.match(
+      await page.locator("[data-aw-ref=main]").innerText(),
+      /UnavailableFont → ChosenFont/,
+    );
+    await page.locator("[data-aw=text-done]").click();
+    assert.equal(
+      await page.evaluate(() => !!window.workshop.state().reviewed.text),
+      false,
+    );
+    await page.locator("[data-aw=keep-fonts]").click();
+    assert.equal(
+      await page.evaluate(
+        () => window.workshop.state().fontChecks[0].confirmed,
+      ),
+      true,
+    );
+    await page.evaluate(() => window.workshop.undo());
+    assert.deepEqual(
+      await page.evaluate(() => window.workshop.state().fontChecks),
+      [],
+    );
+    assert.equal(
+      await page.evaluate(() => window.workshop.state().compareOriginal),
+      false,
+    );
+  });
+});
+
+test("table tools stay collapsed, and confirmed creation survives redrafts but not Undo", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop,
+        state = t.state();
+      state.inspection.structure_editor = window.testStructureEditor = {
+        tableItems: ["Heading A", "Heading B", "Value A", "Value B"].map(
+          (text, i) => ({
+            text,
+            contentIds: ["content-" + i],
+            pageIndex: 0,
+            tableOwner: "",
+          }),
+        ),
+      };
+      t.refreshLinkDrafts();
+      t.saveDecisions();
+      state.open = true;
+      state.step = "review";
+      state.task = "links";
+      document.querySelector("#a11y-workshop").hidden = false;
+      t.render();
+    });
+    assert.equal(
+      await page.locator("[data-aw=table-start]").isVisible(),
+      false,
+    );
+    await page
+      .locator("summary")
+      .filter({ hasText: "Create a table on this page" })
+      .click();
+    await page.locator("[data-aw=table-start]").click();
+    const size = page.locator('[data-aw-input=table-size][data-axis=rows]');
+    await size.fill("3");
+    await size.dispatchEvent("change");
+    await size.fill("2");
+    await size.press("Tab");
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
+    const selects = page.locator("[data-aw-input=table-cell-content]");
+    for (let i = 0; i < 4; i++) await selects.nth(i).selectOption([String(i)]);
+    await page.locator("[data-aw=table-create]").click();
+    await page.waitForFunction(() => !window.workshop.state().busy);
+    const created = await page.evaluate(() => ({
+      drafts: window.workshop.state().tableDrafts,
+      operation: JSON.parse(window.requests.at(-1).operations)[0],
+    }));
+    assert.equal(created.drafts.length, 1);
+    assert.equal(created.operation.action, "create_table");
+    assert.equal(created.operation.rows[0][0].role, "TH");
+    assert.equal(created.operation.rows[1][1].role, "TD");
+    await page.evaluate(() =>
+      window.workshop.rebuildStructure("Headings", "headings"),
+    );
+    assert.equal(
+      await page.evaluate(
+        () =>
+          window.requests.filter(
+            (r) =>
+              r.operations &&
+              JSON.parse(r.operations)[0].action === "create_table",
+          ).length,
+      ),
+      2,
+    );
+    await page.evaluate(() => window.workshop.undo());
+    await page.evaluate(() => window.workshop.undo());
+    assert.deepEqual(
+      await page.evaluate(() => window.workshop.state().tableDrafts),
+      [],
+    );
+    const before = await page.evaluate(() => window.requests.length);
+    await page.evaluate(() =>
+      window.workshop.rebuildStructure("Headings", "headings"),
+    );
+    assert.equal(
+      await page.evaluate(
+        (before) => window.requests.slice(before).some((r) => r.operations),
+        before,
+      ),
+      false,
     );
     assert.deepEqual(await page.evaluate(() => window.errors), []);
   });

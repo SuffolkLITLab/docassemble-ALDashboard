@@ -155,6 +155,7 @@ const state = {
   availableModels: [],
   model: "gpt-5-mini",
   hasUnsavedChanges: false,
+  preservedPageFields: null,
   fieldSearch: "",
   fieldTypeFilter: "",
   fieldSort: "position",
@@ -369,6 +370,8 @@ const pageManagerResetBtn = document.getElementById("page-manager-reset");
 const pageManagerDownloadSplitsBtn = document.getElementById(
   "page-manager-download-splits",
 );
+const pageManagerTagChoice = document.getElementById("page-manager-tag-choice");
+const pageManagerTags = document.getElementById("page-manager-tags");
 const pageManagerApplyBtn = document.getElementById("page-manager-apply");
 const passwordModal = document.getElementById("password-modal");
 const passwordInput = document.getElementById("password-input");
@@ -2555,41 +2558,53 @@ async function confirmSaveToPlayground() {
       state.fields.length > 0 &&
       (state.hasUnsavedChanges || saveDeduplicateFieldNames)
     ) {
-      var formData = new FormData();
-      formData.append("file", getPdfFileForRequests());
-      var saveNameMap = buildExportNameMap({
-        deduplicate: saveDeduplicateFieldNames,
-      });
-      saveRenamedFields = getRenamedFields(saveNameMap);
-      formData.append(
-        "fields",
-        JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)),
-      );
-      formData.append(
-        "accessibility",
-        JSON.stringify(buildAccessibilityPayload(saveNameMap)),
-      );
-      formData.append(
-        "deduplicate_field_names",
-        saveDeduplicateFieldNames ? "true" : "false",
-      );
-      var exportResponse = await fetch(
-        apiUrl("/pdf-labeler/api/apply-fields"),
-        {
-          method: "POST",
-          headers: { Accept: "application/json" },
-          body: formData,
-        },
-      );
-      var exportData = await parseApiResponse(exportResponse);
-      if (
-        !exportData.success ||
-        !exportData.data ||
-        !exportData.data.pdf_base64
-      ) {
-        throw new Error("Failed to apply fields before saving.");
+      if (state.preservedPageFields === JSON.stringify(state.fields)) {
+        const preserved = await applyFieldsToPdf(
+          null,
+          saveDeduplicateFieldNames,
+        );
+        saveRenamedFields = preserved.renames;
+        let encoded = "";
+        for (const value of preserved.bytes)
+          encoded += String.fromCharCode(value);
+        pdfContent = window.btoa(encoded);
+      } else {
+        var formData = new FormData();
+        formData.append("file", getPdfFileForRequests());
+        var saveNameMap = buildExportNameMap({
+          deduplicate: saveDeduplicateFieldNames,
+        });
+        saveRenamedFields = getRenamedFields(saveNameMap);
+        formData.append(
+          "fields",
+          JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)),
+        );
+        formData.append(
+          "accessibility",
+          JSON.stringify(buildAccessibilityPayload(saveNameMap)),
+        );
+        formData.append(
+          "deduplicate_field_names",
+          saveDeduplicateFieldNames ? "true" : "false",
+        );
+        var exportResponse = await fetch(
+          apiUrl("/pdf-labeler/api/apply-fields"),
+          {
+            method: "POST",
+            headers: { Accept: "application/json" },
+            body: formData,
+          },
+        );
+        var exportData = await parseApiResponse(exportResponse);
+        if (
+          !exportData.success ||
+          !exportData.data ||
+          !exportData.data.pdf_base64
+        ) {
+          throw new Error("Failed to apply fields before saving.");
+        }
+        pdfContent = exportData.data.pdf_base64;
       }
-      pdfContent = exportData.data.pdf_base64;
     } else {
       // Use current PDF bytes as-is
       var raw = "";
@@ -2850,6 +2865,7 @@ function updateRequestPdfFile(pdfBytes, fileName, originalFile) {
 
 function syncPdfState(pdfBytes, fileName, originalFile) {
   state.pdfBytes = clonePdfBytes(pdfBytes);
+  state.preservedPageFields = null;
   if (fileName) {
     state.fileName = fileName;
   }
@@ -5340,6 +5356,19 @@ async function relabelFields() {
 // Write the editor's fields into the PDF on the server and return the
 // result. Export, and the accessibility workshop, both start from this.
 async function applyFieldsToPdf(exportNameMap, deduplicateFieldNames) {
+  if (state.preservedPageFields === JSON.stringify(state.fields)) {
+    const preserved = await preservePdfPages(
+      state.pdfBytes,
+      state.fileName,
+      Array.from({ length: state.pageCount }, (_, index) => index),
+      deduplicateFieldNames,
+    );
+    return {
+      ...preserved,
+      filename:
+        stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
+    };
+  }
   const formData = new FormData();
   formData.append("file", getPdfFileForRequests());
   formData.append(
@@ -5368,6 +5397,7 @@ async function applyFieldsToPdf(exportNameMap, deduplicateFieldNames) {
   }
   return {
     bytes: base64ToUint8Array(data.data.pdf_base64),
+    renames: getRenamedFields(exportNameMap),
     filename:
       data.data.filename ||
       stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
@@ -5383,6 +5413,32 @@ async function exportPdf() {
   const deduplicateFieldNames =
     !exportDeduplicateFieldNamesInput ||
     exportDeduplicateFieldNamesInput.checked;
+  if (state.preservedPageFields === JSON.stringify(state.fields)) {
+    showLoading("Exporting PDF with its existing tags and controls...");
+    try {
+      const preserved = await preservePdfPages(
+        state.pdfBytes,
+        state.fileName,
+        Array.from({ length: state.pageCount }, (_, index) => index),
+        deduplicateFieldNames,
+      );
+      downloadBlob(
+        new Blob([preserved.bytes], { type: "application/pdf" }),
+        stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
+      );
+      showFieldRenameSummary(
+        preserved.renames,
+        "The exported PDF contains these renamed exact duplicate fields.",
+      );
+      setDirty(false);
+      showSuccess("PDF exported with its existing tags and controls.");
+    } catch (error) {
+      showError("Export failed: " + error.message);
+    } finally {
+      hideLoading();
+    }
+    return;
+  }
   const exportNameMap = buildExportNameMap({
     deduplicate: deduplicateFieldNames,
   });
@@ -5572,9 +5628,24 @@ function updatePageManagerControls() {
       ".";
   }
   pageManagerInsertRunBtn.disabled = !insertSource || selectedInsertCount === 0;
+  const tagged = pageManagerState.draftPages.some(
+    (page) => pageManagerState.sources[page.sourceId]?.tagged,
+  );
+  pageManagerTagChoice.classList.toggle("hidden", !tagged);
+  const tagChoiceMissing =
+    pageManagerState.checkingTags || (tagged && !pageManagerState.tagPolicy);
+  const unsupportedPreservation =
+    tagged &&
+    pageManagerState.tagPolicy === "preserve" &&
+    pageManagerState.draftPages.some((page) => page.sourceId !== "active");
   pageManagerApplyBtn.disabled =
-    !pageManagerState.draftPages.length || !hasPageManagerStructuralChanges();
+    tagChoiceMissing ||
+    unsupportedPreservation ||
+    !pageManagerState.draftPages.length ||
+    !hasPageManagerStructuralChanges();
   pageManagerDownloadSplitsBtn.disabled =
+    tagChoiceMissing ||
+    unsupportedPreservation ||
     getPageManagerSplitGroups().length < 2;
   renderPageManagerSummary();
   syncPageManagerInsertPositionOptions();
@@ -5698,6 +5769,30 @@ function renderPageManagerPages() {
       escapeHtml(page.id) +
       '">Start new document here</label>' +
       "</div>" +
+      ["earlier", "later"]
+        .map(
+          (direction) =>
+            '<button type="button" class="btn btn-outline-secondary btn-sm" data-page-manager-action="' +
+            direction +
+            '" data-page-id="' +
+            escapeHtml(page.id) +
+            '" aria-label="Move page ' +
+            (index + 1) +
+            " " +
+            direction +
+            '"' +
+            ((
+              direction === "earlier"
+                ? index === 0
+                : index === pageManagerState.draftPages.length - 1
+            )
+              ? " disabled"
+              : "") +
+            ">" +
+            (direction === "earlier" ? "↑" : "↓") +
+            "</button>",
+        )
+        .join("") +
       '<button type="button" class="btn btn-outline-danger btn-sm" data-page-manager-action="remove" data-page-id="' +
       escapeHtml(page.id) +
       '">Remove</button>';
@@ -5771,20 +5866,40 @@ function buildFreshPageManagerState() {
         return createPageManagerDraftPage("active", index);
       },
     ),
+    checkingTags: true,
+    tagPolicy: "",
     insertSourceId: null,
     insertSelections: new Set(),
   };
 }
 
-function openPageManager() {
+async function openPageManager() {
   if (!state.pdfBytes || !state.pdfDoc) return;
   pageManagerState = buildFreshPageManagerState();
+  pageManagerTags.value = "";
   pageManagerInsertFileInput.value = "";
   pageManagerInsertFileName.textContent = "";
   pageManagerDragPageId = null;
   setPageManagerStatus("", "info");
   renderPageManager();
   pageManagerModal.classList.remove("hidden");
+  const current = pageManagerState;
+  try {
+    const source = current.sources.active;
+    const document = await PDFLibGlobal.PDFDocument.load(source.bytes.slice());
+    source.tagged = document.catalog.has(
+      PDFLibGlobal.PDFName.of("StructTreeRoot"),
+    );
+  } catch (error) {
+    setPageManagerStatus(
+      "Could not check existing tags: " + error.message,
+      "danger",
+    );
+    return;
+  }
+  if (pageManagerState !== current) return;
+  current.checkingTags = false;
+  updatePageManagerControls();
 }
 
 function closePageManager() {
@@ -5810,6 +5925,10 @@ async function loadPageManagerInsertSource(file) {
       pageSizes.push({ width: viewport.width, height: viewport.height });
     }
     const fields = await detectExistingFieldsWithServer(file, pageSizes);
+    const tagDocument = await PDFLibGlobal.PDFDocument.load(bytes.slice());
+    const tagged = tagDocument.catalog.has(
+      PDFLibGlobal.PDFName.of("StructTreeRoot"),
+    );
     const sourceId = "insert-" + Date.now();
     pageManagerState.sources[sourceId] = {
       id: sourceId,
@@ -5818,6 +5937,7 @@ async function loadPageManagerInsertSource(file) {
       bytes: bytes,
       pdfDoc: pdfDoc,
       fields: fields,
+      tagged: tagged,
       thumbCache: {},
     };
     pageManagerState.insertSourceId = sourceId;
@@ -5881,12 +6001,56 @@ async function buildPdfBytesFromPageDescriptors(pages, deduplicate = false) {
   if (!PDFLibGlobal.PDFDocument) {
     throw new Error("Page management requires pdf-lib in the browser.");
   }
+  const tagged = pageManagerState.draftPages.some(
+    (page) => pageManagerState.sources[page.sourceId]?.tagged,
+  );
+  if (tagged && !pageManagerState.tagPolicy)
+    throw new Error(
+      "Choose how to handle the existing accessibility tags first.",
+    );
+  if (tagged && pageManagerState.tagPolicy === "preserve") {
+    if (pages.some((page) => page.sourceId !== "active"))
+      throw new Error(
+        "Keeping tags supports the original PDF only. Choose a new draft to insert pages.",
+      );
+    const source = pageManagerState.sources.active;
+    return preservePdfPages(
+      source.bytes,
+      source.name,
+      pages.map((page) => page.sourcePageIndex),
+      deduplicate,
+    );
+  }
   return assemblePdfPages(
     PDFLibGlobal,
     pages,
     pageManagerState.sources,
     deduplicate,
   );
+}
+
+async function preservePdfPages(bytes, name, indexes, deduplicate) {
+  const form = new FormData();
+  form.append(
+    "file",
+    new File([bytes.slice()], name, {
+      type: "application/pdf",
+    }),
+  );
+  form.append("action", "preserve_pages");
+  form.append("page_indexes", JSON.stringify(indexes));
+  form.append("deduplicate_field_names", String(deduplicate));
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-remediate"),
+    { method: "POST", body: form },
+  );
+  const data = await parseApiResponse(response);
+  if (!data.success)
+    throw new Error(data.error?.message || "Could not preserve page tags.");
+  return {
+    bytes: base64ToUint8Array(data.data.pdf_base64),
+    renames: data.data.remediation_result.renames || [],
+  };
 }
 
 function remapFieldsForPageManagerDraft() {
@@ -5926,6 +6090,10 @@ async function applyPageManagerChanges() {
   }
   showLoading("Applying page changes...");
   try {
+    const fieldsUnchanged =
+      !state.hasUnsavedChanges ||
+      state.preservedPageFields === JSON.stringify(state.fields);
+    const keepOriginalTags = pageManagerState.tagPolicy === "preserve";
     const assembled = await buildPdfBytesFromPageDescriptors(
       pageManagerState.draftPages,
     );
@@ -5934,6 +6102,8 @@ async function applyPageManagerChanges() {
     updateDocumentName();
     await refreshPdfDocumentFromState();
     replaceFields(nextFields, { preserveSelection: true });
+    if (keepOriginalTags && fieldsUnchanged)
+      state.preservedPageFields = JSON.stringify(state.fields);
     setDirty(true);
     closePageManager();
     showPdfWorkspace();
@@ -6187,16 +6357,26 @@ repairBtn.addEventListener("click", function () {
 managePagesBtn.addEventListener("click", function () {
   openPageManager();
 });
+pageManagerTags.addEventListener("change", function () {
+  if (!pageManagerState) return;
+  pageManagerState.tagPolicy = pageManagerTags.value;
+  const incompatible =
+    pageManagerTags.value === "preserve" &&
+    pageManagerState.draftPages.some((page) => page.sourceId !== "active");
+  setPageManagerStatus(
+    incompatible
+      ? "Choose a new tag draft to insert pages, or remove the inserted pages to keep the original tags."
+      : "",
+    "info",
+  );
+  updatePageManagerControls();
+});
 closePageManagerBtn.addEventListener("click", function () {
   closePageManager();
 });
 pageManagerResetBtn.addEventListener("click", function () {
   if (!state.pdfBytes) return;
-  pageManagerState = buildFreshPageManagerState();
-  pageManagerInsertFileInput.value = "";
-  pageManagerInsertFileName.textContent = "";
-  setPageManagerStatus("Page arrangement reset to the active PDF.", "info");
-  renderPageManager();
+  void openPageManager();
 });
 pageManagerInsertFileInput.addEventListener("change", function (event) {
   const file = event.target.files && event.target.files[0];
@@ -6220,6 +6400,33 @@ pageManagerInsertPages.addEventListener("click", function (event) {
   togglePageManagerInsertSelection(Number(card.dataset.insertPageIndex || 0));
 });
 pageManagerPages.addEventListener("click", function (event) {
+  const moveBtn = event.target.closest(
+    "[data-page-manager-action][data-page-id]",
+  );
+  if (
+    moveBtn &&
+    pageManagerState &&
+    ["earlier", "later"].includes(moveBtn.dataset.pageManagerAction)
+  ) {
+    const id = moveBtn.dataset.pageId,
+      direction = moveBtn.dataset.pageManagerAction;
+    const index = pageManagerState.draftPages.findIndex(
+      (page) => page.id === id,
+    );
+    movePageManagerDraftPage(
+      id,
+      direction === "earlier" ? index - 1 : index + 2,
+    );
+    const controls = [...pageManagerPages.querySelectorAll("button")].filter(
+      (button) => button.dataset.pageId === id && !button.disabled,
+    );
+    (
+      controls.find(
+        (button) => button.dataset.pageManagerAction === direction,
+      ) || controls[0]
+    )?.focus();
+    return;
+  }
   const removeBtn = event.target.closest(
     '[data-page-manager-action="remove"][data-page-id]',
   );
@@ -6785,7 +6992,7 @@ async function prepareWorkshopPdf() {
     !exportDeduplicateFieldNamesInput ||
       exportDeduplicateFieldNamesInput.checked,
   );
-  await acknowledgeWorkshopRenames(renamedFields);
+  await acknowledgeWorkshopRenames(applied.renames || renamedFields);
   return { bytes: applied.bytes, filename: state.fileName };
 }
 

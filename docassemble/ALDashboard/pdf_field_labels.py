@@ -46,10 +46,18 @@ _PLACEHOLDER = re.compile(
 
 # A leading imperative tells the person what to do with the control. The
 # role announcement already does that; the name should say what the value is.
+# A verb followed by "of", "or" and the like is a noun ("Type of case",
+# "State or country"). "State" and "list" are nouns on forms far more often
+# than verbs ("State Bar number"), so they only count as instructions when
+# something that reads as an imperative follows ("State your name").
+_NOT_IMPERATIVE = r"(?!\s+(?:of|or|and|nor|for|to|from|at|on|by|with|vs\.?|versus)\b)"
 _LEADING_INSTRUCTION = re.compile(
-    r"^\s*(?:please\s+)?(?:type|enter|print|write|fill\s+(?:in|out)|provide|input|insert|"
-    r"add|list|give|state|indicate|specify|select|choose|pick|put)"
-    r"(?:\s+(?:in|out|down))?(?:\s+(?:the|a|an))?\s+",
+    r"^\s*(?:please\s+)?(?:"
+    r"(?:type|enter|print|write|fill\s+(?:in|out)|provide|input|insert|"
+    r"add|give|indicate|specify|select|choose|pick|put)" + _NOT_IMPERATIVE + r"(?:\s+(?:in|out|down))?"
+    r"|(?:state|list)(?=\s+(?:your|the|a|an|any|all|each|every|his|her|their|its|my|our|"
+    r"why|how|what|when|where|whether|who|which|if))"
+    r")(?:\s+(?:the|a|an))?\s+",
     re.IGNORECASE,
 )
 _LEADING_CHECK_IF = re.compile(

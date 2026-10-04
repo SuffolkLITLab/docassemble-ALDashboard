@@ -32,6 +32,29 @@ class TestSimplifyFieldLabel(unittest.TestCase):
             with self.subTest(given=given):
                 self.assertEqual(simplify_field_label(given), expected)
 
+    def test_a_verb_that_is_also_a_noun_is_left_alone(self):
+        for label in (
+            "State of first court order",
+            "State Bar number",
+            "State or country",
+            "Type of case",
+            "List of children",
+            "Print and sign",
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(simplify_field_label(label), label)
+
+    def test_state_and_list_are_instructions_when_they_read_as_one(self):
+        cases = {
+            "State your name": "Your name",
+            "State the reason for the delay": "Reason for the delay",
+            "List all children of the marriage": "All children of the marriage",
+            "State why you are filing": "Why you are filing",
+        }
+        for given, expected in cases.items():
+            with self.subTest(given=given):
+                self.assertEqual(simplify_field_label(given), expected)
+
     def test_a_long_name_of_phrase_stays_a_name(self):
         self.assertEqual(
             simplify_field_label("Name of the person who filed the first case"),

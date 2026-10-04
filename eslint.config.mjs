@@ -7,6 +7,7 @@ const labelerFiles = [
   'docassemble/ALDashboard/data/static/docx_labeler.js',
   'docassemble/ALDashboard/data/static/docx_labeler_preview_utils.js',
   'docassemble/ALDashboard/data/static/pdf_labeler.js',
+  'docassemble/ALDashboard/data/static/pdf_page_assembly.js',
   'docassemble/ALDashboard/data/static/pdf_accessibility_workshop.js',
   'docassemble/ALDashboard/data/static/interview_linter.js',
   '.github/scripts/labeler_a11y.js',

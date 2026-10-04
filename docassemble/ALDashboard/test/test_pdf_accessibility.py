@@ -2444,6 +2444,115 @@ class TestPDFAccessibilityHelpers(unittest.TestCase):
         finally:
             os.remove(pdf_path)
 
+    def test_navigation_flags_repair_existing_title_and_link_only_pages(self):
+        import pikepdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "source.pdf")
+            output = os.path.join(directory, "output.pdf")
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            pdf.add_blank_page(page_size=(612, 792))
+            link = pdf.make_indirect(pikepdf.Dictionary({
+                "/Type": pikepdf.Name("/Annot"),
+                "/Subtype": pikepdf.Name("/Link"),
+                "/Rect": pikepdf.Array([10, 10, 100, 30]),
+            }))
+            page.obj["/Annots"] = pikepdf.Array([link])
+            pdf.docinfo["/Title"] = "Existing court title"
+            pdf.Root["/StructTreeRoot"] = pdf.make_indirect(pikepdf.Dictionary({
+                "/Type": pikepdf.Name("/StructTreeRoot"),
+                "/K": pikepdf.Array(),
+            }))
+            pdf.save(source)
+            pdf.close()
+            result = apply_pdf_accessibility_settings(
+                input_pdf_path=source, output_pdf_path=output,
+                auto_fill_missing_tooltips=False, set_structure_tab_order=True,
+            )
+            self.assertEqual(result["tab_order_updates"], 1)
+            self.assertEqual(result["field_order_count"], 0)
+            with pikepdf.open(output) as repaired:
+                self.assertEqual(str(repaired.pages[0].Tabs), "/S")
+                self.assertNotIn("/Tabs", repaired.pages[1].obj)
+                self.assertEqual(str(repaired.pages[0].Annots[0].Subtype), "/Link")
+                self.assertEqual(str(repaired.docinfo.Title), "Existing court title")
+                self.assertTrue(repaired.Root.ViewerPreferences.DisplayDocTitle)
+                self.assertNotIn("/MarkInfo", repaired.Root)
+            repeated = apply_pdf_accessibility_settings(
+                input_pdf_path=output, output_pdf_path=output,
+                auto_fill_missing_tooltips=False, set_structure_tab_order=True,
+            )
+            self.assertEqual(repeated["tab_order_updates"], 0)
+            self.assertEqual(repeated["metadata_updates"], 0)
+
+    def test_structure_tab_flag_requires_a_tree(self):
+        import pikepdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "source.pdf")
+            output = os.path.join(directory, "output.pdf")
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            page.obj["/Annots"] = pikepdf.Array([pdf.make_indirect(pikepdf.Dictionary({
+                "/Subtype": pikepdf.Name("/Link"),
+                "/Rect": pikepdf.Array([10, 10, 100, 30]),
+            }))])
+            pdf.save(source)
+            pdf.close()
+            result = apply_pdf_accessibility_settings(
+                input_pdf_path=source, output_pdf_path=output,
+                auto_fill_missing_tooltips=False, set_structure_tab_order=True,
+            )
+            self.assertEqual(result["tab_order_updates"], 0)
+            with pikepdf.open(output) as repaired:
+                self.assertNotIn("/Tabs", repaired.pages[0].obj)
+
+    def test_unnamed_controls_can_be_described_without_renaming_them(self):
+        import pikepdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "source.pdf")
+            output = os.path.join(directory, "output.pdf")
+            pdf = pikepdf.new()
+            page = pdf.add_blank_page(page_size=(612, 792))
+            widgets = []
+            for index, name in enumerate(("", "named", "")):
+                widgets.append(pdf.make_indirect(pikepdf.Dictionary({
+                    "/Type": pikepdf.Name("/Annot"),
+                    "/Subtype": pikepdf.Name("/Widget"),
+                    "/FT": pikepdf.Name("/Btn"), "/Ff": 65536,
+                    "/T": pikepdf.String(name),
+                    "/Rect": pikepdf.Array([10, index * 40, 100, index * 40 + 20]),
+                    "/MK": pikepdf.Dictionary({"/CA": pikepdf.String("Print form")}),
+                })))
+            page.obj["/Annots"] = pikepdf.Array(widgets)
+            pdf.Root["/AcroForm"] = pikepdf.Dictionary({"/Fields": pikepdf.Array(widgets)})
+            pdf.save(source)
+            pdf.close()
+            create_draft_structure_tree(source, output)
+            before = inspect_pdf_accessibility(output)["structure_editor"]["widgets"]
+            self.assertEqual(before[0]["caption"], "Print form")
+            self.assertTrue(before[0]["tagged"])
+            apply_pdf_accessibility_settings(
+                input_pdf_path=output, output_pdf_path=output,
+                field_order=["named"], auto_fill_missing_tooltips=False,
+            )
+            after = inspect_pdf_accessibility(output)["structure_editor"]["widgets"]
+            self.assertEqual({w["widgetId"] for w in before}, {w["widgetId"] for w in after})
+            operations = [{"action": "set_widget_description", "pageIndex": 0,
+                           "index": w["index"], "description": f"Control {index}"}
+                          for index, w in enumerate(after)]
+            apply_manual_structure_repairs(output, output, operations)
+            create_draft_structure_tree(output, output, overwrite=True)
+            inspection = inspect_pdf_accessibility(output)
+            self.assertTrue(all(w["tooltip"] for w in inspection["structure_editor"]["widgets"]))
+            for issue in inspection["report"]["issues"]:
+                if issue["id"] in {"field-names", "form-structure-alt"}:
+                    self.assertEqual(issue["status"], "pass")
+            with pikepdf.open(output) as repaired:
+                self.assertEqual(sorted(str(a.T) for a in repaired.pages[0].Annots), ["", "", "named"])
+
     def test_tagged_declaration_sets_and_removes_pdfua_identifier(self):
         import pikepdf
 

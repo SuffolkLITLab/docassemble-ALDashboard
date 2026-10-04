@@ -1079,6 +1079,45 @@ def ocr_pdf(
     """
     _require_executable("ocrmypdf")
 
+    # OCRmyPDF treats even an empty signature box as a signed document. For
+    # ordinary scans with blank signature fields, use the same text-layer
+    # repair as the workshop, which preserves the original widgets.
+    if skip_text:
+        import pikepdf
+
+        with pikepdf.open(input_pdf_path) as pdf:
+            signature_values: List[bool] = []
+
+            def inspect_signatures(field: Any) -> None:
+                if field.get("/FT") == pikepdf.Name.Sig:
+                    signature_values.append(bool(field.get("/V")))
+                for child in field.get("/Kids", []):
+                    inspect_signatures(child)
+
+            form: Any = pdf.Root.get("/AcroForm", {})
+            for field in form.get("/Fields", []):
+                inspect_signatures(field)
+            unsigned = (
+                bool(signature_values)
+                and not any(signature_values)
+                and not pdf.Root.get("/Perms")
+            )
+        if unsigned:
+            from .pdf_accessibility import ocr_image_only_pages
+
+            try:
+                ocr_result = ocr_image_only_pages(
+                    input_pdf_path, output_pdf_path, language=language
+                )
+            except Exception as exc:
+                raise PDFRepairError(f"OCR failed: {exc}") from exc
+            return {
+                **ocr_result,
+                "language": language,
+                "skip_text": skip_text,
+                "strategy": "preserve_blank_signature_fields",
+            }
+
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
 

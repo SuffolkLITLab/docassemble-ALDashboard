@@ -566,7 +566,9 @@ def _nearby_label(
                     ):
                         label = _run(words, previous, -1, others) + label
     reach = max(box["height"] * 1.5, 0.035)
-    if label is None:
+    if label is None or (
+        where == "left" and box["x"] - max(_right(word["box"]) for word in label) > 0.06
+    ):
         # A "$" from the row above is not a column heading.
         above = [
             word for word in words
@@ -575,6 +577,10 @@ def _nearby_label(
             and _right(word["box"]) > box["x"]
             and _letters(str(word["text"])) >= 1
         ]
+        if label is not None:
+            # A distant caption in the adjacent column must not beat a
+            # caption directly above this blank (for example DOCKET NO.).
+            above = [word for word in above if box["y"] - _bottom(word["box"]) < 0.01]
         if above:
             lowest = max(_middle(word["box"]) for word in above)
             label = sorted(
@@ -584,10 +590,19 @@ def _nearby_label(
             where = "above"
     under = [
         word for word in words
-        if 0 <= word["box"]["y"] - _bottom(box) <= max(box["height"], 0.012) * 0.9
+        if -0.003 <= word["box"]["y"] - _bottom(box) <= max(min(box["height"], 0.025), 0.012) * 0.9
         and word["box"]["x"] >= box["x"] - 0.01
         and _right(word["box"]) <= _right(box) + 0.01
     ]
+    if under:
+        first_line = min(_middle(word["box"]) for word in under)
+        under = [word for word in under if abs(_middle(word["box"]) - first_line) < 0.006]
+        snug_caption = min(word["box"]["y"] for word in under) - _bottom(box) < 0.005
+        remote_above = where == "above" and box["y"] - max(_bottom(word["box"]) for word in label or []) > 0.01
+        if snug_caption and remote_above:
+            # Signature/Date captions often touch the bottom of their blank;
+            # the preceding row's caption belongs to a different field.
+            label = None
     if not label:
         if not under or not _is_label(_phrase_text(under)):
             return None

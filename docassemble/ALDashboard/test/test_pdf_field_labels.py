@@ -86,6 +86,40 @@ def _box(name, x, y, *, kind="checkbox", tooltip="", width=0.018, height=0.014):
     }
 
 
+class TestCourtCaptionPlacement(unittest.TestCase):
+    def test_docket_caption_beats_the_adjacent_court_heading(self):
+        field = _box("docket_number", .734, .054, kind="text", width=.211, height=.025)
+        words = {0: [
+            _word("JUVENILE COURT DEPARTMENT", .346, .059, .287, .019),
+            _word("DOCKET NO.", .727, .0355, .092, .015),
+        ]}
+        self.assertEqual(suggest_field_labels([field], words)["docket_number"]["suggested"], "DOCKET NO")
+
+    def test_captions_touching_the_blank_are_found_without_borrowing_previous_row(self):
+        fields = [
+            _box("date", .08, .465, kind="text", width=.3, height=.025),
+            _box("title", .5, .54, kind="text", width=.4, height=.025),
+        ]
+        words = {0: [
+            _word("Date", .081, .4895, .035, .017),
+            _word("Signature", .501, .488, .07, .017),
+            _word("Title", .5, .5645, .04, .017),
+        ]}
+        result = suggest_field_labels(fields, words)
+        self.assertEqual(result["date"]["suggested"], "Date")
+        self.assertEqual(result["title"]["suggested"], "Title")
+
+    def test_tall_answer_box_does_not_collect_the_signature_row_as_a_qualifier(self):
+        field = _box("reasons", .075, .355, kind="text", width=.84, height=.11)
+        words = {0: [
+            _word("Reasons", .106, .334, .3, .02),
+            _word("Date", .081, .49, .035, .017),
+            _word("Print Name", .5, .53, .08, .017),
+            _word("Signature", .501, .488, .07, .017),
+        ]}
+        self.assertEqual(suggest_field_labels([field], words)["reasons"]["suggested"], "Reasons")
+
+
 class TestOptionGroups(unittest.TestCase):
     def setUp(self):
         # "Is the mother married to the father?  [ ] Yes  [ ] No"

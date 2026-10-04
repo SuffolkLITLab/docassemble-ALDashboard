@@ -1,6 +1,7 @@
 // @ts-expect-error pdf.js is loaded from its CDN URL in the browser.
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs";
 import { createAccessibilityWorkshop } from "./pdf_accessibility_workshop.js";
+import { assemblePdfPages } from "./pdf_page_assembly.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
@@ -3116,21 +3117,28 @@ async function parseExistingFieldsLocally(pdfBytes, pageSizes) {
   }
 }
 
-async function detectExistingFieldsWithServer() {
-  if (!state.pdfBytes) return [];
+async function detectExistingFieldsWithServer(
+  file = null,
+  pageSizes = state.pageSizes,
+) {
+  if (!file && !state.pdfBytes) return [];
   const formData = new FormData();
-  formData.append("file", getPdfFileForRequests());
+  formData.append("file", file || getPdfFileForRequests());
   const response = await fetch(apiUrl("/pdf-labeler/api/detect-fields"), {
     method: "POST",
     headers: { Accept: "application/json" },
     body: formData,
   });
   const data = await parseApiResponse(response);
+  if (!data.success)
+    throw new Error(
+      (data.error && data.error.message) || "Field detection failed.",
+    );
   const importedFields = Array.isArray(data.data && data.data.fields)
     ? data.data.fields
     : [];
   return importedFields.map(function (field) {
-    const pageSize = state.pageSizes[field.pageIndex];
+    const pageSize = pageSizes[field.pageIndex];
     const fieldType = normalizeFieldType(field.type);
     const width = pageSize ? clamp(field.width / pageSize.width, 0.01, 1) : 0.1;
     const height = pageSize
@@ -5012,6 +5020,11 @@ function showFieldRenameSummary(renames, contextText) {
     .map(function (rename) {
       return (
         '<div class="border rounded p-2">' +
+        (rename.filename
+          ? '<div class="small text-muted">' +
+            escapeHtml(rename.filename) +
+            "</div>"
+          : "") +
         '<div class="small text-muted">Field ' +
         String(Number(rename.index) + 1) +
         "</div>" +
@@ -5025,6 +5038,32 @@ function showFieldRenameSummary(renames, contextText) {
     })
     .join("");
   fieldRenameSummaryModal.classList.remove("hidden");
+}
+
+async function acknowledgeWorkshopRenames(renames) {
+  if (!renames.length) return;
+  const workshopRoot = document.getElementById("a11y-workshop");
+  workshopRoot.inert = true;
+  try {
+    showFieldRenameSummary(
+      renames,
+      "The accessibility workshop reviews the PDF with these renamed exact duplicate fields.",
+    );
+    await new Promise(function (resolve) {
+      const observer = new MutationObserver(function () {
+        if (fieldRenameSummaryModal.classList.contains("hidden")) {
+          observer.disconnect();
+          resolve();
+        }
+      });
+      observer.observe(fieldRenameSummaryModal, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    });
+  } finally {
+    workshopRoot.inert = false;
+  }
 }
 
 function buildUniqueExportNameMap() {
@@ -5764,6 +5803,13 @@ async function loadPageManagerInsertSource(file) {
     );
     const pdfDoc = await pdfjsLib.getDocument({ data: clonePdfBytes(bytes) })
       .promise;
+    const pageSizes = [];
+    for (let index = 1; index <= pdfDoc.numPages; index += 1) {
+      const page = await pdfDoc.getPage(index);
+      const viewport = page.getViewport({ scale: 1 });
+      pageSizes.push({ width: viewport.width, height: viewport.height });
+    }
+    const fields = await detectExistingFieldsWithServer(file, pageSizes);
     const sourceId = "insert-" + Date.now();
     pageManagerState.sources[sourceId] = {
       id: sourceId,
@@ -5771,6 +5817,7 @@ async function loadPageManagerInsertSource(file) {
       name: file.name || "insert.pdf",
       bytes: bytes,
       pdfDoc: pdfDoc,
+      fields: fields,
       thumbCache: {},
     };
     pageManagerState.insertSourceId = sourceId;
@@ -5830,28 +5877,16 @@ function insertSelectedPagesIntoManager() {
   );
 }
 
-async function buildPdfBytesFromPageDescriptors(pages) {
+async function buildPdfBytesFromPageDescriptors(pages, deduplicate = false) {
   if (!PDFLibGlobal.PDFDocument) {
     throw new Error("Page management requires pdf-lib in the browser.");
   }
-  const outputDoc = await PDFLibGlobal.PDFDocument.create();
-  const sourceDocs = {};
-  for (const page of pages) {
-    const source = getPageManagerSource(page.sourceId);
-    if (!source || !source.bytes) {
-      throw new Error("A source PDF is missing for one or more pages.");
-    }
-    if (!sourceDocs[source.id]) {
-      sourceDocs[source.id] = await PDFLibGlobal.PDFDocument.load(
-        clonePdfBytes(source.bytes),
-      );
-    }
-    const copiedPages = await outputDoc.copyPages(sourceDocs[source.id], [
-      page.sourcePageIndex,
-    ]);
-    outputDoc.addPage(copiedPages[0]);
-  }
-  return new Uint8Array(await outputDoc.save());
+  return assemblePdfPages(
+    PDFLibGlobal,
+    pages,
+    pageManagerState.sources,
+    deduplicate,
+  );
 }
 
 function remapFieldsForPageManagerDraft() {
@@ -5865,10 +5900,20 @@ function remapFieldsForPageManagerDraft() {
 
   const nextFields = [];
   pageManagerState.draftPages.forEach(function (page, newPageIndex) {
-    if (page.sourceId !== "active") return;
-    const sourceFields = fieldsByPageIndex.get(page.sourcePageIndex) || [];
+    const source = getPageManagerSource(page.sourceId);
+    const sourceFields =
+      page.sourceId === "active"
+        ? fieldsByPageIndex.get(page.sourcePageIndex) || []
+        : (source.fields || []).filter(function (field) {
+            return field.pageIndex === page.sourcePageIndex;
+          });
     sourceFields.forEach(function (field) {
-      nextFields.push(Object.assign({}, field, { pageIndex: newPageIndex }));
+      nextFields.push(
+        Object.assign({}, field, {
+          id: page.sourceId === "active" ? field.id : generateId(),
+          pageIndex: newPageIndex,
+        }),
+      );
     });
   });
   return nextFields;
@@ -5881,11 +5926,11 @@ async function applyPageManagerChanges() {
   }
   showLoading("Applying page changes...");
   try {
-    const nextPdfBytes = await buildPdfBytesFromPageDescriptors(
+    const assembled = await buildPdfBytesFromPageDescriptors(
       pageManagerState.draftPages,
     );
     const nextFields = remapFieldsForPageManagerDraft();
-    syncPdfState(nextPdfBytes, state.fileName || "edited-form.pdf");
+    syncPdfState(assembled.bytes, state.fileName || "edited-form.pdf");
     updateDocumentName();
     await refreshPdfDocumentFromState();
     replaceFields(nextFields, { preserveSelection: true });
@@ -5927,14 +5972,24 @@ async function downloadSplitDocumentsFromManager() {
       stripPdfExtension(state.fileName || "document"),
       "document",
     );
-    const outputs = [];
+    const outputs = [],
+      renames = [];
     for (let index = 0; index < groups.length; index += 1) {
-      const bytes = await buildPdfBytesFromPageDescriptors(groups[index]);
-      outputs.push({
-        name: baseName + "-part-" + String(index + 1).padStart(2, "0") + ".pdf",
-        bytes: bytes,
+      const assembled = await buildPdfBytesFromPageDescriptors(
+        groups[index],
+        true,
+      );
+      const filename =
+        baseName + "-part-" + String(index + 1).padStart(2, "0") + ".pdf";
+      outputs.push({ name: filename, bytes: assembled.bytes });
+      assembled.renames.forEach(function (rename) {
+        renames.push({ ...rename, filename: filename });
       });
     }
+    showFieldRenameSummary(
+      renames,
+      "Exact duplicate field names were renamed in these split PDFs.",
+    );
     if (JSZipGlobal) {
       const zip = new JSZipGlobal();
       outputs.forEach(function (output) {
@@ -6730,10 +6785,7 @@ async function prepareWorkshopPdf() {
     !exportDeduplicateFieldNamesInput ||
       exportDeduplicateFieldNamesInput.checked,
   );
-  showFieldRenameSummary(
-    renamedFields,
-    "The accessibility workshop reviews the PDF with these renamed exact duplicate fields.",
-  );
+  await acknowledgeWorkshopRenames(renamedFields);
   return { bytes: applied.bytes, filename: state.fileName };
 }
 

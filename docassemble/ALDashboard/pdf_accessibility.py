@@ -1619,7 +1619,7 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
             walk(child, [index])
 
     annotations = []
-    widgets = []
+    widgets: List[Dict[str, Any]] = []
     for page_index, page in enumerate(pdf.pages):
         for index, annot in enumerate(cast(Iterable[Any], page.get("/Annots") or [])):
             if annot is None or not hasattr(annot, "get"):
@@ -1629,12 +1629,25 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                 parent = _named_parent(annot)
                 field = parent if parent is not None else annot
                 tooltip = _widget_tooltip(annot, parent)
+                object_id = str(getattr(annot, "objgen", ""))
+                rect = [float(value) for value in annot.get("/Rect", [])]
+                # Geometry survives saves and keyboard-order changes.
+                base_id = f"widget:{page_index}:{rect}"
+                occurrence = sum(
+                    item.get("baseId") == base_id and not item["name"]
+                    for item in widgets
+                )
                 widgets.append(
                     {
                         "pageIndex": page_index,
                         "index": index,
                         "name": _safe_pdf_string(field.get("/T", "")),
                         "tooltip": tooltip,
+                        "rect": rect,
+                        "baseId": base_id,
+                        "widgetId": f"{base_id}:{occurrence}",
+                        "caption": _safe_pdf_string((annot.get("/MK") or {}).get("/CA", "")),
+                        "tagged": "Form" in tagged_annotation_roles.get(object_id, set()),
                         "issueIds": [] if tooltip.strip() else ["field_tooltips"],
                     }
                 )
@@ -7442,16 +7455,22 @@ def apply_pdf_accessibility_settings(
                 metadata_updates += _sync_xmp_accessibility_metadata(
                     pdf, title=title, language=language
                 )
-                document_title = (
-                    title or _safe_pdf_string(docinfo.get("/Title", "")).strip()
-                )
-                if set_display_doc_title and document_title:
-                    viewer_preferences = pdf.Root.get("/ViewerPreferences")
-                    if not isinstance(viewer_preferences, pikepdf.Dictionary):
-                        viewer_preferences = pikepdf.Dictionary()
-                        pdf.Root["/ViewerPreferences"] = viewer_preferences
+
+            # Viewer/navigation flags do not require new author decisions or a
+            # field-order payload. Preserve the existing title and tag order.
+            if set_display_doc_title and _extract_pdf_metadata(pdf)["title"].strip():
+                viewer_preferences = pdf.Root.get("/ViewerPreferences")
+                if not isinstance(viewer_preferences, pikepdf.Dictionary):
+                    viewer_preferences = pikepdf.Dictionary()
+                    pdf.Root["/ViewerPreferences"] = viewer_preferences
+                if not viewer_preferences.get("/DisplayDocTitle", False):
                     viewer_preferences["/DisplayDocTitle"] = True
                     metadata_updates += 1
+            if set_structure_tab_order and pdf.Root.get("/StructTreeRoot") is not None:
+                for page in pdf.pages:
+                    if page.get("/Annots") and _safe_pdf_string(page.get("/Tabs", "")) != "/S":
+                        page["/Tabs"] = pikepdf.Name("/S")
+                        tab_order_updates += 1
 
             if mark_as_tagged is not None:
                 mark_info = pdf.Root.get("/MarkInfo")
@@ -7578,13 +7597,6 @@ def apply_pdf_accessibility_settings(
                             for before, after in zip(widgets, sorted_widgets)
                         ):
                             page["/Annots"] = pikepdf.Array(refs)
-                        if (
-                            set_structure_tab_order
-                            and pdf.Root.get("/StructTreeRoot") is not None
-                            and _safe_pdf_string(page.get("/Tabs", "")) != "/S"
-                        ):
-                            page["/Tabs"] = pikepdf.Name("/S")
-                            tab_order_updates += 1
                     if ordered:
                         (
                             structure_order_updates,
@@ -8885,7 +8897,7 @@ def apply_manual_structure_repairs(
                     else:
                         role = str(operation.get("role") or "")
                         subtype = _safe_pdf_string(annot.get("/Subtype", ""))
-                        expected_role = "Link" if subtype == "/Link" else "Annot"
+                        expected_role = {"/Link": "Link", "/Widget": "Form"}.get(subtype, "Annot")
                         if role != expected_role:
                             raise PDFAccessibilityError(
                                 f"{subtype.lstrip('/') or 'Annotation'} requires a {expected_role} tag."
@@ -8921,6 +8933,10 @@ def apply_manual_structure_repairs(
                                 }
                             )
                         )
+                        if role == "Form":
+                            tooltip = _widget_tooltip(annot, _named_parent(annot))
+                            if tooltip:
+                                element["/Alt"] = pikepdf.String(tooltip)
                         _append_structure_child(parent, element)
                         annot["/StructParent"] = key
                         number_entries[key] = element

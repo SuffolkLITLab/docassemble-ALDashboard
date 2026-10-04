@@ -792,11 +792,25 @@ export function createAccessibilityWorkshop(host) {
     setBusy("Reconciling accessibility flags…");
     const flags = await remediate(
       "metadata",
-      { repair_declaration: "true", display_doc_title: "false" },
+      {
+        repair_declaration: "true",
+        display_doc_title: "true",
+        set_structure_tab_order: "true",
+      },
       current,
     );
     current = flags.bytes;
     addReceipt("Tagged-document flag matches the tag tree", flags.result);
+    if (flags.result.tab_order_updates)
+      addReceipt(
+        "Keyboard navigation set to follow the tag tree",
+        flags.result,
+      );
+    if (flags.result.metadata_updates)
+      addReceipt(
+        "Viewer set to show the existing document title",
+        flags.result,
+      );
     return current;
   }
 
@@ -950,8 +964,8 @@ export function createAccessibilityWorkshop(host) {
 
   function refreshLinkDrafts() {
     const editor = (ws.inspection && ws.inspection.structure_editor) || {};
-    (editor.annotations || []).forEach(function (annotation) {
-      const key = annotation.pageIndex + ":" + annotation.index;
+    linkList().forEach(function (annotation) {
+      const key = linkKey(annotation);
       if (!ws.links[key]) {
         ws.links[key] = {
           contents: String(annotation.contents || ""),
@@ -1181,7 +1195,23 @@ export function createAccessibilityWorkshop(host) {
 
   function linkList() {
     const editor = (ws.inspection && ws.inspection.structure_editor) || {};
-    return editor.annotations || [];
+    const unnamed = (editor.widgets || [])
+      .filter(function (widget) {
+        return !widget.name;
+      })
+      .map(function (widget) {
+        return {
+          ...widget,
+          subtype: "Widget",
+          contents: widget.tooltip || widget.caption || "",
+          suggestedRole: "Form",
+        };
+      });
+    return (editor.annotations || []).concat(unnamed);
+  }
+
+  function linkKey(annotation) {
+    return annotation.widgetId || annotation.pageIndex + ":" + annotation.index;
   }
 
   function tableList() {
@@ -1396,7 +1426,7 @@ export function createAccessibilityWorkshop(host) {
       if (!links.length && !tables.length)
         return notApplicable(machine, "There are no links or tables to check.");
       const openLinks = links.filter(function (link) {
-        const decision = ws.links[link.pageIndex + ":" + link.index] || {};
+        const decision = ws.links[linkKey(link)] || {};
         return !decision.confirmed;
       }).length;
       const openTables = tables.filter(function (table) {
@@ -1405,8 +1435,11 @@ export function createAccessibilityWorkshop(host) {
       const parts = [];
       if (links.length)
         parts.push(
-          plural(links.length, "link or note", "links or notes") +
-            " to describe.",
+          plural(
+            links.length,
+            "link, note or other control",
+            "links, notes or other controls",
+          ) + " to describe.",
         );
       if (tables.length)
         parts.push(
@@ -1532,7 +1565,7 @@ export function createAccessibilityWorkshop(host) {
     ws.savedDecisions = snapshotDecisions(ws);
   }
 
-  async function applyChange(label, taskId, steps) {
+  async function applyChange(label, taskId, steps, preserveEvidence = false) {
     if (ws.busy) return false;
     const before = ws.working;
     setBusy(label + "…");
@@ -1543,6 +1576,15 @@ export function createAccessibilityWorkshop(host) {
         if (next) current = next;
       }
       await loadWorkingCopy(current);
+      if (!preserveEvidence) {
+        ws.external = {};
+        ws.recording = "";
+        ws.declare = false;
+        ws.replay.heardAll = false;
+        ws.aiNotes = null;
+        ws.aiRanAt = null;
+        ws.aiDismissed = new Set();
+      }
       refreshLinkDrafts();
       resetBlockOrder();
       ws.history.push({
@@ -2667,6 +2709,7 @@ export function createAccessibilityWorkshop(host) {
         overlays: fieldOverlays(null),
         html:
           reviewedBanner("fields") +
+          unnamedControlNote() +
           '<p class="aw-empty">Every field has a confirmed name.</p>' +
           '<div class="aw-actions"><button type="button" class="aw-btn aw-btn-secondary" data-aw="fields-show-all">Show all fields</button>' +
           (ws.reviewed.fields
@@ -2788,6 +2831,7 @@ export function createAccessibilityWorkshop(host) {
         '<label class="aw-check aw-small"><input type="checkbox" data-aw-input="fields-show-all"' +
         (ws.showAllFields ? " checked" : "") +
         "> <span>Show fields that already have names</span></label>" +
+        unnamedControlNote() +
         '<div class="aw-sticky-actions"><p class="aw-small aw-muted">Confirmed names are copied into the form tags for you. Field names, values and types stay the same.</p>' +
         '<button type="button" class="aw-btn aw-btn-primary" data-aw="fields-write"' +
         (pendingWrites ? "" : " disabled") +
@@ -2795,6 +2839,19 @@ export function createAccessibilityWorkshop(host) {
         plural(pendingWrites, "confirmed name") +
         " to the PDF</button></div>",
     };
+  }
+
+  function unnamedControlNote() {
+    const count = linkList().filter(function (item) {
+      return item.subtype === "Widget";
+    }).length;
+    if (!count) return "";
+    return (
+      '<p class="aw-warning">' +
+      plural(count, "other control") +
+      (count === 1 ? " has" : " have") +
+      ' no internal name. <button type="button" class="aw-linklike" data-aw="task" data-task="links">Review these controls in Tables & links</button>.</p>'
+    );
   }
 
   // Where a suggestion came from, said plainly, with its source outlined.
@@ -3655,7 +3712,7 @@ export function createAccessibilityWorkshop(host) {
     });
     const linkRows = links
       .map(function (link) {
-        const key = link.pageIndex + ":" + link.index;
+        const key = linkKey(link);
         const decision = ws.links[key] || { contents: "" };
         const id = "aw-link-" + key.replace(":", "-");
         return (
@@ -3664,13 +3721,23 @@ export function createAccessibilityWorkshop(host) {
           '"><label for="' +
           id +
           '" class="aw-label">' +
-          esc(link.subtype === "Link" ? "Link" : link.subtype) +
+          esc(
+            link.subtype === "Widget"
+              ? "Control without an internal name"
+              : link.subtype === "Link"
+                ? "Link"
+                : link.subtype,
+          ) +
           " · page " +
           (Number(link.pageIndex) + 1) +
           (link.tagged
             ? ""
             : ' <span class="aw-chip aw-chip-fail">not tagged</span>') +
-          '</label><div class="aw-inline"><input id="' +
+          '</label><button type="button" class="aw-linklike" data-aw="go-page" data-page="' +
+          link.pageIndex +
+          '">Show on page ' +
+          (Number(link.pageIndex) + 1) +
+          '</button><div class="aw-inline"><input id="' +
           id +
           '" class="aw-input" type="text" data-aw-input="link-contents" data-key="' +
           esc(key) +
@@ -3738,11 +3805,20 @@ export function createAccessibilityWorkshop(host) {
       caption: pageLinks.length
         ? plural(pageLinks.length, "link") + " on this page"
         : "",
-      overlays: [],
+      overlays: pageLinks
+        .filter(function (link) {
+          return link.rect && link.rect.length === 4;
+        })
+        .map(function (link) {
+          return {
+            box: normalizedRect(link.rect, ws.pageViews[ws.page]),
+            tone: "current",
+          };
+        }),
       html:
         reviewedBanner("links") +
         (links.length
-          ? '<h3 class="aw-card-title">Links and notes</h3><p class="aw-small aw-muted">Describe where each link goes or what it does, as a reader would want to hear it.</p><ul class="aw-plain-list">' +
+          ? '<h3 class="aw-card-title">Links, notes and other controls</h3><p class="aw-small aw-muted">Describe where each link goes or what it does. Name any controls that have no internal name here; their internal names stay unchanged.</p><ul class="aw-plain-list">' +
             linkRows +
             "</ul>"
           : "") +
@@ -3758,14 +3834,18 @@ export function createAccessibilityWorkshop(host) {
   async function writeLinks() {
     const operations = [];
     linkList().forEach(function (link) {
-      const key = link.pageIndex + ":" + link.index;
+      const key = linkKey(link);
       const decision = ws.links[key];
       if (!decision || !decision.confirmed) return;
       operations.push({
-        action: "set_annotation_contents",
+        action:
+          link.subtype === "Widget"
+            ? "set_widget_description"
+            : "set_annotation_contents",
         pageIndex: link.pageIndex,
         index: link.index,
         contents: decision.contents,
+        description: decision.contents,
       });
       if (!link.tagged)
         operations.push({
@@ -4556,17 +4636,22 @@ export function createAccessibilityWorkshop(host) {
 
   async function declareConformance() {
     if (!ws.declare) return;
-    const applied = await applyChange("PDF/UA declaration", "", [
-      async function (bytes) {
-        return (
-          await remediate(
-            "catalog_flags",
-            { marked: "true", display_doc_title: "false" },
-            bytes,
-          )
-        ).bytes;
-      },
-    ]);
+    const applied = await applyChange(
+      "PDF/UA declaration",
+      "",
+      [
+        async function (bytes) {
+          return (
+            await remediate(
+              "catalog_flags",
+              { marked: "true", display_doc_title: "false" },
+              bytes,
+            )
+          ).bytes;
+        },
+      ],
+      true,
+    );
     if (applied) exportPdf(ws.working, "pdfua");
   }
 
@@ -5112,6 +5197,7 @@ export function createAccessibilityWorkshop(host) {
     },
     "external-done": function () {
       ws.recording = "";
+      ws.savedDecisions.recording = "";
       render();
     },
     declare: declareConformance,
@@ -5269,14 +5355,17 @@ export function createAccessibilityWorkshop(host) {
       const record = ws.external[target.dataset.test] || {};
       record.result = target.value;
       ws.external[target.dataset.test] = record;
+      ws.savedDecisions.external = structuredClone(ws.external);
     },
     "external-notes": function (target) {
       const record = ws.external[target.dataset.test] || {};
       record.notes = target.value;
       ws.external[target.dataset.test] = record;
+      ws.savedDecisions.external = structuredClone(ws.external);
     },
     declare: function (target) {
       ws.declare = !!target.checked;
+      ws.savedDecisions.declare = ws.declare;
       render();
     },
   };

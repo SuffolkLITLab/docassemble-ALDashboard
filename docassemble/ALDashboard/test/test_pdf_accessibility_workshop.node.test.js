@@ -142,7 +142,7 @@ async function withWorkshop(run) {
       .replace(
         "    open: open,",
         `    test: { state: () => ws, loadWorkingCopy, initializeDecisions, saveDecisions,
-        writeFieldNames, rebuildStructure, undo, applyChange, confirmOrderPage, writeImages, textFixPayload, render },
+        writeFieldNames, rebuildStructure, undo, applyChange, confirmOrderPage, writeImages, textFixPayload, refreshLinkDrafts, render },
     open: open,`,
       );
     await page.setContent(template.replace(/<link[^>]*>/g, ""));
@@ -176,6 +176,7 @@ async function withWorkshop(run) {
               content_blocks: [],
               images: [],
               tag_structure: { present: true },
+              structure_editor: window.testStructureEditor || {},
               readback: { announcements: [] },
             },
           };
@@ -277,6 +278,53 @@ test("undo field names restores decisions and a later rebuild cannot write them 
   });
 });
 
+test("controls without internal names can be reviewed and written without a field rename", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop;
+      const state = t.state();
+      state.inspection.structure_editor = window.testStructureEditor = {
+        widgets: [
+          {
+            name: "",
+            pageIndex: 0,
+            index: 4,
+            widgetId: "widget:0:seal",
+            rect: [10, 10, 40, 40],
+            tagged: true,
+            tooltip: "",
+            caption: "",
+          },
+        ],
+      };
+      t.refreshLinkDrafts();
+      t.saveDecisions();
+      state.open = true;
+      state.step = "review";
+      state.task = "links";
+      document.querySelector("#a11y-workshop").hidden = false;
+      t.render();
+    });
+    const input = page.locator('[data-aw-input="link-contents"]');
+    await input.fill("Massachusetts court seal");
+    await page.locator('[data-aw="link-confirm"]').click();
+    await page.locator('[data-aw="links-write"]').click();
+    await page.waitForFunction(() => !window.workshop.state().busy);
+    const request = await page.evaluate(() => window.requests.at(-1));
+    const operations = JSON.parse(request.operations);
+    assert.equal(operations[0].action, "set_widget_description");
+    assert.equal(operations[0].description, "Massachusetts court seal");
+    assert.equal(operations[0].index, 4);
+    assert.ok(!request.field_tooltips);
+    await page.evaluate(() => window.workshop.undo());
+    assert.equal(
+      await page.locator('[data-aw-input="link-contents"]').inputValue(),
+      "",
+    );
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
+  });
+});
+
 test("undo restores image/order decisions, review flags, Sets and the earlier-tree lock", async () => {
   await withWorkshop(async (page) => {
     const result = await page.evaluate(async () => {
@@ -319,6 +367,43 @@ test("undo restores image/order decisions, review flags, Sets and the earlier-tr
     assert.deepEqual(result.reviewed, {});
     assert.equal(result.preexisting, true);
     assert.equal(result.treeDecision, "keep");
+  });
+});
+
+test("changing the PDF invalidates external and AI evidence and undo restores its recorded tests", async () => {
+  await withWorkshop(async (page) => {
+    const result = await page.evaluate(async () => {
+      const t = window.workshop,
+        state = t.state();
+      state.external = { validator: { result: "pass", notes: "Original PDF" } };
+      state.declare = true;
+      state.aiNotes = [{ title: "Earlier PDF" }];
+      state.aiRanAt = "Earlier";
+      state.replay.heardAll = true;
+      t.saveDecisions();
+      state.names.field = {
+        value: "Changed name",
+        confirmed: true,
+        written: false,
+      };
+      await t.writeFieldNames();
+      const changed = {
+        external: state.external,
+        declare: state.declare,
+        aiNotes: state.aiNotes,
+        heardAll: state.replay.heardAll,
+      };
+      await t.undo();
+      return { changed, restored: state.external, declare: state.declare };
+    });
+    assert.deepEqual(result.changed.external, {});
+    assert.equal(result.changed.declare, false);
+    assert.equal(result.changed.aiNotes, null);
+    assert.equal(result.changed.heardAll, false);
+    assert.deepEqual(result.restored, {
+      validator: { result: "pass", notes: "Original PDF" },
+    });
+    assert.equal(result.declare, true);
   });
 });
 

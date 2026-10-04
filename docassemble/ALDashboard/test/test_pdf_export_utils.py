@@ -420,3 +420,87 @@ class TestPDFExportUtils(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnnamedWidgetPreservation(unittest.TestCase):
+    def test_unnamed_buttons_preserve_actions_appearances_and_parent_properties(self):
+        import tempfile
+        from pathlib import Path
+        import pikepdf
+        from docassemble.ALDashboard.pdf_export_utils import (
+            preserve_unnamed_pdf_widgets,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            original = Path(directory) / "original.pdf"
+            exported = Path(directory) / "export.pdf"
+            with pikepdf.Pdf.new() as pdf:
+                page = pdf.add_blank_page()
+                parent = pdf.make_indirect(
+                    pikepdf.Dictionary(
+                        T=pikepdf.String(""),
+                        FT=pikepdf.Name.Btn,
+                        Ff=65536,
+                        TU=pikepdf.String("Print form"),
+                    )
+                )
+                appearance = pdf.make_stream(b"0 0 10 10 re f")
+                appearance.Type = pikepdf.Name.XObject
+                appearance.Subtype = pikepdf.Name.Form
+                appearance.BBox = pikepdf.Array([0, 0, 10, 10])
+                widget = pdf.make_indirect(
+                    pikepdf.Dictionary(
+                        Subtype=pikepdf.Name.Widget,
+                        Parent=parent,
+                        Rect=pikepdf.Array([10, 10, 30, 30]),
+                        AP=pikepdf.Dictionary(N=appearance),
+                        A=pikepdf.Dictionary(
+                            S=pikepdf.Name.JavaScript,
+                            JS=pikepdf.String("this.print();"),
+                        ),
+                    )
+                )
+                parent.Kids = pikepdf.Array([widget])
+                page.Annots = pikepdf.Array([widget])
+                pdf.Root.AcroForm = pdf.make_indirect(
+                    pikepdf.Dictionary(Fields=pikepdf.Array([parent]))
+                )
+                pdf.Root.AcroForm.DA = pikepdf.String("/F0 12 Tf 0 g")
+                pdf.Root.AcroForm.DR = pikepdf.Dictionary(
+                    Font=pikepdf.Dictionary(
+                        F0=pdf.make_indirect(
+                            pikepdf.Dictionary(
+                                Type=pikepdf.Name.Font,
+                                Subtype=pikepdf.Name.Type1,
+                                BaseFont=pikepdf.Name.Helvetica,
+                            )
+                        )
+                    )
+                )
+                pdf.save(original)
+            with pikepdf.Pdf.new() as pdf:
+                pdf.add_blank_page()
+                pdf.save(exported)
+            self.assertEqual(
+                preserve_unnamed_pdf_widgets(str(original), str(exported)), 1
+            )
+            self.assertEqual(
+                preserve_unnamed_pdf_widgets(str(original), str(exported)), 1
+            )
+            with pikepdf.open(exported) as pdf:
+                widget = pdf.pages[0].Annots[0]
+                self.assertEqual(len(pdf.pages[0].Annots), 1)
+                self.assertEqual(widget.T, "")
+                self.assertEqual(widget.TU, "Print form")
+                self.assertEqual(widget.FT, pikepdf.Name.Btn)
+                self.assertEqual(widget.Ff, 65536)
+                self.assertEqual(widget.A.JS, "this.print();")
+                self.assertEqual(widget.AP.N.read_bytes(), b"0 0 10 10 re f")
+                self.assertEqual(widget.objgen, pdf.Root.AcroForm.Fields[0].objgen)
+                self.assertEqual(widget.P.objgen, pdf.pages[0].obj.objgen)
+                alias = str(widget.DA).split()[0]
+                self.assertTrue(alias.startswith("/unnamed0_F0"))
+                self.assertEqual(
+                    pdf.Root.AcroForm.DR.Font[alias].BaseFont,
+                    pikepdf.Name.Helvetica,
+                )

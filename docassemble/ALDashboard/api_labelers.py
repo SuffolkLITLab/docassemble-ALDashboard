@@ -87,6 +87,7 @@ from .api_dashboard_utils import (
     validate_docx_payload_from_options,
 )
 from .pdf_export_utils import (
+    preserve_unnamed_pdf_widgets,
     build_normalized_pdf_field_definitions,
     build_pdf_preview_fill_data,
     build_pdf_export_fields_per_page,
@@ -4046,6 +4047,7 @@ def pdf_labeler_apply_fields() -> Response:
                 output_path = tmp_out.name
 
             set_fields(input_path, output_path, fields_per_page, overwrite=True)
+            preserve_unnamed_pdf_widgets(input_path, output_path)
             _apply_checkbox_export_values(output_path, checkbox_export_values)
             from .pdf_repair import normalize_signature_fields
 

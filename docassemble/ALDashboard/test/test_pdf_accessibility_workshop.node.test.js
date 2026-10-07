@@ -174,7 +174,7 @@ async function withWorkshop(run) {
               metadata: {},
               report: { issues: [] },
               field_labels: [],
-              content_blocks: [],
+              content_blocks: window.testContentBlocks || [],
               images: [],
               tag_structure: { present: true },
               structure_editor: window.testStructureEditor || {},
@@ -822,6 +822,107 @@ test("table tools stay collapsed, and confirmed creation survives redrafts but n
         before,
       ),
       false,
+    );
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
+  });
+});
+
+test("box selection is independent of drag direction and excludes the gap between regions", async () => {
+  const { selectionBox, boxContainsCenter } = await loadWorkshop();
+  const box = selectionBox({ x: 0.8, y: 0.5 }, { x: 0.1, y: 0.1 });
+  assert.equal(box.x, 0.1);
+  assert.equal(box.y, 0.1);
+  assert.equal(
+    boxContainsCenter(box, { x: 0.2, y: 0.2, width: 0.1, height: 0.1 }),
+    true,
+  );
+  assert.equal(
+    boxContainsCenter(box, { x: 0.85, y: 0.2, width: 0.1, height: 0.1 }),
+    false,
+  );
+});
+
+test("draw, merge, ungroup and undo retain disjoint regions and replay grouped decisions", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop,
+        s = t.state();
+      s.open = true;
+      s.step = "review";
+      s.task = "order";
+      s.preexistingTree = false;
+      document.querySelector("#a11y-workshop").hidden = false;
+      document.querySelector("#app").inert = true;
+      s.inspection.content_blocks = [
+        {
+          blockId: "a",
+          pageIndex: 0,
+          text: "First",
+          box: { x: 0.1, y: 0.1, width: 0.2, height: 0.03 },
+        },
+        {
+          blockId: "b",
+          pageIndex: 0,
+          text: "Second",
+          box: { x: 0.1, y: 0.2, width: 0.3, height: 0.03 },
+        },
+        {
+          blockId: "c",
+          pageIndex: 0,
+          text: "Third",
+          box: { x: 0.6, y: 0.3, width: 0.2, height: 0.03 },
+        },
+      ];
+      window.testContentBlocks = s.inspection.content_blocks;
+      s.blockOrder = { 0: ["a", "b", "c"] };
+      t.saveDecisions();
+      t.render();
+    });
+    await page.click('[data-aw="draw-tag"]');
+    const bounds = await page.locator('[data-aw-ref="page"]').boundingBox();
+    await page.mouse.move(
+      bounds.x + bounds.width * 0.05,
+      bounds.y + bounds.height * 0.05,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      bounds.x + bounds.width * 0.45,
+      bounds.y + bounds.height * 0.25,
+    );
+    await page.mouse.up();
+    assert.equal(await page.locator('[data-aw="block-select"]').count(), 2);
+    await page.locator('[data-aw="block-merge"]').first().click();
+    assert.equal(await page.locator('[data-aw="block-select"]').count(), 1);
+    const grouped = await page.evaluate(() => {
+      const s = window.workshop.state();
+      return s.customBlocks[s.blockOrder[0][0]];
+    });
+    assert.equal(grouped.regions.length, 3);
+    await page.click('[data-aw="block-split"]');
+    assert.equal(await page.locator('[data-aw="block-select"]').count(), 3);
+    await page.locator('[data-aw="block-merge"]').first().click();
+    await page.evaluate(async () => {
+      await window.workshop.confirmOrderPage();
+      await window.workshop.rebuildStructure("Again", "");
+    });
+    const payloads = await page.evaluate(() =>
+      window.requests
+        .filter((r) => r.action === "draft_structure")
+        .map((r) => JSON.parse(r.content_decisions)),
+    );
+    assert.equal(payloads.length, 2);
+    for (const payload of payloads) {
+      assert.equal(payload[0].groupId, payload[1].groupId);
+      assert.ok(payload[0].groupId);
+      assert.equal(payload[2]?.groupId || "", "");
+    }
+    await page.evaluate(async () => {
+      await window.workshop.undo();
+      await window.workshop.undo();
+    });
+    assert.deepEqual(
+      await page.evaluate(() => window.workshop.state().customBlocks),
+      {},
     );
     assert.deepEqual(await page.evaluate(() => window.errors), []);
   });

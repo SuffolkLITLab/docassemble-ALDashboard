@@ -7844,6 +7844,9 @@ def create_draft_structure_tree(
     deciding whether they are figures or artifacts requires human review;
     ``image_decisions`` carries that review: each ``{"assetId", "decision",
     "altText"}`` tags an image as a described Figure or marks it an Artifact.
+    Content decisions with the same nonempty ``groupId`` on a page share one
+    tag, with references ordered by ``memberOrder``. Their runs need not touch;
+    content between them remains in its own tags.
     """
     image_choices = _normalized_image_decisions(image_decisions)
     if input_pdf_path != output_pdf_path:
@@ -7890,6 +7893,7 @@ def create_draft_structure_tree(
             "Artifact",
         }
         content_by_key: Dict[Tuple[int, str, int], Dict[str, Any]] = {}
+        matched_group_members: set[Tuple[int, str, int]] = set()
         # Content decisions name blocks by the layout analysis's text, which
         # has word spaces that the content stream often draws as kerning.
         # Match the way headings do, ignoring whitespace.
@@ -7905,11 +7909,14 @@ def create_draft_structure_tree(
                     int(item.get("occurrence", 0)),
                 )
                 order = int(item.get("order", 0))
+                member_order = int(item.get("memberOrder", 0))
             except (TypeError, ValueError):
                 continue
             content_by_key[key] = {
                 "role": role,
                 "order": order,
+                "group_id": str(item.get("groupId") or ""),
+                "member_order": member_order,
                 "role_reviewed": bool(item.get("roleReviewed", False)),
                 "order_reviewed": bool(item.get("orderReviewed", True)),
             }
@@ -7971,6 +7978,11 @@ def create_draft_structure_tree(
                     Tuple[Optional[int], Tuple[float, float], int, Any, str]
                 ] = []
                 content_occurrences: Dict[str, int] = {}
+                # A reviewed tag can own disjoint marked-content runs, including
+                # runs in different streams. Every MCID still maps to its owner.
+                grouped_elements: Dict[str, Any] = {}
+                grouped_roles: Dict[str, str] = {}
+                grouped_references: Dict[str, List[Any]] = {}
 
                 # The same drafting runs over the page's own stream and over
                 # each Form XObject it draws, because plenty of government
@@ -8144,6 +8156,8 @@ def create_draft_structure_tree(
                                         str,
                                         Optional[int],
                                         Tuple[float, float],
+                                        str,
+                                        int,
                                     ]
                                 ] = []
                                 group_index = 0
@@ -8236,16 +8250,44 @@ def create_draft_structure_tree(
                                             tag_name = str(content_decision["role"])
                                         if content_decision["order_reviewed"]:
                                             block_order = int(content_decision["order"])
-                                    groups.append((group, tag_name, block_order, spot))
+                                    group_id = (content_decision or {}).get("group_id", "")
+                                    if group_id:
+                                        matched_group_members.add(
+                                            (page_index, normalized_group, occurrence)
+                                        )
+                                    member_order = (content_decision or {}).get("member_order", 0)
+                                    groups.append(
+                                        (group, tag_name, block_order, spot, group_id, member_order)
+                                    )
 
                                 starts: Dict[int, Tuple[int, str]] = {}
                                 ends: Dict[int, Tuple[int, bool]] = {}
-                                for group, tag_name, block_order, spot in groups:
+                                for group, tag_name, block_order, spot, group_id, member_order in groups:
                                     if tag_name == "Artifact":
                                         starts[group[0]] = (-1, "Artifact")
                                         ends[group[-1]] = (-1, True)
                                         manual_artifact_count += 1
                                         continue
+                                    if group_id and group_id in grouped_elements:
+                                        content_element = grouped_elements[group_id]
+                                        existing_role = str(content_element["/S"]).lstrip("/")
+                                        if existing_role == "LBody":
+                                            existing_role = "LI"
+                                        if grouped_roles[group_id] != tag_name:
+                                            raise PDFAccessibilityError(
+                                                "Merged text blocks must use the same role."
+                                            )
+                                        mcid = len(mcid_elements)
+                                        starts[group[0]] = (mcid, existing_role)
+                                        ends[group[-1]] = (mcid, False)
+                                        grouped_references[group_id].append(
+                                            (member_order, mcid_reference(mcid))
+                                        )
+                                        mcid_elements.append(content_element)
+                                        text_block_count += 1
+                                        continue
+                                    if group_id:
+                                        grouped_roles[group_id] = tag_name
                                     if tag_name.startswith("H"):
                                         level = int(tag_name[1:])
                                         maximum_level = (
@@ -8277,6 +8319,10 @@ def create_draft_structure_tree(
                                             }
                                         )
                                     )
+                                    if group_id:
+                                        content_element["/K"] = pikepdf.Array([mcid_reference(mcid)])
+                                        grouped_elements[group_id] = content_element
+                                        grouped_references[group_id] = [(member_order, mcid_reference(mcid))]
                                     element = content_element
                                     if tag_name == "LI":
                                         element = pdf.make_indirect(
@@ -8478,6 +8524,12 @@ def create_draft_structure_tree(
                     form_obj["/StructParents"] = form_parent
                     parent_tree_entries[form_parent] = pikepdf.Array(form_elements)
                     forms_tagged += 1
+                for group_id, element in grouped_elements.items():
+                    element["/K"] = pikepdf.Array([
+                        reference for _, reference in sorted(
+                            grouped_references[group_id], key=lambda entry: entry[0]
+                        )
+                    ])
                 # A reviewed block order wins where the reviewer set one; runs
                 # they never saw fall in by position rather than by a separate
                 # numbering that used to interleave them into other paragraphs.
@@ -8630,6 +8682,15 @@ def create_draft_structure_tree(
                     page["/Tabs"] = pikepdf.Name("/S")
                 page_part["/K"] = pikepdf.Array(page_children)
 
+            missing_group_members = [
+                key for key, decision in content_by_key.items()
+                if decision["group_id"] and key not in matched_group_members
+            ]
+            if missing_group_members:
+                raise PDFAccessibilityError(
+                    "Some selected text could not be matched to PDF content. "
+                    "The merged tags were not written; ungroup those blocks and retry."
+                )
             parent_tree_numbers: List[Any] = []
             for parent_tree_key in sorted(parent_tree_entries):
                 parent_tree_numbers.extend([parent_tree_key, parent_tree_entries[parent_tree_key]])

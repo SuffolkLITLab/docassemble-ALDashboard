@@ -1638,3 +1638,27 @@ textarea.aw-input {
 .aw .aw-table-editor-scroll td { min-width: 12rem; vertical-align: top; }
 .aw .aw-table-editor-scroll select[multiple] { max-width: 18rem; }
 .aw details > summary { cursor: pointer; font-weight: 600; padding-block: 0.5rem; }
+
+.aw .aw-drawing-tag {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+.aw .aw-drawing-tag .aw-mark {
+  pointer-events: none;
+}
+.aw .aw-tag-selection {
+  position: absolute;
+  border: 2px dashed var(--aw-accent);
+  background: rgba(40, 100, 220, 0.15);
+  pointer-events: none;
+}
+
+.aw .aw-tag-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+.aw .aw-tag-row .aw-order-buttons {
+  grid-column: 2 / -1;
+  flex-wrap: wrap;
+}

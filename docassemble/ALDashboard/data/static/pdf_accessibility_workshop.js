@@ -10,6 +10,27 @@
 // checks, human review, and testing outside this tool. There is no single
 // score, and nothing here ever declares conformance on its own.
 
+// Selection uses normalized page coordinates, independent of zoom and drag direction.
+export function selectionBox(start, end) {
+  return {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.abs(end.x - start.x),
+    height: Math.abs(end.y - start.y),
+  };
+}
+export function boxContainsCenter(selection, box) {
+  if (!box) return false;
+  const x = box.x + box.width / 2,
+    y = box.y + box.height / 2;
+  return (
+    x >= selection.x &&
+    x <= selection.x + selection.width &&
+    y >= selection.y &&
+    y <= selection.y + selection.height
+  );
+}
+
 const TASKS = [
   {
     id: "document",
@@ -364,6 +385,7 @@ const DECISION_KEYS = [
   "tabEdited",
   "blockOrder",
   "blockRoles",
+  "customBlocks",
   "orderEditedPages",
   "orderConfirmedPages",
   "headings",
@@ -464,6 +486,8 @@ export function createAccessibilityWorkshop(host) {
       tabEdited: false,
       blockOrder: {},
       blockRoles: {},
+      customBlocks: {},
+      drawingTag: false,
       orderEditedPages: new Set(),
       orderConfirmedPages: new Set(),
       selectedBlock: "",
@@ -879,6 +903,7 @@ export function createAccessibilityWorkshop(host) {
     ws.tableDrafts = [];
     ws.fontChecks = [];
     ws.blockOrder = {};
+    ws.customBlocks = {};
     const inspection = ws.inspection;
     const metadata = inspection.metadata || {};
     const headings = inspection.heading_candidates || [];
@@ -1042,6 +1067,7 @@ export function createAccessibilityWorkshop(host) {
   }
 
   function blockById(blockId) {
+    if (ws.customBlocks[blockId]) return ws.customBlocks[blockId];
     return ((ws.inspection && ws.inspection.content_blocks) || []).find(
       function (block) {
         return block.blockId === blockId;
@@ -1702,15 +1728,20 @@ export function createAccessibilityWorkshop(host) {
           ws.headings[block.headingCandidateId] &&
           role !== "Artifact" &&
           !ws.blockRoles[block.blockId];
-        payload.push({
-          blockId: block.blockId,
-          pageIndex: pageIndex,
-          text: block.text,
-          occurrence: Number(block.occurrence || 0),
-          role: fromHeading ? "P" : role,
-          order: position,
-          roleReviewed: !fromHeading && !!ws.blockRoles[block.blockId],
-          orderReviewed: reviewed,
+        const members = block.members || [block];
+        members.forEach(function (member, memberOrder) {
+          payload.push({
+            groupId: block.members ? block.blockId : "",
+            memberOrder,
+            blockId: member.blockId,
+            pageIndex: pageIndex,
+            text: member.text,
+            occurrence: Number(member.occurrence || 0),
+            role: fromHeading ? "P" : role,
+            order: position,
+            roleReviewed: !fromHeading && !!ws.blockRoles[block.blockId],
+            orderReviewed: reviewed,
+          });
         });
       });
     });
@@ -2512,6 +2543,10 @@ export function createAccessibilityWorkshop(host) {
     const view = ws.pageViews[ws.page] || [0, 0, 612, 792];
     pageEl.style.aspectRatio =
       String(view[2] - view[0]) + " / " + String(view[3] - view[1]);
+    pageEl.classList.toggle(
+      "aw-drawing-tag",
+      ws.drawingTag && ws.task === "order",
+    );
     overlay.innerHTML =
       (overlaySvg || "") +
       (overlays || [])
@@ -3215,20 +3250,22 @@ export function createAccessibilityWorkshop(host) {
         Number(finding.page) !== ws.page
       );
     });
-    const overlays = order.map(function (blockId, index) {
+    const overlays = order.flatMap(function (blockId, index) {
       const block = blockById(blockId);
       const role = blockRole(block);
-      return {
-        box: block.box,
-        tone:
-          blockId === ws.selectedBlock
-            ? "current"
-            : role === "Artifact"
-              ? "muted"
-              : "quiet",
-        label: role === "Artifact" ? "×" : String(index + 1),
-        target: "block:" + blockId,
-      };
+      return (block.regions || [block.box]).map(function (region) {
+        return {
+          box: region,
+          tone:
+            blockId === ws.selectedBlock
+              ? "current"
+              : role === "Artifact"
+                ? "muted"
+                : "quiet",
+          label: role === "Artifact" ? "×" : String(index + 1),
+          target: "block:" + blockId,
+        };
+      });
     });
     const roleOptions = function (current) {
       return ROLE_CHOICES.map(function (choice) {
@@ -3249,7 +3286,7 @@ export function createAccessibilityWorkshop(host) {
         const role = blockRole(block);
         const selected = blockId === ws.selectedBlock;
         return (
-          '<li class="aw-order-row' +
+          '<li class="aw-order-row aw-tag-row' +
           (selected ? " is-current" : "") +
           (role === "Artifact" ? " is-muted" : "") +
           '"><span class="aw-order-number">' +
@@ -3284,7 +3321,19 @@ export function createAccessibilityWorkshop(host) {
           (index + 1) +
           ' later"' +
           (index === order.length - 1 || treeLocked() ? " disabled" : "") +
-          ">↓</button></span></li>"
+          '>↓</button><button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="block-merge" data-block="' +
+          esc(blockId) +
+          '"' +
+          (index === order.length - 1 || treeLocked() ? " disabled" : "") +
+          ">Merge with next</button>" +
+          (block.members
+            ? '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="block-split" data-block="' +
+              esc(blockId) +
+              '"' +
+              (treeLocked() ? " disabled" : "") +
+              ">Ungroup</button>"
+            : "") +
+          "</span></li>"
         );
       })
       .join("");
@@ -3313,6 +3362,13 @@ export function createAccessibilityWorkshop(host) {
       overlays: overlays,
       html:
         reviewedBanner("order") +
+        '<div class="aw-actions"><button type="button" class="aw-btn aw-btn-secondary" data-aw="draw-tag" aria-pressed="' +
+        ws.drawingTag +
+        '"' +
+        (treeLocked() ? " disabled" : "") +
+        ">" +
+        (ws.drawingTag ? "Cancel drawing" : "Draw a text tag") +
+        '</button></div><p class="aw-help">Drag a box around text to make one tag. Selection snaps to whole text blocks whose centers are inside the box. Merge with the next item to combine more regions, including irregular shapes; the first item’s role is kept. You can also merge using the list buttons. Ungroup restores the separate blocks. Confirm the page to write your changes.</p>' +
         (treeLocked() ? lockedTreeNotice() : "") +
         '<div class="aw-page-chips" role="group" aria-label="Pages">' +
         pagePicker +
@@ -3359,6 +3415,59 @@ export function createAccessibilityWorkshop(host) {
         (ws.page + 1) +
         " order</button></div>",
     };
+  }
+
+  function changedTagDraft() {
+    ws.orderEditedPages.add(ws.page);
+    ws.orderConfirmedPages.delete(ws.page);
+    delete ws.reviewed.order;
+    delete ws.reviewed.headings;
+  }
+
+  function combineBlocks(ids) {
+    if (treeLocked() || !ids.length) return;
+    const order = ws.blockOrder[ws.page] || [];
+    const blocks = ids.map(blockById).filter(Boolean);
+    if (!blocks.length) return;
+    const members = blocks.flatMap((block) => block.members || [block]);
+    const id = "custom:" + members.map((block) => block.blockId).join("|");
+    const role = blockRole(blocks[0]);
+    const first = order.findIndex((item) => ids.includes(item));
+    const remaining = order.filter((item) => !ids.includes(item));
+    members.forEach((member) => setBlockRole(member, role));
+    ws.customBlocks[id] = {
+      blockId: id,
+      pageIndex: ws.page,
+      members,
+      text: members.map((block) => block.text).join(" "),
+      regions: blocks.flatMap((block) => block.regions || [block.box]),
+      box: blocks[0].box,
+    };
+    ws.blockRoles[id] = role;
+    remaining.splice(first, 0, id);
+    ws.blockOrder[ws.page] = remaining;
+    ws.selectedBlock = id;
+    changedTagDraft();
+    announce(
+      "Created one tag from " +
+        plural(members.length, "text block") +
+        ". Confirm the page to write it.",
+    );
+    render();
+  }
+
+  function ungroupBlock(id) {
+    if (treeLocked()) return;
+    const block = blockById(id);
+    if (!block || !block.members) return;
+    const order = ws.blockOrder[ws.page];
+    const index = order.indexOf(id);
+    if (index < 0) return;
+    order.splice(index, 1, ...block.members.map((member) => member.blockId));
+    delete ws.customBlocks[id];
+    ws.selectedBlock = "";
+    changedTagDraft();
+    render();
   }
 
   function moveBlock(blockId, delta) {
@@ -3671,6 +3780,7 @@ export function createAccessibilityWorkshop(host) {
               esc(image.width + "×" + image.height) +
               " pixels). Find it on the page.</p>") +
         "</figure>" +
+        '<p class="aw-help">Describe an image when it adds information. For a logo, name the organization if nearby text does not already identify it; describe any other meaning that matters. Mark purely decorative lines, borders, or repeated decoration as decorative so screen readers skip them. Keep a line that conveys information (such as a chart trend) and describe its meaning.</p>' +
         '<fieldset class="aw-choices"><legend class="aw-label">What does this image do for a reader?</legend>' +
         '<label class="aw-choice"><input type="radio" name="aw-image-kind" value="figure" data-aw-input="image-kind"' +
         (decision.decision === "figure" ? " checked" : "") +
@@ -5298,6 +5408,20 @@ export function createAccessibilityWorkshop(host) {
       speakLines(lines);
     },
     "tab-confirm": confirmTabPage,
+    "draw-tag": function () {
+      if (treeLocked()) return;
+      ws.drawingTag = !ws.drawingTag;
+      render();
+    },
+    "block-merge": function (target) {
+      const order = ws.blockOrder[ws.page] || [];
+      const index = order.indexOf(target.dataset.block);
+      if (index >= 0 && index + 1 < order.length)
+        combineBlocks(order.slice(index, index + 2));
+    },
+    "block-split": function (target) {
+      ungroupBlock(target.dataset.block);
+    },
     "block-select": function (target) {
       ws.selectedBlock = target.dataset.block;
       render();
@@ -5911,6 +6035,84 @@ export function createAccessibilityWorkshop(host) {
 
   root.addEventListener("input", handleInput);
   root.addEventListener("change", handleInput);
+
+  let tagDrag = null;
+  function tagPoint(event, page) {
+    const rect = page.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  }
+  root.addEventListener("pointerdown", function (event) {
+    const page = event.target.closest("[data-aw-ref=page]");
+    if (
+      !page ||
+      !ws.drawingTag ||
+      ws.task !== "order" ||
+      treeLocked() ||
+      ws.busy ||
+      event.button !== 0
+    )
+      return;
+    event.preventDefault();
+    const mark = document.createElement("div");
+    mark.className = "aw-tag-selection";
+    page.appendChild(mark);
+    tagDrag = {
+      page,
+      mark,
+      start: tagPoint(event, page),
+      pointerId: event.pointerId,
+    };
+    page.setPointerCapture(event.pointerId);
+  });
+  root.addEventListener("pointermove", function (event) {
+    if (!tagDrag || tagDrag.pointerId !== event.pointerId) return;
+    const point = tagPoint(event, tagDrag.page);
+    const box = selectionBox(tagDrag.start, point);
+    Object.assign(tagDrag.mark.style, {
+      left: box.x * 100 + "%",
+      top: box.y * 100 + "%",
+      width: box.width * 100 + "%",
+      height: box.height * 100 + "%",
+    });
+  });
+  function cancelTagDrag() {
+    if (tagDrag) tagDrag.mark.remove();
+    tagDrag = null;
+  }
+  root.addEventListener("pointerup", function (event) {
+    if (!tagDrag || tagDrag.pointerId !== event.pointerId) return;
+    const box = selectionBox(tagDrag.start, tagPoint(event, tagDrag.page));
+    cancelTagDrag();
+    if (box.width < 0.005 || box.height < 0.005) return;
+    const ids = (ws.blockOrder[ws.page] || []).filter((id) => {
+      const block = blockById(id);
+      return (block.regions || [block.box]).every((region) =>
+        boxContainsCenter(box, region),
+      );
+    });
+    if (!ids.length) {
+      host.showError(
+        "No whole text blocks selected. Draw around the text, including each block’s center.",
+      );
+      return;
+    }
+    ws.drawingTag = false;
+    combineBlocks(ids);
+  });
+  root.addEventListener("pointercancel", cancelTagDrag);
+  root.addEventListener("lostpointercapture", cancelTagDrag);
+  root.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && ws.drawingTag) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cancelTagDrag();
+      ws.drawingTag = false;
+      render();
+    }
+  });
 
   root.addEventListener("pointerdown", function (event) {
     const divider = event.target.closest(".aw-divider");

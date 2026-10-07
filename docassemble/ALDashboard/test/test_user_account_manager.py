@@ -167,7 +167,9 @@ def test_manage_user_picker_adapts_to_server_size():
     )
 
     user_fields = [
-        field for field in picker["fields"] if field.get("User") == "chosen_user"
+        field
+        for field in picker["fields"]
+        if field.get("User") == "chosen_user_selection"
     ]
     assert len(user_fields) == 2
     assert user_fields[0]["input type"] == "combobox"
@@ -330,3 +332,153 @@ def test_reset_email_confirmation_labels_an_account_without_email():
     )
 
     assert "no email address" in confirmation["subquestion"]
+
+
+def test_user_picker_keeps_ajax_values_as_text_and_converts_for_management():
+    documents = list(
+        YAML(typ="safe").load_all(
+            (PACKAGE_ROOT / "data/questions/manage_users.yml").read_text()
+        )
+    )
+    picker = next(
+        d
+        for d in documents
+        if isinstance(d, dict) and d.get("id") == "select user and management task"
+    )
+    fields = [f for f in picker["fields"] if f.get("User") == "chosen_user_selection"]
+    assert all(f["datatype"] == "text" for f in fields)
+    assert fields[1]["trigger at"] == 2
+    assert "name or email" in fields[1]["hint"]
+    assert "at least 2 characters" in fields[1]["under text"]
+    choices = eval(
+        fields[0]["code"],
+        {
+            "get_users_and_name": lambda **kwargs: [
+                (42, "alice@example.com", "Alice", "Example")
+            ],
+            "user_has_privilege": lambda roles: True,
+        },
+    )
+    assert choices == [{"42": "Alice Example (alice@example.com)"}]
+    conversion = next(
+        d["code"]
+        for d in documents
+        if isinstance(d, dict)
+        and "chosen_user = int(chosen_user_selection)" in d.get("code", "")
+    )
+    namespace = {"chosen_user_selection": "42"}
+    exec(conversion, namespace)
+    assert namespace["chosen_user"] == 42
+
+    errors = []
+
+    class ValidationError(Exception):
+        pass
+
+    def validation_error(message, field):
+        errors.append((message, field))
+        raise ValidationError
+
+    namespace.update(
+        user_task="view_user_info",
+        chosen_user_selection="",
+        validation_error=validation_error,
+    )
+    import pytest
+
+    with pytest.raises(ValidationError):
+        exec(picker["validation code"], namespace)
+    assert errors == [("Select a user", "chosen_user_selection")]
+    namespace["user_task"] = "recent_activity"
+    exec(picker["validation code"], namespace)
+
+
+def test_ajax_user_search_matches_names_emails_and_preserves_role_filter():
+    from typing import List, Tuple
+    from sqlalchemy import (
+        Column,
+        ForeignKey,
+        Integer,
+        String,
+        Table,
+        create_engine,
+        func,
+        or_,
+        select,
+    )
+    from sqlalchemy.orm import Session, declarative_base, relationship
+
+    Base = declarative_base()
+    user_roles = Table(
+        "user_roles",
+        Base.metadata,
+        Column("user_id", ForeignKey("users.id")),
+        Column("role_id", ForeignKey("roles.id")),
+    )
+
+    class Role(Base):
+        __tablename__ = "roles"
+        id = Column(Integer, primary_key=True)
+        name = Column(String)
+
+    class User(Base):
+        __tablename__ = "users"
+        id = Column(Integer, primary_key=True)
+        email = Column(String)
+        first_name = Column(String)
+        last_name = Column(String)
+        nickname = Column(String)
+        roles = relationship(Role, secondary=user_roles)
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add_all(
+            [
+                User(
+                    id=1,
+                    email="asmith@example.com",
+                    first_name="Alice",
+                    last_name="Smith",
+                ),
+                User(id=2, email=None, nickname="Alice Helper"),
+                User(id=3, email="alice@example.com", roles=[Role(name="admin")]),
+                User(
+                    id=4, email="alice-dev@example.com", roles=[Role(name="developer")]
+                ),
+                User(id=5, email="alice-cron@example.com", roles=[Role(name="cron")]),
+                User(id=6, email="percent%name@example.com"),
+            ]
+        )
+        session.commit()
+
+        @contextmanager
+        def database_session():
+            yield session
+
+        namespace = dict(
+            List=List,
+            Tuple=Tuple,
+            UserModel=User,
+            Role=Role,
+            func=func,
+            or_=or_,
+            select=select,
+            _get_db_session=database_session,
+        )
+        exec(
+            _function_sources({"search_users_by_email"})["search_users_by_email"],
+            namespace,
+        )
+        search = namespace["search_users_by_email"]
+        assert search("  ALICE SM  ", search_names=True) == [
+            (1, "asmith@example.com Alice Smith")
+        ]
+        assert {
+            u[0] for u in search("alice", search_names=True, exclude_privileged=True)
+        } == {1, 2}
+        assert {u[0] for u in search("ALICE")} == {3, 4, 5}
+        assert len(search("alice", search_names=True, limit=2)) == 2
+        assert search("%", search_names=True) == [(6, "percent%name@example.com")]
+        assert search("   ", search_names=True) == []
+        assert search("no match", search_names=True) == []

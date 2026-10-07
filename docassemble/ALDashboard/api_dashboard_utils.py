@@ -1575,12 +1575,13 @@ def interview_lint_payload_from_options(
     }
 
 
-def _dayaml_issue_severity(message: str) -> str:
-    normalized = message.strip().lower()
-    if "does not call validation_error" in normalized or normalized.startswith(
-        "warning:"
-    ):
-        return "warning"
+def _dayaml_issue_severity(issue: Any) -> str:
+    """Normalize the severity supplied by a DAYamlChecker finding."""
+    raw_severity = issue.severity
+    severity = getattr(raw_severity, "value", raw_severity)
+    normalized = str(severity or "").strip().lower().rsplit(".", 1)[-1]
+    if normalized in {"error", "warning", "info"}:
+        return normalized
     return "error"
 
 
@@ -1660,6 +1661,7 @@ def yaml_check_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str,
     issues: List[Dict[str, Any]] = []
     warnings: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
+    infos: List[Dict[str, Any]] = []
     for issue in raw_issues:
         message = str(getattr(issue, "err_str", issue))
         line_value = getattr(issue, "line_number", 1)
@@ -1669,7 +1671,7 @@ def yaml_check_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str,
             line = 1
         file_name = str(getattr(issue, "file_name", input_file))
         experimental = bool(getattr(issue, "experimental", True))
-        severity = _dayaml_issue_severity(message)
+        severity = _dayaml_issue_severity(issue)
         normalized_issue = {
             "severity": severity,
             "message": message,
@@ -1680,6 +1682,8 @@ def yaml_check_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str,
         issues.append(normalized_issue)
         if severity == "warning":
             warnings.append(normalized_issue)
+        elif severity == "info":
+            infos.append(normalized_issue)
         else:
             errors.append(normalized_issue)
 
@@ -1687,9 +1691,11 @@ def yaml_check_payload_from_options(raw_options: Mapping[str, Any]) -> Dict[str,
         "valid": len(errors) == 0,
         "error_count": len(errors),
         "warning_count": len(warnings),
+        "info_count": len(infos),
         "issues": issues,
         "errors": errors,
         "warnings": warnings,
+        "infos": infos,
     }
 
 
@@ -2527,7 +2533,7 @@ def build_openapi_spec() -> Dict[str, Any]:
                     "summary": "Check and warn on docassemble YAML with DAYamlChecker",
                     "description": (
                         "Runs DAYamlChecker against `yaml_text`/`yaml_content` and returns "
-                        "structured issues split into errors and warnings."
+                        "structured issues split into errors, warnings, and informational findings."
                     ),
                 }
             },

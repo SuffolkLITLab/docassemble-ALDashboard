@@ -315,21 +315,42 @@ class TestDashboardAPIUtils(unittest.TestCase):
             interview_lint_payload_from_options({})
 
     @patch("docassemble.ALDashboard.api_dashboard_utils._run_dayaml_checker")
-    def test_yaml_check_payload_classifies_warning_and_error(self, mock_dayaml):
+    def test_yaml_check_payload_uses_structured_severity(self, mock_dayaml):
         class _Issue:
-            def __init__(self, err_str, line_number, file_name, experimental=True):
+            def __init__(
+                self,
+                err_str,
+                line_number,
+                file_name,
+                severity,
+                experimental=True,
+            ):
                 self.err_str = err_str
                 self.line_number = line_number
                 self.file_name = file_name
+                self.severity = severity
                 self.experimental = experimental
 
         mock_dayaml.return_value = [
             _Issue(
-                "validation code does not call validation_error(); consider calling validation_error(...) to provide user-facing error messages",
+                "A warning whose text has no severity prefix.",
                 4,
                 "sample.yml",
+                "warning",
             ),
-            _Issue("Keys that shouldn't exist! ['bad key']", 2, "sample.yml", False),
+            _Issue(
+                "warning: this text is misleading because severity is authoritative",
+                2,
+                "sample.yml",
+                "error",
+                False,
+            ),
+            _Issue(
+                "An informational finding.",
+                6,
+                "sample.yml",
+                "info",
+            ),
         ]
         payload = yaml_check_payload_from_options(
             {"yaml_text": "question: hi", "filename": "sample.yml"}
@@ -337,8 +358,14 @@ class TestDashboardAPIUtils(unittest.TestCase):
         self.assertFalse(payload["valid"])
         self.assertEqual(payload["warning_count"], 1)
         self.assertEqual(payload["error_count"], 1)
+        self.assertEqual(payload["info_count"], 1)
         self.assertEqual(len(payload["warnings"]), 1)
         self.assertEqual(len(payload["errors"]), 1)
+        self.assertEqual(len(payload["infos"]), 1)
+        self.assertEqual(
+            [issue["severity"] for issue in payload["issues"]],
+            ["warning", "error", "info"],
+        )
 
     @patch(
         "docassemble.ALDashboard.validate_docx.detect_docx_automation_features",

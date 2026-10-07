@@ -132,7 +132,7 @@ celery modules:
   - Output: per-file Jinja rendering errors.
 - `POST /al/api/v1/dashboard/yaml/check`
   - Input: `yaml_text` (or `yaml_content`) and optional `filename`.
-  - Output: structured DAYamlChecker issues with `errors`, `warnings`, and `valid`.
+  - Output: structured DAYamlChecker issues with `errors`, `warnings`, `infos`, and `valid`; `valid` is false only when error-severity findings are present.
 - `POST /al/api/v1/dashboard/yaml/reformat`
   - Input: `yaml_text` (or `yaml_content`), optional `line_length` and `convert_indent_4_to_2`.
   - Output: reformatted YAML in `formatted_yaml` and `changed` boolean.

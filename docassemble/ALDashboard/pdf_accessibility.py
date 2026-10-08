@@ -1083,6 +1083,31 @@ def _safe_pdf_string(value: Any) -> str:
     return str(value) if value is not None else ""
 
 
+def _full_field_name(field: Any) -> str:
+    """Join actual AcroForm partial names without normalizing their contents."""
+    parts = []
+    seen = set()
+    while field is not None and hasattr(field, "get"):
+        identity = tuple(getattr(field, "objgen", (0, 0)))
+        if identity != (0, 0):
+            if identity in seen:
+                break
+            seen.add(identity)
+        if "/T" in field:
+            parts.append(_safe_pdf_string(field.get("/T")))
+        field = field.get("/Parent")
+    return ".".join(reversed(parts))
+
+
+def _terminal_fields(fields: Any) -> Iterable[Any]:
+    for field in fields or []:
+        children = [kid for kid in field.get("/Kids", []) if hasattr(kid, "get") and "/T" in kid]
+        if children:
+            yield from _terminal_fields(children)
+        else:
+            yield field
+
+
 def _widget_tooltip(annot: Any, parent: Any) -> str:
     """Return a custom tooltip stored on a field parent or widget annotation."""
     parent_tooltip = (
@@ -1217,7 +1242,7 @@ def _structure_form_field_name(node: Any) -> str:
             continue
         field = _named_parent(kid.get("/Obj"))
         if field is not None:
-            return _safe_pdf_string(field.get("/T", ""))
+            return _full_field_name(field)
     return ""
 
 
@@ -1276,7 +1301,7 @@ def _sync_structure_form_objects(pdf: Any) -> int:
                 continue
             live_widgets.add((page_key, tuple(annot.objgen)))
             parent = _named_parent(annot)
-            name = _safe_pdf_string(parent.get("/T", "")) if parent else ""
+            name = _full_field_name(parent) if parent else ""
             if name:
                 widgets.setdefault((page_key, name), []).append(annot)
 
@@ -1723,7 +1748,7 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                     {
                         "pageIndex": page_index,
                         "index": index,
-                        "name": _safe_pdf_string(field.get("/T", "")),
+                        "name": _full_field_name(field),
                         "tooltip": tooltip,
                         "rect": rect,
                         "baseId": base_id,
@@ -1795,7 +1820,7 @@ def _field_label_inputs(pdf: Any) -> List[Dict[str, Any]]:
                 parent = _named_parent(annot)
                 if parent is None:
                     continue
-                name = _safe_pdf_string(parent.get("/T", ""))
+                name = _full_field_name(parent)
                 if not name or name in seen:
                     continue
                 seen.add(name)
@@ -1832,7 +1857,7 @@ def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
                 parent = _named_parent(annot)
                 if parent is None:
                     continue
-                name = _safe_pdf_string(parent.get("/T", ""))
+                name = _full_field_name(parent)
                 if not name or name in seen:
                     continue
                 tooltip = _widget_tooltip(annot, parent)
@@ -1851,10 +1876,10 @@ def _extract_field_records(pdf: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
     acroform = pdf.Root.get("/AcroForm") if hasattr(pdf.Root, "get") else None
     ordered_names: List[str] = []
     if acroform is not None and "/Fields" in acroform:
-        for field_ref in acroform["/Fields"]:
+        for field_ref in _terminal_fields(acroform["/Fields"]):
             try:
                 field_obj = field_ref
-                name = _safe_pdf_string(field_obj.get("/T", ""))
+                name = _full_field_name(field_obj)
                 if name and name not in ordered_names:
                     ordered_names.append(name)
             except Exception:
@@ -4780,7 +4805,29 @@ def _readback_sequence(
             visit(node.get("/K"), page_index)
             return
         role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
+        # Gather source geometry and identities, then replace this whole subtree
+        # once. An owning ActualText also overrides replacements on descendants.
+        start = len(sequence)
         visit_content(node.get("/K"), node, role, page_index)
+        if "/ActualText" in node:
+            runs = sequence[start:]
+            entry = dict(runs[0]) if runs else {"kind": "text", "page": page_index}
+            entry.update({
+                "kind": "field" if role == "Form" and entry.get("kind") == "field" and len(runs) == 1 else "text",
+                "role": role, "structureId": str(node.objgen),
+                "text": _safe_pdf_string(node.get("/ActualText")),
+                "drawn": " ".join(str(run.get("drawn") or "") for run in runs),
+                "replaced": True,
+            })
+            if len(runs) > 1:
+                ids = [run.get("contentId") for run in runs]
+                entry.pop("contentId", None)
+                if all(ids):
+                    entry["contentId"] = hashlib.sha256(json.dumps(ids).encode()).hexdigest()
+            if keep_elements:
+                entry["element"] = node
+                entry["content_container"] = None
+            sequence[start:] = [entry]
 
     def visit_content(
         kids: Any, node: Any, role: str, page_index: Optional[int],
@@ -4819,10 +4866,7 @@ def _readback_sequence(
                     if page_index is not None and page_index < len(page_runs)
                     else None
                 )
-            # Assistive technology announces /ActualText in place of the
-            # glyphs, so the replay has to as well or it reports a problem the
-            # listener would never hit.
-            replacement = _safe_pdf_string(node.get("/ActualText", ""))
+            replacement = ""
             # A Figure is announced by its description, not by what it draws.
             if not replacement and role == "Figure":
                 replacement = _safe_pdf_string(node.get("/Alt", ""))
@@ -4879,7 +4923,7 @@ def _readback_sequence(
                 "role": role,
                 "page": page_index,
                 "name": (
-                    _safe_pdf_string(parent.get("/T", "")).strip()
+                    _full_field_name(parent)
                     if parent is not None
                     else ""
                 ),
@@ -7616,7 +7660,7 @@ def apply_pdf_accessibility_settings(
                         parent = _named_parent(annot)
                         if parent is None:
                             continue
-                        field_name = _safe_pdf_string(parent.get("/T", ""))
+                        field_name = _full_field_name(parent)
                         if not field_name:
                             continue
                         explicit = str(tooltip_map.get(field_name, "")).strip()
@@ -7648,31 +7692,20 @@ def apply_pdf_accessibility_settings(
                 )
                 if acroform is not None and "/Fields" in acroform:
                     if ordered:
-                        existing_refs = list(cast(Iterable[Any], acroform["/Fields"]))
-                        by_name: Dict[str, Any] = {}
-                        fallback_refs: List[Any] = []
-                        for ref in existing_refs:
-                            try:
-                                name = _safe_pdf_string(ref.get("/T", ""))
-                                if name and name not in by_name:
-                                    by_name[name] = ref
-                                else:
-                                    fallback_refs.append(ref)
-                            except Exception:
-                                fallback_refs.append(ref)
-                        new_refs: List[Any] = []
-                        used_names: set[str] = set()
-                        for name in ordered:
-                            ref = by_name.get(name)
-                            if ref is not None and name not in used_names:
-                                new_refs.append(ref)
-                                used_names.add(name)
-                        for name, ref in by_name.items():
-                            if name not in used_names:
-                                new_refs.append(ref)
-                        new_refs.extend(fallback_refs)
-                        acroform["/Fields"] = pikepdf.Array(new_refs)
-                        reordered_fields = len(new_refs)
+                        order_rank = {name: index for index, name in enumerate(ordered)}
+
+                        def reorder_siblings(refs: Any) -> Any:
+                            values = list(refs)
+                            for ref in values:
+                                kids = ref.get("/Kids")
+                                if kids is not None and any("/T" in kid for kid in kids):
+                                    ref["/Kids"] = reorder_siblings(kids)
+                            return pikepdf.Array(sorted(values, key=lambda ref: min(
+                                (order_rank.get(_full_field_name(leaf), len(ordered))
+                                 for leaf in _terminal_fields([ref])), default=len(ordered))))
+
+                        acroform["/Fields"] = reorder_siblings(acroform["/Fields"])
+                        reordered_fields = len(list(_terminal_fields(acroform["/Fields"])))
 
                     # Widget keyboard order lives in each page's /Annots array.
                     # /Tabs /S tells readers to use the structure order; setting
@@ -7695,7 +7728,7 @@ def apply_pdf_accessibility_settings(
                         def annotation_sort_key(ref: Any) -> int:
                             parent = _named_parent(ref)
                             name = (
-                                _safe_pdf_string(parent.get("/T", ""))
+                                _full_field_name(parent)
                                 if parent is not None
                                 else ""
                             )
@@ -9176,7 +9209,7 @@ def apply_manual_structure_repairs(
                             form_element["/Alt"] = pikepdf.String(description[:1000])
                         counts["widget_descriptions_changed"] += 1
                         tooltip_updates.append({
-                            "fieldName": _safe_pdf_string(field.get("/T", "")),
+                            "fieldName": _full_field_name(field),
                             "page": page_index,
                             "tooltip": description[:1000],
                         })

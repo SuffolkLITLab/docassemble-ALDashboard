@@ -137,6 +137,7 @@ const FIELD_NAME_LIBRARY =
 const state = {
   fileName: "",
   pdfBytes: null,
+  pdfRevision: 0,
   requestPdfFile: null,
   quickEditFieldId: null,
   quickEditFocusPending: false,
@@ -2865,6 +2866,7 @@ function updateRequestPdfFile(pdfBytes, fileName, originalFile) {
 
 function syncPdfState(pdfBytes, fileName, originalFile) {
   state.pdfBytes = clonePdfBytes(pdfBytes);
+  state.pdfRevision += 1;
   state.preservedPageFields = null;
   if (fileName) {
     state.fileName = fileName;
@@ -6974,6 +6976,7 @@ function workshopSignature() {
   return [
     state.fileName,
     state.pdfBytes.byteLength,
+    state.pdfRevision,
     JSON.stringify(convertFieldsToAbsoluteCoordinates(workshopNameMap())),
   ].join("|");
 }
@@ -6981,10 +6984,7 @@ function workshopSignature() {
 async function prepareWorkshopPdf() {
   const exportNameMap = workshopNameMap();
   const renamedFields = getRenamedFields(exportNameMap);
-  if (
-    !state.fields.length ||
-    (!state.hasUnsavedChanges && renamedFields.length === 0)
-  ) {
+  if (!state.hasUnsavedChanges && renamedFields.length === 0) {
     return { bytes: clonePdfBytes(state.pdfBytes), filename: state.fileName };
   }
   const applied = await applyFieldsToPdf(

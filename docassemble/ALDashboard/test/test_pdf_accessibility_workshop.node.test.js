@@ -173,6 +173,7 @@ async function withWorkshop(run) {
             data: {
               metadata: {},
               report: { issues: [] },
+              fields: window.testInspectedFields || [],
               field_labels: [],
               content_blocks: window.testContentBlocks || [],
               images: [],
@@ -224,7 +225,7 @@ async function withWorkshop(run) {
                 getAnnotations: async () => [
                   {
                     annotationType: 20,
-                    fieldName: "field",
+                    fieldName: window.testFieldName || "field",
                     fieldType: "Tx",
                     alternativeText: JSON.parse(new TextDecoder().decode(data))
                       .names.field,
@@ -1173,5 +1174,24 @@ test("draft reading order merges adjacent Ctrl-selected blocks, rejecting gaps",
     await page.evaluate(()=>window.workshop.undo());
     assert.equal(await page.evaluate(()=>window.workshop.state().blockOrder[0].length),3);
     assert.deepEqual(await page.evaluate(()=>window.errors),[]);
+  });
+});
+
+test("hierarchical field names reconcile to one located control and are sent intact", async () => {
+  await withWorkshop(async page => {
+    const result = await page.evaluate(async () => {
+      const t=window.workshop,s=t.state();
+      window.testFieldName="person.name__7";
+      window.testInspectedFields=[{name:"person.name__7",pageIndex:0,tooltip:"Person name",has_custom_tooltip:true}];
+      await t.loadWorkingCopy(s.working);
+      t.initializeDecisions();
+      const fields=s.fields.map(field=>({name:field.name,located:!!field.box}));
+      s.names["person.name__7"]={value:"Full name",confirmed:true,written:false};
+      await t.writeFieldNames();
+      return {fields,tooltips:JSON.parse(window.requests[0].field_tooltips),errors:window.errors};
+    });
+    assert.deepEqual(result.fields,[{name:"person.name__7",located:true}]);
+    assert.deepEqual(result.tooltips,{"person.name__7":"Full name"});
+    assert.deepEqual(result.errors,[]);
   });
 });

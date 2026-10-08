@@ -36,6 +36,8 @@ const labelerSource = fs
       renderPageManagerPages: renderPageManagerPages,
       pageManagerState: () => pageManagerState,
       prepareWorkshopPdf: prepareWorkshopPdf,
+      workshopSignature: workshopSignature,
+      syncPdfState: syncPdfState,
       buildUniqueExportNameMap: buildUniqueExportNameMap
     };
   `);
@@ -343,5 +345,31 @@ test("page reorder buttons work from the keyboard and keep focus on the moved pa
     assert.deepEqual(await page.evaluate(() => window.__pdfLabelerTest.pageManagerState().draftPages.map(p=>p.sourcePageIndex)),[2,0,1]);
     assert.equal(await page.evaluate(() => document.activeElement.dataset.pageId), "page-2");
     assert.equal(await page.evaluate(() => document.activeElement.dataset.pageManagerAction), "later");
+  });
+});
+
+test("workshop applies deletion of every field and keys its cache by PDF revision", async () => {
+  await withLabelerPage(async page => {
+    const result = await page.evaluate(async () => {
+      const h = window.__pdfLabelerTest, requests = [];
+      h.syncPdfState(new TextEncoder().encode("%PDF-first!"), "same.pdf");
+      h.state.fields = [];
+      h.state.hasUnsavedChanges = true;
+      const signature = h.workshopSignature();
+      const stable = h.workshopSignature();
+      window.fetch = async (url, options) => {
+        requests.push({url, fields: options.body.get("fields")});
+        return new Response(JSON.stringify({success:true,data:{pdf_base64:btoa("%PDF-empty!"),remediation_result:{renames:[]}}}), {status:200});
+      };
+      const prepared = await h.prepareWorkshopPdf();
+      h.syncPdfState(new TextEncoder().encode("%PDF-other!"), "same.pdf");
+      return {requests, signature, stable, next:h.workshopSignature(), bytes:new TextDecoder().decode(prepared.bytes)};
+    });
+    assert.equal(result.signature, result.stable);
+    assert.notEqual(result.signature, result.next);
+    assert.equal(result.requests.length, 1);
+    assert.match(result.requests[0].url, /apply-fields$/);
+    assert.deepEqual(JSON.parse(result.requests[0].fields), []);
+    assert.equal(result.bytes, "%PDF-empty!");
   });
 });

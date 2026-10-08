@@ -1,5 +1,7 @@
 // @ts-expect-error pdf.js is loaded from its CDN URL in the browser.
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs";
+import { createAccessibilityWorkshop } from "./pdf_accessibility_workshop.js";
+import { assemblePdfPages } from "./pdf_page_assembly.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
@@ -135,6 +137,7 @@ const FIELD_NAME_LIBRARY =
 const state = {
   fileName: "",
   pdfBytes: null,
+  pdfRevision: 0,
   requestPdfFile: null,
   quickEditFieldId: null,
   quickEditFocusPending: false,
@@ -153,6 +156,7 @@ const state = {
   availableModels: [],
   model: "gpt-5-mini",
   hasUnsavedChanges: false,
+  preservedPageFields: null,
   fieldSearch: "",
   fieldTypeFilter: "",
   fieldSort: "position",
@@ -198,7 +202,6 @@ const state = {
   },
   usePlaygroundVariables: false,
   accessibility: {
-    enabled: true,
     fieldOrder: [],
     metadata: {
       language: "",
@@ -207,8 +210,6 @@ const state = {
       subject: "",
     },
     images: [],
-    imageMode: false,
-    tagStructure: null,
     inspected: false,
   },
 };
@@ -263,7 +264,6 @@ let currentVisiblePageIndex = 0;
 let fieldsListProgrammaticScroll = false;
 let pageManagerState = null;
 let pageManagerDragPageId = null;
-let a11yDragFieldId = null;
 
 const fileInput = document.getElementById("file-input");
 const pdfContainer = document.getElementById("pdf-container");
@@ -328,22 +328,10 @@ const closeRepairBtn = document.getElementById("close-repair");
 const repairStatus = document.getElementById("repair-status");
 const repairStatusText = document.getElementById("repair-status-text");
 const utilitiesBtn = document.getElementById("utilities-btn");
-const accessibilityBtn = document.getElementById("accessibility-btn");
-const previewBtn = document.getElementById("preview-btn");
-const accessibilityModal = document.getElementById("accessibility-modal");
-const closeAccessibilityBtn = document.getElementById("close-accessibility");
-const a11yEnableInput = document.getElementById("a11y-enable");
-const a11yAutofillTooltipsBtn = document.getElementById(
-  "a11y-autofill-tooltips",
+const accessibilityWorkshopBtn = document.getElementById(
+  "accessibility-workshop-btn",
 );
-const a11yFieldList = document.getElementById("a11y-field-list");
-const a11yMetaLanguage = document.getElementById("a11y-meta-language");
-const a11yMetaTitle = document.getElementById("a11y-meta-title");
-const a11yMetaAuthor = document.getElementById("a11y-meta-author");
-const a11yMetaSubject = document.getElementById("a11y-meta-subject");
-const a11yImageModeInput = document.getElementById("a11y-image-mode");
-const a11yImageList = document.getElementById("a11y-image-list");
-const a11yTagStructure = document.getElementById("a11y-tag-structure");
+const previewBtn = document.getElementById("preview-btn");
 const utilitiesModal = document.getElementById("utilities-modal");
 const utilitiesCloseBtn = document.getElementById("utilities-close");
 const fieldRenameSummaryModal = document.getElementById(
@@ -383,6 +371,8 @@ const pageManagerResetBtn = document.getElementById("page-manager-reset");
 const pageManagerDownloadSplitsBtn = document.getElementById(
   "page-manager-download-splits",
 );
+const pageManagerTagChoice = document.getElementById("page-manager-tag-choice");
+const pageManagerTags = document.getElementById("page-manager-tags");
 const pageManagerApplyBtn = document.getElementById("page-manager-apply");
 const passwordModal = document.getElementById("password-modal");
 const passwordInput = document.getElementById("password-input");
@@ -1135,7 +1125,8 @@ function updateFieldCount() {
       !state.pdfBytes || totalCount === 0 || !state.auth.aiEnabled;
   }
   previewBtn.disabled = !state.pdfBytes || totalCount === 0;
-  accessibilityBtn.disabled = !state.pdfBytes;
+  if (accessibilityWorkshopBtn)
+    accessibilityWorkshopBtn.disabled = !state.pdfBytes;
   managePagesBtn.disabled = !state.pdfBytes;
   if (!state.pdfBytes || totalCount === 0) {
     state.previewMode = false;
@@ -1282,140 +1273,6 @@ function refreshAccessibilityFromFields() {
   reconcileAccessibilityFieldOrder();
 }
 
-function renderAccessibilityFieldList() {
-  if (!a11yFieldList) return;
-  a11yFieldList.innerHTML = "";
-  if (!state.fields.length) {
-    a11yFieldList.innerHTML =
-      '<div class="small text-muted">No fields detected yet.</div>';
-    return;
-  }
-  const fragment = document.createDocumentFragment();
-  state.accessibility.fieldOrder.forEach(function (fieldId, index) {
-    const field = state.fields.find(function (candidate) {
-      return candidate.id === fieldId;
-    });
-    if (!field) return;
-    const row = document.createElement("div");
-    row.className = "a11y-field-row border rounded p-2";
-    row.dataset.fieldId = field.id;
-    row.innerHTML =
-      '<div class="d-flex align-items-center justify-content-between gap-2 mb-2">' +
-      '<div class="d-flex align-items-center gap-1">' +
-      '<span class="a11y-drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span>' +
-      '<div class="small fw-semibold">' +
-      escapeHtml(field.name) +
-      "</div>" +
-      "</div>" +
-      '<div class="btn-group btn-group-sm">' +
-      '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-up" data-field-id="' +
-      escapeHtml(field.id) +
-      '"' +
-      (index === 0 ? " disabled" : "") +
-      ">Up</button>" +
-      '<button type="button" class="btn btn-outline-secondary" data-a11y-action="move-down" data-field-id="' +
-      escapeHtml(field.id) +
-      '"' +
-      (index === state.accessibility.fieldOrder.length - 1 ? " disabled" : "") +
-      ">Down</button>" +
-      "</div>" +
-      "</div>" +
-      '<label class="form-label small text-muted mb-1" for="a11y-tooltip-' +
-      escapeHtml(field.id) +
-      '">Tooltip</label>' +
-      '<input id="a11y-tooltip-' +
-      escapeHtml(field.id) +
-      '" type="text" class="form-control form-control-sm" data-a11y-action="tooltip" data-field-id="' +
-      escapeHtml(field.id) +
-      '" value="' +
-      escapeHtml(String(field.tooltip || "")) +
-      '">';
-    fragment.appendChild(row);
-  });
-  a11yFieldList.appendChild(fragment);
-}
-
-function renderAccessibilityImages() {
-  if (!a11yImageList) return;
-  a11yImageList.innerHTML = "";
-  const showImages = !!state.accessibility.imageMode;
-  a11yImageList.classList.toggle("hidden", !showImages);
-  if (!showImages) return;
-  if (!state.accessibility.images.length) {
-    a11yImageList.innerHTML =
-      '<div class="small text-muted">No embedded image assets were detected.</div>';
-    return;
-  }
-  const fragment = document.createDocumentFragment();
-  state.accessibility.images.forEach(function (imageAsset) {
-    const row = document.createElement("div");
-    row.className = "border rounded p-2";
-    row.innerHTML =
-      '<div class="small fw-semibold mb-1">Page ' +
-      (Number(imageAsset.pageIndex || 0) + 1) +
-      " - " +
-      escapeHtml(String(imageAsset.name || imageAsset.assetId || "Image")) +
-      "</div>" +
-      '<div class="small text-muted mb-1">Asset ID: ' +
-      escapeHtml(String(imageAsset.assetId || "")) +
-      "</div>" +
-      '<input type="text" class="form-control form-control-sm" data-a11y-action="image-alt" data-asset-id="' +
-      escapeHtml(String(imageAsset.assetId || "")) +
-      '" value="' +
-      escapeHtml(String(imageAsset.altText || "")) +
-      '" placeholder="Alternative text">';
-    fragment.appendChild(row);
-  });
-  a11yImageList.appendChild(fragment);
-}
-
-function renderAccessibilityTagStructure() {
-  if (!a11yTagStructure) return;
-  const summary = state.accessibility.tagStructure;
-  if (!summary || !summary.present) {
-    a11yTagStructure.textContent = "No document tag tree detected.";
-    return;
-  }
-  const lines = [
-    "Tag tree present: yes",
-    "Nodes: " + String(summary.node_count || 0),
-    "Max depth: " + String(summary.max_depth || 0),
-    "",
-    "Preview:",
-  ];
-  const preview = Array.isArray(summary.preview) ? summary.preview : [];
-  if (!preview.length) {
-    lines.push("(no preview nodes available)");
-  } else {
-    preview.forEach(function (line) {
-      lines.push(String(line));
-    });
-  }
-  a11yTagStructure.textContent = lines.join("\n");
-}
-
-function renderAccessibilityModal() {
-  refreshAccessibilityFromFields();
-  a11yEnableInput.checked = !!state.accessibility.enabled;
-  a11yImageModeInput.checked = !!state.accessibility.imageMode;
-  a11yMetaLanguage.value = String(state.accessibility.metadata.language || "");
-  a11yMetaTitle.value = String(state.accessibility.metadata.title || "");
-  a11yMetaAuthor.value = String(state.accessibility.metadata.author || "");
-  a11yMetaSubject.value = String(state.accessibility.metadata.subject || "");
-  renderAccessibilityFieldList();
-  renderAccessibilityImages();
-  renderAccessibilityTagStructure();
-}
-
-function updateAccessibilityMetadataFromInputs() {
-  state.accessibility.metadata = {
-    language: String(a11yMetaLanguage.value || "").trim(),
-    title: String(a11yMetaTitle.value || "").trim(),
-    author: String(a11yMetaAuthor.value || "").trim(),
-    subject: String(a11yMetaSubject.value || "").trim(),
-  };
-}
-
 async function inspectAccessibilityData(forceRefresh) {
   if (!state.pdfBytes) return;
   if (state.accessibility.inspected && !forceRefresh) return;
@@ -1492,18 +1349,11 @@ async function inspectAccessibilityData(forceRefresh) {
         };
       })
     : [];
-  state.accessibility.tagStructure = payload.data.tag_structure || null;
   state.accessibility.inspected = true;
   refreshAccessibilityFromFields();
 }
 
 function buildAccessibilityPayload(exportNameMap) {
-  if (!state.accessibility.enabled) {
-    return {
-      enabled: false,
-      auto_fill_missing_tooltips: true,
-    };
-  }
   const fieldTooltips = {};
   state.fields.forEach(function (field) {
     const exportName = exportNameMap.get(field.id);
@@ -2709,41 +2559,53 @@ async function confirmSaveToPlayground() {
       state.fields.length > 0 &&
       (state.hasUnsavedChanges || saveDeduplicateFieldNames)
     ) {
-      var formData = new FormData();
-      formData.append("file", getPdfFileForRequests());
-      var saveNameMap = buildExportNameMap({
-        deduplicate: saveDeduplicateFieldNames,
-      });
-      saveRenamedFields = getRenamedFields(saveNameMap);
-      formData.append(
-        "fields",
-        JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)),
-      );
-      formData.append(
-        "accessibility",
-        JSON.stringify(buildAccessibilityPayload(saveNameMap)),
-      );
-      formData.append(
-        "deduplicate_field_names",
-        saveDeduplicateFieldNames ? "true" : "false",
-      );
-      var exportResponse = await fetch(
-        apiUrl("/pdf-labeler/api/apply-fields"),
-        {
-          method: "POST",
-          headers: { Accept: "application/json" },
-          body: formData,
-        },
-      );
-      var exportData = await parseApiResponse(exportResponse);
-      if (
-        !exportData.success ||
-        !exportData.data ||
-        !exportData.data.pdf_base64
-      ) {
-        throw new Error("Failed to apply fields before saving.");
+      if (state.preservedPageFields === JSON.stringify(state.fields)) {
+        const preserved = await applyFieldsToPdf(
+          null,
+          saveDeduplicateFieldNames,
+        );
+        saveRenamedFields = preserved.renames;
+        let encoded = "";
+        for (const value of preserved.bytes)
+          encoded += String.fromCharCode(value);
+        pdfContent = window.btoa(encoded);
+      } else {
+        var formData = new FormData();
+        formData.append("file", getPdfFileForRequests());
+        var saveNameMap = buildExportNameMap({
+          deduplicate: saveDeduplicateFieldNames,
+        });
+        saveRenamedFields = getRenamedFields(saveNameMap);
+        formData.append(
+          "fields",
+          JSON.stringify(convertFieldsToAbsoluteCoordinates(saveNameMap)),
+        );
+        formData.append(
+          "accessibility",
+          JSON.stringify(buildAccessibilityPayload(saveNameMap)),
+        );
+        formData.append(
+          "deduplicate_field_names",
+          saveDeduplicateFieldNames ? "true" : "false",
+        );
+        var exportResponse = await fetch(
+          apiUrl("/pdf-labeler/api/apply-fields"),
+          {
+            method: "POST",
+            headers: { Accept: "application/json" },
+            body: formData,
+          },
+        );
+        var exportData = await parseApiResponse(exportResponse);
+        if (
+          !exportData.success ||
+          !exportData.data ||
+          !exportData.data.pdf_base64
+        ) {
+          throw new Error("Failed to apply fields before saving.");
+        }
+        pdfContent = exportData.data.pdf_base64;
       }
-      pdfContent = exportData.data.pdf_base64;
     } else {
       // Use current PDF bytes as-is
       var raw = "";
@@ -3004,12 +2866,13 @@ function updateRequestPdfFile(pdfBytes, fileName, originalFile) {
 
 function syncPdfState(pdfBytes, fileName, originalFile) {
   state.pdfBytes = clonePdfBytes(pdfBytes);
+  state.pdfRevision += 1;
+  state.preservedPageFields = null;
   if (fileName) {
     state.fileName = fileName;
   }
   state.accessibility.inspected = false;
   state.accessibility.images = [];
-  state.accessibility.tagStructure = null;
   updateRequestPdfFile(state.pdfBytes, state.fileName, originalFile);
 }
 
@@ -3272,21 +3135,28 @@ async function parseExistingFieldsLocally(pdfBytes, pageSizes) {
   }
 }
 
-async function detectExistingFieldsWithServer() {
-  if (!state.pdfBytes) return [];
+async function detectExistingFieldsWithServer(
+  file = null,
+  pageSizes = state.pageSizes,
+) {
+  if (!file && !state.pdfBytes) return [];
   const formData = new FormData();
-  formData.append("file", getPdfFileForRequests());
+  formData.append("file", file || getPdfFileForRequests());
   const response = await fetch(apiUrl("/pdf-labeler/api/detect-fields"), {
     method: "POST",
     headers: { Accept: "application/json" },
     body: formData,
   });
   const data = await parseApiResponse(response);
+  if (!data.success)
+    throw new Error(
+      (data.error && data.error.message) || "Field detection failed.",
+    );
   const importedFields = Array.isArray(data.data && data.data.fields)
     ? data.data.fields
     : [];
   return importedFields.map(function (field) {
-    const pageSize = state.pageSizes[field.pageIndex];
+    const pageSize = pageSizes[field.pageIndex];
     const fieldType = normalizeFieldType(field.type);
     const width = pageSize ? clamp(field.width / pageSize.width, 0.01, 1) : 0.1;
     const height = pageSize
@@ -5168,6 +5038,11 @@ function showFieldRenameSummary(renames, contextText) {
     .map(function (rename) {
       return (
         '<div class="border rounded p-2">' +
+        (rename.filename
+          ? '<div class="small text-muted">' +
+            escapeHtml(rename.filename) +
+            "</div>"
+          : "") +
         '<div class="small text-muted">Field ' +
         String(Number(rename.index) + 1) +
         "</div>" +
@@ -5181,6 +5056,32 @@ function showFieldRenameSummary(renames, contextText) {
     })
     .join("");
   fieldRenameSummaryModal.classList.remove("hidden");
+}
+
+async function acknowledgeWorkshopRenames(renames) {
+  if (!renames.length) return;
+  const workshopRoot = document.getElementById("a11y-workshop");
+  workshopRoot.inert = true;
+  try {
+    showFieldRenameSummary(
+      renames,
+      "The accessibility workshop reviews the PDF with these renamed exact duplicate fields.",
+    );
+    await new Promise(function (resolve) {
+      const observer = new MutationObserver(function () {
+        if (fieldRenameSummaryModal.classList.contains("hidden")) {
+          observer.disconnect();
+          resolve();
+        }
+      });
+      observer.observe(fieldRenameSummaryModal, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    });
+  } finally {
+    workshopRoot.inert = false;
+  }
 }
 
 function buildUniqueExportNameMap() {
@@ -5454,6 +5355,57 @@ async function relabelFields() {
   }
 }
 
+// Write the editor's fields into the PDF on the server and return the
+// result. Export, and the accessibility workshop, both start from this.
+async function applyFieldsToPdf(exportNameMap, deduplicateFieldNames) {
+  if (state.preservedPageFields === JSON.stringify(state.fields)) {
+    const preserved = await preservePdfPages(
+      state.pdfBytes,
+      state.fileName,
+      Array.from({ length: state.pageCount }, (_, index) => index),
+      deduplicateFieldNames,
+    );
+    return {
+      ...preserved,
+      filename:
+        stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
+    };
+  }
+  const formData = new FormData();
+  formData.append("file", getPdfFileForRequests());
+  formData.append(
+    "fields",
+    JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)),
+  );
+  formData.append(
+    "accessibility",
+    JSON.stringify(buildAccessibilityPayload(exportNameMap)),
+  );
+  formData.append(
+    "deduplicate_field_names",
+    deduplicateFieldNames ? "true" : "false",
+  );
+  const response = await fetch(apiUrl("/pdf-labeler/api/apply-fields"), {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: formData,
+  });
+  const data = await parseApiResponse(response);
+  if (!data.success) {
+    throw new Error((data.error && data.error.message) || "Export failed.");
+  }
+  if (!data.data || !data.data.pdf_base64) {
+    throw new Error("The export endpoint did not return a PDF.");
+  }
+  return {
+    bytes: base64ToUint8Array(data.data.pdf_base64),
+    renames: getRenamedFields(exportNameMap),
+    filename:
+      data.data.filename ||
+      stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
+  };
+}
+
 async function exportPdf() {
   if (!state.pdfBytes || state.fields.length === 0) {
     showError("There are no fields to export.");
@@ -5463,6 +5415,32 @@ async function exportPdf() {
   const deduplicateFieldNames =
     !exportDeduplicateFieldNamesInput ||
     exportDeduplicateFieldNamesInput.checked;
+  if (state.preservedPageFields === JSON.stringify(state.fields)) {
+    showLoading("Exporting PDF with its existing tags and controls...");
+    try {
+      const preserved = await preservePdfPages(
+        state.pdfBytes,
+        state.fileName,
+        Array.from({ length: state.pageCount }, (_, index) => index),
+        deduplicateFieldNames,
+      );
+      downloadBlob(
+        new Blob([preserved.bytes], { type: "application/pdf" }),
+        stripPdfExtension(state.fileName || "edited-form") + "-with-fields.pdf",
+      );
+      showFieldRenameSummary(
+        preserved.renames,
+        "The exported PDF contains these renamed exact duplicate fields.",
+      );
+      setDirty(false);
+      showSuccess("PDF exported with its existing tags and controls.");
+    } catch (error) {
+      showError("Export failed: " + error.message);
+    } finally {
+      hideLoading();
+    }
+    return;
+  }
   const exportNameMap = buildExportNameMap({
     deduplicate: deduplicateFieldNames,
   });
@@ -5487,40 +5465,12 @@ async function exportPdf() {
 
   showLoading("Exporting PDF...");
   try {
-    const formData = new FormData();
-    formData.append("file", getPdfFileForRequests());
-    formData.append(
-      "fields",
-      JSON.stringify(convertFieldsToAbsoluteCoordinates(exportNameMap)),
+    const applied = await applyFieldsToPdf(
+      exportNameMap,
+      deduplicateFieldNames,
     );
-    formData.append(
-      "accessibility",
-      JSON.stringify(buildAccessibilityPayload(exportNameMap)),
-    );
-    formData.append(
-      "deduplicate_field_names",
-      deduplicateFieldNames ? "true" : "false",
-    );
-
-    const response = await fetch(apiUrl("/pdf-labeler/api/apply-fields"), {
-      method: "POST",
-      headers: { Accept: "application/json" },
-      body: formData,
-    });
-    const data = await parseApiResponse(response);
-    if (!data.success) {
-      throw new Error((data.error && data.error.message) || "Export failed.");
-    }
-
-    if (!data.data || !data.data.pdf_base64) {
-      throw new Error("The export endpoint did not return a PDF.");
-    }
-
-    const outputBytes = base64ToUint8Array(data.data.pdf_base64);
-    const filename =
-      data.data.filename ||
-      (state.fileName || "edited-form").replace(/\.pdf$/i, "") +
-        "-with-fields.pdf";
+    const outputBytes = applied.bytes;
+    const filename = applied.filename;
 
     const blob = new Blob([outputBytes], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
@@ -5680,9 +5630,24 @@ function updatePageManagerControls() {
       ".";
   }
   pageManagerInsertRunBtn.disabled = !insertSource || selectedInsertCount === 0;
+  const tagged = pageManagerState.draftPages.some(
+    (page) => pageManagerState.sources[page.sourceId]?.tagged,
+  );
+  pageManagerTagChoice.classList.toggle("hidden", !tagged);
+  const tagChoiceMissing =
+    pageManagerState.checkingTags || (tagged && !pageManagerState.tagPolicy);
+  const unsupportedPreservation =
+    tagged &&
+    pageManagerState.tagPolicy === "preserve" &&
+    pageManagerState.draftPages.some((page) => page.sourceId !== "active");
   pageManagerApplyBtn.disabled =
-    !pageManagerState.draftPages.length || !hasPageManagerStructuralChanges();
+    tagChoiceMissing ||
+    unsupportedPreservation ||
+    !pageManagerState.draftPages.length ||
+    !hasPageManagerStructuralChanges();
   pageManagerDownloadSplitsBtn.disabled =
+    tagChoiceMissing ||
+    unsupportedPreservation ||
     getPageManagerSplitGroups().length < 2;
   renderPageManagerSummary();
   syncPageManagerInsertPositionOptions();
@@ -5806,6 +5771,30 @@ function renderPageManagerPages() {
       escapeHtml(page.id) +
       '">Start new document here</label>' +
       "</div>" +
+      ["earlier", "later"]
+        .map(
+          (direction) =>
+            '<button type="button" class="btn btn-outline-secondary btn-sm" data-page-manager-action="' +
+            direction +
+            '" data-page-id="' +
+            escapeHtml(page.id) +
+            '" aria-label="Move page ' +
+            (index + 1) +
+            " " +
+            direction +
+            '"' +
+            ((
+              direction === "earlier"
+                ? index === 0
+                : index === pageManagerState.draftPages.length - 1
+            )
+              ? " disabled"
+              : "") +
+            ">" +
+            (direction === "earlier" ? "↑" : "↓") +
+            "</button>",
+        )
+        .join("") +
       '<button type="button" class="btn btn-outline-danger btn-sm" data-page-manager-action="remove" data-page-id="' +
       escapeHtml(page.id) +
       '">Remove</button>';
@@ -5879,20 +5868,40 @@ function buildFreshPageManagerState() {
         return createPageManagerDraftPage("active", index);
       },
     ),
+    checkingTags: true,
+    tagPolicy: "",
     insertSourceId: null,
     insertSelections: new Set(),
   };
 }
 
-function openPageManager() {
+async function openPageManager() {
   if (!state.pdfBytes || !state.pdfDoc) return;
   pageManagerState = buildFreshPageManagerState();
+  pageManagerTags.value = "";
   pageManagerInsertFileInput.value = "";
   pageManagerInsertFileName.textContent = "";
   pageManagerDragPageId = null;
   setPageManagerStatus("", "info");
   renderPageManager();
   pageManagerModal.classList.remove("hidden");
+  const current = pageManagerState;
+  try {
+    const source = current.sources.active;
+    const document = await PDFLibGlobal.PDFDocument.load(source.bytes.slice());
+    source.tagged = document.catalog.has(
+      PDFLibGlobal.PDFName.of("StructTreeRoot"),
+    );
+  } catch (error) {
+    setPageManagerStatus(
+      "Could not check existing tags: " + error.message,
+      "danger",
+    );
+    return;
+  }
+  if (pageManagerState !== current) return;
+  current.checkingTags = false;
+  updatePageManagerControls();
 }
 
 function closePageManager() {
@@ -5911,6 +5920,17 @@ async function loadPageManagerInsertSource(file) {
     );
     const pdfDoc = await pdfjsLib.getDocument({ data: clonePdfBytes(bytes) })
       .promise;
+    const pageSizes = [];
+    for (let index = 1; index <= pdfDoc.numPages; index += 1) {
+      const page = await pdfDoc.getPage(index);
+      const viewport = page.getViewport({ scale: 1 });
+      pageSizes.push({ width: viewport.width, height: viewport.height });
+    }
+    const fields = await detectExistingFieldsWithServer(file, pageSizes);
+    const tagDocument = await PDFLibGlobal.PDFDocument.load(bytes.slice());
+    const tagged = tagDocument.catalog.has(
+      PDFLibGlobal.PDFName.of("StructTreeRoot"),
+    );
     const sourceId = "insert-" + Date.now();
     pageManagerState.sources[sourceId] = {
       id: sourceId,
@@ -5918,6 +5938,8 @@ async function loadPageManagerInsertSource(file) {
       name: file.name || "insert.pdf",
       bytes: bytes,
       pdfDoc: pdfDoc,
+      fields: fields,
+      tagged: tagged,
       thumbCache: {},
     };
     pageManagerState.insertSourceId = sourceId;
@@ -5977,28 +5999,60 @@ function insertSelectedPagesIntoManager() {
   );
 }
 
-async function buildPdfBytesFromPageDescriptors(pages) {
+async function buildPdfBytesFromPageDescriptors(pages, deduplicate = false) {
   if (!PDFLibGlobal.PDFDocument) {
     throw new Error("Page management requires pdf-lib in the browser.");
   }
-  const outputDoc = await PDFLibGlobal.PDFDocument.create();
-  const sourceDocs = {};
-  for (const page of pages) {
-    const source = getPageManagerSource(page.sourceId);
-    if (!source || !source.bytes) {
-      throw new Error("A source PDF is missing for one or more pages.");
-    }
-    if (!sourceDocs[source.id]) {
-      sourceDocs[source.id] = await PDFLibGlobal.PDFDocument.load(
-        clonePdfBytes(source.bytes),
+  const tagged = pageManagerState.draftPages.some(
+    (page) => pageManagerState.sources[page.sourceId]?.tagged,
+  );
+  if (tagged && !pageManagerState.tagPolicy)
+    throw new Error(
+      "Choose how to handle the existing accessibility tags first.",
+    );
+  if (tagged && pageManagerState.tagPolicy === "preserve") {
+    if (pages.some((page) => page.sourceId !== "active"))
+      throw new Error(
+        "Keeping tags supports the original PDF only. Choose a new draft to insert pages.",
       );
-    }
-    const copiedPages = await outputDoc.copyPages(sourceDocs[source.id], [
-      page.sourcePageIndex,
-    ]);
-    outputDoc.addPage(copiedPages[0]);
+    const source = pageManagerState.sources.active;
+    return preservePdfPages(
+      source.bytes,
+      source.name,
+      pages.map((page) => page.sourcePageIndex),
+      deduplicate,
+    );
   }
-  return new Uint8Array(await outputDoc.save());
+  return assemblePdfPages(
+    PDFLibGlobal,
+    pages,
+    pageManagerState.sources,
+    deduplicate,
+  );
+}
+
+async function preservePdfPages(bytes, name, indexes, deduplicate) {
+  const form = new FormData();
+  form.append(
+    "file",
+    new File([bytes.slice()], name, {
+      type: "application/pdf",
+    }),
+  );
+  form.append("action", "preserve_pages");
+  form.append("page_indexes", JSON.stringify(indexes));
+  form.append("deduplicate_field_names", String(deduplicate));
+  const response = await fetch(
+    apiUrl("/pdf-labeler/api/accessibility-remediate"),
+    { method: "POST", body: form },
+  );
+  const data = await parseApiResponse(response);
+  if (!data.success)
+    throw new Error(data.error?.message || "Could not preserve page tags.");
+  return {
+    bytes: base64ToUint8Array(data.data.pdf_base64),
+    renames: data.data.remediation_result.renames || [],
+  };
 }
 
 function remapFieldsForPageManagerDraft() {
@@ -6012,10 +6066,20 @@ function remapFieldsForPageManagerDraft() {
 
   const nextFields = [];
   pageManagerState.draftPages.forEach(function (page, newPageIndex) {
-    if (page.sourceId !== "active") return;
-    const sourceFields = fieldsByPageIndex.get(page.sourcePageIndex) || [];
+    const source = getPageManagerSource(page.sourceId);
+    const sourceFields =
+      page.sourceId === "active"
+        ? fieldsByPageIndex.get(page.sourcePageIndex) || []
+        : (source.fields || []).filter(function (field) {
+            return field.pageIndex === page.sourcePageIndex;
+          });
     sourceFields.forEach(function (field) {
-      nextFields.push(Object.assign({}, field, { pageIndex: newPageIndex }));
+      nextFields.push(
+        Object.assign({}, field, {
+          id: page.sourceId === "active" ? field.id : generateId(),
+          pageIndex: newPageIndex,
+        }),
+      );
     });
   });
   return nextFields;
@@ -6028,14 +6092,20 @@ async function applyPageManagerChanges() {
   }
   showLoading("Applying page changes...");
   try {
-    const nextPdfBytes = await buildPdfBytesFromPageDescriptors(
+    const fieldsUnchanged =
+      !state.hasUnsavedChanges ||
+      state.preservedPageFields === JSON.stringify(state.fields);
+    const keepOriginalTags = pageManagerState.tagPolicy === "preserve";
+    const assembled = await buildPdfBytesFromPageDescriptors(
       pageManagerState.draftPages,
     );
     const nextFields = remapFieldsForPageManagerDraft();
-    syncPdfState(nextPdfBytes, state.fileName || "edited-form.pdf");
+    syncPdfState(assembled.bytes, state.fileName || "edited-form.pdf");
     updateDocumentName();
     await refreshPdfDocumentFromState();
     replaceFields(nextFields, { preserveSelection: true });
+    if (keepOriginalTags && fieldsUnchanged)
+      state.preservedPageFields = JSON.stringify(state.fields);
     setDirty(true);
     closePageManager();
     showPdfWorkspace();
@@ -6074,14 +6144,24 @@ async function downloadSplitDocumentsFromManager() {
       stripPdfExtension(state.fileName || "document"),
       "document",
     );
-    const outputs = [];
+    const outputs = [],
+      renames = [];
     for (let index = 0; index < groups.length; index += 1) {
-      const bytes = await buildPdfBytesFromPageDescriptors(groups[index]);
-      outputs.push({
-        name: baseName + "-part-" + String(index + 1).padStart(2, "0") + ".pdf",
-        bytes: bytes,
+      const assembled = await buildPdfBytesFromPageDescriptors(
+        groups[index],
+        true,
+      );
+      const filename =
+        baseName + "-part-" + String(index + 1).padStart(2, "0") + ".pdf";
+      outputs.push({ name: filename, bytes: assembled.bytes });
+      assembled.renames.forEach(function (rename) {
+        renames.push({ ...rename, filename: filename });
       });
     }
+    showFieldRenameSummary(
+      renames,
+      "Exact duplicate field names were renamed in these split PDFs.",
+    );
     if (JSZipGlobal) {
       const zip = new JSZipGlobal();
       outputs.forEach(function (output) {
@@ -6279,16 +6359,26 @@ repairBtn.addEventListener("click", function () {
 managePagesBtn.addEventListener("click", function () {
   openPageManager();
 });
+pageManagerTags.addEventListener("change", function () {
+  if (!pageManagerState) return;
+  pageManagerState.tagPolicy = pageManagerTags.value;
+  const incompatible =
+    pageManagerTags.value === "preserve" &&
+    pageManagerState.draftPages.some((page) => page.sourceId !== "active");
+  setPageManagerStatus(
+    incompatible
+      ? "Choose a new tag draft to insert pages, or remove the inserted pages to keep the original tags."
+      : "",
+    "info",
+  );
+  updatePageManagerControls();
+});
 closePageManagerBtn.addEventListener("click", function () {
   closePageManager();
 });
 pageManagerResetBtn.addEventListener("click", function () {
   if (!state.pdfBytes) return;
-  pageManagerState = buildFreshPageManagerState();
-  pageManagerInsertFileInput.value = "";
-  pageManagerInsertFileName.textContent = "";
-  setPageManagerStatus("Page arrangement reset to the active PDF.", "info");
-  renderPageManager();
+  void openPageManager();
 });
 pageManagerInsertFileInput.addEventListener("change", function (event) {
   const file = event.target.files && event.target.files[0];
@@ -6312,6 +6402,33 @@ pageManagerInsertPages.addEventListener("click", function (event) {
   togglePageManagerInsertSelection(Number(card.dataset.insertPageIndex || 0));
 });
 pageManagerPages.addEventListener("click", function (event) {
+  const moveBtn = event.target.closest(
+    "[data-page-manager-action][data-page-id]",
+  );
+  if (
+    moveBtn &&
+    pageManagerState &&
+    ["earlier", "later"].includes(moveBtn.dataset.pageManagerAction)
+  ) {
+    const id = moveBtn.dataset.pageId,
+      direction = moveBtn.dataset.pageManagerAction;
+    const index = pageManagerState.draftPages.findIndex(
+      (page) => page.id === id,
+    );
+    movePageManagerDraftPage(
+      id,
+      direction === "earlier" ? index - 1 : index + 2,
+    );
+    const controls = [...pageManagerPages.querySelectorAll("button")].filter(
+      (button) => button.dataset.pageId === id && !button.disabled,
+    );
+    (
+      controls.find(
+        (button) => button.dataset.pageManagerAction === direction,
+      ) || controls[0]
+    )?.focus();
+    return;
+  }
   const removeBtn = event.target.closest(
     '[data-page-manager-action="remove"][data-page-id]',
   );
@@ -6826,138 +6943,71 @@ repairPromptCancelBtn.addEventListener("click", function () {
   state._pendingRepairFile = null;
   pdfEmpty.classList.remove("hidden");
 });
-accessibilityBtn.addEventListener("click", async function () {
-  if (!state.pdfBytes) return;
-  await inspectAccessibilityData(false).catch(function () {
-    showError("Could not inspect accessibility metadata for this PDF.");
-  });
-  renderAccessibilityModal();
-  accessibilityModal.classList.remove("hidden");
-});
-closeAccessibilityBtn.addEventListener("click", function () {
-  updateAccessibilityMetadataFromInputs();
-  accessibilityModal.classList.add("hidden");
-});
-a11yEnableInput.addEventListener("change", function () {
-  state.accessibility.enabled = !!a11yEnableInput.checked;
-});
-a11yImageModeInput.addEventListener("change", function () {
-  state.accessibility.imageMode = !!a11yImageModeInput.checked;
-  renderAccessibilityImages();
-});
-a11yAutofillTooltipsBtn.addEventListener("click", function () {
-  state.fields.forEach(function (field) {
-    if (!String(field.tooltip || "").trim()) {
-      field.tooltip = defaultTooltipFromFieldName(field.name);
-    }
-  });
-  renderAccessibilityFieldList();
-  setDirty(true);
-});
-[a11yMetaLanguage, a11yMetaTitle, a11yMetaAuthor, a11yMetaSubject].forEach(
-  function (input) {
-    input.addEventListener("input", function () {
-      updateAccessibilityMetadataFromInputs();
-      setDirty(true);
-    });
+const accessibilityWorkshop = createAccessibilityWorkshop({
+  pdfjsLib: pdfjsLib,
+  apiUrl: apiUrl,
+  parseApiResponse: parseApiResponse,
+  downloadBlob: downloadBlob,
+  showError: showError,
+  showSuccess: showSuccess,
+  aiEnabled: function () {
+    return !!state.auth.aiEnabled;
   },
-);
-a11yFieldList.addEventListener("input", function (event) {
-  var target = event.target;
-  if (!target || !target.dataset) return;
-  if (target.dataset.a11yAction !== "tooltip") return;
-  var fieldId = target.dataset.fieldId;
-  var field = state.fields.find(function (candidate) {
-    return candidate.id === fieldId;
+  model: function () {
+    return state.model || "";
+  },
+  onClose: function () {
+    if (accessibilityWorkshopBtn) accessibilityWorkshopBtn.focus();
+  },
+});
+
+// The workshop reviews the PDF as it would export: fields written in, with
+// exact duplicate names made unique the same way export does.
+function workshopNameMap() {
+  return buildExportNameMap({
+    deduplicate:
+      !exportDeduplicateFieldNamesInput ||
+      exportDeduplicateFieldNamesInput.checked,
   });
-  if (!field) return;
-  field.tooltip = String(target.value || "");
-  setDirty(true);
-});
-a11yFieldList.addEventListener("click", function (event) {
-  var actionTarget = event.target.closest("[data-a11y-action]");
-  if (!actionTarget) return;
-  var action = actionTarget.dataset.a11yAction;
-  var fieldId = actionTarget.dataset.fieldId;
-  if (!fieldId || (action !== "move-up" && action !== "move-down")) return;
-  var order = state.accessibility.fieldOrder.slice();
-  var index = order.indexOf(fieldId);
-  if (index < 0) return;
-  var swapWith = action === "move-up" ? index - 1 : index + 1;
-  if (swapWith < 0 || swapWith >= order.length) return;
-  var temp = order[swapWith];
-  order[swapWith] = order[index];
-  order[index] = temp;
-  state.accessibility.fieldOrder = order;
-  renderAccessibilityFieldList();
-  setDirty(true);
-});
-a11yFieldList.addEventListener("dragstart", function (event) {
-  if (!event.target.closest(".a11y-drag-handle")) return;
-  var row = event.target.closest("[data-field-id]");
-  if (!row) return;
-  a11yDragFieldId = row.dataset.fieldId;
-  row.classList.add("a11y-dragging");
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
+}
+
+function workshopSignature() {
+  if (!state.pdfBytes) return "";
+  return [
+    state.fileName,
+    state.pdfBytes.byteLength,
+    state.pdfRevision,
+    JSON.stringify(convertFieldsToAbsoluteCoordinates(workshopNameMap())),
+  ].join("|");
+}
+
+async function prepareWorkshopPdf() {
+  const exportNameMap = workshopNameMap();
+  const renamedFields = getRenamedFields(exportNameMap);
+  if (!state.hasUnsavedChanges && renamedFields.length === 0) {
+    return { bytes: clonePdfBytes(state.pdfBytes), filename: state.fileName };
   }
-});
-a11yFieldList.addEventListener("dragend", function () {
-  a11yDragFieldId = null;
-  a11yFieldList
-    .querySelectorAll(".a11y-dragging, .a11y-drag-over")
-    .forEach(function (el) {
-      el.classList.remove("a11y-dragging", "a11y-drag-over");
-    });
-});
-a11yFieldList.addEventListener("dragover", function (event) {
-  if (!a11yDragFieldId) return;
-  event.preventDefault();
-  var row = event.target.closest("[data-field-id]");
-  a11yFieldList.querySelectorAll(".a11y-drag-over").forEach(function (el) {
-    el.classList.remove("a11y-drag-over");
+  const applied = await applyFieldsToPdf(
+    exportNameMap,
+    !exportDeduplicateFieldNamesInput ||
+      exportDeduplicateFieldNamesInput.checked,
+  );
+  await acknowledgeWorkshopRenames(applied.renames || renamedFields);
+  return { bytes: applied.bytes, filename: state.fileName };
+}
+
+function openAccessibilityWorkshop() {
+  if (!state.pdfBytes) return;
+  accessibilityWorkshop.open({
+    signature: workshopSignature(),
+    getPdf: prepareWorkshopPdf,
   });
-  if (row && row.dataset.fieldId !== a11yDragFieldId) {
-    row.classList.add("a11y-drag-over");
-  }
-});
-a11yFieldList.addEventListener("drop", function (event) {
-  if (!a11yDragFieldId) return;
-  event.preventDefault();
-  var targetRow = event.target.closest("[data-field-id]");
-  var order = state.accessibility.fieldOrder.slice();
-  var fromIndex = order.indexOf(a11yDragFieldId);
-  if (fromIndex < 0) return;
-  var toIndex;
-  if (targetRow && targetRow.dataset.fieldId !== a11yDragFieldId) {
-    toIndex = order.indexOf(targetRow.dataset.fieldId);
-    if (toIndex < 0) return;
-  } else if (!targetRow) {
-    toIndex = order.length;
-  } else {
-    return;
-  }
-  order.splice(fromIndex, 1);
-  var adjustedIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
-  order.splice(adjustedIndex, 0, a11yDragFieldId);
-  state.accessibility.fieldOrder = order;
-  a11yDragFieldId = null;
-  renderAccessibilityFieldList();
-  setDirty(true);
-});
-a11yImageList.addEventListener("input", function (event) {
-  var target = event.target;
-  if (!target || !target.dataset) return;
-  if (target.dataset.a11yAction !== "image-alt") return;
-  var assetId = String(target.dataset.assetId || "");
-  if (!assetId) return;
-  var imageAsset = state.accessibility.images.find(function (item) {
-    return String(item.assetId || "") === assetId;
-  });
-  if (!imageAsset) return;
-  imageAsset.altText = String(target.value || "");
-  setDirty(true);
-});
+}
+
+if (accessibilityWorkshopBtn) {
+  accessibilityWorkshopBtn.addEventListener("click", openAccessibilityWorkshop);
+}
+
 settingsBtn.addEventListener("click", function () {
   aiModelInput.value = state.model || state.defaultModel;
   renderModelSuggestions("");
@@ -7093,13 +7143,6 @@ document.addEventListener("mousedown", function (event) {
   ) {
     settingsModal.classList.add("hidden");
     aiModelSuggestions.classList.add("hidden");
-  }
-  if (
-    !accessibilityModal.classList.contains("hidden") &&
-    event.target === accessibilityModal
-  ) {
-    updateAccessibilityMetadataFromInputs();
-    accessibilityModal.classList.add("hidden");
   }
   if (
     !normalizationModal.classList.contains("hidden") &&
@@ -7418,7 +7461,6 @@ document.addEventListener("keydown", function (event) {
     selectField(null, { focusNameInput: false, scrollIntoView: false });
     aiModelSuggestions.classList.add("hidden");
     settingsModal.classList.add("hidden");
-    accessibilityModal.classList.add("hidden");
     normalizationModal.classList.add("hidden");
     if (!pageManagerModal.classList.contains("hidden")) {
       closePageManager();

@@ -57,6 +57,66 @@ Run the focused Python tests for export and attachment mapping, then the static
 labeler extraction tests. When changing browser behavior, also run a JavaScript
 syntax check.
 
+## PDF accessibility workshop
+
+A full-screen review mode of the PDF labeler, opened by the "Accessibility
+workshop" button. Implementation:
+
+- `docassemble/ALDashboard/pdf_accessibility.py`: detection and repairs.
+- `docassemble/ALDashboard/pdf_field_labels.py`: accessible-name review for
+  form controls (instruction-style names, placeholders, answer boxes grouped
+  with their question). Inspection returns it as `field_labels`; the browser
+  uses those suggestions and has no labeling heuristics of its own.
+- `docassemble/ALDashboard/api_labelers.py`: `/pdf-labeler/api/accessibility-*`
+  endpoints. They are stateless: each repair receives the working PDF and
+  returns the repaired one.
+- `docassemble/ALDashboard/data/static/pdf_accessibility_workshop.js`: the
+  workshop module, imported by `pdf_labeler.js`.
+- `docassemble/ALDashboard/data/static/pdf_accessibility_workshop.css`: styles,
+  all scoped under `.aw`.
+- The workshop's markup shell is `#a11y-workshop` in `pdf_labeler.html`,
+  outside `#app` so the editor can be made inert while it is open.
+
+### Contract
+
+- Three steps: find problems (with the repairs that need no judgment applied
+  automatically), review eight reader-facing tasks, then test and export.
+- Machine checks, human review and external testing stay separate evidence.
+  There is no combined score. A task with nothing to review is "not
+  applicable", never "reviewed".
+- Drafts (from nearby text, the layout or AI) never count until a person
+  confirms them. AI calls happen only on an explicit click.
+- Never add the PDF/UA declaration automatically; only the explicit
+  declaration control in Test & export may set it.
+- Reading order, headings and image decisions are applied by rebuilding the
+  draft tag tree from all decisions (`create_draft_structure_tree` with
+  `overwrite`), then re-applying what lives on tag-tree elements (tab order,
+  `/ActualText` corrections). Keep `rebuildSteps()` and
+  `afterStructureSteps()` in step when adding a decision.
+- An earlier tag tree the PDF arrived with is kept until the person chooses to
+  replace it under Headings & tags.
+- Existing tags can be edited directly under Headings & tags via `edit_tag`.
+  These edits preserve the imported hierarchy and content references and must
+  not call the draft-tree rebuild. Text roles may change to other text roles;
+  specialized table, list and form roles stay intact. The preview links tags to
+  their actual marked-content/annotation references; never locate them by text
+  matching. Keep one selected-tag editor, with advanced properties collapsed.
+- Merging belongs under Reading order, not a duplicate control in Headings &
+  tags. Ctrl/Cmd-click and list checkboxes select adjacent items. Native merges
+  preserve original elements as inline Spans in one text group, retaining
+  ParentTree/IDTree references and per-run properties; never rebuild the tree
+  for a native merge. Draft merges still apply on confirming the page.
+- Internal field names never change. Only announced names (`/TU`) do.
+- A name is the information, not an instruction: "County", not "Type name of
+  county"; the screen reader already announces the role. Each box in a row of
+  answers is named by its question and its answer.
+
+### Verification
+
+Run `test/test_pdf_accessibility*.py` (including `_api`, `_image_decisions`
+and `_redraft`) and `test/test_pdf_field_labels.py`, `npm run check`, `npm run test:a11y-workshop`, and
+`npm run test:pdf-labeler-focus` (it stubs the workshop import).
+
 ## Court form shapes
 
 The Interview Intake Document Generator can draft a court filing instead of an

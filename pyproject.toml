@@ -23,6 +23,11 @@ dependencies = [
     'xmlschema>=4.3.1',
     'pyaml',
     'formfyxer>=1.1.0',
+    # FormFyxer's field detection uses groupRectangles, removed in OpenCV 5.
+    'opencv-python<5',
+    'opencv-python-headless<5',
+    'pikepdf>=10.0',
+    'fonttools>=4.0',
     'dayamlchecker>=1.4.0',
     'Mako>=1.1.4',
     'pyspellchecker>=0.6.3',

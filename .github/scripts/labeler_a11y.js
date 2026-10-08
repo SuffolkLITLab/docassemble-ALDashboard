@@ -219,11 +219,6 @@ async function checkPdfLabeler(page) {
   for (const [label, button, modal] of [
     ["PDF labeler settings modal", "#settings-btn", "#settings-modal"],
     [
-      "PDF labeler accessibility modal",
-      "#accessibility-btn",
-      "#accessibility-modal",
-    ],
-    [
       "PDF labeler normalization modal",
       "#normalize-pass-btn",
       "#normalization-modal",
@@ -247,6 +242,17 @@ async function checkPdfLabeler(page) {
       modal,
     );
   }
+
+  // The workshop inspects and repairs the PDF on the server before it shows
+  // its first screen, so wait for that to finish before scanning.
+  await page.locator("#accessibility-workshop-btn").click();
+  await page
+    .locator("#a11y-workshop .aw-task-grid")
+    .waitFor({ state: "visible", timeout: 180_000 });
+  await page
+    .locator("#a11y-workshop [data-aw-ref=busy]")
+    .waitFor({ state: "hidden", timeout: 180_000 });
+  await audit(page, "PDF accessibility workshop", "#a11y-workshop");
 }
 
 async function main() {

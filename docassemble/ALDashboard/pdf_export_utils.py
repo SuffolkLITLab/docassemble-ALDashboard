@@ -478,3 +478,106 @@ def build_pdf_export_fields_per_page(
         fields_per_page[page_idx].append(form_field)
 
     return fields_per_page
+
+
+def preserve_unnamed_pdf_widgets(input_path: str, output_path: str) -> int:
+    """Keep original unnamed controls that the field editor cannot represent.
+
+    The field overwrite intentionally removes named controls deleted in the
+    editor. Empty-name widgets are outside that list and must survive, with
+    their appearances, actions and inherited field properties intact.
+    """
+    import pikepdf
+
+    restored = 0
+    with (
+        pikepdf.open(input_path) as source,
+        pikepdf.open(output_path, allow_overwriting_input=True) as output,
+    ):
+
+        def chain(widget: Any) -> List[Any]:
+            result = [widget]
+            seen = set()
+            while (
+                result[-1].get("/Parent") is not None and result[-1].objgen not in seen
+            ):
+                seen.add(result[-1].objgen)
+                result.append(result[-1].Parent)
+            return result
+
+        def unnamed(widget: Any) -> bool:
+            return widget.get("/Subtype") == pikepdf.Name.Widget and not any(
+                str(field.get("/T", "")) for field in chain(widget)
+            )
+
+        for page_index, page in enumerate(source.pages):
+            originals = [
+                widget for widget in page.get("/Annots", []) if unnamed(widget)
+            ]
+            if not originals:
+                continue
+            target = output.pages[page_index]
+            annotations = list(target.get("/Annots", []))
+            obsolete = {
+                chain(widget)[-1].objgen for widget in annotations if unnamed(widget)
+            }
+            annotations = [widget for widget in annotations if not unnamed(widget)]
+            if "/AcroForm" not in output.Root:
+                output.Root.AcroForm = output.make_indirect(pikepdf.Dictionary())
+            form = output.Root.AcroForm
+            fields = [
+                field
+                for field in form.get("/Fields", [])
+                if field.objgen not in obsolete
+            ]
+            for widget in originals:
+                ancestors = chain(widget)
+                merged = pikepdf.Dictionary(dict(widget.items()))
+                # Turn the retained widget into a terminal field, carrying its
+                # inherited properties without copying omitted sibling widgets.
+                for field in ancestors[1:]:
+                    for key, value in field.items():
+                        if key not in ("/Parent", "/Kids") and key not in merged:
+                            merged[key] = value
+                for key in ("/Parent", "/Kids"):
+                    if key in merged:
+                        del merged[key]
+                copied = output.copy_foreign(source.make_indirect(merged))
+                copied.P = target.obj
+                source_form: Any = source.Root.get("/AcroForm", {})
+                if "/Q" not in copied and "/Q" in source_form:
+                    copied.Q = int(source_form.Q)
+                if "/DA" not in copied and "/DA" in source_form:
+                    copied.DA = pikepdf.String(str(source_form.DA))
+                source_fonts: Any = source_form.get("/DR", {}).get("/Font", {})
+                if source_fonts and "/DA" in copied:
+                    if "/DR" not in form:
+                        form.DR = pikepdf.Dictionary()
+                    if "/Font" not in form.DR:
+                        form.DR.Font = pikepdf.Dictionary()
+                    aliases = {}
+                    for key, font in source_fonts.items():
+                        alias = f"/unnamed{restored}_{str(key)[1:]}"
+                        while alias in form.DR.Font:
+                            alias += "_"
+                        form.DR.Font[alias] = (
+                            output.copy_foreign(font)
+                            if font.is_indirect
+                            else output.copy_foreign(source.make_indirect(font))
+                        )
+                        aliases[str(key)] = alias
+                    copied.DA = pikepdf.String(
+                        re.sub(
+                            r"/[^\s]+",
+                            lambda match: aliases.get(match[0], match[0]),
+                            str(copied.DA),
+                        )
+                    )
+                annotations.append(copied)
+                fields.append(copied)
+                restored += 1
+            target.Annots = pikepdf.Array(annotations)
+            form.Fields = pikepdf.Array(fields)
+        if restored:
+            output.save(output_path)
+    return restored

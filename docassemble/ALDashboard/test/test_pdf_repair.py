@@ -200,7 +200,7 @@ class TestOCR(unittest.TestCase):
     @mock.patch("subprocess.run")
     def test_ocr_success(self, mock_run, _mock_req):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
-            _make_minimal_pdf(inp.name)
+            _make_openable_pdf(inp.name)
             in_path = inp.name
         out_path = in_path + ".ocr.pdf"
         try:
@@ -228,7 +228,7 @@ class TestOCR(unittest.TestCase):
     def test_ocr_failure(self, mock_run, _mock_req):
         mock_run.return_value = mock.MagicMock(returncode=2, stderr="ocr error")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
-            _make_minimal_pdf(inp.name)
+            _make_openable_pdf(inp.name)
             in_path = inp.name
         try:
             with self.assertRaises(PDFRepairError):
@@ -246,7 +246,7 @@ class TestOCR(unittest.TestCase):
     )
     def test_ocr_timeout(self, _mock_run, _mock_req):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as inp:
-            _make_minimal_pdf(inp.name)
+            _make_openable_pdf(inp.name)
             in_path = inp.name
         try:
             with self.assertRaises(PDFRepairError) as ctx:
@@ -875,3 +875,62 @@ class TestAutoRepair(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOCRSignatureFields(unittest.TestCase):
+    @mock.patch(
+        "docassemble.ALDashboard.pdf_repair._require_executable",
+        return_value="ocrmypdf",
+    )
+    @mock.patch("docassemble.ALDashboard.pdf_accessibility.ocr_image_only_pages")
+    @mock.patch("subprocess.run")
+    def test_only_blank_signature_boxes_use_preserving_ocr(
+        self, run, preserving, _require
+    ):
+        import pikepdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = os.path.join(directory, "input.pdf")
+            output_path = os.path.join(directory, "output.pdf")
+            for signed in (False, True):
+                with pikepdf.Pdf.new() as pdf:
+                    page = pdf.add_blank_page()
+                    signature = pdf.make_indirect(
+                        pikepdf.Dictionary(
+                            FT=pikepdf.Name.Sig,
+                            T=pikepdf.String("signature"),
+                            Subtype=pikepdf.Name.Widget,
+                            Rect=pikepdf.Array([0, 0, 100, 20]),
+                        )
+                    )
+                    if signed:
+                        signature.V = pdf.make_indirect(
+                            pikepdf.Dictionary(
+                                Type=pikepdf.Name.Sig,
+                                ByteRange=pikepdf.Array([0, 1, 2, 3]),
+                                Contents=pikepdf.String("signature bytes"),
+                            )
+                        )
+                    page.Annots = pikepdf.Array([signature])
+                    pdf.Root.AcroForm = pdf.make_indirect(
+                        pikepdf.Dictionary(Fields=pikepdf.Array([signature]))
+                    )
+                    pdf.save(input_path)
+                preserving.reset_mock()
+                preserving.return_value = {"action": "ocr", "pages_read": 1}
+                run.return_value = mock.MagicMock(
+                    returncode=2, stderr="DigitalSignatureError"
+                )
+                if signed:
+                    with self.assertRaises(PDFRepairError):
+                        ocr_pdf(input_path, output_path)
+                    preserving.assert_not_called()
+                else:
+                    result = ocr_pdf(input_path, output_path)
+                    preserving.assert_called_once_with(
+                        input_path, output_path, language="eng"
+                    )
+                    self.assertEqual(
+                        result["strategy"], "preserve_blank_signature_fields"
+                    )
+                    run.assert_not_called()

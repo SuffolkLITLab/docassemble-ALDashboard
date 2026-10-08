@@ -1,0 +1,601 @@
+{
+  "date": "2026-10-04",
+  "installation": "~/venv/bin/dainstall --server localhost .",
+  "browser": "Chromium / real localhost Flask API; no repair stubs",
+  "source_files": {
+    "court_seal": {
+      "filename": "docassemble-MotionToDismissCRA__CRA_Motion_to_Dismiss.pdf",
+      "sha256": "6f3aa244afec2b038b27c5ec4b5d571c5cb0381a9347135e020dcdb8ff430348"
+    },
+    "new_table": {
+      "filename": "docassemble-AppealsCivilDocketingStatement__civil_docketing_statement.pdf",
+      "sha256": "74751dadb930ed97d66243596108d54207ce249c83a309467500b23f541e58c3"
+    },
+    "existing_table": {
+      "filename": "docassemble-HousingCodeChecklist__lt1-pullout-10-getting-organized.pdf",
+      "sha256": "c75ec81d96ec1d298fac0fdbe3163ffbe8430d1bd22c5bf07ec85836efe8a48d"
+    },
+    "font_substitution": {
+      "filename": "docassemble-MA209AProtectiveOrder__209a_258e_motion_for_impoundment.pdf",
+      "sha256": "1b9888184a750b5cbf841057ef062c622ec27c4ccfd015fc7d6bf6f29f2c68b3"
+    },
+    "page_preservation": {
+      "filename": "docassemble-ssioverpaymentwaiver__ssa-632.pdf",
+      "sha256": "3b77fdee958735e994e4ffbee39380a811541c935903ce0d96b5ba9f7ef87c70"
+    }
+  },
+  "workflows": {
+    "court_seal": {
+      "disabledCount": 17,
+      "decorationNeedsNoSecondDecision": true,
+      "undoRestored": true,
+      "survivedRedraft": true
+    },
+    "new_table": {
+      "rows": 6,
+      "columns": 3,
+      "axe": [],
+      "survivedRedraft": true,
+      "undoNotResurrected": true
+    },
+    "existing_table": {
+      "before_issues": [
+        "table-row-children"
+      ],
+      "after_issues": []
+    },
+    "font_substitution": {
+      "source": "/home/quinten/all_interviews/templates/docassemble-MA209AProtectiveOrder__209a_258e_motion_for_impoundment.pdf",
+      "pendingDecision": true,
+      "compareKeepUndo": true
+    },
+    "page_preservation": {
+      "explicitChoiceRequired": true,
+      "split": true,
+      "pageCards": 9,
+      "reorderRemove": true,
+      "workshopOpened": true,
+      "keepTagsInsertionBlocked": true,
+      "insertWithExplicitRebuild": true,
+      "errors": [],
+      "writes": [
+        "preserve_pages",
+        "preserve_pages",
+        "preserve_pages",
+        "preserve_pages",
+        "preserve_pages",
+        "fonts",
+        null,
+        "apply-fields"
+      ]
+    }
+  },
+  "render_and_qpdf": {
+    "housing-before.pdf": {
+      "qpdf": 0
+    },
+    "ssa-reordered.pdf": {
+      "qpdf": 0
+    },
+    "appeals-before.pdf": {
+      "qpdf": 0
+    },
+    "ssa-insert-rebuild.pdf": {
+      "qpdf": 0
+    },
+    "appeals-table.pdf": {
+      "qpdf": 0
+    },
+    "cra-final.pdf": {
+      "qpdf": 0
+    },
+    "docassemble-ssioverpaymentwaiver__ssa-632-part-02.pdf": {
+      "qpdf": 0
+    },
+    "appeals-final.pdf": {
+      "qpdf": 0
+    },
+    "docassemble-ssioverpaymentwaiver__ssa-632-part-01.pdf": {
+      "qpdf": 0
+    },
+    "cra-before.pdf": {
+      "qpdf": 0
+    },
+    "housing-repaired.pdf": {
+      "qpdf": 0
+    },
+    "cra-disabled.pdf": {
+      "qpdf": 0
+    },
+    "font-substituted.pdf": {
+      "qpdf": 0
+    },
+    "seal": {
+      "changed_pixels": [
+        0
+      ]
+    },
+    "seal-redraft": {
+      "changed_pixels": [
+        0
+      ]
+    },
+    "new-table": {
+      "changed_pixels": [
+        0,
+        0,
+        0
+      ]
+    },
+    "table-redraft": {
+      "changed_pixels": [
+        0,
+        0,
+        0
+      ]
+    },
+    "existing-table": {
+      "changed_pixels": [
+        0,
+        0
+      ]
+    }
+  },
+  "page_preservation": {
+    "ssa-reordered.pdf": {
+      "pages": 9,
+      "tags": true,
+      "language_preserved": true,
+      "title_preserved": true,
+      "widgets_preserved": true,
+      "announcements": 535,
+      "readback_content_preserved": true,
+      "readback_order_preserved": true,
+      "qpdf": 0,
+      "changed_pixels": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "docassemble-ssioverpaymentwaiver__ssa-632-part-01.pdf": {
+      "pages": 4,
+      "tags": true,
+      "language_preserved": true,
+      "title_preserved": true,
+      "widgets_preserved": true,
+      "announcements": 302,
+      "readback_content_preserved": true,
+      "readback_order_preserved": true,
+      "qpdf": 0
+    },
+    "docassemble-ssioverpaymentwaiver__ssa-632-part-02.pdf": {
+      "pages": 6,
+      "tags": true,
+      "language_preserved": true,
+      "title_preserved": true,
+      "widgets_preserved": true,
+      "announcements": 251,
+      "readback_content_preserved": true,
+      "readback_order_preserved": true,
+      "qpdf": 0
+    }
+  },
+  "verapdf": {
+    "housing-before": {
+      "failed_rules": 7,
+      "failed_checks": 10,
+      "failures": [
+        {
+          "clause": "7.18.5",
+          "test": 2,
+          "description": "Links shall contain an alternate description via their Contents key as described in ISO 32000-1:2008, 14.9.3",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.3",
+          "test": 1,
+          "description": "Figure tags shall include an alternative representation or replacement text that represents the contents marked with the Figure tag as noted in ISO 32000-1:2008, 14.7.2, Table 323",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.18.1",
+          "test": 2,
+          "description": "An annotation (except Widget annotations or hidden annotations, or those having rectangle outside the crop-box) shall have either Contents key or an Alt entry in the enclosing structure element",
+          "failed_checks": 2
+        },
+        {
+          "clause": "5",
+          "test": 1,
+          "description": "The PDF/UA version and conformance level of a file shall be specified using the PDF/UA Identification extension schema",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.21.4.1",
+          "test": 1,
+          "description": "The font programs for all fonts used for rendering within a conforming file shall be embedded within that file, as defined in ISO 32000-1:2008, 9.9",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.2",
+          "test": 10,
+          "description": "TR element may contain only TH and TD elements",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.2",
+          "test": 29,
+          "description": "If the Lang entry is present in the document's Catalog dictionary or in a structure element dictionary or property list, its value shall be a language identifier as described in ISO 32000-1:2008, 14.9.2. A language identifier shall be a Language-Tag as defined in RFC 3066, Tags for the Identification of Languages",
+          "failed_checks": 1
+        }
+      ]
+    },
+    "font-substituted": {
+      "failed_rules": 9,
+      "failed_checks": 125,
+      "failures": [
+        {
+          "clause": "7.2",
+          "test": 22,
+          "description": "Natural language for text in Alt attribute shall be determined",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.18.4",
+          "test": 1,
+          "description": "A Widget annotation shall be nested within a Form tag per ISO 32000-1:2008, 14.8.4.5, Table 340",
+          "failed_checks": 10
+        },
+        {
+          "clause": "7.18.4",
+          "test": 2,
+          "description": "If the Form element omits a Role attribute (Table 348), it shall have only one child: an object reference (14.7.4.3) identifying the widget annotation per ISO 32000-1:2008, 14.8.4.5, Table 340",
+          "failed_checks": 4
+        },
+        {
+          "clause": "7.5",
+          "test": 1,
+          "description": "If the table's structure is not determinable via Headers and IDs, then structure elements of type TH shall have a Scope attribute",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.2",
+          "test": 34,
+          "description": "Natural language for text in page content shall be determined",
+          "failed_checks": 94
+        },
+        {
+          "clause": "7.21.4.1",
+          "test": 1,
+          "description": "The font programs for all fonts used for rendering within a conforming file shall be embedded within that file, as defined in ISO 32000-1:2008, 9.9",
+          "failed_checks": 3
+        },
+        {
+          "clause": "7.18.1",
+          "test": 3,
+          "description": "A form field shall have a TU key present or all its Widget annotations shall have alternative descriptions (in the form of an Alt entry in the enclosing structure elements)",
+          "failed_checks": 8
+        },
+        {
+          "clause": "5",
+          "test": 1,
+          "description": "The PDF/UA version and conformance level of a file shall be specified using the PDF/UA Identification extension schema",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.2",
+          "test": 25,
+          "description": "Natural language in the TU key for form fields shall be determined",
+          "failed_checks": 3
+        }
+      ]
+    },
+    "appeals-final": {
+      "failed_rules": 6,
+      "failed_checks": 190,
+      "failures": [
+        {
+          "clause": "7.2",
+          "test": 33,
+          "description": "Natural language for document metadata shall be determined",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.2",
+          "test": 25,
+          "description": "Natural language in the TU key for form fields shall be determined",
+          "failed_checks": 31
+        },
+        {
+          "clause": "7.2",
+          "test": 22,
+          "description": "Natural language for text in Alt attribute shall be determined",
+          "failed_checks": 31
+        },
+        {
+          "clause": "7.18.1",
+          "test": 3,
+          "description": "A form field shall have a TU key present or all its Widget annotations shall have alternative descriptions (in the form of an Alt entry in the enclosing structure elements)",
+          "failed_checks": 29
+        },
+        {
+          "clause": "7.2",
+          "test": 34,
+          "description": "Natural language for text in page content shall be determined",
+          "failed_checks": 97
+        },
+        {
+          "clause": "5",
+          "test": 1,
+          "description": "The PDF/UA version and conformance level of a file shall be specified using the PDF/UA Identification extension schema",
+          "failed_checks": 1
+        }
+      ]
+    },
+    "housing-repaired": {
+      "failed_rules": 6,
+      "failed_checks": 9,
+      "failures": [
+        {
+          "clause": "5",
+          "test": 1,
+          "description": "The PDF/UA version and conformance level of a file shall be specified using the PDF/UA Identification extension schema",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.18.5",
+          "test": 2,
+          "description": "Links shall contain an alternate description via their Contents key as described in ISO 32000-1:2008, 14.9.3",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.21.4.1",
+          "test": 1,
+          "description": "The font programs for all fonts used for rendering within a conforming file shall be embedded within that file, as defined in ISO 32000-1:2008, 9.9",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.2",
+          "test": 29,
+          "description": "If the Lang entry is present in the document's Catalog dictionary or in a structure element dictionary or property list, its value shall be a language identifier as described in ISO 32000-1:2008, 14.9.2. A language identifier shall be a Language-Tag as defined in RFC 3066, Tags for the Identification of Languages",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.3",
+          "test": 1,
+          "description": "Figure tags shall include an alternative representation or replacement text that represents the contents marked with the Figure tag as noted in ISO 32000-1:2008, 14.7.2, Table 323",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.18.1",
+          "test": 2,
+          "description": "An annotation (except Widget annotations or hidden annotations, or those having rectangle outside the crop-box) shall have either Contents key or an Alt entry in the enclosing structure element",
+          "failed_checks": 2
+        }
+      ]
+    },
+    "ssa-before": {
+      "failed_rules": 14,
+      "failed_checks": 1806,
+      "failures": [
+        {
+          "clause": "7.18.1",
+          "test": 3,
+          "description": "A form field shall have a TU key present or all its Widget annotations shall have alternative descriptions (in the form of an Alt entry in the enclosing structure elements)",
+          "failed_checks": 184
+        },
+        {
+          "clause": "7.21.7",
+          "test": 1,
+          "description": "The Font dictionary of all fonts shall define the map of all used character codes to Unicode values, either via a ToUnicode entry, or other mechanisms as defined in ISO 14289-1, 7.21.7",
+          "failed_checks": 17
+        },
+        {
+          "clause": "7.2",
+          "test": 34,
+          "description": "Natural language for text in page content shall be determined",
+          "failed_checks": 551
+        },
+        {
+          "clause": "7.18.3",
+          "test": 1,
+          "description": "Every page on which there is an annotation shall contain in its page dictionary the key Tabs, and its value shall be S",
+          "failed_checks": 10
+        },
+        {
+          "clause": "7.1",
+          "test": 3,
+          "description": "Content shall be marked as Artifact or tagged as real content",
+          "failed_checks": 599
+        },
+        {
+          "clause": "7.18.4",
+          "test": 1,
+          "description": "A Widget annotation shall be nested within a Form tag per ISO 32000-1:2008, 14.8.4.5, Table 340",
+          "failed_checks": 210
+        },
+        {
+          "clause": "7.21.4.1",
+          "test": 1,
+          "description": "The font programs for all fonts used for rendering within a conforming file shall be embedded within that file, as defined in ISO 32000-1:2008, 9.9",
+          "failed_checks": 12
+        },
+        {
+          "clause": "7.2",
+          "test": 23,
+          "description": "Natural language for text in E attribute shall be determined",
+          "failed_checks": 176
+        },
+        {
+          "clause": "7.18.5",
+          "test": 2,
+          "description": "Links shall contain an alternate description via their Contents key as described in ISO 32000-1:2008, 14.9.3",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.2",
+          "test": 33,
+          "description": "Natural language for document metadata shall be determined",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.18.4",
+          "test": 2,
+          "description": "If the Form element omits a Role attribute (Table 348), it shall have only one child: an object reference (14.7.4.3) identifying the widget annotation per ISO 32000-1:2008, 14.8.4.5, Table 340",
+          "failed_checks": 8
+        },
+        {
+          "clause": "7.1",
+          "test": 10,
+          "description": "The document catalog dictionary shall include a ViewerPreferences dictionary containing a DisplayDocTitle key, whose value shall be true",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.18.1",
+          "test": 2,
+          "description": "An annotation (except Widget annotations or hidden annotations, or those having rectangle outside the crop-box) shall have either Contents key or an Alt entry in the enclosing structure element",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.2",
+          "test": 25,
+          "description": "Natural language in the TU key for form fields shall be determined",
+          "failed_checks": 32
+        }
+      ]
+    },
+    "ssa-after": {
+      "failed_rules": 16,
+      "failed_checks": 1744,
+      "failures": [
+        {
+          "clause": "7.2",
+          "test": 23,
+          "description": "Natural language for text in E attribute shall be determined",
+          "failed_checks": 171
+        },
+        {
+          "clause": "7.2",
+          "test": 33,
+          "description": "Natural language for document metadata shall be determined",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.1",
+          "test": 3,
+          "description": "Content shall be marked as Artifact or tagged as real content",
+          "failed_checks": 576
+        },
+        {
+          "clause": "7.2",
+          "test": 25,
+          "description": "Natural language in the TU key for form fields shall be determined",
+          "failed_checks": 29
+        },
+        {
+          "clause": "7.18.5",
+          "test": 2,
+          "description": "Links shall contain an alternate description via their Contents key as described in ISO 32000-1:2008, 14.9.3",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.18.3",
+          "test": 1,
+          "description": "Every page on which there is an annotation shall contain in its page dictionary the key Tabs, and its value shall be S",
+          "failed_checks": 9
+        },
+        {
+          "clause": "7.2",
+          "test": 34,
+          "description": "Natural language for text in page content shall be determined",
+          "failed_checks": 525
+        },
+        {
+          "clause": "7.18.1",
+          "test": 2,
+          "description": "An annotation (except Widget annotations or hidden annotations, or those having rectangle outside the crop-box) shall have either Contents key or an Alt entry in the enclosing structure element",
+          "failed_checks": 2
+        },
+        {
+          "clause": "7.18.1",
+          "test": 3,
+          "description": "A form field shall have a TU key present or all its Widget annotations shall have alternative descriptions (in the form of an Alt entry in the enclosing structure elements)",
+          "failed_checks": 179
+        },
+        {
+          "clause": "7.18.4",
+          "test": 1,
+          "description": "A Widget annotation shall be nested within a Form tag per ISO 32000-1:2008, 14.8.4.5, Table 340",
+          "failed_checks": 209
+        },
+        {
+          "clause": "5",
+          "test": 1,
+          "description": "The PDF/UA version and conformance level of a file shall be specified using the PDF/UA Identification extension schema",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.4.2",
+          "test": 1,
+          "description": "For documents that are not strongly structured, as described in ISO 32000-1:2008, 14.8.4.3.5, heading tags shall be used as follows: (*) If any heading tags are used, H1 shall be the first. (*) A document may use more than one instance of any specific tag level. For example, a tag level may be repeated if document content requires it. (*) If document semantics require a descending sequence of headers, such a sequence shall proceed in strict numerical order and shall not skip an intervening heading level. (*) A document may increment its heading sequence without restarting at H1 if document semantics require it",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.18.4",
+          "test": 2,
+          "description": "If the Form element omits a Role attribute (Table 348), it shall have only one child: an object reference (14.7.4.3) identifying the widget annotation per ISO 32000-1:2008, 14.8.4.5, Table 340",
+          "failed_checks": 8
+        },
+        {
+          "clause": "7.21.4.1",
+          "test": 1,
+          "description": "The font programs for all fonts used for rendering within a conforming file shall be embedded within that file, as defined in ISO 32000-1:2008, 9.9",
+          "failed_checks": 12
+        },
+        {
+          "clause": "7.1",
+          "test": 10,
+          "description": "The document catalog dictionary shall include a ViewerPreferences dictionary containing a DisplayDocTitle key, whose value shall be true",
+          "failed_checks": 1
+        },
+        {
+          "clause": "7.21.7",
+          "test": 1,
+          "description": "The Font dictionary of all fonts shall define the map of all used character codes to Unicode values, either via a ToUnicode entry, or other mechanisms as defined in ISO 14289-1, 7.21.7",
+          "failed_checks": 17
+        }
+      ]
+    }
+  },
+  "tests": {
+    "full_python": {
+      "passed": 800,
+      "skipped": 2,
+      "subtests": 70
+    },
+    "focused_pdf_python": {
+      "passed": 317,
+      "subtests": 33
+    },
+    "javascript_extraction": 46,
+    "workshop_browser": 18,
+    "focus_page_assembly_browser": 11,
+    "dialogs_browser": 4,
+    "mypy_source_files": 87,
+    "npm_check": "passed"
+  },
+  "limits": [
+    "New tables are rectangular, one page, up to 20 rows and 10 columns; content must stay in complete tagged passages.",
+    "Existing cell roles/scopes can be repaired while retaining spans; padding merged tables is refused.",
+    "Keeping tags supports distinct original pages; insertion requires explicit replacement and a new workshop draft.",
+    "Keeping tags preserves existing defects. Reordering SSA pages introduces a first-heading sequence issue; the existing PDF/UA identifier is intentionally cleared after edits.",
+    "Composite/Type3 fonts cannot be substituted by the simple-font repair; their original font or a regenerated PDF may be needed.",
+    "OCR block splitting/merging and actual NVDA/JAWS validation remain outside this addition."
+  ]
+}

@@ -10,6 +10,178 @@
 // checks, human review, and testing outside this tool. There is no single
 // score, and nothing here ever declares conformance on its own.
 
+// Match PDF.js marked content to the server's actual /K references. Text
+// equality is deliberately not used: repeated labels must stay distinct.
+export async function existingTagRegions(page, nodes, pageIndex, ops = {}) {
+  const viewport = page.getViewport({ scale: 1 });
+  const regions = new Map();
+  const owners = new Map();
+  const references = nodes.flatMap((node) =>
+    (node.contentRefs || [])
+      .filter((ref) => ref.pageIndex === pageIndex)
+      .map((ref) => ({ ...ref, path: node.path })),
+  );
+  for (const ref of references) {
+    if (ref.mcid == null) continue;
+    const identities = owners.get(ref.mcid) || new Set();
+    identities.add(ref.stream || "page");
+    owners.set(ref.mcid, identities);
+  }
+  function boxFromPoints(points) {
+    const xs = points.map((p) => p[0] / viewport.width);
+    const ys = points.map((p) => p[1] / viewport.height);
+    const x = Math.max(0, Math.min(...xs)),
+      y = Math.max(0, Math.min(...ys));
+    return {
+      x,
+      y,
+      width: Math.min(1, Math.max(...xs)) - x,
+      height: Math.min(1, Math.max(...ys)) - y,
+    };
+  }
+  function add(path, box) {
+    if (!box || box.width <= 0 || box.height <= 0) return;
+    const boxes = regions.get(path) || [];
+    // Adjacent text runs on the same line share a single highlight.
+    const previous = boxes.find(
+      (b) =>
+        Math.abs(b.y - box.y) < 0.004 &&
+        Math.abs(b.height - box.height) < 0.004 &&
+        b.x <= box.x + box.width + 0.008 &&
+        box.x <= b.x + b.width + 0.008,
+    );
+    if (previous) {
+      const right = Math.max(previous.x + previous.width, box.x + box.width);
+      const bottom = Math.max(previous.y + previous.height, box.y + box.height);
+      previous.x = Math.min(previous.x, box.x);
+      previous.y = Math.min(previous.y, box.y);
+      previous.width = right - previous.x;
+      previous.height = bottom - previous.y;
+    } else boxes.push(box);
+    regions.set(path, boxes);
+  }
+  function addMarked(mcid, box) {
+    // PDF.js exposes page-local MCIDs even inside Form XObjects. When streams
+    // reuse one, don't invent a position for either tag.
+    if (owners.get(mcid)?.size !== 1) return;
+    for (const ref of references)
+      if (ref.mcid === mcid) add(ref.path, { ...box });
+  }
+  for (const ref of references) {
+    if (ref.rect && viewport.convertToViewportPoint) {
+      const [x1, y1, x2, y2] = ref.rect;
+      add(
+        ref.path,
+        boxFromPoints(
+          [
+            [x1, y1],
+            [x2, y2],
+          ].map((p) => viewport.convertToViewportPoint(...p)),
+        ),
+      );
+    }
+  }
+  if (page.getTextContent && references.some((ref) => ref.mcid != null)) {
+    const content = await page.getTextContent({ includeMarkedContent: true });
+    const stack = [];
+    for (const item of content.items) {
+      if (
+        item.type === "beginMarkedContent" ||
+        item.type === "beginMarkedContentProps"
+      ) {
+        const match = /_mc(\d+)$/.exec(item.id || "");
+        stack.push(match ? Number(match[1]) : null);
+      } else if (item.type === "endMarkedContent") stack.pop();
+      else if (
+        item.str?.trim() &&
+        item.transform &&
+        viewport.convertToViewportPoint
+      ) {
+        const [a, b, c, d, e, f] = item.transform;
+        const fontHeight = Math.hypot(c, d),
+          baseline = Math.hypot(a, b);
+        if (!fontHeight || !baseline) continue;
+        const style = content.styles[item.fontName] || {};
+        const ascent =
+          style.ascent ?? (style.descent != null ? 1 + style.descent : 0.8);
+        const width = item.width;
+        const dx = (a / baseline) * width,
+          dy = (b / baseline) * width;
+        const corners = [
+          [e + c * ascent, f + d * ascent],
+          [e + dx + c * ascent, f + dy + d * ascent],
+          [e + c * (ascent - 1), f + d * (ascent - 1)],
+          [e + dx + c * (ascent - 1), f + dy + d * (ascent - 1)],
+        ];
+        const box = boxFromPoints(
+          corners.map((p) => viewport.convertToViewportPoint(...p)),
+        );
+        for (const mcid of new Set(stack.filter((id) => id != null)))
+          addMarked(mcid, box);
+      }
+    }
+  }
+  // Image painting uses the unit square transformed by the current graphics
+  // matrix. This also handles Figure tags with no extractable text.
+  if (
+    page.getOperatorList &&
+    ops.transform != null &&
+    references.some((ref) => ref.mcid != null)
+  ) {
+    const list = await page.getOperatorList();
+    const identity = [1, 0, 0, 1, 0, 0];
+    let matrix = identity.slice();
+    const saved = [],
+      marked = [];
+    const multiply = (a, b) => [
+      a[0] * b[0] + a[2] * b[1],
+      a[1] * b[0] + a[3] * b[1],
+      a[0] * b[2] + a[2] * b[3],
+      a[1] * b[2] + a[3] * b[3],
+      a[0] * b[4] + a[2] * b[5] + a[4],
+      a[1] * b[4] + a[3] * b[5] + a[5],
+    ];
+    const paints = [
+      ops.paintImageXObject,
+      ops.paintInlineImageXObject,
+      ops.paintImageMaskXObject,
+      ops.paintSolidColorImageMask,
+    ].filter((op) => op != null);
+    list.fnArray.forEach((op, index) => {
+      const args = list.argsArray[index] || [];
+      if (op === ops.save || op === ops.paintFormXObjectBegin) {
+        saved.push(matrix.slice());
+        if (op === ops.paintFormXObjectBegin && args[0])
+          matrix = multiply(matrix, args[0]);
+      } else if (op === ops.restore || op === ops.paintFormXObjectEnd)
+        matrix = saved.pop() || identity.slice();
+      else if (op === ops.transform) matrix = multiply(matrix, args);
+      else if (op === ops.beginMarkedContentProps)
+        marked.push(Number.isInteger(args[1]) ? args[1] : null);
+      else if (op === ops.beginMarkedContent) marked.push(null);
+      else if (op === ops.endMarkedContent) marked.pop();
+      else if (paints.includes(op) && viewport.convertToViewportPoint) {
+        const box = boxFromPoints(
+          [
+            [0, 0],
+            [0, 1],
+            [1, 0],
+            [1, 1],
+          ].map(([x, y]) =>
+            viewport.convertToViewportPoint(
+              matrix[0] * x + matrix[2] * y + matrix[4],
+              matrix[1] * x + matrix[3] * y + matrix[5],
+            ),
+          ),
+        );
+        for (const mcid of new Set(marked.filter((id) => id != null)))
+          addMarked(mcid, box);
+      }
+    });
+  }
+  return regions;
+}
+
 // Selection uses normalized page coordinates, independent of zoom and drag direction.
 export function selectionBox(start, end) {
   return {
@@ -491,6 +663,10 @@ export function createAccessibilityWorkshop(host) {
       orderEditedPages: new Set(),
       orderConfirmedPages: new Set(),
       selectedBlock: "",
+      selectedOrderBlocks: [],
+      selectedExistingTags: [],
+      selectedExistingTag: "",
+      existingTagDrafts: {},
       selectedLink: "",
       headings: {},
       images: {},
@@ -609,10 +785,30 @@ export function createAccessibilityWorkshop(host) {
       .promise;
     const pageViews = [];
     const widgets = [];
+    const tagNodes = (inspection.structure_editor || {}).nodes || [];
+    tagNodes.forEach((node) => {
+      node.regions = [];
+    });
     for (let index = 0; index < pdfDoc.numPages; index += 1) {
       const page = await pdfDoc.getPage(index + 1);
       const view = page.view;
       pageViews.push(view);
+      if (tagNodes.length) {
+        try {
+          const regions = await existingTagRegions(
+            page,
+            tagNodes,
+            index,
+            host.pdfjsLib.OPS,
+          );
+          tagNodes.forEach((node) => {
+            for (const box of regions.get(node.path) || [])
+              node.regions.push({ pageIndex: index, box });
+          });
+        } catch (_error) {
+          // Unlocatable content stays editable, with an explicit message.
+        }
+      }
       const annotations = await page.getAnnotations({ intent: "display" });
       annotations.forEach(function (annotation) {
         if (annotation.annotationType !== 20 || !annotation.fieldName) return;
@@ -631,6 +827,8 @@ export function createAccessibilityWorkshop(host) {
     ws.pdfDoc = pdfDoc;
     ws.pageViews = pageViews;
     ws.inspection = inspection;
+    ws.selectedExistingTags = [];
+    ws.selectedOrderBlocks = [];
     buildFields(widgets);
     ws.page = Math.min(ws.page, Math.max(0, ws.pageViews.length - 1));
   }
@@ -745,6 +943,7 @@ export function createAccessibilityWorkshop(host) {
         ws.originalInspection.tag_structure &&
         ws.originalInspection.tag_structure.present
       );
+      if (ws.preexistingTree) ws.treeDecision = "keep";
       initializeDecisions();
       const originalDecisions = snapshotDecisions(ws);
       const repaired = await runAutomaticRepairs(ws.original);
@@ -1216,6 +1415,17 @@ export function createAccessibilityWorkshop(host) {
   }
 
   function pagesWithText() {
+    if (treeLocked())
+      return [
+        ...new Set([
+          ...Object.keys(ws.blockOrder).map(Number),
+          ...existingTagNodes().flatMap((node) =>
+            [...(node.regions || []), ...(node.contentRefs || [])].map(
+              (item) => item.pageIndex,
+            ),
+          ),
+        ]),
+      ].sort((a, b) => a - b);
     return Object.keys(ws.blockOrder)
       .map(Number)
       .sort(function (a, b) {
@@ -1420,6 +1630,18 @@ export function createAccessibilityWorkshop(host) {
       };
     }
     if (taskId === "headings") {
+      if (treeLocked()) {
+        const count = ((ws.inspection.structure_editor || {}).nodes || [])
+          .length;
+        return {
+          count: ws.reviewed.headings ? 0 : count || 1,
+          machine: machine,
+          applicable: true,
+          summary:
+            plural(count, "existing tag") + " available to review and edit.",
+          action: "Review existing tags",
+        };
+      }
       const pending = headingCandidates().filter(function (candidate) {
         const decision = ws.headings[candidate.candidateId];
         return !decision || decision.status === "pending";
@@ -1673,6 +1895,9 @@ export function createAccessibilityWorkshop(host) {
     try {
       await loadWorkingCopy(entry.bytes);
       Object.assign(ws, structuredClone(entry.decisions));
+      ws.existingTagDrafts = {};
+      ws.selectedExistingTags = [];
+      ws.selectedOrderBlocks = [];
       ws.fontReview = null;
       ws.fontSubs = null;
       ws.previews = null;
@@ -2562,19 +2787,29 @@ export function createAccessibilityWorkshop(host) {
             "%;height:" +
             (item.box.height * 100).toFixed(3) +
             "%";
+          const isTag = item.target && item.target.startsWith("tag:");
           return (
-            '<div class="aw-mark aw-mark-' +
+            (isTag ? '<button type="button"' : "<div") +
+            ' class="aw-mark aw-mark-' +
             esc(item.tone || "info") +
             (item.target ? " is-clickable" : "") +
+            (item.passThrough ? " aw-mark-pass-through" : "") +
             '" style="' +
             style +
             '"' +
             (item.target ? ' data-aw-mark="' + esc(item.target) + '"' : "") +
+            (isTag
+              ? ' aria-pressed="' +
+                Boolean(item.pressed) +
+                '" aria-label="' +
+                esc(item.accessibleLabel || "Select tag") +
+                '"'
+              : "") +
             ">" +
             (item.label
               ? '<span class="aw-mark-label">' + esc(item.label) + "</span>"
               : "") +
-            "</div>"
+            (isTag ? "</button>" : "</div>")
           );
         })
         .join("");
@@ -2630,7 +2865,11 @@ export function createAccessibilityWorkshop(host) {
         ? view.html
         : '<p class="aw-empty">' + esc(summary.summary) + "</p>") +
       '<p class="aw-done-note">' +
-      esc(task.done) +
+      esc(
+        ws.task === "headings" && treeLocked()
+          ? "Done when you have checked the existing tags against the page and saved any changes."
+          : task.done,
+      ) +
       "</p></section></div></div>";
     if (!view.noViewer) paintPage(view.overlays || [], view.overlaySvg);
     if (view.after) view.after();
@@ -3221,7 +3460,7 @@ export function createAccessibilityWorkshop(host) {
 
   function lockedTreeNotice() {
     return (
-      '<div class="aw-callout"><p class="aw-eyebrow">This PDF already has tags</p><p>Someone tagged this file before. To change order, headings or images here, replace those tags with our draft. Until then you can listen and compare, but not edit.</p>' +
+      '<div class="aw-callout"><p class="aw-eyebrow">This PDF already has tags</p><p>This file has an existing tag tree. Review and edit its tags under Headings &amp; tags. The page-layout tools here require replacing the tree with a draft.</p>' +
       '<div class="aw-actions"><button type="button" class="aw-btn aw-btn-secondary" data-aw="task" data-task="headings">Decide under Headings & tags</button></div></div>'
     );
   }
@@ -3232,7 +3471,228 @@ export function createAccessibilityWorkshop(host) {
     });
   }
 
+  function toggleTagSelection(selection, id, additive, fallback = "") {
+    if (!additive) return [id];
+    const current = selection.length ? selection : fallback ? [fallback] : [];
+    return current.includes(id)
+      ? current.filter((value) => value !== id)
+      : current.concat(id);
+  }
+
+  function selectionMergeReason(selected, order) {
+    if (selected.length < 2)
+      return "Select two or more adjacent tags to merge.";
+    const positions = selected
+      .map((id) => order.indexOf(id))
+      .sort((a, b) => a - b);
+    if (
+      positions[0] < 0 ||
+      positions.some(
+        (value, index) => index && value !== positions[index - 1] + 1,
+      )
+    )
+      return "Select neighboring tags in reading order, without skipping an item.";
+    return "";
+  }
+
+  function draftMergeControls(order) {
+    const selected = order.filter((id) => ws.selectedOrderBlocks.includes(id));
+    const reason = selectionMergeReason(selected, order);
+    return (
+      '<p class="aw-help">Ctrl+click (Cmd+click on Mac) to select multiple tags on the page, or use the list checkboxes.</p><div class="aw-actions"><button type="button" class="aw-btn aw-btn-secondary" data-aw="order-selection-merge"' +
+      (reason ? " disabled" : "") +
+      '>Merge selected tags</button><span class="aw-small">' +
+      selected.length +
+      " selected</span></div>" +
+      (selected.length > 1 && reason
+        ? '<p class="aw-small">' + esc(reason) + "</p>"
+        : "")
+    );
+  }
+
+  function visibleExistingTags() {
+    const nodes = existingTagNodes();
+    const merged = nodes.filter((node) => node.merged);
+    return nodes.filter(
+      (node) =>
+        !merged.some((parent) => node.path.startsWith(parent.path + "/")),
+    );
+  }
+
+  function existingOrderTags() {
+    return visibleExistingTags().filter((node) => {
+      const regions = node.merged ? tagRegions(node) : node.regions || [];
+      return (
+        regions.some((region) => region.pageIndex === ws.page) ||
+        (!regions.length &&
+          node.pageIndex === ws.page &&
+          (node.contentRefs || []).length)
+      );
+    });
+  }
+
+  function toggleExistingTag(path, additive) {
+    ws.selectedExistingTags = toggleTagSelection(
+      ws.selectedExistingTags,
+      path,
+      additive,
+    );
+    ws.selectedExistingTag = path;
+    render();
+  }
+
+  function existingMergeReason(nodes) {
+    const reason = selectionMergeReason(
+      nodes.map((node) => node.path),
+      existingOrderTags().map((node) => node.path),
+    );
+    if (reason) return reason;
+    const parts = nodes.map((node) => node.path.split("/"));
+    if (
+      parts.some(
+        (path) =>
+          path.slice(0, -1).join("/") !== parts[0].slice(0, -1).join("/"),
+      ) ||
+      parts.some(
+        (path, index) =>
+          index &&
+          Number(path[path.length - 1]) !==
+            Number(parts[index - 1][parts[index - 1].length - 1]) + 1,
+      )
+    )
+      return "These tags have different parents or intervening tags. Select adjacent tags in the same section.";
+    if (
+      nodes.some(
+        (node) =>
+          ![
+            "P",
+            "Span",
+            "H",
+            "H1",
+            "H2",
+            "H3",
+            "H4",
+            "H5",
+            "H6",
+            "BlockQuote",
+            "Note",
+          ].includes(node.role),
+      )
+    )
+      return "Only text tags can be merged. Table, list, image and form tags keep their separate structure.";
+    if (Object.keys(ws.existingTagDrafts).length)
+      return "Save pending tag property edits under Headings & tags before merging.";
+    return "";
+  }
+
+  function existingOrderView() {
+    const nodes = existingOrderTags();
+    const paths = nodes.map((node) => node.path);
+    ws.selectedExistingTags = ws.selectedExistingTags.filter((path) =>
+      paths.includes(path),
+    );
+    const selected = nodes.filter((node) =>
+      ws.selectedExistingTags.includes(node.path),
+    );
+    const reason = existingMergeReason(selected);
+    const findings = readbackFindings("order").filter(
+      (finding) => finding.page == null || Number(finding.page) === ws.page,
+    );
+    return {
+      lead: "Review the existing reading order. Merge adjacent text tags without rebuilding the PDF’s tag tree.",
+      caption: "Existing tags · page " + (ws.page + 1),
+      overlays: existingTagOverlays(),
+      html:
+        reviewedBanner("order") +
+        findings
+          .map(
+            (finding) =>
+              '<div class="aw-callout aw-callout-attention"><p class="aw-eyebrow">' +
+              esc(finding.title) +
+              '</p><p class="aw-small">' +
+              esc(finding.detail) +
+              "</p></div>",
+          )
+          .join("") +
+        '<p class="aw-help">Ctrl+click (Cmd+click on Mac) to select tags on the page, or use the checkboxes below. Merge keeps the first tag’s role and the existing reading order.</p>' +
+        '<div class="aw-actions"><button type="button" class="aw-btn aw-btn-primary" data-aw="existing-tags-merge"' +
+        (reason ? " disabled" : "") +
+        '>Merge selected tags</button><span class="aw-small" role="status">' +
+        selected.length +
+        " selected</span></div>" +
+        (selected.length > 1 && reason
+          ? '<p class="aw-small">' + esc(reason) + "</p>"
+          : "") +
+        '<ol class="aw-order-list" aria-label="Existing reading order">' +
+        nodes
+          .map(
+            (node, index) =>
+              '<li class="aw-order-row aw-existing-order-row"><label class="aw-check"><input type="checkbox" data-aw-input="existing-tag-check" data-path="' +
+              esc(node.path) +
+              '"' +
+              (ws.selectedExistingTags.includes(node.path) ? " checked" : "") +
+              "><span>" +
+              (index + 1) +
+              ". " +
+              esc(
+                node.role +
+                  " · " +
+                  (node.text ||
+                    tagText(node) ||
+                    node.altText ||
+                    node.title ||
+                    "Tagged content"),
+              ) +
+              "</span></label></li>",
+          )
+          .join("") +
+        "</ol>" +
+        '<p class="aw-small aw-muted">Change tag roles and properties under Headings & tags. Undo restores tags after a merge.</p>' +
+        (speechAvailable()
+          ? '<button type="button" class="aw-btn aw-btn-secondary" data-aw="order-listen-now">Hear the file now</button>'
+          : "") +
+        '<div class="aw-sticky-actions"><button type="button" class="aw-btn aw-btn-primary" data-aw="order-confirm">Confirm page ' +
+        (ws.page + 1) +
+        " order</button></div>",
+    };
+  }
+
+  function tagText(node) {
+    return existingTagNodes()
+      .filter((item) => item.path.startsWith(node.path + "/"))
+      .map((item) => item.text || "")
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  async function mergeExistingTags() {
+    const nodes = existingOrderTags().filter((node) =>
+      ws.selectedExistingTags.includes(node.path),
+    );
+    if (existingMergeReason(nodes)) return;
+    const paths = nodes.map((node) => node.path);
+    const applied = await applyChange("Merge existing tags", "order", [
+      async (bytes) =>
+        (
+          await remediate(
+            "structure",
+            { operations: [{ action: "merge_tags", paths }] },
+            bytes,
+          )
+        ).bytes,
+    ]);
+    if (!applied) return;
+    ws.selectedExistingTags = [paths[0]];
+    ws.selectedExistingTag = paths[0];
+    ws.orderConfirmedPages.clear();
+    delete ws.reviewed.order;
+    delete ws.reviewed.headings;
+    saveDecisions();
+    render();
+  }
+
   function orderView() {
+    if (treeLocked()) return existingOrderView();
     const pages = pagesWithText();
     if (pages.indexOf(ws.page) === -1 && pages.length) ws.page = pages[0];
     const order = ws.blockOrder[ws.page] || [];
@@ -3257,6 +3717,7 @@ export function createAccessibilityWorkshop(host) {
         return {
           box: region,
           tone:
+            ws.selectedOrderBlocks.includes(blockId) ||
             blockId === ws.selectedBlock
               ? "current"
               : role === "Artifact"
@@ -3284,12 +3745,20 @@ export function createAccessibilityWorkshop(host) {
       .map(function (blockId, index) {
         const block = blockById(blockId);
         const role = blockRole(block);
-        const selected = blockId === ws.selectedBlock;
+        const selected =
+          ws.selectedOrderBlocks.includes(blockId) ||
+          blockId === ws.selectedBlock;
         return (
           '<li class="aw-order-row aw-tag-row' +
           (selected ? " is-current" : "") +
           (role === "Artifact" ? " is-muted" : "") +
-          '"><span class="aw-order-number">' +
+          '"><input type="checkbox" data-aw-input="order-block-check" data-block="' +
+          esc(blockId) +
+          '" aria-label="Select item ' +
+          (index + 1) +
+          '"' +
+          (ws.selectedOrderBlocks.includes(blockId) ? " checked" : "") +
+          '><span class="aw-order-number">' +
           (index + 1) +
           '</span><button type="button" class="aw-order-text aw-linklike" data-aw="block-select" data-block="' +
           esc(blockId) +
@@ -3362,6 +3831,7 @@ export function createAccessibilityWorkshop(host) {
       overlays: overlays,
       html:
         reviewedBanner("order") +
+        draftMergeControls(order) +
         '<div class="aw-actions"><button type="button" class="aw-btn aw-btn-secondary" data-aw="draw-tag" aria-pressed="' +
         ws.drawingTag +
         '"' +
@@ -3447,6 +3917,7 @@ export function createAccessibilityWorkshop(host) {
     remaining.splice(first, 0, id);
     ws.blockOrder[ws.page] = remaining;
     ws.selectedBlock = id;
+    ws.selectedOrderBlocks = [];
     changedTagDraft();
     announce(
       "Created one tag from " +
@@ -3484,7 +3955,7 @@ export function createAccessibilityWorkshop(host) {
 
   async function confirmOrderPage() {
     const page = ws.page;
-    const needsRebuild = ws.orderEditedPages.has(page);
+    const needsRebuild = !treeLocked() && ws.orderEditedPages.has(page);
     if (needsRebuild) {
       const applied = await rebuildStructure(
         "Reading order, page " + (page + 1),
@@ -3499,11 +3970,192 @@ export function createAccessibilityWorkshop(host) {
     });
     if (!remaining.length) markReviewed("order");
     else ws.page = remaining[0];
-    if (needsRebuild) saveDecisions();
+    saveDecisions();
     render();
   }
 
   // --- Headings & tags ---
+
+  function existingTagNodes() {
+    return (ws.inspection.structure_editor || {}).nodes || [];
+  }
+
+  function tagRegions(node) {
+    // Containers have no painted content of their own. Selecting one shows
+    // its descendants, without drawing a giant box across unrelated columns.
+    return existingTagNodes()
+      .filter(
+        (item) =>
+          item.path === node.path || item.path.startsWith(node.path + "/"),
+      )
+      .flatMap((item) => item.regions || []);
+  }
+
+  function selectedExistingTag() {
+    const nodes = existingTagNodes();
+    let node = nodes.find((item) => item.path === ws.selectedExistingTag);
+    if (
+      !node ||
+      (tagRegions(node).length &&
+        !tagRegions(node).some((region) => region.pageIndex === ws.page)) ||
+      (!tagRegions(node).length &&
+        node.pageIndex != null &&
+        node.pageIndex !== ws.page)
+    ) {
+      node =
+        nodes.find((item) =>
+          (item.regions || []).some((region) => region.pageIndex === ws.page),
+        ) ||
+        nodes.find((item) => item.pageIndex === ws.page) ||
+        nodes[0];
+      ws.selectedExistingTag = node?.path || "";
+    }
+    return node;
+  }
+
+  function selectExistingTag(path) {
+    const node = existingTagNodes().find((item) => item.path === path);
+    if (!node) return;
+    ws.selectedExistingTag = path;
+    const regions = tagRegions(node);
+    if (
+      regions.length &&
+      !regions.some((region) => region.pageIndex === ws.page)
+    )
+      ws.page = regions[0].pageIndex;
+    else if (!regions.length && node.pageIndex != null)
+      ws.page = node.pageIndex;
+    ws.scrollToMark = true;
+    render();
+    focusField("aw-existing-tag");
+  }
+
+  function existingTagOverlays() {
+    const selected = selectedExistingTag();
+    const overlays = visibleExistingTags().flatMap((node) =>
+      (node.merged ? tagRegions(node) : node.regions || [])
+        .filter((region) => region.pageIndex === ws.page)
+        .map((region) => ({
+          box: region.box,
+          tone: "quiet",
+          target: "tag:" + node.path,
+          pressed:
+            ws.task === "order"
+              ? ws.selectedExistingTags.includes(node.path)
+              : node.path === selected?.path,
+          accessibleLabel:
+            node.role +
+            ": " +
+            (node.text || node.title || node.altText || "Select tag"),
+        })),
+    );
+    const highlighted =
+      ws.task === "order"
+        ? visibleExistingTags().filter((node) =>
+            ws.selectedExistingTags.includes(node.path),
+          )
+        : selected
+          ? [selected]
+          : [];
+    for (const selected of highlighted)
+      tagRegions(selected)
+        .filter((region) => region.pageIndex === ws.page)
+        .forEach((region, index) =>
+          overlays.push({
+            box: region.box,
+            tone: "current",
+            passThrough: true,
+            label: index === 0 ? selected.role : "",
+            // The selected outline must not cover the child tags' click targets.
+          }),
+        );
+    return overlays;
+  }
+
+  function existingTagsView() {
+    const nodes = existingTagNodes();
+    const node = selectedExistingTag();
+    if (!node) return '<p class="aw-empty">No editable tags were found.</p>';
+    const draft = { ...node, ...(ws.existingTagDrafts[node.path] || {}) };
+    const textRoles = [
+      "P",
+      "Span",
+      "H",
+      "H1",
+      "H2",
+      "H3",
+      "H4",
+      "H5",
+      "H6",
+      "BlockQuote",
+      "Note",
+    ];
+    const roles = textRoles.includes(node.role) ? textRoles : [node.role];
+    const input = (key, label) =>
+      "<label>" +
+      label +
+      '<textarea class="aw-input" data-aw-input="existing-tag-value" data-tag-key="' +
+      key +
+      '">' +
+      esc(draft[key] || "") +
+      "</textarea></label>";
+    return (
+      '<p class="aw-small aw-muted">Select a tag on the page, or choose one below. To merge tags, use <button type="button" class="aw-linklike" data-aw="task" data-task="order">Reading order</button>.</p>' +
+      '<label class="aw-tag-picker">Tag <select class="aw-input" id="aw-existing-tag" data-aw-input="existing-tag-select">' +
+      nodes
+        .map((item) => {
+          const page = tagRegions(item)[0]?.pageIndex ?? item.pageIndex;
+          return (
+            '<option value="' +
+            esc(item.path) +
+            '"' +
+            (item.path === node.path ? " selected" : "") +
+            ">" +
+            esc(
+              "  ".repeat(item.path.split("/").length - 1) +
+                item.role +
+                " · " +
+                (item.text || item.title || item.altText || "Container").slice(
+                  0,
+                  100,
+                ) +
+                (page != null ? " — p. " + (page + 1) : ""),
+            ) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<div class="aw-tag-editor" data-existing-tag="' +
+      esc(node.path) +
+      '">' +
+      (tagRegions(node).some((region) => region.pageIndex === ws.page)
+        ? ""
+        : '<p class="aw-small aw-muted">No reliable page highlight is available for this tag. Its content may be empty, vector-only, or use ambiguous content references.</p>') +
+      (node.text ? '<p class="aw-tag-text">' + esc(node.text) + "</p>" : "") +
+      '<label>Tag role <select class="aw-input" data-aw-input="existing-tag-value" data-tag-key="role">' +
+      roles
+        .map(
+          (role) =>
+            "<option" +
+            (role === draft.role ? " selected" : "") +
+            ">" +
+            esc(role) +
+            "</option>",
+        )
+        .join("") +
+      "</select></label>" +
+      (node.role === "Figure" ? input("altText", "Image description") : "") +
+      '<details class="aw-tag-advanced"><summary>More tag properties</summary>' +
+      input("title", "Tag title") +
+      input("actualText", "Replacement text (overrides spoken content)") +
+      (node.role !== "Figure" ? input("altText", "Alternative text") : "") +
+      "</details>" +
+      '<button type="button" class="aw-btn aw-btn-primary" data-aw="existing-tag-save" data-path="' +
+      esc(node.path) +
+      '">Save tag</button></div>'
+    );
+  }
 
   function headingsView() {
     const candidates = headingCandidates();
@@ -3604,70 +4256,66 @@ export function createAccessibilityWorkshop(host) {
       return (ws.headings[candidate.candidateId] || {}).status === "pending";
     }).length;
     const treeChoice = ws.preexistingTree
-      ? '<div class="aw-callout' +
-        (ws.treeDecision ? "" : " aw-callout-attention") +
-        '"><p class="aw-eyebrow">This PDF already has tags</p><p class="aw-small">Someone tagged this file before (' +
-        esc(
-          plural(
-            Number((ws.originalInspection.tag_structure || {}).node_count || 0),
-            "tag",
-          ),
-        ) +
-        "). What should we do with them?</p>" +
-        '<fieldset class="aw-choices"><legend class="aw-sr">Earlier tags</legend>' +
-        '<label class="aw-choice"><input type="radio" name="aw-tree" value="keep" data-aw-input="tree-decision"' +
-        (ws.treeDecision === "keep" ? " checked" : "") +
-        '><span><strong>Keep them</strong><span class="aw-muted aw-small">Order, headings and images stay as they are. You can still name fields, set Tab order and fix links.</span></span></label>' +
-        '<label class="aw-choice"><input type="radio" name="aw-tree" value="replace" data-aw-input="tree-decision"' +
-        (ws.treeDecision === "replace" ? " checked" : "") +
-        '><span><strong>Replace with our draft</strong><span class="aw-muted aw-small">Rebuild tags from the page layout and your decisions here.</span></span></label>' +
-        "</fieldset></div>"
+      ? '<details class="aw-tag-options"><summary>Tag options</summary><p class="aw-small">Editing keeps the existing hierarchy. Replacing it rebuilds tags from page layout and discards the earlier structure.</p>' +
+        '<label><input type="radio" name="aw-tree" value="keep" data-aw-input="tree-decision"' +
+        (treeLocked() ? " checked" : "") +
+        "> Review and edit existing tags</label>" +
+        '<label><input type="radio" name="aw-tree" value="replace" data-aw-input="tree-decision"' +
+        (!treeLocked() ? " checked" : "") +
+        "> Replace with our draft</label></details>"
       : "";
     return {
-      lead: "Decide what is a heading and how the headings nest. We build the rest of the tag tree from your decisions.",
-      caption: pageCandidates.length
-        ? plural(pageCandidates.length, "candidate") + " on this page"
-        : "",
-      overlays: overlays,
+      lead: treeLocked()
+        ? "Review and edit the existing tags while preserving their hierarchy."
+        : "Decide what is a heading and how the headings nest. We build the rest of the tag tree from your decisions.",
+      caption: treeLocked()
+        ? "Existing tags · page " + (ws.page + 1)
+        : pageCandidates.length
+          ? plural(pageCandidates.length, "candidate") + " on this page"
+          : "",
+      overlays: treeLocked() ? existingTagOverlays() : overlays,
       html:
         reviewedBanner("headings") +
-        treeChoice +
-        (candidates.length
-          ? '<div class="aw-subhead"><h3 class="aw-card-title">Proposed outline</h3>' +
-            (host.aiEnabled() && !treeLocked()
-              ? '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="headings-ai">Review with AI</button>'
-              : "") +
-            "</div>" +
-            '<ol class="aw-outline">' +
-            outline +
-            "</ol>" +
-            '<p class="aw-checks"><span class="aw-chip aw-chip-' +
-            (skipped ? "fail" : "pass") +
-            '">' +
-            (skipped ? "skips a level" : "no skipped levels") +
-            '</span> <span class="aw-chip aw-chip-' +
-            (h1Count === 1 ? "pass" : "neutral") +
-            '">' +
-            plural(h1Count, "H1") +
-            "</span></p>" +
-            '<p class="aw-small aw-muted">To make any other line a heading, change its role under Reading order.</p>'
-          : '<p class="aw-empty">No lines stand out as headings. If the document has sections, set their role under Reading order.</p>') +
+        (treeLocked()
+          ? existingTagsView()
+          : candidates.length
+            ? '<div class="aw-subhead"><h3 class="aw-card-title">Proposed outline</h3>' +
+              (host.aiEnabled() && !treeLocked()
+                ? '<button type="button" class="aw-btn aw-btn-quiet aw-btn-small" data-aw="headings-ai">Review with AI</button>'
+                : "") +
+              "</div>" +
+              '<ol class="aw-outline">' +
+              outline +
+              "</ol>" +
+              '<p class="aw-checks"><span class="aw-chip aw-chip-' +
+              (skipped ? "fail" : "pass") +
+              '">' +
+              (skipped ? "skips a level" : "no skipped levels") +
+              '</span> <span class="aw-chip aw-chip-' +
+              (h1Count === 1 ? "pass" : "neutral") +
+              '">' +
+              plural(h1Count, "H1") +
+              "</span></p>" +
+              '<p class="aw-small aw-muted">To make any other line a heading, change its role under Reading order.</p>'
+            : '<p class="aw-empty">No lines stand out as headings. If the document has sections, set their role under Reading order.</p>') +
         '<div class="aw-sticky-actions">' +
-        (pending
+        (pending && !treeLocked()
           ? '<p class="aw-small">' +
             plural(pending, "candidate") +
             " still marked “?”. Confirming accepts the level shown for each.</p>"
           : "") +
         '<button type="button" class="aw-btn aw-btn-primary" data-aw="headings-confirm"' +
-        (ws.preexistingTree && !ws.treeDecision ? " disabled" : "") +
+        "" +
         ">" +
-        (treeLocked() ? "Keep earlier tags" : "Confirm outline") +
-        "</button></div>",
+        (treeLocked() ? "Finish reviewing existing tags" : "Confirm outline") +
+        "</button></div>" +
+        treeChoice,
     };
   }
 
   async function confirmHeadings() {
     if (treeLocked()) {
+      ws.treeDecision = "keep";
       markReviewed("headings");
       goToNextTask();
       return;
@@ -5424,6 +6072,7 @@ export function createAccessibilityWorkshop(host) {
     },
     "block-select": function (target) {
       ws.selectedBlock = target.dataset.block;
+      ws.selectedOrderBlocks = [target.dataset.block];
       render();
     },
     "block-up": function (target) {
@@ -5475,6 +6124,38 @@ export function createAccessibilityWorkshop(host) {
         host.showError("AI review failed: " + (error.message || error));
       } finally {
         setBusy("");
+        render();
+      }
+    },
+    "existing-tags-merge": mergeExistingTags,
+    "order-selection-merge": function () {
+      const order = ws.blockOrder[ws.page] || [];
+      const selected = order.filter((id) =>
+        ws.selectedOrderBlocks.includes(id),
+      );
+      if (selectionMergeReason(selected, order)) return;
+      combineBlocks(selected);
+      ws.selectedOrderBlocks = [];
+      render();
+    },
+    "existing-tag-save": async function (target) {
+      const container = target.closest("[data-existing-tag]");
+      const operation = { action: "edit_tag", path: target.dataset.path };
+      container.querySelectorAll("[data-tag-key]").forEach(function (input) {
+        operation[input.dataset.tagKey] = input.value;
+      });
+      const applied = await applyChange("Edit existing tag", "headings", [
+        async function (bytes) {
+          return (
+            await remediate("structure", { operations: [operation] }, bytes)
+          ).bytes;
+        },
+      ]);
+      if (applied) {
+        delete ws.existingTagDrafts[target.dataset.path];
+        ws.treeDecision = "keep";
+        ws.reviewed.headings = false;
+        saveDecisions();
         render();
       }
     },
@@ -5798,7 +6479,8 @@ export function createAccessibilityWorkshop(host) {
   root.addEventListener("click", function (event) {
     const mark = event.target.closest("[data-aw-mark]");
     if (mark) {
-      handleMarkClick(mark.dataset.awMark);
+      if (ws.busy) return;
+      handleMarkClick(mark.dataset.awMark, event.ctrlKey || event.metaKey);
       return;
     }
     const target = event.target.closest("[data-aw]");
@@ -5811,11 +6493,14 @@ export function createAccessibilityWorkshop(host) {
     });
   });
 
-  function handleMarkClick(value) {
+  function handleMarkClick(value, additive = false) {
     const separator = value.indexOf(":");
     const kind = value.slice(0, separator);
     const id = value.slice(separator + 1);
-    if (kind === "field") {
+    if (kind === "tag") {
+      if (ws.task === "order") toggleExistingTag(id, additive);
+      else selectExistingTag(id);
+    } else if (kind === "field") {
       const list = fieldsInTask();
       let index = list.findIndex(function (field) {
         return field.name === id;
@@ -5830,12 +6515,40 @@ export function createAccessibilityWorkshop(host) {
       render();
       focusField("aw-field-name");
     } else if (kind === "block") {
-      ws.selectedBlock = id;
+      ws.selectedOrderBlocks = toggleTagSelection(
+        ws.selectedOrderBlocks,
+        id,
+        additive,
+        ws.selectedBlock,
+      );
+      ws.selectedBlock =
+        ws.selectedOrderBlocks[ws.selectedOrderBlocks.length - 1] || "";
       render();
     }
   }
 
   const inputHandlers = {
+    "existing-tag-check": function (target) {
+      toggleExistingTag(target.dataset.path, true);
+    },
+    "order-block-check": function (target) {
+      ws.selectedOrderBlocks = toggleTagSelection(
+        ws.selectedOrderBlocks,
+        target.dataset.block,
+        true,
+      );
+      ws.selectedBlock =
+        ws.selectedOrderBlocks[ws.selectedOrderBlocks.length - 1] || "";
+      render();
+    },
+    "existing-tag-select": function (target) {
+      selectExistingTag(target.value);
+    },
+    "existing-tag-value": function (target) {
+      const path = target.closest("[data-existing-tag]").dataset.existingTag;
+      ws.existingTagDrafts[path] ||= {};
+      ws.existingTagDrafts[path][target.dataset.tagKey] = target.value;
+    },
     "draft-ai": function (target) {
       ws.draftWithAi = !!target.checked;
     },

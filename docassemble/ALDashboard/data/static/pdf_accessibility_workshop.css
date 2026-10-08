@@ -1662,3 +1662,70 @@ textarea.aw-input {
   grid-column: 2 / -1;
   flex-wrap: wrap;
 }
+
+/* Existing tags: a page selection and one editor, not a card for every tag. */
+.aw .aw-tag-picker select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.aw .aw-tag-editor {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+.aw .aw-tag-editor label {
+  display: grid;
+  gap: 0.3rem;
+}
+.aw .aw-tag-editor textarea {
+  width: 100%;
+  min-height: 4rem;
+}
+.aw .aw-tag-text {
+  max-height: 6rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-size: 0.9rem;
+}
+.aw .aw-tag-advanced summary,
+.aw .aw-tag-options summary {
+  cursor: pointer;
+  color: var(--aw-muted);
+  font-size: 0.85rem;
+}
+.aw .aw-tag-advanced label,
+.aw .aw-tag-options label {
+  margin-top: 0.75rem;
+}
+.aw .aw-tag-options {
+  margin-top: 1rem;
+}
+.aw button.aw-mark {
+  padding: 0;
+  border: 0;
+  min-height: 0;
+  appearance: none;
+}
+.aw button.aw-mark:hover,
+.aw button.aw-mark:focus-visible {
+  outline: 3px solid var(--aw-accent);
+  background: rgba(36, 66, 194, 0.16);
+  z-index: 2;
+}
+
+.aw .aw-mark-pass-through {
+  pointer-events: none;
+}
+
+.aw .aw-tag-row:has([data-aw-input="order-block-check"]) {
+  grid-template-columns: 18px 24px minmax(0, 1fr) auto;
+}
+.aw .aw-existing-order-row {
+  display: block;
+}
+.aw .aw-existing-order-row .aw-check {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

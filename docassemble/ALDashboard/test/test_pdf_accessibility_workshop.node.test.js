@@ -177,7 +177,7 @@ async function withWorkshop(run) {
               content_blocks: window.testContentBlocks || [],
               images: [],
               tag_structure: { present: true },
-              structure_editor: window.testStructureEditor || {},
+              structure_editor: data.structureEditor || window.testStructureEditor || {},
               readback: { announcements: window.testReadback || [] },
             },
           };
@@ -186,6 +186,9 @@ async function withWorkshop(run) {
           [...form.entries()].filter(([key]) => key !== "file"),
         );
         window.requests.push(fields);
+        if (window.testMergeStructureEditor && fields.action === "structure" && JSON.parse(fields.operations || "[]").some(op => op.action === "merge_tags")) {
+          data.structureEditor = window.testMergeStructureEditor;
+        }
         if (fields.field_tooltips)
           Object.assign(data.names, JSON.parse(fields.field_tooltips));
         return {
@@ -214,8 +217,10 @@ async function withWorkshop(run) {
                 getViewport: ({ scale }) => ({
                   width: 612 * scale,
                   height: 792 * scale,
+                  convertToViewportPoint: (x, y) => [x * scale, (792 - y) * scale],
                 }),
                 render: () => ({ promise: Promise.resolve() }),
+                getTextContent: async () => window.testTextContent || { items: [], styles: {} },
                 getAnnotations: async () => [
                   {
                     annotationType: 20,
@@ -925,5 +930,248 @@ test("draw, merge, ungroup and undo retain disjoint regions and replay grouped d
       {},
     );
     assert.deepEqual(await page.evaluate(() => window.errors), []);
+  });
+});
+
+test("existing tags save directly without rebuilding and remain undoable", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop,
+        s = t.state();
+      s.preexistingTree = true;
+      s.treeDecision = "keep";
+      s.originalInspection = s.inspection;
+      s.open = true;
+      document.querySelector("#a11y-workshop").hidden = false;
+      s.step = "review";
+      s.task = "headings";
+      s.inspection.structure_editor = window.testStructureEditor = {
+        nodes: [
+          {
+            path: "0/0",
+            role: "P",
+            title: "Section",
+            actualText: "",
+            altText: "",
+          },
+        ],
+      };
+      t.saveDecisions();
+      t.render();
+    });
+    await page.locator(".aw-tag-advanced summary").click();
+    await page.locator('[data-tag-key="role"]').selectOption("H2");
+    await page
+      .locator('[data-tag-key="actualText"]')
+      .fill("Correct section text");
+    await page.locator('[data-aw="existing-tag-save"]').click();
+    await page.waitForFunction(
+      () => !window.workshop.state().busy && window.requests.length > 0,
+    );
+    const result = await page.evaluate(async () => {
+      const requests = window.requests.slice();
+      const history = window.workshop.state().history.length;
+      await window.workshop.undo();
+      return {
+        requests,
+        history,
+        preserved: window.workshop.state().preexistingTree,
+        errors: window.errors,
+      };
+    });
+    assert.equal(result.requests.length, 1);
+    assert.equal(result.requests[0].action, "structure");
+    assert.deepEqual(JSON.parse(result.requests[0].operations), [
+      {
+        action: "edit_tag",
+        path: "0/0",
+        role: "H2",
+        title: "Section",
+        actualText: "Correct section text",
+        altText: "",
+      },
+    ]);
+    assert.equal(result.history, 1);
+    assert.equal(result.preserved, true);
+    assert.deepEqual(result.errors, []);
+  });
+});
+
+function tagGeometryPage(items, rotated = false) {
+  return {
+    getViewport: () => ({
+      width: rotated ? 200 : 100, height: rotated ? 100 : 200,
+      // Crop origin (10,20), including a 90-degree rotated page.
+      convertToViewportPoint: (x, y) => rotated ? [y - 20, x - 10] : [x - 10, 220 - y],
+    }),
+    getTextContent: async () => ({ items, styles: { f: { ascent: 0.8 } } }),
+  };
+}
+function markedText(mcid, x, y) {
+  return [{ type: "beginMarkedContentProps", id: "p3R_mc" + mcid },
+    { str: "Repeated label", fontName: "f", width: 20, transform: [10, 0, 0, 10, x, y] },
+    { type: "endMarkedContent" }];
+}
+
+test("existing tag geometry follows MCIDs, cropped/rotated pages and annotations", async () => {
+  const { existingTagRegions } = await loadWorkshop();
+  const nodes = [
+    { path: "0/0", contentRefs: [{ pageIndex: 0, mcid: 1, stream: "page" }] },
+    { path: "0/1", contentRefs: [{ pageIndex: 0, mcid: 2, stream: "page" }] },
+    { path: "0/2", contentRefs: [{ pageIndex: 0, rect: [20, 30, 40, 50] }] },
+    { path: "0/3", contentRefs: [{ pageIndex: 1, mcid: 1, stream: "page" }] },
+  ];
+  const items = [...markedText(1, 20, 200), ...markedText(2, 60, 100)];
+  const regions = await existingTagRegions(tagGeometryPage(items), nodes, 0);
+  assert.deepEqual(regions.get("0/0"), [{ x: 0.1, y: 0.06, width: 0.19999999999999998, height: 0.05 }]);
+  assert.equal(regions.get("0/1")[0].x, 0.5);
+  assert.equal(regions.has("0/3"), false);
+  assert.equal(regions.get("0/2")[0].y, 0.85);
+  const rotated = await existingTagRegions(tagGeometryPage(items, true), nodes, 0);
+  assert.equal(rotated.get("0/0")[0].y, 0.1);
+  assert.ok(Math.abs(rotated.get("0/0")[0].width - 0.05) < 1e-8);
+});
+
+test("ambiguous MCIDs across streams do not produce misleading highlights", async () => {
+  const { existingTagRegions } = await loadWorkshop();
+  const nodes = [
+    { path: "0/0", contentRefs: [{ pageIndex: 0, mcid: 1, stream: "page" }] },
+    { path: "0/1", contentRefs: [{ pageIndex: 0, mcid: 1, stream: "(9, 0)" }] },
+  ];
+  const regions = await existingTagRegions(tagGeometryPage(markedText(1, 20, 200)), nodes, 0);
+  assert.equal(regions.size, 0);
+});
+
+test("tagged images use their painted transform and restore graphics state", async () => {
+  const { existingTagRegions } = await loadWorkshop();
+  const ops = { save: 1, restore: 2, transform: 3, beginMarkedContentProps: 4, endMarkedContent: 5, paintImageXObject: 6 };
+  const page = tagGeometryPage([]);
+  page.getOperatorList = async () => ({
+    fnArray: [4, 1, 3, 6, 2, 5],
+    argsArray: [["Figure", 7], [], [20, 0, 0, 40, 20, 100], ["image"], [], []],
+  });
+  const result = await existingTagRegions(page, [{ path: "0", contentRefs: [{ pageIndex: 0, mcid: 7 }] }], 0, ops);
+  const box = result.get("0")[0];
+  assert.equal(box.x, 0.1);
+  assert.equal(box.y, 0.4);
+  assert.ok(Math.abs(box.height - 0.2) < 1e-8);
+});
+
+test("existing tags use the center preview and one editor, retaining unsaved edits across selection", async () => {
+  await withWorkshop(async (page) => {
+    await page.evaluate(() => {
+      const t = window.workshop, s = t.state();
+      s.preexistingTree = true; s.treeDecision = "keep"; s.originalInspection = s.inspection;
+      s.open = true; s.step = "review"; s.task = "headings";
+      document.querySelector("#a11y-workshop").hidden = false;
+      s.inspection.structure_editor.nodes = [
+        { path: "0", role: "Document", contentRefs: [] },
+        { path: "0/0", role: "H1", text: "Court filing", pageIndex: 0, regions: [{ pageIndex: 0, box: { x: .1, y: .1, width: .4, height: .04 } }] },
+        { path: "0/1", role: "P", text: "County", pageIndex: 0, regions: [{ pageIndex: 0, box: { x: .1, y: .2, width: .2, height: .03 } }] },
+        { path: "0/2", role: "Figure", altText: "Seal", pageIndex: 0, regions: [{ pageIndex: 0, box: { x: .6, y: .1, width: .2, height: .15 } }] },
+        { path: "0/3", role: "P", text: "Next page", pageIndex: 1, regions: [{ pageIndex: 1, box: { x: .1, y: .1, width: .4, height: .03 } }] },
+        { path: "0/4", role: "P", text: "Unlocated text", pageIndex: 0 },
+      ];
+      s.pageViews.push([0, 0, 612, 792]);
+      t.render();
+    });
+    await page.locator('[data-aw-mark="tag:0/1"]').click();
+    assert.equal(await page.locator('[data-existing-tag]').count(), 1);
+    assert.equal(await page.locator('[data-existing-tag]').getAttribute('data-existing-tag'), '0/1');
+    assert.equal(await page.locator('.aw-tag-advanced').getAttribute('open'), null);
+    await page.locator('[data-tag-key="role"]').selectOption('H2');
+    await page.locator('[data-aw-mark="tag:0/0"]').click();
+    await page.waitForFunction(() => document.querySelector(".aw-mark-current .aw-mark-label")?.textContent === "H1");
+    await page.waitForTimeout(30);
+    await page.locator('[data-aw-mark="tag:0/1"]').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('[data-tag-key="role"]').inputValue(), 'H2');
+    await page.locator('[data-aw-input="existing-tag-select"]').selectOption('0/2');
+    assert.equal(await page.locator('[data-tag-key="altText"]').isVisible(), true);
+    await page.locator('[data-aw-input="existing-tag-select"]').selectOption('0/3');
+    assert.equal(await page.evaluate(() => window.workshop.state().page), 1);
+    await page.locator('[data-aw-mark="tag:0/3"]').waitFor();
+    assert.equal(await page.locator('[data-aw-mark="tag:0/1"]').count(), 0);
+    await page.locator('[data-aw-input="existing-tag-select"]').selectOption('0');
+    assert.equal(await page.locator('[data-existing-tag]').getAttribute('data-existing-tag'), '0');
+    await page.locator('[data-aw-input="existing-tag-select"]').selectOption('0/4');
+    assert.match(await page.locator('[data-existing-tag]').textContent(), /No reliable page highlight/);
+    assert.deepEqual(await page.evaluate(() => window.errors), []);
+  });
+});
+
+test("reading order merges Ctrl/Cmd-selected existing tags and undo restores them", async () => {
+  await withWorkshop(async page => {
+    await page.evaluate(async () => {
+      const t = window.workshop, s = t.state();
+      const leaf = (path, mcid, role = "P") => ({path, role, pageIndex:0, text: "Text " + mcid, contentRefs:[{pageIndex:0,mcid,stream:"page"}]});
+      window.testStructureEditor = {nodes:[leaf("0/0",0), leaf("0/1",1), leaf("0/2",2)]};
+      window.testMergeStructureEditor = {nodes:[
+        {path:"0/0",role:"P",merged:true,pageIndex:0,text:"Text 0 Text 1",contentRefs:[]},
+        leaf("0/0/0",0,"Span"),leaf("0/0/1",1,"Span"),leaf("0/1",2),
+      ]};
+      window.testTextContent = {styles:{f:{ascent:.8}},items:[0,1,2].flatMap(mcid => [
+        {type:"beginMarkedContentProps",id:"p3R_mc"+mcid},
+        {str:"Text "+mcid,fontName:"f",width:120,transform:[12,0,0,12,60,700-mcid*40]},
+        {type:"endMarkedContent"},
+      ])};
+      await t.loadWorkingCopy(s.working);
+      s.originalInspection = s.inspection; s.preexistingTree=true; s.treeDecision="keep";
+      s.open=true; s.step="review";s.task="order";s.reviewed.order=true;s.reviewed.headings=true;
+      document.querySelector("#a11y-workshop").hidden=false;
+      t.saveDecisions();t.render();
+    });
+    const mark = path => page.locator(`[data-aw-mark="tag:${path}"]`).first();
+    await mark('0/0').click();
+    await mark('0/2').click({modifiers:['Control']});
+    assert.equal(await page.locator('[data-aw="existing-tags-merge"]').isDisabled(),true);
+    assert.match(await page.locator('#aw-review-panel').textContent(),/without skipping/);
+    await mark('0/2').click({modifiers:['Meta']});
+    await mark('0/1').click({modifiers:['Control']});
+    assert.equal(await page.locator('[data-aw-input="existing-tag-check"]:checked').count(),2);
+    assert.equal(await page.locator('.aw-mark-current').count(),2);
+    await page.locator('[data-aw="existing-tags-merge"]').click();
+    await page.waitForFunction(()=>!window.workshop.state().busy && window.requests.length > 0);
+    assert.deepEqual(await page.evaluate(()=>JSON.parse(window.requests[0].operations)),[{action:'merge_tags',paths:['0/0','0/1']}]);
+    assert.equal(await page.locator('[data-aw-input="existing-tag-check"]').count(),2);
+    assert.equal(await page.locator('[data-aw-mark="tag:0/0"]').count(),2);
+    assert.equal(await page.locator('[data-aw-mark="tag:0/0/0"]').count(),0);
+    assert.equal(await page.evaluate(()=>!!window.workshop.state().reviewed.headings),false);
+    await page.evaluate(()=>window.workshop.undo());
+    assert.equal(await page.locator('[data-aw-input="existing-tag-check"]').count(),3);
+    // Checkboxes provide the same selection without modifier keys.
+    await page.locator('[data-aw-input="existing-tag-check"][data-path="0/0"]').check();
+    await page.locator('[data-aw-input="existing-tag-check"][data-path="0/1"]').check();
+    assert.equal(await page.locator('[data-aw="existing-tags-merge"]').isEnabled(),true);
+    await page.evaluate(()=>{const t=window.workshop;t.state().task="headings";t.render();});
+    assert.equal(await page.locator('[data-aw="existing-tags-merge"]').count(),0);
+    assert.equal(await page.locator('#aw-review-panel [data-aw="task"][data-task="order"]').filter({hasText:'Reading order'}).count(),1);
+    assert.deepEqual(await page.evaluate(()=>window.errors),[]);
+  });
+});
+
+test("draft reading order merges adjacent Ctrl-selected blocks, rejecting gaps", async () => {
+  await withWorkshop(async page => {
+    await page.evaluate(()=>{
+      const t=window.workshop,s=t.state();
+      s.preexistingTree=false;s.open=true;s.step="review";s.task="order";
+      s.inspection.content_blocks = window.testContentBlocks = [0,1,2].map(i=>({blockId:"b"+i,pageIndex:0,text:"Text "+i,box:{x:.1,y:.1+i*.1,width:.3,height:.03}}));
+      t.initializeDecisions();t.saveDecisions();document.querySelector("#a11y-workshop").hidden=false;t.render();
+    });
+    await page.locator('[data-aw-mark="block:b0"]').click();
+    await page.locator('[data-aw-mark="block:b2"]').click({modifiers:['Control']});
+    assert.equal(await page.locator('[data-aw="order-selection-merge"]').isDisabled(),true);
+    await page.locator('[data-aw-mark="block:b2"]').click({modifiers:['Control']});
+    assert.equal(await page.locator(".aw-mark-current").count(), 1);
+    await page.locator('[data-aw-mark="block:b1"]').click({modifiers:['Control']});
+    await page.locator('[data-aw="order-selection-merge"]').click();
+    assert.equal(await page.evaluate(()=>window.workshop.state().blockOrder[0].length),2);
+    assert.equal(await page.evaluate(()=>window.requests.length),0);
+    await page.locator('[data-aw="order-confirm"]').click();
+    await page.waitForFunction(()=>!window.workshop.state().busy && window.requests.length > 0);
+    assert.equal(await page.evaluate(()=>window.requests[0].action),'draft_structure');
+    await page.evaluate(()=>window.workshop.undo());
+    assert.equal(await page.evaluate(()=>window.workshop.state().blockOrder[0].length),3);
+    assert.deepEqual(await page.evaluate(()=>window.errors),[]);
   });
 });

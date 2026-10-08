@@ -95,6 +95,17 @@ workshop" button. Implementation:
   `afterStructureSteps()` in step when adding a decision.
 - An earlier tag tree the PDF arrived with is kept until the person chooses to
   replace it under Headings & tags.
+- Existing tags can be edited directly under Headings & tags via `edit_tag`.
+  These edits preserve the imported hierarchy and content references and must
+  not call the draft-tree rebuild. Text roles may change to other text roles;
+  specialized table, list and form roles stay intact. The preview links tags to
+  their actual marked-content/annotation references; never locate them by text
+  matching. Keep one selected-tag editor, with advanced properties collapsed.
+- Merging belongs under Reading order, not a duplicate control in Headings &
+  tags. Ctrl/Cmd-click and list checkboxes select adjacent items. Native merges
+  preserve original elements as inline Spans in one text group, retaining
+  ParentTree/IDTree references and per-run properties; never rebuild the tree
+  for a native merge. Draft merges still apply on confirming the page.
 - Internal field names never change. Only announced names (`/TU`) do.
 - A name is the information, not an instruction: "County", not "Type name of
   county"; the screen reader already announces the role. Each box in a row of

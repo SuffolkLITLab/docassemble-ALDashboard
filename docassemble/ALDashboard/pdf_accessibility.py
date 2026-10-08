@@ -1526,6 +1526,12 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
         str(getattr(page.obj, "objgen", "")): index
         for index, page in enumerate(pdf.pages)
     }
+    content_by_element: Dict[Any, List[str]] = {}
+    for item in _readback_sequence(pdf, keep_elements=True):
+        element = item.get("element")
+        if element is not None:
+            content_by_element.setdefault(element.objgen, []).append(str(item.get("text") or ""))
+    nodes: List[Dict[str, Any]] = []
     tables: List[Dict[str, Any]] = []
     figures: List[Dict[str, Any]] = []
     tagged_annotation_roles: Dict[str, set[str]] = {}
@@ -1547,11 +1553,61 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                 object_id = str(getattr(kid.get("/Obj"), "objgen", ""))
                 tagged_annotation_roles.setdefault(object_id, set()).add(parent_role)
 
-    def walk(node: Any, path: List[int]) -> None:
+    def content_references(node: Any, inherited_page: Optional[int]) -> List[Dict[str, Any]]:
+        """Keep the actual marked-content/annotation links, not text matches."""
+        import pikepdf
+
+        result: List[Dict[str, Any]] = []
+
+        def collect(kid: Any, page_index: Optional[int]) -> None:
+            if isinstance(kid, pikepdf.Array):
+                for item in kid:
+                    collect(item, page_index)
+            elif isinstance(kid, int):
+                if page_index is not None:
+                    result.append({"pageIndex": page_index, "mcid": kid, "stream": "page"})
+            elif hasattr(kid, "get") and kid.get("/S") is None:
+                own_page = page_index_for(kid)
+                if own_page is not None:
+                    page_index = own_page
+                if page_index is None:
+                    return
+                if kid.get("/MCID") is not None:
+                    stream = kid.get("/Stm")
+                    result.append({
+                        "pageIndex": page_index,
+                        "mcid": int(kid.get("/MCID")),
+                        "stream": str(stream.objgen) if stream is not None else "page",
+                    })
+                obj = kid.get("/Obj")
+                if obj is not None and hasattr(obj, "get") and obj.get("/Rect") is not None:
+                    result.append({"pageIndex": page_index, "rect": [float(v) for v in obj.get("/Rect")]})
+
+        collect(node.get("/K"), inherited_page)
+        return result
+
+    def walk(node: Any, path: List[int], inherited_page: Optional[int] = None) -> None:
         role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
         children = _structure_children(node)
         collect_objr(node)
         path_text = "/".join(str(index) for index in path)
+        node_page = page_index_for(node)
+        if node_page is None:
+            node_page = inherited_page
+        references = content_references(node, node_page)
+        if node_page is None and references:
+            node_page = references[0]["pageIndex"]
+        nodes.append({
+            "path": path_text,
+            "text": " ".join(content_by_element.get(node.objgen, [])),
+            "role": role,
+            "pageIndex": node_page,
+            "contentRefs": references,
+            "merged": bool(node.get("/DAWorkshopMerged", False)),
+            "title": _safe_pdf_string(node.get("/T", "")),
+            "actualText": _safe_pdf_string(node.get("/ActualText", "")),
+            "altText": _safe_pdf_string(node.get("/Alt", "")),
+        })
         if role == "Figure":
             alt_text = _safe_pdf_string(node.get("/Alt", ""))
             figures.append(
@@ -1632,11 +1688,17 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
                 }
             )
         for index, child in enumerate(children):
-            walk(child, path + [index])
+            walk(child, path + [index], node_page)
 
     if struct_root is not None:
         for index, child in enumerate(_structure_children(struct_root)):
             walk(child, [index])
+
+    direct_text = {node["path"]: node["text"] for node in nodes}
+    for node in nodes:
+        if node["merged"]:
+            node["text"] = " ".join(text for path, text in direct_text.items()
+                                    if text and path.startswith(node["path"] + "/"))
 
     annotations = []
     widgets: List[Dict[str, Any]] = []
@@ -1712,6 +1774,7 @@ def _structure_editor_data(pdf: Any) -> Dict[str, Any]:
     return {
         "tables": tables,
         "tableItems": table_items,
+        "nodes": nodes,
         "figures": figures,
         "annotations": annotations,
         "widgets": widgets,
@@ -8805,6 +8868,73 @@ def _document_structure_parent(struct_root: Any) -> Any:
     return struct_root
 
 
+def _merge_structure_tags(pdf: Any, paths: Any) -> int:
+    """Group adjacent text siblings without breaking their content backreferences.
+
+    Original elements become inline Spans inside one text tag. Keeping those
+    objects preserves ParentTree, IDTree, language, ActualText and other
+    per-run properties, including explicit references from elsewhere in the PDF.
+    """
+    import pikepdf
+
+    if not isinstance(paths, list) or not 2 <= len(paths) <= 200:
+        raise PDFAccessibilityError("Select at least two adjacent text tags to merge.")
+    if any(not isinstance(path, str) for path in paths) or len(set(paths)) != len(paths):
+        raise PDFAccessibilityError("Select distinct tag paths to merge.")
+    try:
+        indexes = [tuple(int(part) for part in path.split("/")) for path in paths]
+    except ValueError as exc:
+        raise PDFAccessibilityError("Invalid structure-tree path.") from exc
+    indexes.sort()
+    parent_path = indexes[0][:-1]
+    if any(path[:-1] != parent_path for path in indexes) or any(
+        right[-1] != left[-1] + 1 for left, right in zip(indexes, indexes[1:])
+    ):
+        raise PDFAccessibilityError("Merge requires adjacent tags with the same parent in reading order.")
+    root = pdf.Root.StructTreeRoot
+    parent = _structure_node_at_path(root, "/".join(map(str, parent_path))) if parent_path else root
+    selected = [_structure_node_at_path(root, "/".join(map(str, path))) for path in indexes]
+    text_roles = {"P", "Span", "H", "H1", "H2", "H3", "H4", "H5", "H6", "BlockQuote", "Note"}
+    if any(str(node.get("/S")).lstrip("/") not in text_roles for node in selected):
+        raise PDFAccessibilityError("Only text tags can be merged; keep table, list, image and form structure intact.")
+
+    def inline_children(node: Any) -> bool:
+        return all(str(child.get("/S")) == "/Span" and inline_children(child)
+                   for child in _structure_children(node))
+
+    if not all(inline_children(node) for node in selected):
+        raise PDFAccessibilityError("Merge text tags with inline content only, not tags containing separate blocks.")
+    raw = parent.get("/K")
+    kids = list(raw) if isinstance(raw, pikepdf.Array) else [raw]
+    identities = {node.objgen for node in selected}
+    if (0, 0) in identities:
+        raise PDFAccessibilityError("These tags have no stable object references and cannot be merged safely.")
+    positions = [i for i, kid in enumerate(kids) if getattr(kid, "objgen", None) in identities]
+    if len(positions) != len(selected) or positions != list(range(positions[0], positions[-1] + 1)):
+        raise PDFAccessibilityError("Unselected content separates these tags in reading order.")
+    merged = pdf.make_indirect(pikepdf.Dictionary({
+        "/Type": pikepdf.Name("/StructElem"), "/S": selected[0].S,
+        "/P": parent, "/K": pikepdf.Array(selected), "/DAWorkshopMerged": True,
+    }))
+    # Preserve inherited page references before changing the parent chain.
+    inherited_page = parent.get("/Pg")
+    ancestor = parent
+    visited = set()
+    while inherited_page is None and ancestor.get("/P") is not None:
+        if ancestor.objgen in visited:
+            break
+        visited.add(ancestor.objgen)
+        ancestor = ancestor.P
+        inherited_page = ancestor.get("/Pg")
+    if inherited_page is not None:
+        merged["/Pg"] = inherited_page
+    for node in selected:
+        node["/S"] = pikepdf.Name("/Span")
+        node["/P"] = merged
+    parent["/K"] = pikepdf.Array(kids[:positions[0]] + [merged] + kids[positions[-1] + 1:])
+    return len(selected)
+
+
 def apply_manual_structure_repairs(
     input_pdf_path: str,
     output_pdf_path: str,
@@ -8826,6 +8956,8 @@ def apply_manual_structure_repairs(
                     "Create a draft structure tree before editing semantic tags."
                 )
             counts = {
+                "tags_merged": 0,
+                "tags_edited": 0,
                 "roles_changed": 0,
                 "scopes_changed": 0,
                 "figure_alts_changed": 0,
@@ -8848,6 +8980,27 @@ def apply_manual_structure_repairs(
             )
             for operation in operation_list:
                 action = str(operation.get("action") or "")
+                if action == "merge_tags":
+                    counts["tags_merged"] += _merge_structure_tags(pdf, operation.get("paths"))
+                    continue
+                if action == "edit_tag":
+                    node = _structure_node_at_path(struct_root, str(operation.get("path") or ""))
+                    role = str(operation.get("role") or "")
+                    current_role = _safe_pdf_string(node.get("/S", "")).lstrip("/")
+                    text_roles = {"P", "Span", "H", "H1", "H2", "H3", "H4", "H5", "H6", "BlockQuote", "Note"}
+                    if role != current_role and not (current_role in text_roles and role in text_roles):
+                        raise PDFAccessibilityError("Only text tags can be changed to another text role; keep table, list and form structure intact.")
+                    node["/S"] = pikepdf.Name("/" + role)
+                    for key, pdf_key in (("title", "/T"), ("actualText", "/ActualText"), ("altText", "/Alt")):
+                        if key in operation:
+                            value = str(operation[key])
+                            if value:
+                                node[pdf_key] = pikepdf.String(value)
+                            elif pdf_key in node:
+                                del node[pdf_key]
+                    counts["tags_edited"] += 1
+                    counts["roles_changed"] += int(role != current_role)
+                    continue
                 if action == "create_table":
                     from .pdf_accessibility_review import create_table
 
@@ -9085,13 +9238,14 @@ def apply_manual_structure_repairs(
                     raise PDFAccessibilityError(
                         f"Unsupported structure edit: {action or 'missing action'}."
                     )
-            flattened: List[Any] = []
-            for key in sorted(number_entries):
-                flattened.extend([key, number_entries[key]])
-            struct_root["/ParentTree"] = pdf.make_indirect(
-                pikepdf.Dictionary({"/Nums": pikepdf.Array(flattened)})
-            )
-            struct_root["/ParentTreeNextKey"] = next_key
+            if any(op.get("action") not in {"edit_tag", "merge_tags"} for op in operation_list):
+                flattened: List[Any] = []
+                for key in sorted(number_entries):
+                    flattened.extend([key, number_entries[key]])
+                struct_root["/ParentTree"] = pdf.make_indirect(
+                    pikepdf.Dictionary({"/Nums": pikepdf.Array(flattened)})
+                )
+                struct_root["/ParentTreeNextKey"] = next_key
             pdf.save(output_pdf_path)
         return {
             "action": "structure",

@@ -4811,7 +4811,7 @@ def _readback_sequence(
         visit_content(node.get("/K"), node, role, page_index)
         if "/ActualText" in node:
             runs = sequence[start:]
-            entry = dict(runs[0]) if runs else {"kind": "text", "page": page_index}
+            entry: Dict[str, Any] = dict(runs[0]) if runs else {"kind": "text", "page": page_index}
             entry.update({
                 "kind": "field" if role == "Form" and entry.get("kind") == "field" and len(runs) == 1 else "text",
                 "role": role, "structureId": str(node.objgen),
@@ -9024,9 +9024,9 @@ def apply_manual_structure_repairs(
                     if role != current_role and not (current_role in text_roles and role in text_roles):
                         raise PDFAccessibilityError("Only text tags can be changed to another text role; keep table, list and form structure intact.")
                     node["/S"] = pikepdf.Name("/" + role)
-                    for key, pdf_key in (("title", "/T"), ("actualText", "/ActualText"), ("altText", "/Alt")):
-                        if key in operation:
-                            value = str(operation[key])
+                    for property_key, pdf_key in (("title", "/T"), ("actualText", "/ActualText"), ("altText", "/Alt")):
+                        if property_key in operation:
+                            value = str(operation[property_key])
                             if value:
                                 node[pdf_key] = pikepdf.String(value)
                             elif pdf_key in node:

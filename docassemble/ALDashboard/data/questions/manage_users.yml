@@ -110,13 +110,13 @@ subquestion: |
   % endif
   % endif
 fields:
-  - User: chosen_user
+  - User: chosen_user_selection
     required: False
-    datatype: integer
+    datatype: text
     input type: combobox
     code: |
       [
-        {user[0]: f"{user[2]} {user[3]} ({user[1]})".strip()}
+        {str(user[0]): f"{user[2]} {user[3]} ({user[1]})".strip()}
         for user in get_users_and_name(
           limit_to_non_admin_or_developers=not user_has_privilege(["admin", "developer"])
         )
@@ -128,11 +128,15 @@ fields:
         manage_user_count <= 200
     js show if: |
       val("user_task") != "recent_activity"
-  - User: chosen_user
+  - User: chosen_user_selection
     required: False
-    datatype: integer
+    datatype: text
     input type: ajax
     action: manage_user_search_ajax
+    trigger at: 2
+    hint: Start typing a name or email address
+    under text: |
+      Enter at least 2 characters of a name or email address, then select a result.
     show if:
       code: |
         manage_user_count > 200
@@ -182,10 +186,16 @@ fields:
       code: |
         not "access_privileges" in user_info().permissions
 validation code: |
-  if user_task != "recent_activity" and not chosen_user:
-    validation_error("Select a user", field="chosen_user")
+  if user_task != "recent_activity" and not chosen_user_selection:
+    validation_error("Select a user", field="chosen_user_selection")
   if user_task == "reset_password" and new_user_password != new_user_password_2:
     validation_error("The passwords do not match", field="new_user_password_2")
+---
+# Keep the AJAX value as text: docassemble 1.9 cannot render integer defaults.
+code: |
+  chosen_user = int(chosen_user_selection)
+depends on:
+  - chosen_user_selection
 ---
 event: manage_user_search_ajax
 code: |
@@ -204,6 +214,7 @@ code: |
     [str(user_id), label]
     for user_id, label in search_users_by_email(
       original,
+      search_names=True,
       exclude_privileged=not user_has_privilege(["admin", "developer"]),
     )
   ]

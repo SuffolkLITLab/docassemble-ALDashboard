@@ -581,36 +581,51 @@ def search_users_by_email(
     wordstart: str,
     limit: int = 20,
     exclude_privileged: bool = False,
+    search_names: bool = False,
 ) -> List[Tuple[int, str]]:
-    """
-    Search for users whose email starts with the given text. Used by the input type: ajax field on large servers,
-    so we never load the full user table - just return a handful of matches as the admin types.
+    """Find a bounded list of users for AJAX selectors.
+
+    By default, match email prefixes. With ``search_names``, match text anywhere
+    in the email or full display name, as in the small-server user picker.
     """
     wordstart = wordstart.strip()
     if not wordstart:
         return []
 
+    match = UserModel.email.istartswith(wordstart, autoescape=True)
+    if search_names:
+        full_name = (
+            func.coalesce(UserModel.first_name, "")
+            + " "
+            + func.coalesce(UserModel.last_name, "")
+        )
+        match = or_(
+            UserModel.email.icontains(wordstart, autoescape=True),
+            full_name.icontains(wordstart, autoescape=True),
+            UserModel.nickname.icontains(wordstart, autoescape=True),
+        )
     statement = select(
-        UserModel.id, UserModel.email, UserModel.first_name, UserModel.last_name
-    ).where(UserModel.email.istartswith(wordstart))
+        UserModel.id,
+        UserModel.email,
+        UserModel.first_name,
+        UserModel.last_name,
+        UserModel.nickname,
+    ).where(match)
     if exclude_privileged:
         statement = statement.where(
             ~UserModel.roles.any(Role.name.in_(["admin", "developer", "cron"]))
         )
-    statement = statement.limit(limit)
+    statement = statement.order_by(UserModel.email, UserModel.id).limit(limit)
     with _get_db_session() as session:
         users = session.execute(statement).all()
 
-        results = []
-        for user in users:
-            user_id, email, first_name, last_name = user
-            label = email
-            if first_name:
-                label += " " + first_name
-            if last_name:
-                label += " " + last_name
-            results.append((user_id, label))
-        return results
+    results = []
+    for user_id, email, first_name, last_name, nickname in users:
+        label = " ".join(
+            part for part in (email, first_name or nickname, last_name) if part
+        )
+        results.append((user_id, label or f"User ID {user_id}"))
+    return results
 
 
 def speedy_get_users() -> List[Dict[int, str]]:

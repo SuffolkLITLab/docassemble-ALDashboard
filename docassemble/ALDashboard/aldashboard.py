@@ -2496,11 +2496,8 @@ def dashboard_session_activity(
         minutes_list = [1, 5, 10, 30, 60, 120]
 
     # Build exclude set from config + defaults
-    if exclude_filenames is None:
-        exclude_filenames = []
-    exclude_set = set(exclude_filenames)
+    exclude_set = set(exclude_filenames or [])
     exclude_set.add("docassemble.ALDashboard:")
-    # Add entries from config
     config_excludes = (
         get_config("assembly line", {})
         .get("interview list", {})
@@ -2508,85 +2505,61 @@ def dashboard_session_activity(
     )
     if config_excludes:
         exclude_set.update(config_excludes)
+    exclude_prefixes = tuple(excl for excl in exclude_set if excl.endswith(":"))
+    exclude_exact = {excl for excl in exclude_set if not excl.endswith(":")}
 
-    results = {}
-
-    # Build dynamic WHERE clause for exclusions using safe parameterization
-    # Separate prefixes from exact filenames for cleaner logic
-    exclude_prefixes = [excl for excl in sorted(exclude_set) if excl.endswith(":")]
-    exclude_exact = [excl for excl in sorted(exclude_set) if not excl.endswith(":")]
-
-    exclude_where_parts = []
-    exclude_params = {}
-
-    # For prefixes: use NOT LIKE with concatenation to avoid SQL injection
-    for idx, prefix in enumerate(exclude_prefixes):
-        param_key = f"excl_prefix_{idx}"
-        exclude_params[param_key] = prefix
-        exclude_where_parts.append(f"sub.filename NOT LIKE CONCAT(:{param_key}, '%')")
-
-    # For exact matches: use safe != comparisons
-    for idx, fname in enumerate(exclude_exact):
-        param_key = f"excl_exact_{idx}"
-        exclude_params[param_key] = fname
-        exclude_where_parts.append(f"sub.filename != :{param_key}")
-
-    exclude_where = " AND ".join(exclude_where_parts) if exclude_where_parts else "1=1"
-
-    # Build the query with the WHERE clause safely embedded
-    query_sql = f"""
-SELECT sub.filename as filename, COUNT(sub.key) AS sessions, COUNT(DISTINCT userdictkeys.user_id) AS users
+    # userdict has no index on modtime, so only look at sessions that show up in the newest rows
+    # Run the query once for the largest window and split the results into the smaller windows
+    query = text("""
+SELECT sub.key, sub.filename, sub.starttime, userdictkeys.user_id
 FROM (
     SELECT key, filename, MIN(modtime) AS starttime
     FROM userdict
+    WHERE key IN (
+        SELECT key FROM (
+            SELECT key, modtime FROM userdict ORDER BY indexno DESC LIMIT 25000
+        ) recent
+        WHERE modtime >= :cutoff
+    )
     GROUP BY key, filename
 ) sub
 LEFT JOIN userdictkeys ON userdictkeys.key = sub.key
-WHERE sub.starttime >= :cutoff AND {exclude_where}
-GROUP BY sub.filename
-ORDER BY sessions DESC
-LIMIT :limit
-    """
-    query = text(query_sql)
-
+WHERE sub.starttime >= :cutoff
+    """)
+    now = datetime.utcnow()
+    largest = max((int(m) for m in minutes_list), default=0)
     with _get_db_session() as session:
-        for m in minutes_list:
-            cutoff = datetime.utcnow() - timedelta(minutes=int(m))
-            query_params = {"cutoff": cutoff, "limit": int(limit)}
-            query_params.update(exclude_params)
-            rs = session.execute(query, query_params)
-            rows = []
-            for row in rs:
-                # SQLAlchemy result rows may be mapping-like or tuple-like depending on version/context.
-                if hasattr(row, "_mapping"):
-                    mapping = row._mapping
-                    fname = mapping.get("filename")
-                    sessions_count = mapping.get("sessions")
-                    users_count = mapping.get("users")
-                else:
-                    # positional fallback: filename, sessions, users
-                    fname = row[0] if len(row) > 0 else None
-                    sessions_count = row[1] if len(row) > 1 else None
-                    users_count = row[2] if len(row) > 2 else None
+        rows = session.execute(
+            query, {"cutoff": now - timedelta(minutes=largest)}
+        ).all()
 
-                try:
-                    sessions_val = int(sessions_count or 0)
-                except Exception:
-                    sessions_val = 0
-                try:
-                    users_val = int(users_count or 0)
-                except Exception:
-                    users_val = 0
+    sessions: Dict[Tuple[str, str], Tuple[datetime, Set[int]]] = {}
+    for key, filename, starttime, user_id in rows:
+        if not filename or filename in exclude_exact:
+            continue
+        if filename.startswith(exclude_prefixes):
+            continue
+        users = sessions.setdefault((key, filename), (starttime, set()))[1]
+        if user_id is not None:
+            users.add(user_id)
 
-                rows.append(
-                    {
-                        "filename": fname,
-                        "sessions": sessions_val,
-                        "users": users_val,
-                        "title": nicer_interview_filename(fname) if fname else "",
-                    }
-                )
-            results[int(m)] = rows
+    results = {}
+    for m in minutes_list:
+        cutoff = now - timedelta(minutes=int(m))
+        per_file: Dict[str, List[Set[int]]] = {}
+        for (key, filename), (starttime, users) in sessions.items():
+            if starttime >= cutoff:
+                per_file.setdefault(filename, []).append(users)
+        top = sorted(per_file.items(), key=lambda item: len(item[1]), reverse=True)
+        results[int(m)] = [
+            {
+                "filename": filename,
+                "sessions": len(user_sets),
+                "users": len(set().union(*user_sets)),
+                "title": nicer_interview_filename(filename),
+            }
+            for filename, user_sets in top[: int(limit)]
+        ]
     return results
 
 
